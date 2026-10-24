@@ -529,6 +529,17 @@ export const MobileHud: React.FC<MobileHudProps> = ({
               <span className="text-[9px] text-[#c4ab7d] font-mono-tabular">
                 XP {player.xp}/{player.xpToNext}
               </span>
+              <span
+                title="Moedas de Ouro (Status do Personagem)"
+                className="flex items-center gap-0.5 px-1 py-0.2 rounded bg-amber-950/80 border border-amber-500/50 text-[9px] font-mono-tabular font-bold text-amber-300"
+              >
+                <img
+                  src={spriteAtlas.getItemIconUrl('gold_coin')}
+                  alt="Ouro"
+                  className="w-3 h-3 pixelated"
+                />
+                <span>{player.goldCoins ?? 0}</span>
+              </span>
             </div>
 
             <div className="flex items-center gap-1 text-[9px] font-mono-tabular text-[#f3e5c8]">

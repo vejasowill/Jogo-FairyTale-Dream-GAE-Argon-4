@@ -246,6 +246,20 @@ export const CraftingDrawer: React.FC<CraftingDrawerProps> = ({
           </div>
 
           <div className="flex items-center gap-2">
+            <div
+              title="Moedas de Ouro (Status do Personagem — não ocupa espaço na mochila)"
+              className="flex items-center gap-1.5 px-2.5 py-1 mc-slot border-amber-500/50 bg-[#120b07]"
+            >
+              <img
+                src={spriteAtlas.getItemIconUrl('gold_coin')}
+                alt="Ouro"
+                className="w-4 h-4 pixelated"
+              />
+              <span className="text-[10px] font-mono-tabular font-bold text-amber-300">
+                {player.goldCoins ?? 0} Ouro
+              </span>
+            </div>
+
             {activeTab === 'craft' && stationContext !== null && (
               <button
                 onClick={() => setIncludeHandRecipesInStation((v) => !v)}

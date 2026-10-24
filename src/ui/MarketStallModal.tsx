@@ -160,6 +160,7 @@ export const MarketStallModal: React.FC<MarketStallModalProps> = ({
           (c) => c.id === stall.ownerId && c.hp > 0
         ) || null
       : null;
+  const isVillagerOwnerAlive = engine.isVillagerStallOwnerAlive(stall);
 
   const playerGold = engine.getItemCount('gold_coin');
   const activeSlotCount = slots.filter(
@@ -609,11 +610,17 @@ export const MarketStallModal: React.FC<MarketStallModalProps> = ({
                           </button>
                         )}
                       </div>
-                    ) : (
+                    ) : isVillagerOwnerAlive ? (
                       <div className="p-2.5 bg-[#160d08] border border-[#3a2416] text-xs text-[#c4ab7d]">
-                        O mercador responsável não está próximo no momento. Você
-                        pode assumir a administração desta tenda na aba de
-                        Configurações se desejar.
+                        O aldeão dono desta tenda ainda está vivo na vila. Você
+                        só é dono das tendas que colocar — para tomar esta
+                        tenda, você deve destruí-la ou o aldeão dono precisa ter
+                        morrido.
+                      </div>
+                    ) : (
+                      <div className="p-2.5 bg-amber-950/40 border border-amber-500/40 text-xs text-amber-200">
+                        💀 O aldeão dono desta tenda morreu! Agora você pode
+                        tomar posse desta Tenda de Vendas abaixo.
                       </div>
                     )}
 
@@ -641,62 +648,68 @@ export const MarketStallModal: React.FC<MarketStallModalProps> = ({
                   <div className="medieval-inset p-3.5 space-y-2.5 border border-[#4a301e]">
                     <h3 className="font-pixel text-xs font-bold text-amber-300 flex items-center gap-1.5">
                       <Sparkles className="w-4 h-4 text-amber-400" />
-                      <span>COMO FUNCIONA SUA TENDA DE VENDAS</span>
+                      <span>REGRAS DE POSSE & VENDAS DA TENDA</span>
                     </h3>
                     <ul className="text-xs text-[#e5d5b5] space-y-2 list-disc list-inside leading-relaxed">
                       <li>
-                        Ao posicionar uma{' '}
+                        Você só é dono da{' '}
                         <strong className="text-amber-300">
                           Tenda de Mercador
-                        </strong>
-                        , você se torna o dono e pode expor até{' '}
-                        <strong>8 lotes de itens</strong> com preços livremente
-                        editáveis.
+                        </strong>{' '}
+                        que você mesmo colocar. Para tomar a tenda de um aldeão,
+                        você deve <strong>destruir a tenda</strong> ou o{' '}
+                        <strong>aldeão dono deve ter morrido</strong>.
                       </li>
                       <li>
-                        Aldeões e Andarilhos que passam perto têm chance de
-                        serem atraídos para avaliar suas ofertas.
+                        Cada aldeão inspeciona até{' '}
+                        <strong className="text-sky-300">
+                          3 vezes ao dia por tenda
+                        </strong>
+                        .
                       </li>
                       <li>
                         <strong className="text-emerald-300">
-                          Itens baratos e com desconto
+                          Compras Automáticas:
                         </strong>{' '}
-                        em relação à Tabela de Preços vendem com muito mais
-                        facilidade; itens caros ou superfaturados são raros de
-                        vender.
+                        quando um aldeão decide comprar um item exposto, a
+                        compra ocorre automaticamente (sem precisar confirmar) e
+                        as Moedas de Ouro vão direto para o seu status!
                       </li>
                       <li>
-                        Cada NPC realiza apenas{' '}
+                        Cada NPC realiza até{' '}
                         <strong className="text-amber-300">
                           1 compra por dia
                         </strong>{' '}
-                        (independente da quantidade levada) e só volta a comprar
-                        após <strong>dormir em sua casa</strong> à noite!
-                      </li>
-                      <li>
-                        Quando um NPC decide comprar, um{' '}
-                        <strong className="text-yellow-300">
-                          ponto de exclamação (!)
-                        </strong>{' '}
-                        surge acima da tenda para você aprovar ou recusar a
-                        venda.
+                        e reseta ao dormir em sua casa à noite.
                       </li>
                     </ul>
                     <div className="pt-1">
-                      <button
-                        type="button"
-                        onClick={() => {
-                          const res = engine.setMarketStallOwner(
-                            stall.id,
-                            'PLAYER'
-                          );
-                          showFeedback(res.ok, res.message);
-                        }}
-                        className="w-full min-h-[38px] medieval-btn-gold font-pixel text-[11px] font-bold flex items-center justify-center gap-1.5"
-                      >
-                        <Crown className="w-4 h-4" />
-                        <span>ASSUMIR ESTA TENDA COMO MERCADOR</span>
-                      </button>
+                      {isVillagerOwnerAlive ? (
+                        <div className="w-full min-h-[38px] px-3 py-2 bg-rose-950/60 border border-rose-500/40 text-rose-200 text-[11px] font-semibold flex items-center justify-center gap-1.5 text-center">
+                          <AlertCircle className="w-4 h-4 shrink-0 text-rose-400" />
+                          <span>
+                            Dono Vivo ({stall.ownerName || 'Aldeão'}) — Destrua
+                            a tenda ou aguarde a morte do dono para tomá-la
+                          </span>
+                        </div>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const res = engine.setMarketStallOwner(
+                              stall.id,
+                              'PLAYER'
+                            );
+                            showFeedback(res.ok, res.message);
+                          }}
+                          className="w-full min-h-[38px] medieval-btn-gold font-pixel text-[11px] font-bold flex items-center justify-center gap-1.5"
+                        >
+                          <Crown className="w-4 h-4" />
+                          <span>
+                            TOMAR POSSE DESTA TENDA (ALDEÃO DONO MORREU)
+                          </span>
+                        </button>
+                      )}
                     </div>
                   </div>
                 </div>
@@ -1371,12 +1384,34 @@ export const MarketStallModal: React.FC<MarketStallModalProps> = ({
                   </button>
                 </div>
 
-                {/* Ownership Selector */}
+                {/* Ownership Status & Takeover Rule */}
                 <div className="space-y-1.5 pt-2 border-t border-[#3a2416]">
                   <div className="text-[11px] font-bold text-[#e5d5b5]">
-                    Dono Definido da Tenda:
+                    Posse da Tenda:
                   </div>
-                  <div className="flex flex-wrap gap-1.5">
+                  {isPlayerOwner ? (
+                    <div className="p-2.5 bg-amber-500/15 border border-amber-400/50 text-xs text-amber-200 flex items-center gap-2">
+                      <Crown className="w-4 h-4 text-amber-400 shrink-0" />
+                      <span>
+                        <strong>Você é o Dono desta Tenda.</strong> As compras
+                        dos aldeões são concluídas automaticamente!
+                      </span>
+                    </div>
+                  ) : isVillagerOwnerAlive ? (
+                    <div className="p-2.5 bg-rose-950/50 border border-rose-500/40 text-xs text-rose-200 space-y-1">
+                      <div className="font-bold flex items-center gap-1.5">
+                        <UserCheck className="w-4 h-4 text-rose-400 shrink-0" />
+                        <span>
+                          Pertence a: {stall.ownerName || 'Mercador da Vila'}
+                        </span>
+                      </div>
+                      <p className="text-[11px] text-[#e5d5b5]">
+                        Você só é dono da tenda que colocar. Para tomar esta
+                        tenda, destrua-a atacando ou aguarde caso o aldeão dono
+                        morra.
+                      </p>
+                    </div>
+                  ) : (
                     <button
                       type="button"
                       onClick={() => {
@@ -1386,51 +1421,16 @@ export const MarketStallModal: React.FC<MarketStallModalProps> = ({
                         );
                         showFeedback(res.ok, res.message);
                       }}
-                      className={`px-3 py-1.5 text-xs font-bold flex items-center gap-1.5 border ${
-                        isPlayerOwner
-                          ? 'bg-amber-500/25 border-amber-400 text-amber-200'
-                          : 'bg-[#140c07] border-[#3b2415] text-[#c4ab7d]'
-                      }`}
+                      className="w-full min-h-[38px] medieval-btn-gold font-pixel text-xs font-bold flex items-center justify-center gap-1.5"
                     >
-                      <Crown className="w-3.5 h-3.5 text-amber-400" />
-                      <span>Você (Mercador)</span>
+                      <Crown className="w-4 h-4" />
+                      <span>TOMAR POSSE DA TENDA (DONO MORREU)</span>
                     </button>
-
-                    {nearbyNpcs
-                      .filter((n) => n.kind === CreatureKind.VILLAGER)
-                      .slice(0, 3)
-                      .map((npc) => {
-                        const isThisOwner =
-                          stall.ownerType === 'VILLAGER' &&
-                          stall.ownerId === npc.id;
-                        return (
-                          <button
-                            key={npc.id}
-                            type="button"
-                            onClick={() => {
-                              const res = engine.setMarketStallOwner(
-                                stall.id,
-                                'VILLAGER',
-                                npc.id
-                              );
-                              showFeedback(res.ok, res.message);
-                            }}
-                            className={`px-2.5 py-1.5 text-xs font-bold flex items-center gap-1 border ${
-                              isThisOwner
-                                ? 'bg-sky-500/25 border-sky-400 text-sky-200'
-                                : 'bg-[#140c07] border-[#3b2415] text-[#c4ab7d]'
-                            }`}
-                          >
-                            <UserCheck className="w-3.5 h-3.5 text-sky-400" />
-                            <span>Aldeão: {npc.name}</span>
-                          </button>
-                        );
-                      })}
-                  </div>
+                  )}
                 </div>
 
                 {/* Pickup / Dismantle Player Stall */}
-                {!stall.villageId && !stall.id.startsWith('world_struct_') && (
+                {(isPlayerOwner || !isVillagerOwnerAlive) && (
                   <div className="pt-2 border-t border-[#3a2416]">
                     <button
                       type="button"
@@ -1451,15 +1451,15 @@ export const MarketStallModal: React.FC<MarketStallModalProps> = ({
                 )}
               </div>
 
-              {/* Nearby Villagers & Wanderers Daily Purchase Status */}
+              {/* Nearby Villagers & Wanderers Daily Purchase & Inspection Status */}
               <div className="medieval-inset p-3.5 space-y-2.5 border border-[#4a301e]">
                 <div className="flex items-center justify-between">
                   <h3 className="font-pixel text-xs font-bold text-amber-300 flex items-center gap-1.5">
                     <Users className="w-4 h-4 text-sky-400" />
-                    <span>CLIENTES PRÓXIMOS & LIMITE DIÁRIO</span>
+                    <span>CLIENTES PRÓXIMOS & INSPEÇÕES DIÁRIAS</span>
                   </h3>
                   <span className="text-[10px] text-[#c4ab7d]">
-                    1 compra/dia (Reseta ao dormir em casa)
+                    Máx. 3 inspeções/dia por tenda
                   </span>
                 </div>
 
@@ -1474,7 +1474,9 @@ export const MarketStallModal: React.FC<MarketStallModalProps> = ({
                     {nearbyNpcs.map((npc) => {
                       const boughtToday = Boolean(npc.hasBoughtToday);
                       const isAttracted = npc.attractedStallId === stall.id;
-                      const isOfferBuyer = offer?.buyerId === npc.id;
+                      const inspectionsCount =
+                        npc.stallInspectionsToday?.[stall.id] || 0;
+                      const reachedInspectionLimit = inspectionsCount >= 3;
 
                       return (
                         <div
@@ -1492,9 +1494,12 @@ export const MarketStallModal: React.FC<MarketStallModalProps> = ({
                                 )
                               </span>
                             </div>
-                            <div className="text-[10px] text-[#c4ab7d] flex items-center gap-2 mt-0.5">
+                            <div className="text-[10px] text-[#c4ab7d] flex flex-wrap items-center gap-2 mt-0.5">
                               <span>
                                 Afinidade: ♥{Math.round(npc.affinity ?? 55)}
+                              </span>
+                              <span className="text-sky-300 font-mono">
+                                Inspeções hoje: {inspectionsCount}/3
                               </span>
                               {npc.isInsideHouse && (
                                 <span className="text-amber-300 flex items-center gap-0.5">
@@ -1505,13 +1510,13 @@ export const MarketStallModal: React.FC<MarketStallModalProps> = ({
                           </div>
 
                           <div className="text-right shrink-0">
-                            {isOfferBuyer ? (
-                              <span className="px-2 py-0.5 bg-rose-600/30 border border-yellow-400 text-yellow-300 text-[10px] font-bold">
-                                ❗ Quer Comprar!
-                              </span>
-                            ) : boughtToday ? (
+                            {boughtToday ? (
                               <span className="px-2 py-0.5 bg-slate-900 border border-slate-700 text-slate-400 text-[10px] font-semibold">
-                                💤 Já comprou hoje (Aguardando dormir)
+                                💤 Já comprou hoje
+                              </span>
+                            ) : reachedInspectionLimit ? (
+                              <span className="px-2 py-0.5 bg-amber-950/70 border border-amber-500/40 text-amber-300 text-[10px] font-semibold">
+                                🛑 3/3 Inspeções Hoje
                               </span>
                             ) : isAttracted ? (
                               <span className="px-2 py-0.5 bg-sky-950 border border-sky-400 text-sky-300 text-[10px] font-bold">
@@ -1519,7 +1524,8 @@ export const MarketStallModal: React.FC<MarketStallModalProps> = ({
                               </span>
                             ) : (
                               <span className="px-2 py-0.5 bg-emerald-950/70 border border-emerald-500/40 text-emerald-300 text-[10px] font-semibold">
-                                🟢 Pode Comprar Hoje
+                                🟢 Pode Inspecionar ({3 - inspectionsCount}{' '}
+                                rest.)
                               </span>
                             )}
                           </div>

@@ -85,6 +85,7 @@ export function createInitialPlayerState(): PlayerState {
       agility: 1,
       survival: 1,
     },
+    goldCoins: 0,
     inventory,
     selectedHotbarIndex: 0,
     equippedArmorId: null,
@@ -172,6 +173,23 @@ export function migrateSaveData(rawSave: WorldSaveData): WorldSaveData {
       }
     }
     migrated.player.inventory = newInv;
+  }
+
+  // Ensure goldCoins is a valid status attribute and migrate any legacy gold_coin inventory slots into player.goldCoins
+  migrated.player.goldCoins =
+    typeof migrated.player.goldCoins === 'number' &&
+    Number.isFinite(migrated.player.goldCoins)
+      ? Math.max(0, Math.floor(migrated.player.goldCoins))
+      : 0;
+
+  for (let i = 0; i < migrated.player.inventory.length; i++) {
+    const slot = migrated.player.inventory[i];
+    if (slot && slot.itemId === 'gold_coin') {
+      if (slot.count > 0) {
+        migrated.player.goldCoins += Math.floor(slot.count);
+      }
+      migrated.player.inventory[i] = null;
+    }
   }
 
   if (

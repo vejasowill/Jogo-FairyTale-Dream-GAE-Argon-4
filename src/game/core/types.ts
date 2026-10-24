@@ -348,6 +348,7 @@ export interface CreatureEntity {
   hasBoughtToday?: boolean;
   attractedStallId?: string;
   stallInspectCooldown?: number;
+  stallInspectionsToday?: Record<string, number>;
   // Hostility Forgiveness Debt (in Gold Coins) demanded when player holds the Peace Item
   peaceDebtCoins?: number;
 }
@@ -450,6 +451,7 @@ export interface PlayerState {
   xpToNext: number;
   attributePoints: number;
   attributes: PlayerAttributes;
+  goldCoins: number;
   inventory: (InventorySlot | null)[]; // 32 slots (0..7 hotbar, 8..31 backpack)
   selectedHotbarIndex: number;
   equippedArmorId: string | null; // Legacy chest/primary armor ID synced for backward compatibility

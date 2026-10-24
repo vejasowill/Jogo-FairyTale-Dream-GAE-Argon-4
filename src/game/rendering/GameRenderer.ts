@@ -1910,6 +1910,7 @@ export class GameRenderer {
 
     // Adaptive 16-State Wall, Window, Fence & Door Rendering
     if (
+      st.type !== PlaceableType.CHEST &&
       bp &&
       (bp.continuityMode === 'WALL_16' ||
         bp.continuityMode === 'FENCE_16' ||

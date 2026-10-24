@@ -287,12 +287,27 @@ export const CharacterPetsModal: React.FC<CharacterPetsModalProps> = ({
             </button>
           </div>
 
-          <button
-            onClick={onClose}
-            className="min-h-[34px] min-w-[34px] medieval-btn-crimson flex items-center justify-center shrink-0"
-          >
-            <X className="w-4 h-4" />
-          </button>
+          <div className="flex items-center gap-2 shrink-0">
+            <div
+              title="Saldo de Moedas de Ouro do Personagem (não ocupa espaço na mochila)"
+              className="flex items-center gap-1.5 px-2.5 py-1 mc-slot border-amber-500/50 bg-[#120b07]"
+            >
+              <img
+                src={spriteAtlas.getItemIconUrl('gold_coin')}
+                alt="Ouro"
+                className="w-4 h-4 pixelated"
+              />
+              <span className="text-[10px] font-mono-tabular font-bold text-amber-300">
+                {player.goldCoins ?? 0} Ouro
+              </span>
+            </div>
+            <button
+              onClick={onClose}
+              className="min-h-[34px] min-w-[34px] medieval-btn-crimson flex items-center justify-center shrink-0"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
         </div>
 
         {/* ================================================================= */}
@@ -667,11 +682,22 @@ export const CharacterPetsModal: React.FC<CharacterPetsModalProps> = ({
         ) : activeTab === 'stats' ? (
           <div className="flex-1 overflow-y-auto p-2.5 sm:p-3.5 space-y-2.5">
             {/* Hero Summary Banner */}
-            <div className="medieval-inset p-2 grid grid-cols-4 gap-2 text-center">
+            <div className="medieval-inset p-2 grid grid-cols-2 sm:grid-cols-5 gap-2 text-center">
               <div className="mc-slot p-1.5">
                 <div className="text-[9px] text-[#c4ab7d]">Nível & XP</div>
                 <div className="font-pixel text-[11px] text-amber-400 font-bold">
                   NV.{player.level} ({player.xp}/{player.xpToNext})
+                </div>
+              </div>
+              <div className="mc-slot p-1.5">
+                <div className="text-[9px] text-[#c4ab7d]">Moedas de Ouro</div>
+                <div className="font-mono-tabular text-[11px] text-amber-300 font-bold flex items-center justify-center gap-1">
+                  <img
+                    src={spriteAtlas.getItemIconUrl('gold_coin')}
+                    alt="Ouro"
+                    className="w-3.5 h-3.5 pixelated"
+                  />
+                  <span>{player.goldCoins ?? 0}</span>
                 </div>
               </div>
               <div className="mc-slot p-1.5">
@@ -686,7 +712,7 @@ export const CharacterPetsModal: React.FC<CharacterPetsModalProps> = ({
                   {totalDefPct > 0 ? `-${totalDefPct}% Dano` : '0% (Sem Armadura)'}
                 </div>
               </div>
-              <div className="mc-slot p-1.5">
+              <div className="mc-slot p-1.5 col-span-2 sm:col-span-1">
                 <div className="text-[9px] text-[#c4ab7d]">Pontos Livres</div>
                 <div className="font-pixel text-[11px] text-emerald-400 font-bold">
                   {player.attributePoints} PTS

@@ -176,6 +176,23 @@ export class GameEngine {
       this.player = JSON.parse(JSON.stringify(saveData.player));
     }
 
+    this.player.goldCoins =
+      typeof this.player.goldCoins === 'number' &&
+      Number.isFinite(this.player.goldCoins)
+        ? Math.max(0, Math.floor(this.player.goldCoins))
+        : 0;
+    if (Array.isArray(this.player.inventory)) {
+      for (let i = 0; i < this.player.inventory.length; i++) {
+        const slot = this.player.inventory[i];
+        if (slot && slot.itemId === 'gold_coin') {
+          if (slot.count > 0) {
+            this.player.goldCoins += Math.floor(slot.count);
+          }
+          this.player.inventory[i] = null;
+        }
+      }
+    }
+
     this.world = new WorldManager(
       this.metadata.seed,
       saveData.chunks,
@@ -279,6 +296,18 @@ export class GameEngine {
     if (this.metadata.timeOfDay >= 24) {
       this.metadata.timeOfDay -= 24;
       this.metadata.dayCount += 1;
+      for (const cr of this.entities.creatures) {
+        if (
+          cr.kind === CreatureKind.VILLAGER ||
+          cr.kind === CreatureKind.WANDERER
+        ) {
+          cr.stallInspectionsToday = {};
+          if (cr.kind === CreatureKind.WANDERER) {
+            cr.hasBoughtToday = false;
+            cr.attractedStallId = undefined;
+          }
+        }
+      }
       this.addFloatingText(
         `Dia ${this.metadata.dayCount}`,
         this.player.x,
@@ -693,50 +722,84 @@ export class GameEngine {
         if (st.type !== PlaceableType.MARKET_STALL) continue;
         this.ensureMarketStallInitialized(st);
 
-        if (st.ownerType === 'VILLAGER') {
-          const currentOwner = st.ownerId
-            ? this.entities.creatures.find(
-                (c) =>
-                  c.id === st.ownerId &&
-                  c.kind === CreatureKind.VILLAGER &&
-                  c.hp > 0
-              )
-            : null;
+        if (st.ownerType === 'VILLAGER' && !st.ownerId) {
+          const sx = st.tileX * TILE_SIZE + TILE_SIZE / 2;
+          const sy = st.tileY * TILE_SIZE + TILE_SIZE / 2;
+          let bestMerchant: CreatureEntity | null = null;
+          let bestScore = Infinity;
 
-          if (!currentOwner) {
-            const sx = st.tileX * TILE_SIZE + TILE_SIZE / 2;
-            const sy = st.tileY * TILE_SIZE + TILE_SIZE / 2;
-            let bestMerchant: CreatureEntity | null = null;
-            let bestScore = Infinity;
-
-            for (const cr of this.entities.creatures) {
-              if (cr.kind !== CreatureKind.VILLAGER || cr.hp <= 0) continue;
-              const d = Math.hypot(cr.x - sx, cr.y - sy);
-              if (d > 380 && (!st.villageId || cr.villageId !== st.villageId)) {
-                continue;
-              }
-              const roleBonus = cr.npcRole === 'mercador' ? -220 : 0;
-              const villageBonus =
-                st.villageId && cr.villageId === st.villageId ? -120 : 0;
-              const score = d + roleBonus + villageBonus;
-              if (score < bestScore) {
-                bestScore = score;
-                bestMerchant = cr;
-              }
+          for (const cr of this.entities.creatures) {
+            if (cr.kind !== CreatureKind.VILLAGER || cr.hp <= 0) continue;
+            const d = Math.hypot(cr.x - sx, cr.y - sy);
+            if (d > 380 && (!st.villageId || cr.villageId !== st.villageId)) {
+              continue;
             }
-
-            if (bestMerchant) {
-              st.ownerId = bestMerchant.id;
-              st.ownerName = `${bestMerchant.name} (${
-                bestMerchant.npcProfessionLabel || 'Mercador'
-              })`;
-            } else if (!st.ownerName) {
-              st.ownerName = 'Mercador da Vila';
+            const roleBonus = cr.npcRole === 'mercador' ? -220 : 0;
+            const villageBonus =
+              st.villageId && cr.villageId === st.villageId ? -120 : 0;
+            const score = d + roleBonus + villageBonus;
+            if (score < bestScore) {
+              bestScore = score;
+              bestMerchant = cr;
             }
+          }
+
+          if (bestMerchant) {
+            st.ownerId = bestMerchant.id;
+            st.ownerName = `${bestMerchant.name} (${
+              bestMerchant.npcProfessionLabel || 'Mercador'
+            })`;
+          } else if (!st.ownerName) {
+            st.ownerName = 'Mercador da Vila';
           }
         }
       }
     }
+  }
+
+  /**
+   * Checks whether a villager-owned Market Stall still has a living Villager owner.
+   * If the villager owner died, returns false so the player can claim the stall.
+   */
+  public isVillagerStallOwnerAlive(stall: PlacedStructure): boolean {
+    if (stall.ownerType !== 'VILLAGER') return false;
+    if (stall.ownerId) {
+      return this.entities.creatures.some(
+        (c) =>
+          c.id === stall.ownerId &&
+          c.kind === CreatureKind.VILLAGER &&
+          c.hp > 0
+      );
+    }
+    if (stall.villageId) {
+      return this.entities.creatures.some(
+        (c) =>
+          c.kind === CreatureKind.VILLAGER &&
+          c.villageId === stall.villageId &&
+          c.hp > 0
+      );
+    }
+    return false;
+  }
+
+  /**
+   * Checks whether the player has permission from a village to open its Guild Chest (`chestStruct.villageId`).
+   * Requires either all villagers of that village to be dead, or average affinity >= 75 and no hostile villagers.
+   */
+  public hasVillageChestPermission(villageId?: string): boolean {
+    if (!villageId) return true;
+    const villageNpcs = this.entities.creatures.filter(
+      (c) =>
+        c.kind === CreatureKind.VILLAGER &&
+        c.villageId === villageId &&
+        c.hp > 0
+    );
+    if (villageNpcs.length === 0) return true;
+    if (villageNpcs.some((n) => n.isHostile)) return false;
+    const avgAff =
+      villageNpcs.reduce((sum, n) => sum + (n.affinity ?? 55), 0) /
+      villageNpcs.length;
+    return avgAff >= 75;
   }
 
   /**
@@ -832,10 +895,11 @@ export class GameEngine {
     cr.vx = 0;
     cr.vy = 0;
     cr.aiState = calledByKnock ? 'idle' : 'wander';
-    // When waking up naturally at dawn after sleeping in their house, reset the daily purchase limit!
+    // When waking up naturally at dawn after sleeping in their house, reset the daily purchase & inspection limits!
     if (!calledByKnock) {
       cr.hasBoughtToday = false;
       cr.attractedStallId = undefined;
+      cr.stallInspectionsToday = {};
     }
 
     const baseX = cr.homeX ?? cr.x;
@@ -1469,7 +1533,9 @@ export class GameEngine {
               if (this.canEntityOccupy(sx, sy)) {
                 cr.x = sx;
                 cr.y = sy;
-                cr.wanderAngle = sAng;
+                if (cr.kind !== CreatureKind.WANDERER) {
+                  cr.wanderAngle = sAng;
+                }
                 break;
               }
             }
@@ -1899,9 +1965,7 @@ export class GameEngine {
     ];
 
     const currentHeading =
-      cr.wanderAngle !== undefined
-        ? cr.wanderAngle
-        : Math.hypot(cr.vx, cr.vy) > 2
+      Math.hypot(cr.vx, cr.vy) > 2
         ? Math.atan2(cr.vy, cr.vx)
         : desiredAngle;
 
@@ -1947,7 +2011,7 @@ export class GameEngine {
 
       // Momentum continuity (prevents left-right oscillation around obstacles)
       score += Math.cos(cand - currentHeading) * 0.55;
-      if (offset * cr.orbitSign > 0) {
+      if (offset !== 0 && offset * cr.orbitSign > 0) {
         score += 0.12;
       }
 
@@ -1957,7 +2021,9 @@ export class GameEngine {
       }
     }
 
-    cr.wanderAngle = bestAngle;
+    if (cr.kind !== CreatureKind.WANDERER) {
+      cr.wanderAngle = bestAngle;
+    }
 
     // Soft separation from nearby creatures so mobs & villagers don't stack on top of one another
     let sepX = 0;
@@ -2065,27 +2131,102 @@ export class GameEngine {
 
   /**
    * Directional walking AI for `CreatureKind.WANDERER`:
-   * Moves steadily along a persistent compass heading (`wanderAngle`), proactively curving around obstacles & coastlines.
+   * Follows a single straight-line trajectory (`wanderAngle`) and only changes direction
+   * when blocked/impeded by an impassable barrier or coastline, never walking in circles.
    */
   private updateDirectionalWandererAi(cr: CreatureEntity, dt: number): void {
-    if (cr.wanderAngle === undefined) {
+    if (cr.wanderAngle === undefined || !Number.isFinite(cr.wanderAngle)) {
       cr.wanderAngle = Math.random() * Math.PI * 2;
     }
 
-    cr.aiTimer -= dt;
-    if (cr.aiTimer <= 0) {
-      cr.aiTimer = 4.5 + Math.random() * 4.0;
-      cr.wanderAngle += (Math.random() - 0.5) * 0.4;
+    cr.aiState = 'wander';
+    const walkSpeed = cr.moveSpeed * 0.82;
+    const cosA = Math.cos(cr.wanderAngle);
+    const sinA = Math.sin(cr.wanderAngle);
+
+    // Track forward progress using targetX/targetY as the last progress checkpoint
+    if (!Number.isFinite(cr.targetX) || !Number.isFinite(cr.targetY)) {
+      cr.targetX = cr.x;
+      cr.targetY = cr.y;
+      cr.aiTimer = 1.25;
     }
 
-    cr.aiState = 'wander';
-    this.steerCreatureAlongAngle(
-      cr,
-      cr.wanderAngle,
-      cr.moveSpeed * 0.82,
-      dt,
-      true
-    );
+    cr.aiTimer -= dt;
+    let isStuck = false;
+    if (cr.aiTimer <= 0) {
+      const movedDist = Math.hypot(cr.x - cr.targetX, cr.y - cr.targetY);
+      if (movedDist < 10) {
+        isStuck = true;
+      }
+      cr.targetX = cr.x;
+      cr.targetY = cr.y;
+      cr.aiTimer = 1.25;
+    }
+
+    const clearNear = this.canEntityOccupy(cr.x + cosA * 15, cr.y + sinA * 15);
+    const clearMid = this.canEntityOccupy(cr.x + cosA * 30, cr.y + sinA * 30);
+
+    if (!isStuck && clearNear && clearMid) {
+      // Clear path directly ahead: walk straight along the fixed compass direction
+      this.steerCreatureAlongAngle(cr, cr.wanderAngle, walkSpeed, dt, true);
+      return;
+    }
+
+    // Immediate path has an obstacle: check if a point further along the SAME straight trajectory is clear
+    // (e.g., stepping around a single tree or boulder while maintaining the same overall direction)
+    if (!isStuck) {
+      for (const lookAhead of [56, 84, 112]) {
+        const ax = cr.x + cosA * lookAhead;
+        const ay = cr.y + sinA * lookAhead;
+        if (this.canEntityOccupy(ax, ay)) {
+          this.steerCreatureToward(cr, ax, ay, walkSpeed, dt, true);
+          return;
+        }
+      }
+    }
+
+    // Genuinely blocked/impeded along current direction (e.g., ocean shore, wall, or stuck):
+    // Pick a new single straight-line direction with the longest clear corridor ahead.
+    const turnSign = cr.orbitSign || 1;
+    let bestNewAngle = cr.wanderAngle + Math.PI;
+    let bestClearScore = -Infinity;
+
+    for (let i = 1; i <= 16; i++) {
+      const stepIdx = Math.ceil(i / 2);
+      const dirSign = i % 2 === 1 ? turnSign : -turnSign;
+      const offset = stepIdx * (Math.PI / 8) * dirSign;
+      const candAngle = cr.wanderAngle + offset;
+      const cCos = Math.cos(candAngle);
+      const cSin = Math.sin(candAngle);
+
+      let clearReach = 0;
+      for (const dist of [16, 34, 56, 84, 116]) {
+        if (this.canEntityOccupy(cr.x + cCos * dist, cr.y + cSin * dist)) {
+          clearReach = dist;
+        } else {
+          break;
+        }
+      }
+
+      if (clearReach < 34) continue;
+
+      // Prefer long clear straight corridors while avoiding immediate 180-degree flip if a 45-90 deg turn is open
+      const score = clearReach + Math.cos(offset) * 18;
+      if (score > bestClearScore) {
+        bestClearScore = score;
+        bestNewAngle = candAngle;
+      }
+    }
+
+    // Normalize angle to [-PI, PI]
+    cr.wanderAngle = Math.atan2(Math.sin(bestNewAngle), Math.cos(bestNewAngle));
+    cr.navWaypointX = undefined;
+    cr.navWaypointY = undefined;
+    cr.targetX = cr.x;
+    cr.targetY = cr.y;
+    cr.aiTimer = 1.25;
+
+    this.steerCreatureAlongAngle(cr, cr.wanderAngle, walkSpeed, dt, true);
   }
 
   /**
@@ -2735,43 +2876,68 @@ export class GameEngine {
           }
         }
 
-        if (equippedTool === ToolType.AXE || equippedTool === ToolType.PICKAXE) {
-          for (let si = chunk.structures.length - 1; si >= 0; si--) {
-            const st = chunk.structures[si];
-            const sx = st.tileX * TILE_SIZE + TILE_SIZE / 2;
-            const sy = st.tileY * TILE_SIZE + TILE_SIZE / 2;
-            if (Math.hypot(sx - hitCenterX, sy - hitCenterY) <= reach * 0.72) {
-              st.hp -= baseHarvest;
-              st.hitFlashTimer = 0.15;
-              soundManager.playHitWood();
-              this.renderer.spawnBurst(
-                sx,
-                sy,
-                equippedTool === ToolType.PICKAXE ? 'STONE' : 'WOOD',
-                st.hp <= 0 ? 14 : 7
+        for (let si = chunk.structures.length - 1; si >= 0; si--) {
+          const st = chunk.structures[si];
+          const canBreakWithAnyAttack =
+            st.type === PlaceableType.CHEST ||
+            st.type === PlaceableType.MARKET_STALL;
+          if (
+            equippedTool !== ToolType.AXE &&
+            equippedTool !== ToolType.PICKAXE &&
+            !canBreakWithAnyAttack
+          ) {
+            continue;
+          }
+
+          const sx = st.tileX * TILE_SIZE + TILE_SIZE / 2;
+          const sy = st.tileY * TILE_SIZE + TILE_SIZE / 2;
+          if (Math.hypot(sx - hitCenterX, sy - hitCenterY) <= reach * 0.72) {
+            const structDmg =
+              equippedTool === ToolType.AXE || equippedTool === ToolType.PICKAXE
+                ? baseHarvest
+                : Math.max(baseHarvest, baseAttack);
+            st.hp -= structDmg;
+            st.hitFlashTimer = 0.15;
+            soundManager.playHitWood();
+            this.renderer.spawnBurst(
+              sx,
+              sy,
+              equippedTool === ToolType.PICKAXE ? 'STONE' : 'WOOD',
+              st.hp <= 0 ? 14 : 7
+            );
+            this.renderer.spawnRipple(sx, sy, '#fbbf24', 18, 0.3);
+            if (st.villageId) {
+              this.provokeVillage(
+                st.villageId,
+                null,
+                35,
+                '⚔ Vandalismo! A vila se voltou contra você!'
               );
-              this.renderer.spawnRipple(sx, sy, '#fbbf24', 18, 0.3);
-              if (st.villageId) {
-                this.provokeVillage(
-                  st.villageId,
-                  null,
-                  35,
-                  '⚔ Vandalismo! A vila se voltou contra você!'
+            }
+            if (st.hp <= 0) {
+              if (st.type === PlaceableType.CHEST) {
+                this.dropChestContents(st, sx, sy);
+                this.addFloatingText(
+                  '💥 Baú quebrado! Itens caíram no chão!',
+                  sx,
+                  sy - 20,
+                  '#fde047'
+                );
+              } else if (st.type === PlaceableType.MARKET_STALL) {
+                this.dropMarketStallContents(st, sx, sy);
+                this.addFloatingText(
+                  '💥 Tenda destruída! Recolha-a para ser o dono!',
+                  sx,
+                  sy - 20,
+                  '#fde047'
                 );
               }
-              if (st.hp <= 0) {
-                if (st.type === PlaceableType.CHEST) {
-                  this.dropChestContents(st, sx, sy);
-                } else if (st.type === PlaceableType.MARKET_STALL) {
-                  this.dropMarketStallContents(st, sx, sy);
-                }
-                this.spawnDrop(st.itemId, 1, sx, sy);
-                chunk.structures.splice(si, 1);
-                this.emitUiSnapshot();
-              }
-              this.syncChunkAtTile(st.tileX, st.tileY);
-              return;
+              this.spawnDrop(st.itemId, 1, sx, sy);
+              chunk.structures.splice(si, 1);
+              this.emitUiSnapshot();
             }
+            this.syncChunkAtTile(st.tileX, st.tileY);
+            return;
           }
         }
       }
@@ -3111,7 +3277,7 @@ export class GameEngine {
             this.metadata.dayCount += 1;
           }
           this.metadata.timeOfDay = 6.5;
-          // Any villager who slept in their house resets their daily purchase limit at dawn!
+          // Any villager who slept in their house resets their daily purchase & inspection limits at dawn!
           for (const cr of this.entities.creatures) {
             if (
               cr.kind === CreatureKind.VILLAGER &&
@@ -3119,6 +3285,11 @@ export class GameEngine {
             ) {
               cr.hasBoughtToday = false;
               cr.attractedStallId = undefined;
+              cr.stallInspectionsToday = {};
+            } else if (cr.kind === CreatureKind.WANDERER) {
+              cr.hasBoughtToday = false;
+              cr.attractedStallId = undefined;
+              cr.stallInspectionsToday = {};
             }
           }
           soundManager.playLevelUp();
@@ -3179,27 +3350,27 @@ export class GameEngine {
         if (chestStruct) {
           this.ensureChestStorageInitialized(chestStruct);
 
-          // Situational Village Theft Check when opening an unlooted Village Guild Chest!
-          if (chestStruct.villageId && chestStruct.lootItems && chestStruct.lootItems.length > 0) {
-            const villageNpcs = this.entities.creatures.filter(
-              (c) =>
-                c.kind === CreatureKind.VILLAGER &&
-                c.villageId === chestStruct.villageId &&
-                c.hp > 0
-            );
-            const avgAff =
-              villageNpcs.length > 0
-                ? villageNpcs.reduce((sum, n) => sum + (n.affinity ?? 55), 0) /
-                  villageNpcs.length
-                : 80;
-            if (villageNpcs.length > 0 && avgAff < 75) {
-              this.provokeVillage(
-                chestStruct.villageId,
-                null,
-                40,
-                '⚔ Roubo no Cofre da Vila! Os Guardas ficaram Hostis!'
+          // Village Guild Chest Permission Lock: Cannot be opened without village permission!
+          // Without permission, the only way to access the items is by breaking the chest so its items drop on the ground.
+          if (chestStruct.villageId) {
+            if (!this.hasVillageChestPermission(chestStruct.villageId)) {
+              soundManager.playHitWood();
+              this.renderer.spawnRipple(
+                target.worldX,
+                target.worldY,
+                '#f43f5e',
+                24,
+                0.45
               );
-            } else if (villageNpcs.length > 0) {
+              this.addFloatingText(
+                '🔒 Cofre da Vila Trancado! Sem permissão (Requer ♥75+ ou quebre o baú)',
+                target.worldX,
+                target.worldY - 26,
+                '#f43f5e'
+              );
+              this.emitUiSnapshot();
+              return;
+            } else {
               this.addFloatingText(
                 '♥ Aliado da Vila: Acesso ao Cofre da Guilda autorizado!',
                 target.worldX,
@@ -3704,8 +3875,10 @@ export class GameEngine {
               st.isOpen ? 'Fechar Passagem 🔒' : 'Abrir Passagem 🔓'
             }${houseBadge}`
           : st.type === PlaceableType.CHEST
-          ? st.villageId && hasLoot
-            ? 'Abrir Cofre da Vila (Requer ♥75+)'
+          ? st.villageId
+            ? this.hasVillageChestPermission(st.villageId)
+              ? '🔓 Abrir Cofre da Vila (Permissão Concedida ♥)'
+              : '🔒 Cofre da Vila Trancado (Requer ♥75+ ou Quebrar Baú)'
             : hasLoot
             ? `Abrir Baú de Tesouro (${occupiedChestSlots} itens) ✦`
             : occupiedChestSlots > 0
@@ -3714,14 +3887,11 @@ export class GameEngine {
           : st.type === PlaceableType.VILLAGE_WELL
           ? 'Beber Água Fresca (+HP/Energia)'
           : st.type === PlaceableType.MARKET_STALL
-          ? st.pendingCustomerOffer
-            ? `❗ Oferta: ${st.pendingCustomerOffer.buyerName} quer ${st.pendingCustomerOffer.quantity}x ${
-                ITEMS[st.pendingCustomerOffer.itemId]?.name ||
-                st.pendingCustomerOffer.itemId
-              } (${st.pendingCustomerOffer.totalPrice} Ouro)!`
-            : st.ownerType === 'PLAYER'
+          ? st.ownerType === 'PLAYER'
             ? 'Gerenciar Sua Tenda de Vendas 🏪'
-            : `Tenda de ${st.ownerName || 'Mercador'} · Ver Tenda & Preços 🏪`
+            : this.isVillagerStallOwnerAlive(st)
+            ? `Tenda de ${st.ownerName || 'Mercador'} · Ver Tenda & Preços 🏪`
+            : 'Tenda sem Dono (Aldeão Morreu) · Tomar Posse 🏪'
           : st.type === PlaceableType.VILLAGE_HOUSE
           ? `Descansar na Casa · Moradores: ${houseResidents}/${MAX_VILLAGERS_PER_HOUSE} 🏠`
           : st.type === PlaceableType.CAMPFIRE
@@ -5125,11 +5295,41 @@ export class GameEngine {
     }
 
     const st = chunk.structures[targetIdx];
+
+    if (
+      st.type === PlaceableType.CHEST &&
+      st.villageId &&
+      !this.hasVillageChestPermission(st.villageId)
+    ) {
+      soundManager.playHitWood();
+      this.addFloatingText(
+        '🔒 Cofre da Vila Trancado! Quebre-o atacando para os itens caírem no chão.',
+        tx * TILE_SIZE + 16,
+        ty * TILE_SIZE,
+        '#f43f5e'
+      );
+      return false;
+    }
+
+    if (
+      st.type === PlaceableType.MARKET_STALL &&
+      st.ownerType === 'VILLAGER' &&
+      this.isVillagerStallOwnerAlive(st)
+    ) {
+      soundManager.playHitWood();
+      this.addFloatingText(
+        '🔒 Tenda de Aldeão! Destrua-a atacando ou caso o aldeão morra.',
+        tx * TILE_SIZE + 16,
+        ty * TILE_SIZE,
+        '#f43f5e'
+      );
+      return false;
+    }
+
     const isWorldFixedLandmark = Boolean(
       (st.villageId || st.id.startsWith('world_struct_')) &&
         (st.type === PlaceableType.VILLAGE_HOUSE ||
           st.type === PlaceableType.VILLAGE_WELL ||
-          st.type === PlaceableType.MARKET_STALL ||
           st.type === PlaceableType.HEALING_FOUNTAIN)
     );
     if (isWorldFixedLandmark) {
@@ -5402,6 +5602,18 @@ export class GameEngine {
       1,
       Math.min(cSlot.count, typeof count === 'number' ? count : cSlot.count)
     );
+
+    if (cSlot.itemId === 'gold_coin') {
+      this.addItemToInventory('gold_coin', amountToMove);
+      cSlot.count -= amountToMove;
+      if (cSlot.count <= 0) {
+        slots[chestSlotIdx] = null;
+      }
+      soundManager.playPickup();
+      this.emitUiSnapshot();
+      return true;
+    }
+
     let remaining = amountToMove;
 
     // 1. If a specific player slot was targeted, try there first
@@ -5849,14 +6061,28 @@ export class GameEngine {
     if (!stall) return { ok: false, message: 'Tenda não encontrada.' };
 
     if (ownerType === 'PLAYER') {
+      if (
+        stall.ownerType === 'VILLAGER' &&
+        this.isVillagerStallOwnerAlive(stall)
+      ) {
+        soundManager.playHitWood();
+        return {
+          ok: false,
+          message:
+            'Você só é dono da tenda que colocar! Para tomar a tenda de um aldeão, o aldeão deve morrer ou você deve destruir a tenda.',
+        };
+      }
+
       stall.ownerType = 'PLAYER';
       stall.ownerId = 'player';
       stall.ownerName = 'Você (Mercador)';
+      stall.villageId = undefined;
+      stall.pendingCustomerOffer = null;
       soundManager.playCraft();
       this.emitUiSnapshot();
       return {
         ok: true,
-        message: 'Você assumiu esta Tenda de Vendas como Mercador!',
+        message: 'Você assumiu a posse desta Tenda de Vendas como Mercador!',
       };
     }
 
@@ -6223,10 +6449,10 @@ export class GameEngine {
   }
 
   /**
-   * Handles NPC (Villager / Wanderer) attraction and purchase evaluation for Player-owned Market Stalls:
+   * Handles NPC (Villager / Wanderer) attraction and automatic purchase evaluation for Player-owned Market Stalls:
    * - An NPC who has already made a purchase today (`hasBoughtToday === true`) cannot buy again until they sleep in their house.
-   * - Passing NPCs have a small chance to be attracted to an open player stall with active items.
-   * - Cheap items and prices below the official Price Table have a high chance of purchase; expensive/overpriced items are rare or rejected.
+   * - Each NPC inspects a given Market Stall at most 3 times per day (`stallInspectionsToday[stall.id] <= 3`).
+   * - When an NPC decides to buy an item, the purchase completes automatically without requiring player confirmation!
    */
   private updateNpcMarketStallShopping(
     cr: CreatureEntity,
@@ -6237,49 +6463,16 @@ export class GameEngine {
       return false;
     }
 
-    // 1. Check if this NPC is currently waiting for the player to approve/decline their active offer on a stall
     const cTile = this.world.worldToTile(cr.x, cr.y);
     const cChunk = this.world.tileToChunk(cTile.tx, cTile.ty);
-    for (let dy = -1; dy <= 1; dy++) {
-      for (let dx = -1; dx <= 1; dx++) {
-        const chunk =
-          this.world.chunks[
-            WorldManager.chunkKey(cChunk.cx + dx, cChunk.cy + dy)
-          ];
-        if (!chunk) continue;
-        for (const st of chunk.structures) {
-          if (
-            st.type === PlaceableType.MARKET_STALL &&
-            st.pendingCustomerOffer &&
-            st.pendingCustomerOffer.buyerId === cr.id
-          ) {
-            const sx = st.tileX * TILE_SIZE + TILE_SIZE / 2;
-            const sy = st.tileY * TILE_SIZE + TILE_SIZE / 2 + 20;
-            const dist = Math.hypot(sx - cr.x, sy - cr.y);
-            if (dist > 22) {
-              this.steerCreatureToward(
-                cr,
-                sx,
-                sy,
-                cr.moveSpeed * 0.85,
-                dt,
-                true
-              );
-            } else {
-              cr.vx = 0;
-              cr.vy = 0;
-              cr.aiState = 'idle';
-              cr.direction = 'up';
-            }
-            return true;
-          }
-        }
-      }
-    }
 
-    // 2. If already attracted to a specific Player Market Stall, walk to it and evaluate the deals
+    // 1. If already attracted to a specific Player Market Stall, walk to it and evaluate the deals
     if (cr.attractedStallId) {
       const stall = this.getMarketStallById(cr.attractedStallId);
+      const inspectionsForStall =
+        stall && cr.stallInspectionsToday
+          ? cr.stallInspectionsToday[stall.id] || 0
+          : 0;
       const activeSlots =
         stall && Array.isArray(stall.stallSlots)
           ? stall.stallSlots
@@ -6297,7 +6490,7 @@ export class GameEngine {
         !stall ||
         stall.ownerType !== 'PLAYER' ||
         stall.stallOpen === false ||
-        stall.pendingCustomerOffer ||
+        inspectionsForStall >= 3 ||
         activeSlots.length === 0
       ) {
         cr.attractedStallId = undefined;
@@ -6324,6 +6517,13 @@ export class GameEngine {
       if (cr.aiTimer > 0) {
         return true;
       }
+
+      // Record this inspection (maximum 3 inspections per day per stall)
+      if (!cr.stallInspectionsToday) {
+        cr.stallInspectionsToday = {};
+      }
+      const newInspectionCount = (cr.stallInspectionsToday[stall.id] || 0) + 1;
+      cr.stallInspectionsToday[stall.id] = newInspectionCount;
 
       // Evaluate all enabled merchandise slots on the stall
       const scoredCandidates = activeSlots.map(({ sl, idx }) => {
@@ -6355,61 +6555,62 @@ export class GameEngine {
           : Math.min(0.96, Math.max(0.02, evalRes.buyChance + affinityBonus));
 
       if (Math.random() < finalBuyChance) {
-        // NPC decides to buy! Pick quantity (1 up to maxBuyQty and available stock)
+        // NPC decides to buy! Execute the purchase automatically without player confirmation
         const maxPossibleQty = Math.min(sl.count, evalRes.maxBuyQty);
         const qty =
           maxPossibleQty > 1
             ? 1 + Math.floor(Math.random() * maxPossibleQty)
             : 1;
-        const totalGold = qty * sl.unitPrice;
+        const totalGold = Math.max(1, qty * sl.unitPrice);
         const itemName = ITEMS[sl.itemId]?.name || sl.itemId;
 
-        stall.pendingCustomerOffer = {
-          id: `offer_${Date.now()}_${Math.floor(Math.random() * 999)}`,
-          buyerId: cr.id,
-          buyerName: cr.name,
-          buyerKind: cr.kind,
-          buyerProfession:
-            cr.kind === CreatureKind.WANDERER
-              ? 'Andarilho'
-              : cr.npcProfessionLabel || 'Aldeão',
-          slotIndex: idx,
-          itemId: sl.itemId,
-          quantity: qty,
-          unitPrice: sl.unitPrice,
-          totalPrice: totalGold,
-          baseUnitPrice: evalRes.basePrice,
-          expiresTimer: 55,
-        };
+        const slots = this.ensureMarketStallInitialized(stall);
+        sl.count -= qty;
+        if (sl.count <= 0) {
+          slots[idx] = null;
+        }
 
+        this.addItemToInventory('gold_coin', totalGold);
+        stall.stallSalesCount = (stall.stallSalesCount || 0) + 1;
+        stall.stallTotalGoldEarned =
+          (stall.stallTotalGoldEarned || 0) + totalGold;
+        stall.pendingCustomerOffer = null;
+
+        cr.hasBoughtToday = true;
         cr.attractedStallId = undefined;
-        cr.stallInspectCooldown = 30;
-        soundManager.playPickup();
-        this.renderer.spawnBurst(sx, sy - 20, 'GOLD', 10);
-        this.renderer.spawnRipple(sx, sy - 16, '#fde047', 26, 0.5);
+        cr.stallInspectCooldown = 60;
+        cr.affinity = Math.min(100, (cr.affinity ?? 55) + 6);
+
+        soundManager.playCraft();
+        this.gainXp(30);
+        this.renderer.spawnBurst(cr.x, cr.y - 6, 'GOLD', 14);
+        this.renderer.spawnBurst(sx, sy - 6, 'GOLD', 18);
+        this.renderer.spawnRipple(sx, sy, '#fde047', 30, 0.55);
+
         this.addFloatingText(
-          `❗ ${cr.name} quer comprar ${qty}x ${itemName} (${totalGold} Ouro)!`,
+          `💰 ${cr.name} comprou ${qty}x ${itemName} (+${totalGold} Moedas)!`,
           sx,
-          sy - 34,
+          sy - 28,
           '#fde047'
         );
         this.emitUiSnapshot();
-        return true;
+        return false;
       } else {
-        // NPC decided not to buy
+        // NPC decided not to buy on this inspection
         cr.attractedStallId = undefined;
         cr.stallInspectCooldown = 22 + Math.random() * 14;
         const itemName = ITEMS[sl.itemId]?.name || sl.itemId;
         const msg =
           evalRes.priceRatio > 1.25
-            ? `💸 ${cr.name}: "${itemName} por ${sl.unitPrice} Ouro está caro..."`
-            : `🤔 ${cr.name} olhou a tenda e seguiu caminho`;
+            ? `💸 ${cr.name}: "${itemName} (${sl.unitPrice}g) está caro..." (${newInspectionCount}/3 hoje)`
+            : `🤔 ${cr.name} inspecionou a tenda (${newInspectionCount}/3 hoje)`;
         this.addFloatingText(msg, cr.x, cr.y - 22, '#cbd5e1');
+        this.emitUiSnapshot();
         return false;
       }
     }
 
-    // 3. Otherwise, when passing near an open Player Market Stall, small chance to be attracted!
+    // 2. Otherwise, when passing near an open Player Market Stall, small chance to be attracted (up to 3 inspections/day/stall)!
     if ((cr.stallInspectCooldown ?? 0) > 0) {
       return false;
     }
@@ -6424,11 +6625,12 @@ export class GameEngine {
         for (const st of chunk.structures) {
           if (st.type !== PlaceableType.MARKET_STALL) continue;
           this.ensureMarketStallInitialized(st);
-          if (
-            st.ownerType !== 'PLAYER' ||
-            st.stallOpen === false ||
-            st.pendingCustomerOffer
-          ) {
+          if (st.ownerType !== 'PLAYER' || st.stallOpen === false) {
+            continue;
+          }
+
+          const inspectionsToday = cr.stallInspectionsToday?.[st.id] || 0;
+          if (inspectionsToday >= 3) {
             continue;
           }
 
@@ -6455,7 +6657,7 @@ export class GameEngine {
               cr.attractedStallId = st.id;
               cr.aiTimer = 1.6 + Math.random() * 1.2;
               this.addFloatingText(
-                `👀 ${cr.name} foi atraído pela Tenda!`,
+                `👀 ${cr.name} foi olhar a Tenda (${inspectionsToday + 1}/3 hoje)`,
                 cr.x,
                 cr.y - 20,
                 '#38bdf8'
@@ -6477,6 +6679,9 @@ export class GameEngine {
   // === CRAFTING & INVENTORY ===
 
   public getItemCount(itemId: string): number {
+    if (itemId === 'gold_coin') {
+      return Math.max(0, Math.floor(this.player.goldCoins || 0));
+    }
     let total = 0;
     for (const slot of this.player.inventory) {
       if (slot && slot.itemId === itemId) {
@@ -6550,6 +6755,15 @@ export class GameEngine {
   public addItemToInventory(itemId: string, count: number): boolean {
     const def = ITEMS[itemId];
     if (!def) return false;
+    if (itemId === 'gold_coin') {
+      if (count > 0) {
+        this.player.goldCoins = Math.max(
+          0,
+          Math.floor((this.player.goldCoins || 0) + count)
+        );
+      }
+      return true;
+    }
     let remaining = count;
 
     for (let i = 0; i < this.player.inventory.length; i++) {
@@ -6576,6 +6790,13 @@ export class GameEngine {
   }
 
   public removeItemFromInventory(itemId: string, count: number): void {
+    if (itemId === 'gold_coin') {
+      this.player.goldCoins = Math.max(
+        0,
+        Math.floor((this.player.goldCoins || 0) - count)
+      );
+      return;
+    }
     let remaining = count;
     for (let i = 0; i < this.player.inventory.length; i++) {
       const slot = this.player.inventory[i];
