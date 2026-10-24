@@ -1,0 +1,10 @@
+{
+  "name": "Wildborn: Fronteira Pixel — RPG 2D",
+  "short_name": "Wildborn",
+  "description": "RPG 2D top-down de sobrevivência e mundo aberto procedural voltado para dispositivos móveis.",
+  "start_url": "/?autofs=1",
+  "display": "fullscreen",
+  "orientation": "landscape",
+  "background_color": "#120c08",
+  "theme_color": "#120c08"
+}

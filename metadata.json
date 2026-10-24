@@ -1,0 +1,8 @@
+{
+  "name": "Remix 2Pixel Survival Realms",
+  "description": "Explore, craft, and survive in procedurally generated mobile worlds featuring dynamic combat, animal taming, and responsive pixel art.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
