@@ -169,9 +169,11 @@ export const OnlineInviteModal: React.FC<OnlineInviteModalProps> = ({
                   </strong>
                   {session.isOnline && session.transportMode && (
                     <span className="ml-2 px-1.5 py-0.5 rounded bg-emerald-950/90 border border-emerald-600/40 text-[9px] text-emerald-300 font-bold">
-                      {session.transportMode === 'WEBSOCKET'
-                        ? 'WS + HTTP TEMPO REAL'
-                        : 'HTTP TEMPO REAL'}
+                      {session.transportMode === 'P2P_WEBRTC'
+                        ? 'P2P WEBRTC TEMPO REAL'
+                        : session.transportMode === 'WEBSOCKET'
+                        ? 'WS + P2P TEMPO REAL'
+                        : 'HTTP + P2P TEMPO REAL'}
                     </span>
                   )}
                 </div>

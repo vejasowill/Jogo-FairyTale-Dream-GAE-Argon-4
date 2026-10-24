@@ -135,7 +135,10 @@ export const WorldSelectScreen: React.FC<WorldSelectScreenProps> = ({
     const res = await MultiplayerManager.joinWorldByCode(
       cleanCode,
       cleanName,
-      settings.customServerUrl
+      settings.customServerUrl,
+      (progressText) => {
+        setStatusMessage(progressText);
+      }
     );
 
     setIsJoiningOnline(false);

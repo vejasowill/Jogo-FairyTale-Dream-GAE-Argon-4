@@ -519,7 +519,7 @@ export interface OnlineSessionInfo {
   statusMessage?: string | null;
   activationState?: 'IDLE' | 'ACTIVATING' | 'ACTIVE' | 'ERROR';
   activationSteps?: OnlineActivationStep[];
-  transportMode?: 'WEBSOCKET' | 'HTTP_SYNC' | 'NONE';
+  transportMode?: 'WEBSOCKET' | 'HTTP_SYNC' | 'P2P_WEBRTC' | 'NONE';
   lastError?: string | null;
 }
 
