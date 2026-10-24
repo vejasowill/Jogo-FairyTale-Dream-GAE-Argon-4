@@ -15,6 +15,7 @@ import {
   DroppedItem,
   EquipmentSlot,
   FloatingText,
+  GAME_VERSION,
   GameSettings,
   HOTBAR_SIZE,
   InventorySlot,
@@ -142,12 +143,22 @@ export class GameEngine {
 
     if (isGuestSession) {
       let guestPlayer: PlayerState | null = null;
+      let hasSavedPosition = false;
       try {
         const savedGuestRaw = localStorage.getItem(
           `wildborn_guest_player_${this.metadata.id}`
         );
         if (savedGuestRaw) {
           guestPlayer = JSON.parse(savedGuestRaw);
+          if (
+            guestPlayer &&
+            typeof guestPlayer.x === 'number' &&
+            Number.isFinite(guestPlayer.x) &&
+            typeof guestPlayer.y === 'number' &&
+            Number.isFinite(guestPlayer.y)
+          ) {
+            hasSavedPosition = true;
+          }
         }
       } catch {
         guestPlayer = null;
@@ -156,8 +167,10 @@ export class GameEngine {
         guestPlayer = createInitialPlayerState();
         guestPlayer.appearance.shirtColor = '#059669';
       }
-      guestPlayer.x = (saveData.player?.x ?? 16) + 24;
-      guestPlayer.y = saveData.player?.y ?? 16;
+      if (!hasSavedPosition) {
+        guestPlayer.x = (saveData.player?.x ?? 16) + 24;
+        guestPlayer.y = saveData.player?.y ?? 16;
+      }
       this.player = guestPlayer;
     } else {
       this.player = JSON.parse(JSON.stringify(saveData.player));
@@ -168,6 +181,8 @@ export class GameEngine {
       saveData.chunks,
       this.metadata.worldGenVersion ?? 1
     );
+    // Ensure the player never spawns trapped inside a newly built structure or solid hitbox
+    this.pushPlayerOutOfHitbox(0, true);
     this.entities = new EntityManager(saveData.creatures);
     this.droppedItems = saveData.droppedItems || [];
     this.waypoints = saveData.waypoints || [];
@@ -413,6 +428,11 @@ export class GameEngine {
     this.player.vy = move.y * baseSpeed;
     this.player.isMoving = Math.hypot(move.x, move.y) > 0.05;
 
+    // If the player is overlapping any solid hitbox (e.g. structure built on last location, closed door, etc.), push out smoothly
+    if (!this.canEntityOccupy(this.player.x, this.player.y)) {
+      this.pushPlayerOutOfHitbox(dt, false);
+    }
+
     if (this.player.isMoving) {
       this.player.direction = EntityManager.vectorToDirection(
         move.x,
@@ -440,6 +460,11 @@ export class GameEngine {
       this.world.revealAround(this.player.x, this.player.y, revealRad);
     } else {
       this.player.animFrame = 0;
+    }
+
+    // Secondary post-movement check to guarantee the character never stays stuck inside a hitbox
+    if (!this.canEntityOccupy(this.player.x, this.player.y)) {
+      this.pushPlayerOutOfHitbox(dt, false);
     }
 
     if (this.player.swingTimer > 0) {
@@ -510,6 +535,44 @@ export class GameEngine {
 
   private canEntityOccupy(wx: number, wy: number): boolean {
     return this.world.canEntityOccupyWorldCircle(wx, wy, 6.2);
+  }
+
+  /**
+   * Pushes the player character out of any solid hitbox if they are ever inside one
+   * (e.g., spawning at a previous location where the host built structures, having a block
+   * placed on top of them, or any collision overlap).
+   */
+  private pushPlayerOutOfHitbox(dt: number, immediate = false): void {
+    if (this.canEntityOccupy(this.player.x, this.player.y)) {
+      return;
+    }
+
+    const safePos = this.world.findNearestSafePosition(
+      this.player.x,
+      this.player.y,
+      6.2
+    );
+    const dx = safePos.x - this.player.x;
+    const dy = safePos.y - this.player.y;
+    const dist = Math.hypot(dx, dy);
+
+    if (dist < 0.01) return;
+
+    if (immediate || dist <= 3.5 || dt <= 0) {
+      this.player.x = safePos.x;
+      this.player.y = safePos.y;
+    } else {
+      const pushSpeed = 260; // Smooth, responsive push-out velocity (px/s)
+      const step = Math.min(dist, Math.max(3.5, pushSpeed * dt));
+      this.player.x += (dx / dist) * step;
+      this.player.y += (dy / dist) * step;
+    }
+
+    const revealRad = Math.max(
+      10,
+      Math.min(20, Math.round(13 / Math.max(0.55, this.camera?.zoom || 1.15)))
+    );
+    this.world.revealAround(this.player.x, this.player.y, revealRad);
   }
 
   /**
@@ -6758,11 +6821,15 @@ export class GameEngine {
         if (Array.isArray(snapshot.droppedItems)) {
           this.droppedItems = snapshot.droppedItems;
         }
+        this.pushPlayerOutOfHitbox(0, true);
         this.emitUiSnapshot();
       },
       onChunkSyncReceived: (chunkKey, chunkData) => {
         if (!chunkKey || !chunkData) return;
         this.world.chunks[chunkKey] = chunkData;
+        if (!this.canEntityOccupy(this.player.x, this.player.y)) {
+          this.pushPlayerOutOfHitbox(0.05, false);
+        }
         this.emitUiSnapshot();
       },
       onSpawnDropReceived: (drop) => {
@@ -7068,6 +7135,7 @@ export class GameEngine {
     this.metadata.updatedAt = Date.now();
     this.metadata.playerLevel = this.player.level;
     this.metadata.exploredChunksCount = this.world.getExploredChunksCount();
+    this.metadata.gameVersion = GAME_VERSION;
     return {
       version: CURRENT_SAVE_VERSION,
       metadata: { ...this.metadata },

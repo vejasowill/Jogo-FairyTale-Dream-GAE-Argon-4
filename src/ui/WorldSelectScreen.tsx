@@ -20,7 +20,12 @@ import {
   Wifi,
   X,
 } from 'lucide-react';
-import { GameSettings, WorldMetadata, WorldSaveData } from '../game/core/types';
+import {
+  GAME_VERSION,
+  GameSettings,
+  WorldMetadata,
+  WorldSaveData,
+} from '../game/core/types';
 import { MultiplayerManager } from '../game/network/MultiplayerManager';
 import { SaveManager } from '../game/persistence/SaveManager';
 import { spriteAtlas } from '../game/rendering/SpriteAtlas';
@@ -255,8 +260,11 @@ export const WorldSelectScreen: React.FC<WorldSelectScreenProps> = ({
             />
           </div>
           <div>
-            <span className="font-pixel text-xs sm:text-base font-bold text-amber-400 block leading-none">
-              WILDBORN: FRONTEIRA PIXEL
+            <span className="font-pixel text-xs sm:text-base font-bold text-amber-400 flex items-center gap-2 leading-none">
+              <span>WILDBORN: FRONTEIRA PIXEL</span>
+              <span className="px-1.5 py-0.5 rounded bg-amber-950/80 border border-amber-500/40 text-[9px] font-mono text-amber-300">
+                v{GAME_VERSION}
+              </span>
             </span>
             <span className="text-[10px] text-[#c4ab7d] hidden sm:inline">
               RPG 2D Mobile Horizontal · Sobrevivência & Mundo Aberto Procedural
@@ -344,14 +352,17 @@ export const WorldSelectScreen: React.FC<WorldSelectScreenProps> = ({
             className="flex flex-col md:flex-row items-stretch md:items-center justify-between gap-3"
           >
             <div className="space-y-1">
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2">
                 <Wifi className="w-4 h-4 text-emerald-400 shrink-0" />
                 <h2 className="font-pixel text-xs sm:text-sm font-bold text-emerald-300">
                   JOGAR ONLINE · ENTRAR COM CÓDIGO DE CONVITE
                 </h2>
+                <span className="px-1.5 py-0.5 rounded bg-emerald-950/90 border border-emerald-500/40 text-[9px] font-mono font-bold text-emerald-300">
+                  Versão: v{GAME_VERSION}
+                </span>
               </div>
               <p className="text-[11px] text-[#c4ab7d] leading-snug">
-                Digite o código de 6 letras do seu amigo (ele precisa estar <strong>dentro do mundo aberto e online</strong> para o convite funcionar):
+                Digite o código de 6 letras do seu amigo (ambos devem estar na versão <strong>v{GAME_VERSION}</strong> e com o mundo aberto e online):
               </p>
             </div>
 

@@ -3,6 +3,7 @@ import {
   ChunkData,
   CreatureEntity,
   DroppedItem,
+  GAME_VERSION,
   OnlineActivationStep,
   OnlinePeerSummary,
   OnlineSessionInfo,
@@ -123,6 +124,7 @@ export class MultiplayerManager {
       hostName: this.hostName,
       localPlayerName: this.localPlayerName,
       connectedPeers: [...this.connectedPeers],
+      gameVersion: GAME_VERSION,
       statusMessage: this.statusMessage,
       activationState: this.activationState,
       activationSteps: this.activationSteps.map((s) => ({ ...s })),
@@ -401,6 +403,7 @@ export class MultiplayerManager {
           peerId: this.peerId,
           playerName: this.localPlayerName,
           preferredCode: preferredCode ?? this.inviteCode ?? '',
+          gameVersion: GAME_VERSION,
           worldSnapshot,
           playerState: playerStatePayload,
         }),
@@ -693,6 +696,20 @@ export class MultiplayerManager {
           String(msg.playerName || 'Viajante')
             .trim()
             .slice(0, 22) || 'Viajante';
+        const guestVersion = String(msg.gameVersion || '').trim();
+
+        // Enforce strict game version match between Host and Guest
+        if (guestVersion !== GAME_VERSION) {
+          const guestVerLabel = guestVersion || 'anterior/desatualizada';
+          this.safeSendConn(conn, {
+            type: 'p2p_join_rejected',
+            code: 'VERSION_MISMATCH',
+            hostVersion: GAME_VERSION,
+            guestVersion: guestVerLabel,
+            error: `Versão incompatível! O mundo do anfitrião está na versão v${GAME_VERSION}, mas o seu jogo está na versão v${guestVerLabel}. Atualize o jogo para jogar na mesma versão.`,
+          });
+          return;
+        }
 
         registeredPeerId = guestPeerId;
         registeredName = guestName;
@@ -795,6 +812,7 @@ export class MultiplayerManager {
           inviteCode: this.inviteCode,
           worldName: this.worldName,
           hostName: this.hostName,
+          gameVersion: GAME_VERSION,
           peers: this.connectedPeers,
           remoteStates,
         });
@@ -1171,14 +1189,37 @@ export class MultiplayerManager {
           inviteCode: cleanCode,
           peerId: manager.peerId,
           playerName: manager.localPlayerName,
+          gameVersion: GAME_VERSION,
         }),
         signal: controller.signal,
       });
       window.clearTimeout(timeoutId);
 
+      if (res.status === 409) {
+        const errData = await res.json().catch(() => null);
+        return {
+          ok: false,
+          error:
+            errData?.error ||
+            `Versão incompatível! Todos os jogadores devem estar na versão v${GAME_VERSION} para jogar juntos.`,
+        };
+      }
+
       if (res.ok) {
         const data = await res.json().catch(() => null);
         if (data && data.ok && data.worldSnapshot) {
+          const hostVersion = String(
+            data.gameVersion ||
+              data.worldSnapshot?.metadata?.gameVersion ||
+              ''
+          ).trim();
+          if (hostVersion && hostVersion !== GAME_VERSION) {
+            return {
+              ok: false,
+              error: `Versão incompatível! O mundo do anfitrião está na versão v${hostVersion}, mas o seu jogo está na versão v${GAME_VERSION}. Ambos precisam estar na mesma versão.`,
+            };
+          }
+
           manager.isOnline = true;
           manager.role = 'GUEST';
           manager.inviteCode = data.inviteCode || cleanCode;
@@ -1285,7 +1326,7 @@ export class MultiplayerManager {
 
         conn.on('open', () => {
           onProgress?.(
-            'Canal P2P aberto! Solicitando dados do mundo ao anfitrião...'
+            `Canal P2P aberto! Verificando versão (v${GAME_VERSION}) e solicitando mundo...`
           );
           manager.incomingSnapshotChunks = [];
           manager.incomingSnapshotTotal = 0;
@@ -1293,6 +1334,7 @@ export class MultiplayerManager {
             type: 'p2p_join_request',
             peerId: manager.peerId,
             playerName: manager.localPlayerName,
+            gameVersion: GAME_VERSION,
           });
         });
 
@@ -1333,6 +1375,17 @@ export class MultiplayerManager {
           if (msg.type === 'p2p_join_accepted') {
             window.clearTimeout(overallTimeout);
             try {
+              const hostVersion = String(msg.gameVersion || '').trim();
+              if (hostVersion !== GAME_VERSION) {
+                const hostVerLabel = hostVersion || 'anterior/desatualizada';
+                manager.closeP2PInternal();
+                finish({
+                  ok: false,
+                  error: `Versão incompatível! Seu jogo está na versão v${GAME_VERSION}, mas o mundo do anfitrião está na versão v${hostVerLabel}. Todos os jogadores precisam estar na mesma versão.`,
+                });
+                return;
+              }
+
               const fullJson = manager.incomingSnapshotChunks.join('');
               const worldSnapshot = (
                 fullJson ? JSON.parse(fullJson) : msg.worldSnapshot

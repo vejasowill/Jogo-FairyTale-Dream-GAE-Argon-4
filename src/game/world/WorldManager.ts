@@ -1718,6 +1718,136 @@ export class WorldManager {
   }
 
   /**
+   * Finds the nearest collision-free world position `(x, y)` when an entity or player
+   * is stuck inside a solid hitbox (e.g. spawning inside a newly built structure,
+   * having a wall/furniture placed on top of them, or closing a door while overlapping).
+   * Uses collider center repulsion bias so the entity is always pushed out toward the nearest edge.
+   */
+  public findNearestSafePosition(
+    wx: number,
+    wy: number,
+    entityRadius = 6.2
+  ): { x: number; y: number } {
+    if (this.canEntityOccupyWorldCircle(wx, wy, entityRadius)) {
+      return { x: wx, y: wy };
+    }
+
+    // 1. Compute outward repulsion vector from all overlapping colliders in the 3x3 tile neighborhood
+    let repulseX = 0;
+    let repulseY = 0;
+    const centerTile = this.worldToTile(wx, wy);
+
+    for (let dy = -1; dy <= 1; dy++) {
+      for (let dx = -1; dx <= 1; dx++) {
+        const tx = centerTile.tx + dx;
+        const ty = centerTile.ty + dy;
+        const { cx, cy } = this.tileToChunk(tx, ty);
+        const chunk = this.getOrCreateChunk(cx, cy);
+
+        for (const node of chunk.nodes) {
+          if (node.tileX !== tx || node.tileY !== ty) continue;
+          const nbp = NATURE_BLUEPRINTS[node.type];
+          if (!nbp || !nbp.hasHitbox || nbp.hitboxRadius <= 0) continue;
+          const nx = tx * TILE_SIZE + TILE_SIZE / 2;
+          const ny = ty * TILE_SIZE + TILE_SIZE * 0.58;
+          const dist = Math.hypot(wx - nx, wy - ny);
+          const minDist = entityRadius + nbp.hitboxRadius;
+          if (dist < minDist) {
+            const ux = dist > 0.001 ? (wx - nx) / dist : 0;
+            const uy = dist > 0.001 ? (wy - ny) / dist : 1;
+            const weight = minDist - dist + 2;
+            repulseX += ux * weight;
+            repulseY += uy * weight;
+          }
+        }
+
+        for (const st of chunk.structures) {
+          if (st.tileX !== tx || st.tileY !== ty) continue;
+          if (!WorldManager.isStructureCurrentlySolid(st)) continue;
+          const sx = tx * TILE_SIZE + TILE_SIZE / 2;
+          const sy = ty * TILE_SIZE + TILE_SIZE * 0.54;
+          const dist = Math.hypot(wx - sx, wy - sy);
+          if (dist < TILE_SIZE * 0.85) {
+            const ux = dist > 0.001 ? (wx - sx) / dist : 0;
+            const uy = dist > 0.001 ? (wy - sy) / dist : 1;
+            const weight = TILE_SIZE * 0.85 - dist + 2;
+            repulseX += ux * weight;
+            repulseY += uy * weight;
+          }
+        }
+      }
+    }
+
+    const repulseMag = Math.hypot(repulseX, repulseY);
+    const normRx = repulseMag > 0.01 ? repulseX / repulseMag : 0;
+    const normRy = repulseMag > 0.01 ? repulseY / repulseMag : 1;
+
+    // First try stepping directly along the repulsion vector for immediate edge ejection
+    if (repulseMag > 0.01) {
+      for (let d = 2; d <= 36; d += 2) {
+        const testX = wx + normRx * d;
+        const testY = wy + normRy * d;
+        if (this.canEntityOccupyWorldCircle(testX, testY, entityRadius)) {
+          return { x: testX, y: testY };
+        }
+      }
+    }
+
+    // 2. Radial ring search around (wx, wy), favoring directions aligned with the repulsion vector
+    const radii = [
+      2, 4, 6, 8, 10, 13, 16, 20, 24, 28, 32, 38, 44, 52, 64, 80, 96, 112, 128,
+      160, 192, 224, 256,
+    ];
+
+    for (const r of radii) {
+      const steps = r <= 24 ? 16 : 24;
+      let bestCandidate: { x: number; y: number } | null = null;
+      let bestAlignment = -Infinity;
+
+      for (let i = 0; i < steps; i++) {
+        const angle = (i / steps) * Math.PI * 2;
+        const dirX = Math.cos(angle);
+        const dirY = Math.sin(angle);
+        const candX = wx + dirX * r;
+        const candY = wy + dirY * r;
+
+        if (this.canEntityOccupyWorldCircle(candX, candY, entityRadius)) {
+          const alignment =
+            repulseMag > 0.01 ? dirX * normRx + dirY * normRy : -Math.abs(dirX) * 0.01 + dirY * 0.02;
+          if (alignment > bestAlignment) {
+            bestAlignment = alignment;
+            bestCandidate = { x: candX, y: candY };
+          }
+        }
+      }
+
+      if (bestCandidate) {
+        return bestCandidate;
+      }
+    }
+
+    // 3. Fallback spiral tile search up to 16 tiles away
+    for (let rad = 1; rad <= 16; rad++) {
+      for (let dy = -rad; dy <= rad; dy++) {
+        for (let dx = -rad; dx <= rad; dx++) {
+          if (Math.abs(dx) !== rad && Math.abs(dy) !== rad) continue;
+          const tx = centerTile.tx + dx;
+          const ty = centerTile.ty + dy;
+          if (this.isTileWalkable(tx, ty)) {
+            const cx = tx * TILE_SIZE + TILE_SIZE / 2;
+            const cy = ty * TILE_SIZE + TILE_SIZE / 2;
+            if (this.canEntityOccupyWorldCircle(cx, cy, entityRadius)) {
+              return { x: cx, y: cy };
+            }
+          }
+        }
+      }
+    }
+
+    return { x: wx, y: wy };
+  }
+
+  /**
    * Computes the 4-directional continuity bitmask (N=1, E=2, S=4, W=8 => 0..15)
    * for any structure at (tx, ty) based on its ConstructionBlueprint connection rules.
    */

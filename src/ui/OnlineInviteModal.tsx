@@ -19,7 +19,7 @@ import {
   X,
   XCircle,
 } from 'lucide-react';
-import { GameSettings } from '../game/core/types';
+import { GAME_VERSION, GameSettings } from '../game/core/types';
 import { GameEngine, HudSnapshot } from '../game/loop/GameEngine';
 
 interface OnlineInviteModalProps {
@@ -110,16 +110,19 @@ export const OnlineInviteModal: React.FC<OnlineInviteModalProps> = ({
               )}
             </div>
             <div>
-              <h2 className="text-sm sm:text-base font-extrabold tracking-wide uppercase text-amber-300 flex items-center gap-1.5">
-                Modo Online & Convite
+              <h2 className="text-sm sm:text-base font-extrabold tracking-wide uppercase text-amber-300 flex items-center gap-2">
+                <span>Modo Online & Convite</span>
+                <span className="px-1.5 py-0.5 rounded bg-amber-950/80 border border-amber-500/40 text-[10px] font-mono text-amber-200">
+                  v{session.gameVersion || GAME_VERSION}
+                </span>
               </h2>
               <p className="text-[11px] text-amber-100/70">
                 {session.role === 'GUEST'
-                  ? `Conectado ao mundo de ${session.hostName}`
+                  ? `Conectado ao mundo de ${session.hostName} (v${session.gameVersion || GAME_VERSION})`
                   : isActivating
                   ? 'Ativando sala online no servidor...'
                   : session.isOnline
-                  ? 'Mundo aberto para amigos entrarem com seu código'
+                  ? 'Mundo aberto para amigos entrarem na mesma versão'
                   : 'Ative o modo online para gerar um código de convite'}
               </p>
             </div>

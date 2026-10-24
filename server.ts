@@ -59,6 +59,7 @@ interface OnlineWorldRoom {
   worldName: string;
   hostPeerId: string;
   hostName: string;
+  gameVersion: string;
   worldSnapshot: any;
   peers: Map<string, ConnectedPeer>;
   createdAt: number;
@@ -434,6 +435,7 @@ async function startServer() {
         peerId,
         playerName,
         preferredCode,
+        gameVersion,
         worldSnapshot,
         playerState,
       } = req.body || {};
@@ -452,6 +454,9 @@ async function startServer() {
       const hostName = String(playerName || 'Anfitrião')
         .trim()
         .slice(0, 22);
+      const roomVersion = String(
+        gameVersion || worldSnapshot.metadata?.gameVersion || '0.4.2-beta'
+      ).trim();
 
       const cleanPreferred = String(preferredCode || '')
         .toUpperCase()
@@ -499,6 +504,7 @@ async function startServer() {
         worldName: worldSnapshot.metadata.name || 'Mundo Online',
         hostPeerId,
         hostName,
+        gameVersion: roomVersion,
         worldSnapshot,
         peers: peersMap,
         createdAt: existingRoom?.createdAt || Date.now(),
@@ -513,6 +519,7 @@ async function startServer() {
         peerId: hostPeerId,
         worldName: room.worldName,
         hostName: room.hostName,
+        gameVersion: room.gameVersion,
         peers: getRoomPeersSummary(room),
         serverTime: Date.now(),
       });
@@ -528,8 +535,13 @@ async function startServer() {
   // 3. Join an Online World Room by Invite Code
   app.post('/api/mp/join', (req, res) => {
     try {
-      const { inviteCode: rawCode, peerId: rawPeerId, playerName, playerState } =
-        req.body || {};
+      const {
+        inviteCode: rawCode,
+        peerId: rawPeerId,
+        playerName,
+        gameVersion,
+        playerState,
+      } = req.body || {};
 
       const code = String(rawCode || '')
         .toUpperCase()
@@ -540,6 +552,19 @@ async function startServer() {
         res.status(404).json({
           ok: false,
           error: `Nenhum mundo online ativo encontrado com o código "${code}". Verifique se o anfitrião está dentro do mundo com o Modo Online ativado.`,
+        });
+        return;
+      }
+
+      const guestVersion = String(gameVersion || '').trim();
+      if (guestVersion !== room.gameVersion) {
+        const guestVerLabel = guestVersion || 'anterior/desatualizada';
+        res.status(409).json({
+          ok: false,
+          versionMismatch: true,
+          hostVersion: room.gameVersion,
+          guestVersion: guestVerLabel,
+          error: `Versão incompatível! O mundo do anfitrião está na versão v${room.gameVersion}, mas o seu jogo está na versão v${guestVerLabel}. Todos os jogadores precisam estar na mesma versão.`,
         });
         return;
       }
@@ -609,6 +634,7 @@ async function startServer() {
         worldName: room.worldName,
         hostName: room.hostName,
         hostPeerId: room.hostPeerId,
+        gameVersion: room.gameVersion,
         worldSnapshot: room.worldSnapshot,
         peers: getRoomPeersSummary(room),
         remoteStates: getRoomRemoteStates(room, guestPeerId),
@@ -871,6 +897,11 @@ async function startServer() {
             worldName: worldSnapshot.metadata.name || 'Mundo Online',
             hostPeerId: peerId,
             hostName,
+            gameVersion: String(
+              msg.gameVersion ||
+                worldSnapshot.metadata?.gameVersion ||
+                '0.4.2-beta'
+            ).trim(),
             worldSnapshot,
             peers: new Map(),
             createdAt: Date.now(),
@@ -900,6 +931,7 @@ async function startServer() {
               inviteCode,
               peerId,
               worldName: room.worldName,
+              gameVersion: room.gameVersion,
               peers: getRoomPeersSummary(room),
             })
           );
@@ -918,6 +950,18 @@ async function startServer() {
                 type: 'join_error',
                 error:
                   'Código de convite inválido ou o anfitrião não está com o mundo aberto no momento.',
+              })
+            );
+            return;
+          }
+
+          const guestVersion = String(msg.gameVersion || '').trim();
+          if (guestVersion !== room.gameVersion) {
+            const guestVerLabel = guestVersion || 'anterior/desatualizada';
+            ws.send(
+              JSON.stringify({
+                type: 'join_error',
+                error: `Versão incompatível! O mundo do anfitrião está na versão v${room.gameVersion}, mas o seu jogo está na versão v${guestVerLabel}.`,
               })
             );
             return;

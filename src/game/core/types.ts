@@ -508,6 +508,8 @@ export interface OnlineActivationStep {
   detail?: string;
 }
 
+export const GAME_VERSION = '0.4.2-beta';
+
 export interface OnlineSessionInfo {
   isOnline: boolean;
   role: 'HOST' | 'GUEST' | 'OFFLINE';
@@ -516,6 +518,7 @@ export interface OnlineSessionInfo {
   hostName: string;
   localPlayerName: string;
   connectedPeers: OnlinePeerSummary[];
+  gameVersion?: string;
   statusMessage?: string | null;
   activationState?: 'IDLE' | 'ACTIVATING' | 'ACTIVE' | 'ERROR';
   activationSteps?: OnlineActivationStep[];
@@ -536,6 +539,7 @@ export interface WorldMetadata {
   playerLevel: number;
   exploredChunksCount: number;
   worldGenVersion?: number; // 1 = legacy worlds, 2 = realistic biomes, ecology & structures
+  gameVersion?: string;
 }
 
 export interface WorldSaveData {
