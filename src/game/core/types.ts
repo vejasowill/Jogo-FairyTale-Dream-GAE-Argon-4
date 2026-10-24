@@ -501,6 +501,13 @@ export interface OnlinePeerSummary {
   level?: number;
 }
 
+export interface OnlineActivationStep {
+  id: string;
+  label: string;
+  status: 'pending' | 'loading' | 'success' | 'error';
+  detail?: string;
+}
+
 export interface OnlineSessionInfo {
   isOnline: boolean;
   role: 'HOST' | 'GUEST' | 'OFFLINE';
@@ -510,6 +517,10 @@ export interface OnlineSessionInfo {
   localPlayerName: string;
   connectedPeers: OnlinePeerSummary[];
   statusMessage?: string | null;
+  activationState?: 'IDLE' | 'ACTIVATING' | 'ACTIVE' | 'ERROR';
+  activationSteps?: OnlineActivationStep[];
+  transportMode?: 'WEBSOCKET' | 'HTTP_SYNC' | 'NONE';
+  lastError?: string | null;
 }
 
 export interface WorldMetadata {

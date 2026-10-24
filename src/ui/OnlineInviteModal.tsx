@@ -1,17 +1,23 @@
 import React, { useState } from 'react';
 import {
+  AlertTriangle,
   Check,
+  CheckCircle2,
   Copy,
   Globe,
+  Loader2,
   MessageSquare,
   Power,
   RefreshCw,
   Send,
   Shield,
+  Sparkles,
+  User,
   Users,
   Wifi,
   WifiOff,
   X,
+  XCircle,
 } from 'lucide-react';
 import { GameSettings } from '../game/core/types';
 import { GameEngine, HudSnapshot } from '../game/loop/GameEngine';
@@ -20,17 +26,9 @@ interface OnlineInviteModalProps {
   engine: GameEngine;
   snapshot: HudSnapshot;
   settings: GameSettings;
-  onUpdateSettings: (s: GameSettings) => void;
+  onUpdateSettings: (newSettings: GameSettings) => void;
   onClose: () => void;
 }
-
-const QUICK_EMOTES = [
-  '👋 Olá! Bem-vindo ao mundo!',
-  '🧭 Siga-me!',
-  '⚔️ Preciso de ajuda aqui!',
-  '🏠 Venha até a base!',
-  '💰 Vamos negociar na tenda!',
-];
 
 export const OnlineInviteModal: React.FC<OnlineInviteModalProps> = ({
   engine,
@@ -40,345 +38,464 @@ export const OnlineInviteModal: React.FC<OnlineInviteModalProps> = ({
   onClose,
 }) => {
   const session = snapshot.onlineSession;
-  const [playerNameInput, setPlayerNameInput] = useState(
+  const [copied, setCopied] = useState(false);
+  const [nameInput, setNameInput] = useState(
     session.localPlayerName || settings.playerName || 'Aventureiro'
   );
-  const [copiedCode, setCopiedCode] = useState(false);
+  const [nameSaved, setNameSaved] = useState(false);
   const [chatInput, setChatInput] = useState('');
-  const [feedbackMsg, setFeedbackMsg] = useState<string | null>(null);
+  const [showDiagnostics, setShowDiagnostics] = useState(true);
 
-  const handleCopyInviteCode = () => {
+  const onToggleOnline = () => engine.toggleOnlineSession();
+  const onRegenerateCode = () => engine.regenerateInviteCode();
+  const onUpdatePlayerName = (name: string) => {
+    engine.updateMultiplayerPlayerName(name);
+    onUpdateSettings({ ...settings, playerName: name });
+  };
+  const onSendChat = (text: string) => engine.sendMultiplayerChat(text);
+
+  const isActivating = session.activationState === 'ACTIVATING';
+  const hasError = session.activationState === 'ERROR';
+  const steps = session.activationSteps || [];
+
+  const handleCopyCode = () => {
     if (!session.inviteCode) return;
-    navigator.clipboard?.writeText(session.inviteCode).catch(() => {});
-    setCopiedCode(true);
-    setFeedbackMsg(
-      `Código ${session.inviteCode} copiado! Envie para seu amigo colocar na tela inicial do jogo dele.`
-    );
-    setTimeout(() => setCopiedCode(false), 2500);
+    navigator.clipboard.writeText(session.inviteCode).catch(() => {});
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2200);
   };
 
-  const handleSavePlayerName = (e: React.FormEvent) => {
+  const handleSaveName = (e: React.FormEvent) => {
     e.preventDefault();
-    const clean = playerNameInput.trim().slice(0, 22) || 'Aventureiro';
-    setPlayerNameInput(clean);
-    engine.updateMultiplayerPlayerName(clean);
-    onUpdateSettings({
-      ...settings,
-      playerName: clean,
-    });
-    setFeedbackMsg(`Seu nome online foi atualizado para "${clean}".`);
+    const trimmed = nameInput.trim();
+    if (!trimmed) return;
+    onUpdatePlayerName(trimmed);
+    setNameSaved(true);
+    setTimeout(() => setNameSaved(false), 1800);
   };
 
-  const handleSendChat = (e: React.FormEvent) => {
+  const handleSendChatSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!chatInput.trim()) return;
-    engine.sendMultiplayerChat(chatInput);
+    onSendChat(chatInput.trim());
     setChatInput('');
   };
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-2 sm:p-4">
-      <div className="w-full max-w-2xl medieval-panel flex flex-col max-h-[94dvh] overflow-hidden">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 backdrop-blur-sm p-3 sm:p-4 select-none">
+      <div
+        className="w-full max-w-lg rounded-2xl border-2 border-[#7c5330] bg-[#16110c] text-[#f5e7d3] shadow-2xl overflow-hidden flex flex-col max-h-[92vh]"
+        onClick={(e) => e.stopPropagation()}
+      >
         {/* Header */}
-        <div className="flex items-center justify-between px-4 py-2.5 bg-[#1a110b] border-b-2 border-[#4a301e]">
-          <div className="flex items-center gap-2">
-            <Globe className="w-4 h-4 text-emerald-400" />
-            <h2 className="font-pixel text-xs sm:text-sm font-bold text-amber-400">
-              MODO ONLINE & CÓDIGO DE CONVITE DO MUNDO
-            </h2>
+        <div className="flex items-center justify-between px-4 py-3.5 bg-gradient-to-r from-[#261b12] via-[#312216] to-[#261b12] border-b border-[#5e3e22]">
+          <div className="flex items-center gap-2.5">
+            <div
+              className={`w-9 h-9 rounded-xl flex items-center justify-center border ${
+                session.isOnline
+                  ? 'bg-emerald-950/80 border-emerald-500/60 text-emerald-400'
+                  : isActivating
+                  ? 'bg-amber-950/80 border-amber-500/60 text-amber-400'
+                  : hasError
+                  ? 'bg-rose-950/80 border-rose-500/60 text-rose-400'
+                  : 'bg-stone-900 border-stone-700 text-stone-400'
+              }`}
+            >
+              {isActivating ? (
+                <Loader2 className="w-5 h-5 animate-spin" />
+              ) : session.isOnline ? (
+                <Wifi className="w-5 h-5" />
+              ) : (
+                <WifiOff className="w-5 h-5" />
+              )}
+            </div>
+            <div>
+              <h2 className="text-sm sm:text-base font-extrabold tracking-wide uppercase text-amber-300 flex items-center gap-1.5">
+                Modo Online & Convite
+              </h2>
+              <p className="text-[11px] text-amber-100/70">
+                {session.role === 'GUEST'
+                  ? `Conectado ao mundo de ${session.hostName}`
+                  : isActivating
+                  ? 'Ativando sala online no servidor...'
+                  : session.isOnline
+                  ? 'Mundo aberto para amigos entrarem com seu código'
+                  : 'Ative o modo online para gerar um código de convite'}
+              </p>
+            </div>
           </div>
+
           <button
             onClick={onClose}
-            className="min-h-[34px] min-w-[34px] medieval-btn-crimson flex items-center justify-center"
+            className="p-2 rounded-xl bg-black/40 hover:bg-black/70 text-amber-200/80 hover:text-white border border-amber-900/50 transition"
+            title="Fechar"
           >
             <X className="w-4 h-4" />
           </button>
         </div>
 
         {/* Body */}
-        <div className="flex-1 overflow-y-auto p-3.5 sm:p-4 space-y-3.5">
-          {feedbackMsg && (
-            <div className="medieval-inset px-3 py-2 flex items-center justify-between text-xs text-emerald-300 border border-emerald-500/40">
-              <span>{feedbackMsg}</span>
-              <button
-                onClick={() => setFeedbackMsg(null)}
-                className="text-[#c4ab7d] hover:text-white"
-              >
-                <X className="w-3.5 h-3.5" />
-              </button>
-            </div>
-          )}
-
-          {/* Top Banner: Invite Code Box */}
-          <div className="medieval-inset p-3.5 sm:p-4 border-2 border-amber-500/50 space-y-3">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <div className="flex items-center gap-2">
-                {session.isOnline ? (
-                  <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded bg-emerald-950/90 border border-emerald-500/70 text-emerald-300 text-[11px] font-bold">
-                    <Wifi className="w-3.5 h-3.5 text-emerald-400 animate-pulse" />
-                    <span>MUNDO ABERTO E ONLINE</span>
-                  </span>
-                ) : (
-                  <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded bg-stone-900 border border-stone-600 text-stone-300 text-[11px] font-bold">
-                    <WifiOff className="w-3.5 h-3.5 text-rose-400" />
-                    <span>MODO OFFLINE (CONVITE DESATIVADO)</span>
-                  </span>
-                )}
-
-                <span className="text-[11px] text-[#c4ab7d]">
-                  Mundo: <strong className="text-white">{snapshot.metadata.name}</strong>
-                </span>
-              </div>
-
-              {session.role !== 'GUEST' && (
-                <button
-                  type="button"
-                  onClick={() => engine.toggleOnlineSession()}
-                  className={`min-h-[34px] px-3 py-1 text-xs font-bold flex items-center gap-1.5 ${
-                    session.isOnline ? 'medieval-btn-crimson' : 'medieval-btn-emerald'
-                  }`}
-                >
-                  <Power className="w-3.5 h-3.5" />
-                  <span>
-                    {session.isOnline ? 'Fechar Sala Online' : 'Abrir Mundo Online'}
-                  </span>
-                </button>
-              )}
-            </div>
-
-            {session.isOnline && session.inviteCode ? (
-              <div className="bg-[#120b07] border-2 border-amber-500/60 p-3 flex flex-col sm:flex-row items-center justify-between gap-3">
-                <div className="space-y-1 text-center sm:text-left">
-                  <div className="text-[10px] font-pixel text-amber-300 uppercase">
-                    SEU CÓDIGO DE CONVITE DESTE MUNDO:
-                  </div>
-                  <div className="font-pixel text-xl sm:text-2xl font-extrabold tracking-[0.22em] text-amber-400 select-all">
-                    {session.inviteCode}
-                  </div>
-                  <p className="text-[11px] text-[#c4ab7d]">
-                    Outra pessoa no jogo dela só precisa digitar este código em{' '}
-                    <strong className="text-white">"Entrar com Código de Convite"</strong>.
-                    Válido enquanto você estiver com este mundo aberto!
-                  </p>
+        <div className="p-4 overflow-y-auto space-y-4">
+          {/* Status & Toggle Bar */}
+          <div className="flex flex-wrap items-center justify-between gap-2 p-3 rounded-xl bg-[#211810] border border-[#4d341e]">
+            <div className="flex items-center gap-2.5">
+              <span
+                className={`w-2.5 h-2.5 rounded-full ${
+                  isActivating
+                    ? 'bg-amber-400 animate-ping'
+                    : session.isOnline
+                    ? 'bg-emerald-400 shadow-[0_0_8px_#34d399] animate-pulse'
+                    : hasError
+                    ? 'bg-rose-500'
+                    : 'bg-stone-500'
+                }`}
+              />
+              <div>
+                <div className="text-xs font-bold uppercase tracking-wider text-amber-200 flex items-center gap-1.5">
+                  {isActivating
+                    ? 'ATIVANDO MODO ONLINE...'
+                    : session.isOnline
+                    ? session.role === 'HOST'
+                      ? 'MUNDO ONLINE (HOSPEDANDO)'
+                      : 'MUNDO ONLINE (CONVIDADO)'
+                    : hasError
+                    ? 'FALHA NA ATIVAÇÃO ONLINE'
+                    : 'MODO OFFLINE (CONVITE DESATIVADO)'}
                 </div>
-
-                <div className="flex sm:flex-col gap-2 w-full sm:w-auto shrink-0">
-                  <button
-                    type="button"
-                    onClick={handleCopyInviteCode}
-                    className="flex-1 sm:w-44 min-h-[42px] px-3 medieval-btn-gold font-pixel text-xs font-bold flex items-center justify-center gap-1.5"
-                  >
-                    {copiedCode ? (
-                      <>
-                        <Check className="w-4 h-4" />
-                        <span>COPIADO!</span>
-                      </>
-                    ) : (
-                      <>
-                        <Copy className="w-4 h-4" />
-                        <span>COPIAR CÓDIGO</span>
-                      </>
-                    )}
-                  </button>
-
-                  {session.role === 'HOST' && (
-                    <button
-                      type="button"
-                      onClick={() => engine.regenerateInviteCode()}
-                      className="min-h-[36px] px-2.5 medieval-btn-wood text-[11px] font-bold flex items-center justify-center gap-1.5"
-                      title="Gerar um novo código de convite para este mundo"
-                    >
-                      <RefreshCw className="w-3.5 h-3.5 text-amber-300" />
-                      <span>Trocar Código</span>
-                    </button>
+                <div className="text-[11px] text-amber-100/60">
+                  Mundo:{' '}
+                  <strong className="text-amber-200">
+                    {session.worldName || 'Fronteira'}
+                  </strong>
+                  {session.isOnline && session.transportMode && (
+                    <span className="ml-2 px-1.5 py-0.5 rounded bg-emerald-950/90 border border-emerald-600/40 text-[9px] text-emerald-300 font-bold">
+                      {session.transportMode === 'WEBSOCKET'
+                        ? 'WS + HTTP TEMPO REAL'
+                        : 'HTTP TEMPO REAL'}
+                    </span>
                   )}
                 </div>
               </div>
-            ) : (
-              <div className="bg-[#120b07] border border-[#4a301e] p-3 text-xs text-[#c4ab7d]">
-                Clique em <strong className="text-emerald-400">"Abrir Mundo Online"</strong>{' '}
-                acima para gerar um código de convite ativo para este mundo.
-              </div>
+            </div>
+
+            {session.role !== 'GUEST' && (
+              <button
+                onClick={() => {
+                  setShowDiagnostics(true);
+                  onToggleOnline();
+                }}
+                disabled={isActivating}
+                className={`flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-extrabold uppercase tracking-wider border transition cursor-pointer ${
+                  isActivating
+                    ? 'bg-amber-900/40 border-amber-600/50 text-amber-200 opacity-75 cursor-wait'
+                    : session.isOnline
+                    ? 'bg-rose-950/70 hover:bg-rose-900/80 border-rose-500/50 text-rose-200'
+                    : 'bg-emerald-700 hover:bg-emerald-600 border-emerald-400/60 text-white shadow-lg shadow-emerald-950/50'
+                }`}
+              >
+                {isActivating ? (
+                  <>
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    Ativando...
+                  </>
+                ) : (
+                  <>
+                    <Power className="w-3.5 h-3.5" />
+                    {session.isOnline
+                      ? 'Desativar Online'
+                      : hasError
+                      ? 'Tentar Novamente'
+                      : 'Abrir Mundo Online'}
+                  </>
+                )}
+              </button>
             )}
           </div>
 
-          {/* 2-Column Grid: Player Identity + Connected Players & Quick Chat */}
-          <div className="grid grid-cols-1 sm:grid-cols-12 gap-3">
-            {/* Left Column (5 cols): Player Name & Rules */}
-            <div className="sm:col-span-5 space-y-3">
-              <form
-                onSubmit={handleSavePlayerName}
-                className="medieval-inset p-3 space-y-2"
-              >
-                <label className="block font-pixel text-[10px] text-amber-400 font-bold">
-                  SEU NOME NO MUNDO ONLINE
-                </label>
-                <div className="flex gap-1.5">
-                  <input
-                    type="text"
-                    maxLength={22}
-                    value={playerNameInput}
-                    onChange={(e) => setPlayerNameInput(e.target.value)}
-                    placeholder="Seu nome/nick..."
-                    className="flex-1 h-9 px-2.5 mc-slot text-xs text-white focus:outline-none"
-                  />
-                  <button
-                    type="submit"
-                    className="px-3 min-h-[36px] medieval-btn-gold text-xs font-bold"
-                  >
-                    Salvar
-                  </button>
-                </div>
-                <p className="text-[10px] text-[#c4ab7d]">
-                  Aparece acima do seu personagem para os outros jogadores.
-                </p>
-              </form>
-
-              <div className="medieval-inset p-3 space-y-1.5 text-[11px] text-[#e5d5b5]">
-                <div className="flex items-center gap-1.5 font-pixel text-[10px] text-sky-300 font-bold">
-                  <Shield className="w-3.5 h-3.5" />
-                  <span>COMO FUNCIONA O CONVITE</span>
-                </div>
-                <ul className="list-disc list-inside space-y-1 text-[10px] text-[#c4ab7d]">
-                  <li>
-                    Para convidar alguém, basta estar dentro do seu mundo com o modo online ativo.
-                  </li>
-                  <li>
-                    O convidado digita seu código na tela inicial dele e entra direto neste mundo em tempo real.
-                  </li>
-                  <li>
-                    Construções, colheitas, baús, tendas e combates são sincronizados ao vivo.
-                  </li>
-                  <li>
-                    Ao sair do mundo ou fechar o jogo, o convite é encerrado automaticamente.
-                  </li>
-                </ul>
-              </div>
-            </div>
-
-            {/* Right Column (7 cols): Connected Players List & Live Chat/Emotes */}
-            <div className="sm:col-span-7 space-y-3 flex flex-col justify-between">
-              <div className="medieval-inset p-3 space-y-2">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-1.5 font-pixel text-[10px] text-amber-400 font-bold">
-                    <Users className="w-3.5 h-3.5 text-amber-400" />
-                    <span>
-                      JOGADORES NO MUNDO ({session.connectedPeers.length || 1})
-                    </span>
-                  </div>
-                  <span className="text-[10px] text-emerald-400 font-mono-tabular">
-                    {session.role === 'HOST'
-                      ? 'Você é o Anfitrião'
-                      : session.role === 'GUEST'
-                      ? `Anfitrião: ${session.hostName}`
-                      : 'Single-player'}
-                  </span>
-                </div>
-
-                <div className="space-y-1.5 max-h-36 overflow-y-auto pr-1">
-                  {session.connectedPeers.length === 0 ? (
-                    <div className="p-2 mc-slot flex items-center justify-between text-xs">
-                      <span className="font-bold text-amber-300">
-                        👑 {session.localPlayerName} (Você)
+          {/* Fast Activation Loading & Verification Checklist */}
+          {(isActivating || hasError || (steps.length > 0 && showDiagnostics)) && (
+            <div
+              className={`rounded-xl border p-3 transition-all ${
+                hasError
+                  ? 'bg-rose-950/30 border-rose-500/50'
+                  : isActivating
+                  ? 'bg-amber-950/30 border-amber-500/50'
+                  : 'bg-emerald-950/25 border-emerald-500/40'
+              }`}
+            >
+              <div className="flex items-center justify-between mb-2">
+                <div className="flex items-center gap-1.5 text-[11px] font-extrabold uppercase tracking-wider">
+                  {isActivating ? (
+                    <>
+                      <Loader2 className="w-3.5 h-3.5 text-amber-400 animate-spin" />
+                      <span className="text-amber-300">
+                        Verificando e Ativando Servidor Online...
                       </span>
-                      <span className="text-[10px] text-[#c4ab7d]">
-                        NV.{snapshot.player.level}
+                    </>
+                  ) : hasError ? (
+                    <>
+                      <AlertTriangle className="w-3.5 h-3.5 text-rose-400" />
+                      <span className="text-rose-300">
+                        Diagnóstico de Erro na Ativação
                       </span>
-                    </div>
+                    </>
                   ) : (
-                    session.connectedPeers.map((peer) => {
-                      const isSelf = peer.peerId === engine.multiplayer.peerId;
-                      return (
-                        <div
-                          key={peer.peerId}
-                          className={`p-2 flex items-center justify-between text-xs ${
-                            isSelf ? 'mc-slot-active' : 'mc-slot'
-                          }`}
-                        >
-                          <div className="flex items-center gap-1.5">
-                            <span>{peer.isHost ? '👑' : '🌐'}</span>
-                            <span className="font-bold text-white">
-                              {peer.name}
-                            </span>
-                            {isSelf && (
-                              <span className="text-[10px] text-amber-300 font-bold">
-                                (Você)
-                              </span>
-                            )}
-                          </div>
-                          <div className="flex items-center gap-2 text-[10px]">
-                            <span
-                              className={
-                                peer.isHost ? 'text-amber-400 font-bold' : 'text-sky-300'
-                              }
-                            >
-                              {peer.isHost ? 'Anfitrião' : 'Convidado'}
-                            </span>
-                            {peer.level && (
-                              <span className="text-[#c4ab7d] font-mono-tabular">
-                                NV.{peer.level}
-                              </span>
-                            )}
-                          </div>
-                        </div>
-                      );
-                    })
+                    <>
+                      <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+                      <span className="text-emerald-300">
+                        Ativação Concluída com Sucesso
+                      </span>
+                    </>
                   )}
                 </div>
+
+                {!isActivating && !hasError && (
+                  <button
+                    onClick={() => setShowDiagnostics(false)}
+                    className="text-[10px] text-amber-200/60 hover:text-amber-200 underline cursor-pointer"
+                  >
+                    Ocultar
+                  </button>
+                )}
               </div>
 
-              {/* Quick Chat & Overhead Message */}
-              {session.isOnline && (
-                <div className="medieval-inset p-3 space-y-2">
-                  <div className="flex items-center gap-1.5 font-pixel text-[10px] text-amber-400 font-bold">
-                    <MessageSquare className="w-3.5 h-3.5" />
-                    <span>MENSAGEM NO MUNDO (BALÃO DE FALA)</span>
-                  </div>
+              <div className="space-y-1.5">
+                {steps.map((step) => (
+                  <div
+                    key={step.id}
+                    className={`flex items-center justify-between gap-2 px-2.5 py-1.5 rounded-lg text-xs border ${
+                      step.status === 'success'
+                        ? 'bg-emerald-950/40 border-emerald-700/40 text-emerald-200'
+                        : step.status === 'loading'
+                        ? 'bg-amber-950/50 border-amber-600/50 text-amber-200'
+                        : step.status === 'error'
+                        ? 'bg-rose-950/60 border-rose-600/60 text-rose-200'
+                        : 'bg-black/30 border-stone-800 text-stone-400'
+                    }`}
+                  >
+                    <div className="flex items-center gap-2 min-w-0">
+                      {step.status === 'loading' && (
+                        <Loader2 className="w-3.5 h-3.5 text-amber-400 animate-spin shrink-0" />
+                      )}
+                      {step.status === 'success' && (
+                        <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                      )}
+                      {step.status === 'error' && (
+                        <XCircle className="w-3.5 h-3.5 text-rose-400 shrink-0" />
+                      )}
+                      {step.status === 'pending' && (
+                        <span className="w-3.5 h-3.5 rounded-full border border-stone-600 inline-block shrink-0" />
+                      )}
+                      <span className="font-semibold truncate">{step.label}</span>
+                    </div>
 
-                  <form onSubmit={handleSendChat} className="flex gap-1.5">
-                    <input
-                      type="text"
-                      maxLength={70}
-                      value={chatInput}
-                      onChange={(e) => setChatInput(e.target.value)}
-                      placeholder="Escreva uma mensagem para os jogadores..."
-                      className="flex-1 h-9 px-2.5 mc-slot text-xs text-white focus:outline-none"
-                    />
-                    <button
-                      type="submit"
-                      className="px-3 min-h-[36px] medieval-btn-emerald text-xs font-bold flex items-center gap-1"
-                    >
-                      <Send className="w-3.5 h-3.5" />
-                      <span>Enviar</span>
-                    </button>
-                  </form>
-
-                  <div className="flex flex-wrap gap-1 pt-0.5">
-                    {QUICK_EMOTES.map((emote) => (
-                      <button
-                        key={emote}
-                        type="button"
-                        onClick={() => engine.sendMultiplayerChat(emote)}
-                        className="px-2 py-1 mc-slot text-[10px] text-amber-200 hover:text-white"
+                    {step.detail && (
+                      <span
+                        className={`text-[10px] font-mono shrink-0 px-1.5 py-0.5 rounded ${
+                          step.status === 'success'
+                            ? 'bg-emerald-900/50 text-emerald-300'
+                            : step.status === 'error'
+                            ? 'bg-rose-900/60 text-rose-200 font-bold'
+                            : 'bg-black/30 text-amber-200/70'
+                        }`}
                       >
-                        {emote}
-                      </button>
-                    ))}
+                        {step.detail}
+                      </span>
+                    )}
+                  </div>
+                ))}
+              </div>
+
+              {hasError && session.lastError && (
+                <div className="mt-2.5 p-2 rounded-lg bg-rose-950/80 border border-rose-500/60 text-[11px] text-rose-200 flex items-start gap-2">
+                  <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
+                  <div>
+                    <div className="font-bold text-rose-300">
+                      Causa detectada:
+                    </div>
+                    <div>{session.lastError}</div>
                   </div>
                 </div>
               )}
             </div>
-          </div>
-        </div>
+          )}
 
-        {/* Footer */}
-        <div className="px-4 py-2.5 bg-[#1a110b] border-t-2 border-[#4a301e] flex items-center justify-end">
-          <button
-            onClick={onClose}
-            className="min-h-[38px] px-6 medieval-btn-gold font-pixel text-xs font-bold"
+          {/* Invite Code Card */}
+          {session.isOnline && session.inviteCode ? (
+            <div className="p-4 rounded-2xl bg-gradient-to-br from-[#291d12] via-[#1f160e] to-[#291d12] border-2 border-amber-500/50 shadow-inner text-center space-y-2.5">
+              <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-amber-500/15 border border-amber-400/30 text-amber-300 text-[10px] font-extrabold uppercase tracking-widest">
+                <Sparkles className="w-3 h-3" /> Código de Convite do Mundo
+              </div>
+
+              <div className="flex items-center justify-center gap-2">
+                <div className="px-5 py-2.5 rounded-xl bg-black/60 border border-amber-500/40 font-mono text-2xl sm:text-3xl font-black tracking-[0.28em] text-amber-300 select-all shadow-inner">
+                  {session.inviteCode}
+                </div>
+
+                <button
+                  onClick={handleCopyCode}
+                  className="flex flex-col items-center justify-center px-3.5 py-2.5 rounded-xl bg-amber-600 hover:bg-amber-500 text-stone-950 font-extrabold text-xs transition shadow-md cursor-pointer"
+                  title="Copiar código"
+                >
+                  {copied ? (
+                    <>
+                      <Check className="w-4 h-4" />
+                      <span className="text-[10px] mt-0.5">Copiado!</span>
+                    </>
+                  ) : (
+                    <>
+                      <Copy className="w-4 h-4" />
+                      <span className="text-[10px] mt-0.5">Copiar</span>
+                    </>
+                  )}
+                </button>
+
+                {session.role === 'HOST' && (
+                  <button
+                    onClick={() => {
+                      setShowDiagnostics(true);
+                      onRegenerateCode();
+                    }}
+                    disabled={isActivating}
+                    className="flex flex-col items-center justify-center px-3 py-2.5 rounded-xl bg-[#332417] hover:bg-[#422f1e] text-amber-200 border border-[#614328] text-xs transition cursor-pointer"
+                    title="Gerar novo código de convite"
+                  >
+                    <RefreshCw
+                      className={`w-4 h-4 ${isActivating ? 'animate-spin' : ''}`}
+                    />
+                    <span className="text-[10px] mt-0.5">Novo</span>
+                  </button>
+                )}
+              </div>
+
+              <p className="text-[11px] text-amber-100/75 max-w-md mx-auto leading-relaxed">
+                Outro jogador só precisa abrir a tela inicial de{' '}
+                <strong>Mundos</strong>, digitar este código em{' '}
+                <strong>Entrar com Código de Convite</strong> e clicar em
+                Conectar. O convite vale enquanto você estiver com este mundo
+                aberto!
+              </p>
+            </div>
+          ) : (
+            !isActivating && (
+              <div className="p-4 rounded-xl bg-black/30 border border-stone-800 text-center text-xs text-stone-400">
+                Clique em{' '}
+                <strong className="text-emerald-400">Abrir Mundo Online</strong>{' '}
+                acima para ativar a sala no servidor e gerar um código de convite
+                instantâneo.
+              </div>
+            )
+          )}
+
+          {/* Player Name Configuration */}
+          <form
+            onSubmit={handleSaveName}
+            className="p-3 rounded-xl bg-[#1f160f] border border-[#47301b] space-y-2"
           >
-            VOLTAR AO MUNDO
-          </button>
+            <label className="flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wider text-amber-300/90">
+              <User className="w-3.5 h-3.5" /> Seu Nome no Jogo Online
+            </label>
+            <div className="flex gap-2">
+              <input
+                type="text"
+                maxLength={20}
+                value={nameInput}
+                onChange={(e) => setNameInput(e.target.value)}
+                placeholder="Ex: Guardião Aric"
+                className="flex-1 px-3 py-1.5 rounded-lg bg-black/50 border border-[#5c3e23] text-xs text-amber-100 focus:outline-none focus:border-amber-400"
+              />
+              <button
+                type="submit"
+                className="px-3 py-1.5 rounded-lg bg-[#3b2919] hover:bg-[#4f3722] border border-amber-500/40 text-amber-200 text-xs font-bold transition cursor-pointer"
+              >
+                {nameSaved ? 'Salvo!' : 'Atualizar'}
+              </button>
+            </div>
+          </form>
+
+          {/* Quick In-Game Chat Bubble Sender */}
+          {session.isOnline && (
+            <form
+              onSubmit={handleSendChatSubmit}
+              className="p-3 rounded-xl bg-[#1f160f] border border-[#47301b] space-y-2"
+            >
+              <label className="flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wider text-amber-300/90">
+                <MessageSquare className="w-3.5 h-3.5" /> Mensagem Rápida (Balão
+                de Fala no Mundo)
+              </label>
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  maxLength={75}
+                  value={chatInput}
+                  onChange={(e) => setChatInput(e.target.value)}
+                  placeholder="Digite uma mensagem para os jogadores no mundo..."
+                  className="flex-1 px-3 py-1.5 rounded-lg bg-black/50 border border-[#5c3e23] text-xs text-amber-100 focus:outline-none focus:border-amber-400"
+                />
+                <button
+                  type="submit"
+                  className="px-3.5 py-1.5 rounded-lg bg-amber-600 hover:bg-amber-500 text-stone-950 text-xs font-extrabold flex items-center gap-1 transition cursor-pointer"
+                >
+                  <Send className="w-3.5 h-3.5" /> Enviar
+                </button>
+              </div>
+            </form>
+          )}
+
+          {/* Connected Players List */}
+          <div className="p-3 rounded-xl bg-[#1f160f] border border-[#47301b] space-y-2">
+            <div className="flex items-center justify-between">
+              <span className="flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wider text-amber-300/90">
+                <Users className="w-3.5 h-3.5" /> Jogadores neste Mundo (
+                {session.connectedPeers.length || 1})
+              </span>
+              <span className="text-[10px] text-emerald-400/90 flex items-center gap-1">
+                <Globe className="w-3 h-3" /> Tempo Real
+              </span>
+            </div>
+
+            <div className="space-y-1.5 max-h-36 overflow-y-auto pr-1">
+              {session.connectedPeers.length === 0 ? (
+                <div className="flex items-center justify-between px-3 py-2 rounded-lg bg-black/40 border border-stone-800 text-xs">
+                  <span className="font-semibold text-amber-100">
+                    {session.localPlayerName} (Você)
+                  </span>
+                  <span className="text-[10px] px-2 py-0.5 rounded bg-stone-800 text-stone-300">
+                    Local
+                  </span>
+                </div>
+              ) : (
+                session.connectedPeers.map((peer) => (
+                  <div
+                    key={peer.peerId}
+                    className="flex items-center justify-between px-3 py-2 rounded-lg bg-black/40 border border-[#422d1a] text-xs"
+                  >
+                    <div className="flex items-center gap-2">
+                      <span className="w-2 h-2 rounded-full bg-emerald-400" />
+                      <span className="font-bold text-amber-100">
+                        {peer.name}
+                      </span>
+                      {peer.level && (
+                        <span className="text-[10px] text-amber-400/80">
+                          Nv.{peer.level}
+                        </span>
+                      )}
+                    </div>
+                    <span
+                      className={`text-[10px] font-bold px-2 py-0.5 rounded flex items-center gap-1 ${
+                        peer.isHost
+                          ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40'
+                          : 'bg-sky-500/20 text-sky-300 border border-sky-500/40'
+                      }`}
+                    >
+                      <Shield className="w-2.5 h-2.5" />
+                      {peer.isHost ? 'Anfitrião' : 'Convidado'}
+                    </span>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
         </div>
       </div>
     </div>

@@ -6857,13 +6857,26 @@ export class GameEngine {
    * Opens this world for online multiplayer and generates a unique 6-char Invite Code
    * valid for as long as the player keeps this world open.
    */
-  public openOnlineInviteSession(preferredCode?: string): void {
+  public async openOnlineInviteSession(
+    preferredCode?: string,
+    notifyInWorld = false
+  ): Promise<void> {
     if (this.multiplayer.role === 'GUEST') return;
-    this.multiplayer.hostWorld(
+    if (this.multiplayer.activationState === 'ACTIVATING') return;
+    this.emitUiSnapshot();
+    const ok = await this.multiplayer.hostWorld(
       this.buildSaveData(),
       this.player,
       preferredCode
     );
+    if (ok && notifyInWorld && this.multiplayer.inviteCode) {
+      this.addFloatingText(
+        `🌐 Mundo Online! Código: ${this.multiplayer.inviteCode}`,
+        this.player.x,
+        this.player.y - 24,
+        '#4ade80'
+      );
+    }
     this.emitUiSnapshot();
   }
 
@@ -6885,23 +6898,19 @@ export class GameEngine {
 
   public toggleOnlineSession(): void {
     if (this.multiplayer.role === 'GUEST') return;
+    if (this.multiplayer.activationState === 'ACTIVATING') return;
     if (this.multiplayer.isOnline) {
       this.closeOnlineInviteSession();
     } else {
-      this.openOnlineInviteSession();
+      void this.openOnlineInviteSession(undefined, true);
     }
   }
 
   public regenerateInviteCode(): void {
     if (this.multiplayer.role === 'GUEST') return;
+    if (this.multiplayer.activationState === 'ACTIVATING') return;
     this.multiplayer.inviteCode = null;
-    this.openOnlineInviteSession('');
-    this.addFloatingText(
-      '🔄 Novo Código de Convite gerado!',
-      this.player.x,
-      this.player.y - 24,
-      '#4ade80'
-    );
+    void this.openOnlineInviteSession('', true);
   }
 
   public updateMultiplayerPlayerName(newName: string): void {
