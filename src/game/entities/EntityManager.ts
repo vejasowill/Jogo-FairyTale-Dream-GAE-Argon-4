@@ -391,12 +391,52 @@ export class EntityManager {
     return 'WILDLIFE';
   }
 
+  /**
+   * Returns the specific swimming speed (`swimSpeed`) for a creature when in water,
+   * distinct from its normal land `moveSpeed`.
+   */
+  public static getCreatureSwimSpeed(cr: CreatureEntity): number {
+    if (typeof cr.swimSpeed === 'number' && cr.swimSpeed > 0) {
+      return cr.swimSpeed;
+    }
+    const eliteMult = cr.isElite ? 1.1 : 1.0;
+    switch (cr.kind) {
+      case CreatureKind.SHEEP:
+        return 22;
+      case CreatureKind.BOAR:
+        return 32;
+      case CreatureKind.CAMEL:
+        return 30;
+      case CreatureKind.HORSE:
+        return 34;
+      case CreatureKind.BOAT:
+        return 152;
+      case CreatureKind.ZOMBIE:
+        return Math.round(28 * eliteMult);
+      case CreatureKind.OGRE:
+        return Math.round(25 * eliteMult);
+      case CreatureKind.FOREST_STALKER:
+        return Math.round(35 * eliteMult);
+      case CreatureKind.DESERT_SCORPION:
+        return Math.round(27 * eliteMult);
+      case CreatureKind.STONE_GOLEM:
+        return Math.round(19 * eliteMult);
+      case CreatureKind.BANDIT:
+        return Math.round(34 * eliteMult);
+      case CreatureKind.VILLAGER:
+      case CreatureKind.WANDERER:
+      default:
+        return Math.max(22, Math.round((cr.moveSpeed || 44) * 0.6));
+    }
+  }
+
   public spawnInitialAroundPlayer(world: WorldManager, px: number, py: number): void {
     if (this.creatures.length > 0) return;
 
-    // Spawn a small flock of Sheep in the starter meadow and a pair of Boars near the shrubland edge
+    // Spawn a small flock of Sheep, a Horse in the starter plains, and a Boar near the shrubland edge
     this.trySpawnCreatureAt(world, CreatureKind.SHEEP, px + 135, py + 85);
     this.trySpawnCreatureAt(world, CreatureKind.SHEEP, px + 165, py + 105);
+    this.trySpawnCreatureAt(world, CreatureKind.HORSE, px - 135, py - 115);
     this.trySpawnCreatureAt(world, CreatureKind.BOAR, px - 175, py + 115);
     this.trySpawnCreatureAt(world, CreatureKind.SHEEP, px + 105, py - 155);
 
@@ -430,7 +470,11 @@ export class EntityManager {
     }
   ): CreatureEntity | null {
     const { tx, ty } = world.worldToTile(wx, wy);
-    if (!world.isTileWalkable(tx, ty)) return null;
+    if (kind === CreatureKind.BOAT) {
+      if (!world.isTileSwimmableWater(tx, ty)) return null;
+    } else {
+      if (!world.isTileWalkable(tx, ty, false)) return null;
+    }
 
     const isElite = Boolean(options?.isElite);
     const hpMult = isElite ? 1.4 : 1.0;
@@ -467,6 +511,7 @@ export class EntityManager {
             maxHp: 45,
             attackDamage: 0,
             moveSpeed: 38,
+            swimSpeed: 22,
             favoriteFoodIds: ['berry', 'coconut', 'taming_treat'],
           };
         case CreatureKind.BOAR:
@@ -478,6 +523,7 @@ export class EntityManager {
             maxHp: 75,
             attackDamage: 14,
             moveSpeed: 52,
+            swimSpeed: 32,
             favoriteFoodIds: ['apple', 'coconut', 'taming_treat'],
           };
         case CreatureKind.CAMEL:
@@ -489,7 +535,42 @@ export class EntityManager {
             maxHp: 95,
             attackDamage: 10,
             moveSpeed: 58,
+            swimSpeed: 30,
             favoriteFoodIds: ['cactus_fruit', 'coconut', 'taming_treat'],
+            hasSaddle: false,
+            mountSpeed: 132 + Math.floor(Math.random() * 28), // 132..159 px/s individual speed
+            mountStamina: 165,
+            mountMaxStamina: 165, // Higher gallop stamina than Horse
+          };
+        case CreatureKind.HORSE:
+          return {
+            kind,
+            name: options?.customName || 'Cavalo da Planície',
+            isHostile: false,
+            hp: 90,
+            maxHp: 90,
+            attackDamage: 0,
+            moveSpeed: 60,
+            swimSpeed: 34,
+            favoriteFoodIds: ['apple', 'taming_treat'],
+            hasSaddle: false,
+            mountSpeed: 136 + Math.floor(Math.random() * 34), // 136..169 px/s individual speed
+            mountStamina: 100,
+            mountMaxStamina: 100,
+          };
+        case CreatureKind.BOAT:
+          return {
+            kind,
+            name: options?.customName || 'Bote de Madeira',
+            isHostile: false,
+            hp: 120,
+            maxHp: 120,
+            attackDamage: 0,
+            moveSpeed: 152,
+            swimSpeed: 152,
+            favoriteFoodIds: [],
+            mountSpeed: 152,
+            isSwimming: true,
           };
         case CreatureKind.ZOMBIE:
           return {
@@ -502,6 +583,7 @@ export class EntityManager {
             maxHp: Math.round(65 * hpMult),
             attackDamage: Math.round(14 * dmgMult),
             moveSpeed: isElite ? 52 : 48,
+            swimSpeed: isElite ? 31 : 28,
             favoriteFoodIds: [],
           };
         case CreatureKind.OGRE:
@@ -515,6 +597,7 @@ export class EntityManager {
             maxHp: Math.round(190 * hpMult),
             attackDamage: Math.round(32 * dmgMult),
             moveSpeed: isElite ? 43 : 40,
+            swimSpeed: isElite ? 28 : 25,
             favoriteFoodIds: [],
           };
         case CreatureKind.FOREST_STALKER:
@@ -528,6 +611,7 @@ export class EntityManager {
             maxHp: Math.round(82 * hpMult),
             attackDamage: Math.round(17 * dmgMult),
             moveSpeed: isElite ? 64 : 58,
+            swimSpeed: isElite ? 39 : 35,
             favoriteFoodIds: [],
             specialCooldown: 3.5,
           };
@@ -542,6 +626,7 @@ export class EntityManager {
             maxHp: Math.round(115 * hpMult),
             attackDamage: Math.round(22 * dmgMult),
             moveSpeed: isElite ? 56 : 52,
+            swimSpeed: isElite ? 30 : 27,
             favoriteFoodIds: [],
             specialCooldown: 4.0,
           };
@@ -556,6 +641,7 @@ export class EntityManager {
             maxHp: Math.round(235 * hpMult),
             attackDamage: Math.round(36 * dmgMult),
             moveSpeed: isElite ? 39 : 35,
+            swimSpeed: isElite ? 22 : 19,
             favoriteFoodIds: [],
             specialCooldown: 5.0,
           };
@@ -570,6 +656,7 @@ export class EntityManager {
             maxHp: Math.round(95 * hpMult),
             attackDamage: Math.round(19 * dmgMult),
             moveSpeed: isElite ? 60 : 55,
+            swimSpeed: isElite ? 37 : 34,
             favoriteFoodIds: [],
             specialCooldown: 6.0,
           };
@@ -589,6 +676,7 @@ export class EntityManager {
             maxHp: prof.hp,
             attackDamage: prof.attackDamage,
             moveSpeed: prof.moveSpeed,
+            swimSpeed: Math.round(prof.moveSpeed * 0.6),
             favoriteFoodIds: ['gold_coin', 'apple', 'solar_crystal', 'warrior_feast'],
             npcRole: role,
             npcProfessionLabel: prof.professionLabel,
@@ -613,6 +701,7 @@ export class EntityManager {
             maxHp: prof.hp,
             attackDamage: prof.attackDamage,
             moveSpeed: prof.moveSpeed,
+            swimSpeed: Math.round(prof.moveSpeed * 0.6),
             favoriteFoodIds: ['gold_coin', 'apple', 'solar_crystal', 'warrior_feast'],
             npcRole: 'andarilho',
             npcProfessionLabel: prof.professionLabel,
@@ -642,12 +731,12 @@ export class EntityManager {
       attackTimer: 0,
       attackCooldown: 0,
       hitFlashTimer: 0,
-      aiState: 'wander',
+      aiState: kind === CreatureKind.BOAT ? 'stay' : 'wander',
       aiTimer: 2 + Math.random() * 3,
       targetX: options?.homeX ?? spawnWorldX,
       targetY: options?.homeY ?? spawnWorldY,
-      tamed: false,
-      tameProgress: 0,
+      tamed: kind === CreatureKind.BOAT,
+      tameProgress: kind === CreatureKind.BOAT ? 100 : 0,
       produceTimer: 35,
       isElite,
       homeX: options?.homeX,
@@ -696,6 +785,7 @@ export class EntityManager {
     cr.hp = prof.hp;
     cr.attackDamage = prof.attackDamage;
     cr.moveSpeed = prof.moveSpeed;
+    cr.swimSpeed = Math.round(prof.moveSpeed * 0.6);
     cr.trades = prof.trades.map((t) => ({ ...t }));
     cr.dialogueLine =
       'Encontrei um lar seguro nesta casa! Agora sou um Aldeão e ajudarei a defender nossa moradia contra monstros.';
@@ -961,20 +1051,16 @@ export class EntityManager {
     }
 
     if (chunk.landmarkName === 'Posto da Caravana') {
-      this.trySpawnCreatureAt(
-        world,
-        CreatureKind.CAMEL,
-        centerWx - 44,
-        centerWy + 38,
-        { homeX: centerWx, homeY: centerWy }
-      );
-      this.trySpawnCreatureAt(
-        world,
-        CreatureKind.CAMEL,
-        centerWx + 44,
-        centerWy - 36,
-        { homeX: centerWx, homeY: centerWy }
-      );
+      // Camels are rare even at Caravan Outposts
+      if (Math.random() < 0.25) {
+        this.trySpawnCreatureAt(
+          world,
+          CreatureKind.CAMEL,
+          centerWx - 44,
+          centerWy + 38,
+          { homeX: centerWx, homeY: centerWy }
+        );
+      }
       return;
     }
 
@@ -988,7 +1074,7 @@ export class EntityManager {
       );
       this.trySpawnCreatureAt(
         world,
-        CreatureKind.BOAR,
+        CreatureKind.HORSE,
         centerWx + 52,
         centerWy - 40,
         { homeX: centerWx, homeY: centerWy }
@@ -1033,7 +1119,7 @@ export class EntityManager {
   ): void {
     // 1. Despawn untamed non-villager creatures very far from player to keep mobile memory low
     this.creatures = this.creatures.filter((c) => {
-      if (c.tamed || c.kind === CreatureKind.VILLAGER) return true;
+      if (c.tamed || c.kind === CreatureKind.VILLAGER || c.kind === CreatureKind.BOAT) return true;
       const dist = Math.hypot(c.x - playerX, c.y - playerY);
       return dist < 1480;
     });
@@ -1046,7 +1132,7 @@ export class EntityManager {
     this.spawnTimer = isNight ? 2.8 : 3.5;
 
     const wildCount = this.creatures.filter(
-      (c) => !c.tamed && c.kind !== CreatureKind.VILLAGER
+      (c) => !c.tamed && c.kind !== CreatureKind.VILLAGER && c.kind !== CreatureKind.BOAT
     ).length;
     const maxWild = isNight ? 24 : 19;
     if (wildCount >= maxWild) return;
@@ -1070,7 +1156,11 @@ export class EntityManager {
 
     if (isNight) {
       // Nighttime Ecosystem: Zombies, Forest Stalkers, Desert Scorpions, Bandits & Ogres roam
-      if (biome === BiomeType.DESERT && roll < 0.34) {
+      if (
+        biome === BiomeType.DESERT &&
+        zone !== EcologicalZone.COASTAL_TROPICS &&
+        roll < 0.34
+      ) {
         kind = CreatureKind.DESERT_SCORPION;
         isElite = distFromOriginTiles > 36 && Math.random() < 0.25;
       } else if (
@@ -1096,19 +1186,26 @@ export class EntityManager {
         groupSize = Math.random() < 0.4 ? 2 : 1;
       } else {
         kind =
-          biome === BiomeType.DESERT
-            ? CreatureKind.CAMEL
-            : CreatureKind.SHEEP;
+          biome === BiomeType.DESERT && zone !== EcologicalZone.COASTAL_TROPICS
+            ? Math.random() < 0.08
+              ? CreatureKind.CAMEL
+              : CreatureKind.DESERT_SCORPION
+            : Math.random() < 0.25
+              ? CreatureKind.HORSE
+              : CreatureKind.SHEEP;
       }
     } else {
       // Daytime Ecological Habitat Spawning
       switch (zone) {
         case EcologicalZone.MEADOW_CLEARING:
         case EcologicalZone.COASTAL_TROPICS: {
-          if (roll < 0.72) {
+          if (roll < 0.54) {
             kind = CreatureKind.SHEEP;
             groupSize = Math.random() < 0.55 ? 2 : 1;
-          } else if (roll < 0.94 || distFromOriginTiles < 18) {
+          } else if (roll < 0.78) {
+            kind = CreatureKind.HORSE;
+            groupSize = Math.random() < 0.25 ? 2 : 1;
+          } else if (roll < 0.95 || distFromOriginTiles < 18) {
             kind = CreatureKind.BOAR;
           } else {
             kind = CreatureKind.BANDIT;
@@ -1117,12 +1214,14 @@ export class EntityManager {
         }
 
         case EcologicalZone.OVERGROWN_SHRUBLAND: {
-          if (roll < 0.48) {
+          if (roll < 0.42) {
             kind = CreatureKind.BOAR;
             groupSize = Math.random() < 0.4 ? 2 : 1;
-          } else if (roll < 0.74) {
+          } else if (roll < 0.64) {
             kind = CreatureKind.SHEEP;
-          } else if (roll < 0.88 && distFromOriginTiles > 14) {
+          } else if (roll < 0.78) {
+            kind = CreatureKind.HORSE;
+          } else if (roll < 0.9 && distFromOriginTiles > 14) {
             kind = CreatureKind.FOREST_STALKER;
           } else if (distFromOriginTiles > 18) {
             kind = CreatureKind.BANDIT;
@@ -1168,15 +1267,16 @@ export class EntityManager {
 
         case EcologicalZone.OPEN_SAND_DUNES:
         case EcologicalZone.DESERT_OASIS: {
-          if (roll < 0.68) {
+          // Camels are now very rare in the desert (~7% chance)
+          if (roll < 0.07) {
             kind = CreatureKind.CAMEL;
-            groupSize = Math.random() < 0.45 ? 2 : 1;
-          } else if (roll < 0.88 && distFromOriginTiles > 14) {
+            groupSize = 1;
+          } else if (roll < 0.64) {
             kind = CreatureKind.DESERT_SCORPION;
-          } else if (distFromOriginTiles > 20) {
+          } else if (distFromOriginTiles > 18) {
             kind = CreatureKind.BANDIT;
           } else {
-            kind = CreatureKind.CAMEL;
+            kind = CreatureKind.DESERT_SCORPION;
           }
           break;
         }
@@ -1184,13 +1284,15 @@ export class EntityManager {
         case EcologicalZone.CACTUS_SCRUBLAND:
         case EcologicalZone.CRYSTAL_BADLANDS:
         default: {
-          if (roll < 0.35) {
+          // Camels are very rare (~5% chance)
+          if (roll < 0.05) {
             kind = CreatureKind.CAMEL;
-          } else if (roll < 0.68) {
+            groupSize = 1;
+          } else if (roll < 0.62) {
             kind = CreatureKind.DESERT_SCORPION;
             isElite =
               zone === EcologicalZone.CRYSTAL_BADLANDS && Math.random() < 0.28;
-          } else if (roll < 0.86 && distFromOriginTiles > 18) {
+          } else if (roll < 0.84 && distFromOriginTiles > 18) {
             kind =
               zone === EcologicalZone.CRYSTAL_BADLANDS
                 ? CreatureKind.STONE_GOLEM

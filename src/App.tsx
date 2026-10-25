@@ -79,6 +79,15 @@ export default function App() {
   const [snapshot, setSnapshot] = useState<HudSnapshot | null>(null);
   const [activeModal, setActiveModal] = useState<ActiveModal>('NONE');
   const [isEditingHud, setIsEditingHud] = useState<boolean>(false);
+  const [isMountSaddlebagOpen, setIsMountSaddlebagOpen] =
+    useState<boolean>(false);
+  const [transitionState, setTransitionState] = useState<{
+    active: boolean;
+    title: string;
+    subtitle: string;
+    stepLabel: string;
+    progress: number;
+  } | null>(null);
   const [stationContext, setStationContext] = useState<PlaceableType | null>(
     null
   );
@@ -320,50 +329,165 @@ export default function App() {
         setStationContext(interactedStation);
         setCraftInitialTab('craft');
         setActiveModal('CRAFT');
+        engine.setUiPauseRequested(true);
       },
       (interactedNpc) => {
         setActiveNpcId(interactedNpc.id);
         setActiveModal('NPC_TRADE');
+        engine.setUiPauseRequested(true);
       },
       (interactedChest) => {
         setActiveChestId(interactedChest.id);
         setActiveModal('CHEST');
+        engine.setUiPauseRequested(true);
       },
       (interactedStall) => {
         setActiveStallId(interactedStall.id);
         setActiveModal('MARKET_STALL');
+        engine.setUiPauseRequested(true);
       },
       guestMultiplayerRef.current,
       (reason: string) => {
-        guestMultiplayerRef.current = null;
-        setActiveModal('NONE');
-        setIsEditingHud(false);
-        setActiveWorldSave(null);
-        setSnapshot(null);
-        showToast(reason);
+        setTransitionState({
+          active: true,
+          title: 'ENCERRANDO SESSÃO ONLINE',
+          subtitle: reason || 'O anfitrião encerrou a sessão.',
+          stepLabel: 'Salvando herói e montaria integrada...',
+          progress: 75,
+        });
+        void engine.saveGame(true).finally(() => {
+          window.setTimeout(() => {
+            guestMultiplayerRef.current = null;
+            setActiveModal('NONE');
+            setIsEditingHud(false);
+            setIsMountSaddlebagOpen(false);
+            setActiveWorldSave(null);
+            setSnapshot(null);
+            setTransitionState(null);
+            showToast(reason);
+          }, 380);
+        });
       }
     );
     guestMultiplayerRef.current = null;
     engineRef.current = engine;
     engine.initialize(canvas);
 
+    // Smoothly complete the entry transition loading screen once the canvas and initial chunks are ready
+    setTransitionState((prev) =>
+      prev
+        ? {
+            ...prev,
+            stepLabel: 'Mundo pronto! Sincronizando interface...',
+            progress: 100,
+          }
+        : null
+    );
+    const readyTimer = window.setTimeout(() => {
+      setTransitionState(null);
+    }, 320);
+
     return () => {
+      window.clearTimeout(readyTimer);
       window.removeEventListener('resize', resizeCanvas);
-      engine.saveGame(true);
+      void engine.saveGame(true);
       engine.destroy();
       engineRef.current = null;
     };
   }, [activeWorldSave]);
 
+  // Synchronize real game pause whenever Map, Inventory, Craft, Character, Pause, Chest, NPC Trade, Stall, Saddlebag, or HUD Editor is open.
+  // GameEngine automatically disables pause while network multiplayer players are connected.
+  useEffect(() => {
+    if (!engineRef.current) return;
+    const shouldRequestPause =
+      activeModal !== 'NONE' || isEditingHud || isMountSaddlebagOpen;
+    engineRef.current.setUiPauseRequested(shouldRequestPause);
+  }, [activeModal, isEditingHud, isMountSaddlebagOpen]);
+
+  const handleStartWorldWithTransition = (
+    saveData: WorldSaveData,
+    mpManager?: MultiplayerManager | null
+  ) => {
+    if (transitionState?.active) return;
+    const isGuest = Boolean(mpManager && mpManager.role === 'GUEST');
+    setTransitionState({
+      active: true,
+      title: isGuest
+        ? `CONECTANDO A ${saveData.metadata.name.toUpperCase()}`
+        : `CARREGANDO ${saveData.metadata.name.toUpperCase()}`,
+      subtitle: isGuest
+        ? 'Sincronizando mundo do anfitrião, entidades e sua montaria integrada...'
+        : 'Gerando terreno procedural, biomas, vilas, águas e restaurando estado salvo...',
+      stepLabel: 'Inicializando motor gráfico e superfície Canvas...',
+      progress: 45,
+    });
+
+    window.setTimeout(() => {
+      guestMultiplayerRef.current = mpManager || null;
+      setActiveModal('NONE');
+      setIsEditingHud(false);
+      setIsMountSaddlebagOpen(false);
+      setActiveWorldSave(saveData);
+    }, 220);
+  };
+
+  const handleSaveAndExitToMenu = async () => {
+    if (transitionState?.active) return;
+    setTransitionState({
+      active: true,
+      title: 'SALVANDO E SAINDO PARA O MENU',
+      subtitle:
+        'Preservando inventário, construções e montaria integrada ao personagem...',
+      stepLabel: 'Gravando dados locais e encerrando sessão...',
+      progress: 60,
+    });
+
+    try {
+      if (activeChestId && engineRef.current) {
+        engineRef.current.closeChest(activeChestId);
+      }
+      if (engineRef.current) {
+        await engineRef.current.saveGame(false);
+      }
+    } catch {
+      // ignore
+    }
+
+    setTransitionState((prev) =>
+      prev
+        ? {
+            ...prev,
+            stepLabel: 'Transição concluída!',
+            progress: 100,
+          }
+        : null
+    );
+
+    window.setTimeout(() => {
+      setActiveModal('NONE');
+      setStationContext(null);
+      setActiveChestId(null);
+      setActiveStallId(null);
+      setIsEditingHud(false);
+      setIsMountSaddlebagOpen(false);
+      setActiveWorldSave(null);
+      setSnapshot(null);
+      setTransitionState(null);
+    }, 320);
+  };
+
   const openModal = (modal: ActiveModal) => {
+    if (transitionState?.active) return;
     setIsEditingHud(false);
     setActiveModal(modal);
     if (engineRef.current) {
-      engineRef.current.isPaused = modal === 'PAUSE';
+      engineRef.current.setUiPauseRequested(modal !== 'NONE' || isMountSaddlebagOpen);
     }
   };
 
   const openHandCraftModal = () => {
+    if (transitionState?.active) return;
     setStationContext(null);
     setCraftInitialTab('inventory');
     openModal('CRAFT');
@@ -378,7 +502,7 @@ export default function App() {
     setActiveChestId(null);
     setActiveStallId(null);
     if (engineRef.current) {
-      engineRef.current.isPaused = false;
+      engineRef.current.setUiPauseRequested(isEditingHud || isMountSaddlebagOpen);
     }
   };
 
@@ -386,19 +510,29 @@ export default function App() {
     setActiveModal('NONE');
     setIsEditingHud(true);
     if (engineRef.current) {
-      engineRef.current.isPaused = true;
+      engineRef.current.setUiPauseRequested(true);
     }
   };
 
   const handleFinishEditingHud = () => {
     setIsEditingHud(false);
     if (engineRef.current) {
-      engineRef.current.isPaused = false;
+      engineRef.current.setUiPauseRequested(
+        activeModal !== 'NONE' || isMountSaddlebagOpen
+      );
     }
   };
 
   const handleCanvasPointerDown = (e: React.PointerEvent<HTMLCanvasElement>) => {
-    if (!engineRef.current || activeModal !== 'NONE' || isEditingHud) return;
+    if (
+      !engineRef.current ||
+      activeModal !== 'NONE' ||
+      isEditingHud ||
+      isMountSaddlebagOpen ||
+      transitionState?.active
+    ) {
+      return;
+    }
     const rect = e.currentTarget.getBoundingClientRect();
     const sx = e.clientX - rect.left;
     const sy = e.clientY - rect.top;
@@ -587,16 +721,10 @@ export default function App() {
           onToggleFullscreen={toggleFullscreen}
           onUpdateSettings={handleUpdateSettings}
           onStartWorld={(saveData) => {
-            guestMultiplayerRef.current = null;
-            setActiveModal('NONE');
-            setIsEditingHud(false);
-            setActiveWorldSave(saveData);
+            handleStartWorldWithTransition(saveData, null);
           }}
           onJoinOnlineWorld={(saveData, mpManager) => {
-            guestMultiplayerRef.current = mpManager;
-            setActiveModal('NONE');
-            setIsEditingHud(false);
-            setActiveWorldSave(saveData);
+            handleStartWorldWithTransition(saveData, mpManager);
           }}
         />
       ) : (
@@ -607,6 +735,28 @@ export default function App() {
             onPointerDown={handleCanvasPointerDown}
             className="block w-full h-full pixelated cursor-crosshair touch-none"
           />
+
+          {/* Real Pause / Active Multiplayer Indicator Pill when interacting with Map, Inventory, Craft, Pause, or Saddlebag */}
+          {snapshot &&
+            (activeModal !== 'NONE' ||
+              isEditingHud ||
+              isMountSaddlebagOpen) && (
+              <div className="fixed top-2 left-1/2 -translate-x-1/2 z-[55] pointer-events-none">
+                <div
+                  className={`medieval-panel px-3 py-1 flex items-center gap-2 text-[10px] font-pixel font-bold shadow-lg ${
+                    snapshot.isPaused
+                      ? 'border-amber-500/80 text-amber-300'
+                      : 'border-sky-500/80 text-sky-300'
+                  }`}
+                >
+                  <span>
+                    {snapshot.isPaused
+                      ? '⏸ JOGO PAUSADO'
+                      : '🌐 MULTIPLAYER EM REDE ATIVO — O MUNDO CONTINUA EM TEMPO REAL'}
+                  </span>
+                </div>
+              </div>
+            )}
 
           {/* Responsive Medieval Pixel Mobile HUD + Live WYSIWYG Control Editor */}
           {engineRef.current && snapshot && (
@@ -624,6 +774,14 @@ export default function App() {
               onOpenCharacter={() => openModal('CHARACTER')}
               onOpenOnlineInvite={() => openModal('ONLINE_INVITE')}
               onOpenPause={() => openModal('PAUSE')}
+              onMountSaddlebagToggle={(open) => {
+                setIsMountSaddlebagOpen(open);
+                if (engineRef.current) {
+                  engineRef.current.setUiPauseRequested(
+                    open || activeModal !== 'NONE' || isEditingHud
+                  );
+                }
+              }}
             />
           )}
 
@@ -733,10 +891,7 @@ export default function App() {
               onOpenOnlineInvite={() => openModal('ONLINE_INVITE')}
               onResume={closeModal}
               onExitToMenu={() => {
-                closeModal();
-                setIsEditingHud(false);
-                setActiveWorldSave(null);
-                setSnapshot(null);
+                void handleSaveAndExitToMenu();
               }}
             />
           )}
@@ -754,8 +909,7 @@ export default function App() {
                 <button
                   type="button"
                   onClick={() => {
-                    setActiveWorldSave(null);
-                    setSnapshot(null);
+                    void handleSaveAndExitToMenu();
                   }}
                   className="w-full min-h-[44px] medieval-btn-gold font-pixel text-xs font-bold"
                 >
@@ -764,6 +918,38 @@ export default function App() {
               </div>
             </div>
           )}
+        </div>
+      )}
+
+      {/* Global Transition Loading Screen to prevent race conditions and state inconsistencies */}
+      {transitionState?.active && (
+        <div className="fixed inset-0 z-[95] bg-[#0e0906]/95 backdrop-blur-sm flex items-center justify-center p-4 select-none">
+          <div className="w-full max-w-md medieval-panel p-6 text-center space-y-4 border-2 border-amber-500/70 shadow-[0_0_32px_rgba(0,0,0,0.9)]">
+            <div className="w-14 h-14 mx-auto mc-slot-active flex items-center justify-center">
+              <div className="w-7 h-7 border-3 border-amber-400 border-t-transparent rounded-full animate-spin" />
+            </div>
+            <div className="space-y-1.5">
+              <h2 className="font-pixel text-sm sm:text-base font-bold text-amber-400 tracking-wide">
+                {transitionState.title}
+              </h2>
+              <p className="text-xs text-[#e5d5b5] leading-relaxed">
+                {transitionState.subtitle}
+              </p>
+            </div>
+            <div className="space-y-1.5">
+              <div className="w-full h-3 medieval-inset overflow-hidden p-[2px]">
+                <div
+                  className="h-full bg-gradient-to-r from-amber-600 via-amber-400 to-yellow-300 transition-all duration-200"
+                  style={{
+                    width: `${Math.max(15, Math.min(100, transitionState.progress))}%`,
+                  }}
+                />
+              </div>
+              <div className="text-[10px] font-mono-tabular text-amber-300/90 font-semibold">
+                {transitionState.stepLabel}
+              </div>
+            </div>
+          </div>
         </div>
       )}
     </div>

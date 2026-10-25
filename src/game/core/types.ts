@@ -41,6 +41,7 @@ export enum ToolType {
   SWORD = 'SWORD',
   HOE = 'HOE',
   WATERING_CAN = 'WATERING_CAN',
+  FISHING_ROD = 'FISHING_ROD',
 }
 
 export type Direction = 'down' | 'up' | 'left' | 'right';
@@ -139,6 +140,9 @@ export interface ConstructionBlueprint {
   lightRadius: number;
   speedMultiplier?: number;
   isInteractive?: boolean;
+  materialKind?: MaterialKind;
+  requiredTool?: ToolType;
+  requiredTier?: number;
 }
 
 export enum NatureNodeType {
@@ -257,10 +261,13 @@ export interface ChunkData {
 }
 
 export enum CreatureKind {
-  // Animals (Domesticable)
+  // Animals (Domesticable & Mountable)
   SHEEP = 'SHEEP',
   BOAR = 'BOAR',
   CAMEL = 'CAMEL',
+  HORSE = 'HORSE',
+  // Water Mount / Vessel
+  BOAT = 'BOAT',
   // Classic Enemies
   ZOMBIE = 'ZOMBIE',
   OGRE = 'OGRE',
@@ -308,6 +315,17 @@ export interface CreatureEntity {
   maxHp: number;
   attackDamage: number;
   moveSpeed: number;
+  swimSpeed?: number;
+  isSwimming?: boolean;
+  // Mount, Saddle & Boat properties
+  hasSaddle?: boolean;
+  mountSpeed?: number; // Individual mount speed for Horse & Camel, or water speed for Boat
+  mountStamina?: number; // Current gallop stamina for Horse (max 100) & Camel (max 165)
+  mountMaxStamina?: number;
+  mountInventory?: (InventorySlot | null)[]; // 8-slot saddlebag inventory when equipped with a saddle
+  riderPlayerId?: string | null; // Primary driver/rider ID ('LOCAL' or peerId)
+  passengerPlayerId?: string | null; // 2nd seat player ID on a Boat ('LOCAL' or peerId)
+  passengerPetId?: string | null; // 2nd seat following pet ID on a Boat
   // Animation states
   animFrame: number;
   animTimer: number;
@@ -378,6 +396,7 @@ export const BACKPACK_SIZE = 24;
 export const TOTAL_INVENTORY_SIZE = HOTBAR_SIZE + BACKPACK_SIZE; // 32 slots (8 hotbar + 3x8 backpack)
 export const CHEST_STORAGE_SIZE = 24; // 24 slots (3x8 chest storage grid)
 export const MARKET_STALL_SIZE = 8; // 8 display slots on a Market Stall counter
+export const MOUNT_STORAGE_SIZE = 8; // 8 slots in a saddled Horse or Camel saddlebag
 
 export interface InventorySlot {
   itemId: string;
@@ -406,12 +425,35 @@ export interface MarketPurchaseOffer {
   expiresTimer: number;
 }
 
+export type MaterialKind =
+  | 'FIBER_FOLIAGE'
+  | 'SOFT_WOOD'
+  | 'ROUGH_STONE'
+  | 'HARDWOOD'
+  | 'IRON_MINERAL'
+  | 'PRIMORDIAL_WOOD'
+  | 'ASTRAL_MINERAL';
+
+export interface DeathBag {
+  id: string;
+  ownerName: string;
+  x: number;
+  y: number;
+  items: InventorySlot[];
+  goldCoins: number;
+  createdAt: number;
+  expiresTimer: number; // Countdown in seconds (600s = 10 minutes)
+  maxTimer: number; // 600
+}
+
 export interface MapWaypoint {
   id: string;
   label: string;
   tileX: number;
   tileY: number;
   color: string;
+  isDeathBag?: boolean;
+  expiresTimer?: number;
 }
 
 export interface PlayerAttributes {
@@ -432,6 +474,16 @@ export interface PlayerAppearance {
   eyeColor: string;
   shirtColor: string;
   pantsColor: string;
+}
+
+export interface FishingState {
+  active: boolean;
+  bobberX: number;
+  bobberY: number;
+  phase: 'waiting' | 'biting';
+  timer: number;
+  biteWindowTimer: number;
+  rippleTimer: number;
 }
 
 export interface PlayerState {
@@ -459,8 +511,18 @@ export interface PlayerState {
   appearance: PlayerAppearance; // Custom visual appearance (skin, hair, base clothes)
   strengthBuffTimer?: number;
   speedBuffTimer?: number;
+  fishingState?: FishingState | null;
+  mountedEntityId?: string | null;
+  mountedCreatureData?: CreatureEntity | null;
+  isGalloping?: boolean;
+  // Respawn point defined by the last rest point interacted with or used
+  respawnX?: number;
+  respawnY?: number;
+  respawnLabel?: string;
   // Animation state
   isMoving: boolean;
+  isSwimming?: boolean;
+  swimSpeed?: number;
   animFrame: number;
   animTimer: number;
   swingTimer: number;
@@ -483,6 +545,10 @@ export interface RemotePlayerState {
   maxHp: number;
   level: number;
   isMoving: boolean;
+  isSwimming?: boolean;
+  mountedEntityId?: string | null;
+  mountedCreatureData?: CreatureEntity | null;
+  isGalloping?: boolean;
   animFrame: number;
   animTimer: number;
   swingTimer: number;
@@ -510,7 +576,7 @@ export interface OnlineActivationStep {
   detail?: string;
 }
 
-export const GAME_VERSION = '0.4.2-beta';
+export const GAME_VERSION = '0.4.3-beta';
 
 export interface OnlineSessionInfo {
   isOnline: boolean;
@@ -525,6 +591,8 @@ export interface OnlineSessionInfo {
   activationState?: 'IDLE' | 'ACTIVATING' | 'ACTIVE' | 'ERROR';
   activationSteps?: OnlineActivationStep[];
   transportMode?: 'WEBSOCKET' | 'HTTP_SYNC' | 'P2P_WEBRTC' | 'NONE';
+  syncStatus?: 'SYNCED' | 'RESYNCING' | 'DEGRADED';
+  worldRevision?: number;
   lastError?: string | null;
 }
 
@@ -552,6 +620,7 @@ export interface WorldSaveData {
   creatures: CreatureEntity[];
   droppedItems: DroppedItem[];
   waypoints?: MapWaypoint[];
+  deathBags?: DeathBag[];
 }
 
 export interface HudElementPlacement {

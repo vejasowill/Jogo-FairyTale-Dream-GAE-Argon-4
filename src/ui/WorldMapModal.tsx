@@ -113,6 +113,8 @@ export const WorldMapModal: React.FC<WorldMapModalProps> = ({
             ctx.fillStyle = '#4c9444';
           } else if (zone === EcologicalZone.ROCKY_HIGHLANDS) {
             ctx.fillStyle = '#5c7042';
+          } else if (zone === EcologicalZone.COASTAL_TROPICS) {
+            ctx.fillStyle = '#f3d98b';
           } else if (zone === EcologicalZone.DESERT_OASIS) {
             ctx.fillStyle = '#34a853';
           } else if (zone === EcologicalZone.CRYSTAL_BADLANDS) {
@@ -197,19 +199,44 @@ export const WorldMapModal: React.FC<WorldMapModalProps> = ({
       }
     }
 
-    // Draw Custom Waypoints
+    // Draw Respawn Point Marker (Last used Rest Point)
+    const respawnTx = Math.floor((player.respawnX ?? 16) / TILE_SIZE);
+    const respawnTy = Math.floor((player.respawnY ?? 16) / TILE_SIZE);
+    const rsx = centerX + (respawnTx - playerTx) * zoom;
+    const rsy = centerY + (respawnTy - playerTy) * zoom;
+    ctx.fillStyle = '#4ade80';
+    ctx.fillRect(rsx - 3, rsy - 3, 6, 6);
+    ctx.strokeStyle = '#052e16';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(rsx - 3, rsy - 3, 6, 6);
+
+    // Draw Custom Waypoints & Active Death Bag Markers
     for (const wp of waypoints) {
       const sx = centerX + (wp.tileX - playerTx) * zoom;
       const sy = centerY + (wp.tileY - playerTy) * zoom;
-      ctx.fillStyle = wp.color || '#f59e0b';
-      ctx.fillRect(sx - 3, sy - 3, 6, 6);
-      ctx.strokeStyle = '#000';
-      ctx.lineWidth = 1;
-      ctx.strokeRect(sx - 3, sy - 3, 6, 6);
+      if (wp.isDeathBag) {
+        ctx.fillStyle = '#f43f5e';
+        ctx.beginPath();
+        ctx.arc(sx, sy, 5, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.strokeStyle = '#fde047';
+        ctx.lineWidth = 1.5;
+        ctx.stroke();
 
-      ctx.font = 'bold 9px "Plus Jakarta Sans", sans-serif';
-      ctx.fillStyle = '#fef08a';
-      ctx.fillText(wp.label, sx + 5, sy + 3);
+        ctx.font = 'bold 9px "Plus Jakarta Sans", sans-serif';
+        ctx.fillStyle = '#fda4af';
+        ctx.fillText(wp.label, sx + 7, sy + 3);
+      } else {
+        ctx.fillStyle = wp.color || '#f59e0b';
+        ctx.fillRect(sx - 3, sy - 3, 6, 6);
+        ctx.strokeStyle = '#000';
+        ctx.lineWidth = 1;
+        ctx.strokeRect(sx - 3, sy - 3, 6, 6);
+
+        ctx.font = 'bold 9px "Plus Jakarta Sans", sans-serif';
+        ctx.fillStyle = '#fef08a';
+        ctx.fillText(wp.label, sx + 5, sy + 3);
+      }
     }
 
     // Draw Player Marker
@@ -277,7 +304,7 @@ export const WorldMapModal: React.FC<WorldMapModalProps> = ({
                 CARTOGRAFIA DE CHUNKS EXPLORADOS
               </h2>
               <span className="text-[10px] text-[#c4ab7d] font-mono-tabular">
-                Pos: ({playerTx}, {playerTy}) · Revelados: {world.getExploredChunksCount()}
+                Pos: ({playerTx}, {playerTy}) · Renascer: {player.respawnLabel || 'Acampamento Inicial'} ({Math.floor((player.respawnX ?? 16) / TILE_SIZE)}, {Math.floor((player.respawnY ?? 16) / TILE_SIZE)})
               </span>
             </div>
           </div>
@@ -380,6 +407,12 @@ export const WorldMapModal: React.FC<WorldMapModalProps> = ({
               <span className="flex items-center gap-1">
                 <span className="w-2 h-2 bg-[#fde047] inline-block" /> Base/Ponte
               </span>
+              <span className="flex items-center gap-1">
+                <span className="w-2 h-2 bg-[#4ade80] inline-block" /> Renascimento
+              </span>
+              <span className="flex items-center gap-1">
+                <span className="w-2 h-2 rounded-full bg-[#f43f5e] inline-block" /> Bolsinha (10m)
+              </span>
             </div>
           </div>
 
@@ -417,7 +450,9 @@ export const WorldMapModal: React.FC<WorldMapModalProps> = ({
                 {waypoints.map((wp) => (
                   <div
                     key={wp.id}
-                    className="mc-slot px-2 py-1.5 flex items-center justify-between gap-1.5 text-[11px]"
+                    className={`mc-slot px-2 py-1.5 flex items-center justify-between gap-1.5 text-[11px] ${
+                      wp.isDeathBag ? 'border border-rose-500/60 bg-rose-950/30' : ''
+                    }`}
                   >
                     <button
                       onClick={() =>
@@ -428,20 +463,31 @@ export const WorldMapModal: React.FC<WorldMapModalProps> = ({
                       }
                       className="text-left flex-1 truncate"
                     >
-                      <div className="font-bold text-amber-300 truncate">
+                      <div
+                        className={`font-bold truncate ${
+                          wp.isDeathBag ? 'text-rose-300' : 'text-amber-300'
+                        }`}
+                      >
                         {wp.label}
                       </div>
                       <div className="text-[9px] font-mono-tabular text-[#c4ab7d]">
                         Tile ({wp.tileX}, {wp.tileY})
+                        {wp.isDeathBag ? ' · Some ao coletar ou 10m' : ''}
                       </div>
                     </button>
-                    <button
-                      onClick={() => engine.removeWaypoint(wp.id)}
-                      className="p-1 text-rose-400 hover:text-rose-200"
-                      title="Remover Marcador"
-                    >
-                      <Trash2 className="w-3.5 h-3.5" />
-                    </button>
+                    {wp.isDeathBag ? (
+                      <span className="px-1.5 py-0.5 text-[8px] font-bold bg-rose-900/60 text-rose-200 border border-rose-500/40 shrink-0">
+                        ESPÓLIOS
+                      </span>
+                    ) : (
+                      <button
+                        onClick={() => engine.removeWaypoint(wp.id)}
+                        className="p-1 text-rose-400 hover:text-rose-200"
+                        title="Remover Marcador"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    )}
                   </div>
                 ))}
               </div>

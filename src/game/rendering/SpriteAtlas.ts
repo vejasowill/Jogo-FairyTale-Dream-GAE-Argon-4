@@ -2581,6 +2581,173 @@ class SpriteAtlasManager {
         b: '#991b1b',
       }
     );
+
+    // === FISHING SYSTEM SPRITES ===
+    // Fishing Rod (Vara de Pesca Rústica)
+    registerItem(
+      'fishing_rod',
+      [
+        '...........bbb..',
+        '..........bbwb..',
+        '.........bb..w..',
+        '........bb...w..',
+        '.......bb....w..',
+        '......bb.....w..',
+        '.....bb......r..',
+        '....bb......rrr.',
+        '...bb.......www.',
+        '..hbb........r..',
+        '.hhb............',
+        '.hh.............',
+        '................',
+        '................',
+        '................',
+        '................',
+      ],
+      { b: '#b45309', h: '#451a03', w: '#e2e8f0', r: '#ef4444' }
+    );
+
+    // Tilápia Prateada (Basic Fish)
+    registerItem(
+      'fish_tilapia',
+      [
+        '................',
+        '......dddddd....',
+        '....ddssssssdd..',
+        '...dsswwwwwwssd.',
+        '..dswsswwwwsedd.',
+        '.ddssssssssssdd.',
+        'dd.dsswwwwwwssd.',
+        'd...ddssssssdd..',
+        '......dddddd....',
+        '................',
+        '................',
+        '................',
+        '................',
+        '................',
+        '................',
+        '................',
+      ],
+      { d: '#1e293b', s: '#94a3b8', w: '#e2e8f0', e: '#0f172a' }
+    );
+
+    // Salmão Real (Rare Fish)
+    registerItem(
+      'fish_salmon',
+      [
+        '................',
+        '......dddddd....',
+        '....ddttttttdd..',
+        '...dttrrrrrrttd.',
+        '..dtrrrppprrted.',
+        '.ddttrrrrrrrrdd.',
+        'dd.dttppppppttd.',
+        'd...ddttttttdd..',
+        '......dddddd....',
+        '................',
+        '................',
+        '................',
+        '................',
+        '................',
+        '................',
+        '................',
+      ],
+      { d: '#0f172a', t: '#0f766e', r: '#fb7185', p: '#fda4af', e: '#fef08a' }
+    );
+
+    // Peixe-Sol Dourado (Very Rare Golden Fish)
+    registerItem(
+      'fish_golden',
+      [
+        '.......gggg.....',
+        '.....ggyyyygg...',
+        '...ggyywwwwyygg.',
+        '..gyywwyyyywwyg.',
+        '.ggywwwwyyyyzeg.',
+        'gg.gyywwwwwwyyg.',
+        'g...ggyyyyyygg..',
+        '......gggggg....',
+        '................',
+        '................',
+        '................',
+        '................',
+        '................',
+        '................',
+        '................',
+        '................',
+      ],
+      { g: '#b45309', y: '#f59e0b', w: '#fef08a', z: '#ffffff', e: '#0284c7' }
+    );
+
+    // Peixe Assado na Brasa (Cooked Fish)
+    registerItem(
+      'cooked_fish',
+      [
+        '.....ss..ss.....',
+        '......ss..ss....',
+        '......dddddd....',
+        '....ddbbbbbbdd..',
+        '...dbbllllllbbd.',
+        '..dblbbllllbedd.',
+        '.ddbbbbbbbbbbdd.',
+        'dd.dbbllllllbbd.',
+        'd...ddbbbbbbdd..',
+        '......dddddd....',
+        '................',
+        '................',
+        '................',
+        '................',
+        '................',
+        '................',
+      ],
+      { d: '#2a1205', b: '#92400e', l: '#d97706', e: '#fef08a', s: '#cbd5e1' }
+    );
+
+    registerItem(
+      'saddle',
+      [
+        '................',
+        '....ddd..ddd....',
+        '...dlllddllld...',
+        '..dlbbbbbbbbld..',
+        '..dbbbggggbbbd..',
+        '..dbbbllllbbbd..',
+        '...ddddbbdddd...',
+        '....d.dbbd.d....',
+        '....d..dd..d....',
+        '...gsg....gsg...',
+        '...ggg....ggg...',
+        '................',
+        '................',
+        '................',
+        '................',
+        '................',
+      ],
+      { d: '#2a1205', b: '#78350f', l: '#b45309', g: '#fbbf24', s: '#cbd5e1' }
+    );
+
+    registerItem(
+      'wood_boat',
+      [
+        '................',
+        '.......dd.......',
+        '......dbbd......',
+        '......dbbd......',
+        '..dddddbbddddd..',
+        '.dlllllllllllld.',
+        'dlbbbbbbbbbbbbld',
+        'dbbbddddddddbbbd',
+        '.dbbbbbbbbbbbbd.',
+        '..dddddddddddd..',
+        '...wwwwwwwwww...',
+        '................',
+        '................',
+        '................',
+        '................',
+        '................',
+      ],
+      { d: '#2a1205', b: '#78350f', l: '#b45309', w: '#38bdf8' }
+    );
   }
 
   private buildNatureNodes(): void {
@@ -4568,14 +4735,83 @@ class SpriteAtlasManager {
       ctx.fillStyle = '#fbbf24';
       ctx.fillRect(12, 7, 7, 4);
       ctx.fillRect(26, 5, 4, 4);
-      // Ornate Crimson & Gold Nomad Saddle Cloth
-      ctx.fillStyle = '#b91c1c';
-      ctx.fillRect(10, 13, 11, 6);
-      ctx.fillStyle = '#fde047';
-      ctx.fillRect(11, 18, 9, 1);
+      // Natural furry hump shading (saddle is drawn dynamically when cr.hasSaddle is true)
+      ctx.fillStyle = '#b45309';
+      ctx.fillRect(11, 12, 9, 3);
       // Eye
       ctx.fillStyle = '#0f172a';
       ctx.fillRect(29, 6, 1, 2);
+    });
+
+    // HORSE (36x32 — Sleek Plains Horse with flowing mane, tail, and muscular stride)
+    buildCreature(CreatureKind.HORSE, 36, 32, (ctx, f) => {
+      const leg = f % 2;
+      ctx.fillStyle = 'rgba(0,0,0,0.32)';
+      ctx.fillRect(5, 28, 25, 3);
+      // Dark outline
+      ctx.fillStyle = '#1c1008';
+      ctx.fillRect(6, 11, 20, 10);
+      ctx.fillRect(22, 4, 9, 12);
+      // Flowing dark tail
+      ctx.fillStyle = '#27170c';
+      ctx.fillRect(2, 12 + leg, 5, 8);
+      ctx.fillRect(1, 15 + leg, 3, 6);
+      // Agile Legs & Hooves
+      ctx.fillStyle = '#5c2d16';
+      ctx.fillRect(8, 20 + leg, 3, 9);
+      ctx.fillRect(13, 21 - leg, 2, 8);
+      ctx.fillRect(20, 20 + leg, 2, 8);
+      ctx.fillRect(23, 21 - leg, 3, 9);
+      ctx.fillStyle = '#1e293b';
+      ctx.fillRect(8, 28 + leg, 3, 2);
+      ctx.fillRect(23, 28 - leg, 3, 2);
+      // Chestnut Coat, Neck & Head
+      ctx.fillStyle = '#854d0e';
+      ctx.fillRect(7, 12, 18, 8);
+      ctx.fillRect(23, 5, 6, 10);
+      ctx.fillRect(26, 6, 5, 5);
+      // Coat highlight & white blaze
+      ctx.fillStyle = '#a16207';
+      ctx.fillRect(8, 12, 15, 4);
+      ctx.fillRect(24, 6, 4, 5);
+      ctx.fillStyle = '#fef3c7';
+      ctx.fillRect(29, 6, 2, 3);
+      // Dark Mane & Ears
+      ctx.fillStyle = '#27170c';
+      ctx.fillRect(21, 5, 3, 8);
+      ctx.fillRect(25, 3, 2, 3);
+      // Eye
+      ctx.fillStyle = '#0f172a';
+      ctx.fillRect(27, 7, 1, 2);
+    });
+
+    // BOAT (40x24 — Sturdy Twin-Seat Wooden Rowboat with curved prow, benches, and oars)
+    buildCreature(CreatureKind.BOAT, 40, 24, (ctx, f) => {
+      const oarShift = f % 2 === 0 ? 0 : 2;
+      // Water wake shadow
+      ctx.fillStyle = 'rgba(14, 116, 144, 0.45)';
+      ctx.fillRect(3, 17, 34, 5);
+      // Hull outer dark rim
+      ctx.fillStyle = '#2a1205';
+      ctx.fillRect(4, 8, 32, 10);
+      ctx.fillRect(2, 10, 36, 6);
+      // Warm oak hull planks
+      ctx.fillStyle = '#92400e';
+      ctx.fillRect(5, 9, 30, 8);
+      ctx.fillRect(3, 11, 34, 4);
+      // Hull gunwale highlight
+      ctx.fillStyle = '#d97706';
+      ctx.fillRect(5, 9, 30, 2);
+      // Interior dark deck & 2 wooden bench seats
+      ctx.fillStyle = '#451a03';
+      ctx.fillRect(8, 11, 24, 4);
+      ctx.fillStyle = '#b45309';
+      ctx.fillRect(12, 10, 4, 6); // Rear passenger/pet seat
+      ctx.fillRect(23, 10, 4, 6); // Front rower seat
+      // Side oars dipping in water
+      ctx.fillStyle = '#fde68a';
+      ctx.fillRect(19 - oarShift, 4, 2, 5);
+      ctx.fillRect(19 + oarShift, 16, 2, 6);
     });
 
     // ZOMBIE (22x26 — Humanoid undead night walker matching player height)

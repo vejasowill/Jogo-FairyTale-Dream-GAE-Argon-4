@@ -2,6 +2,8 @@ import { CONSTRUCTION_BLUEPRINTS, ITEMS, NATURE_BLUEPRINTS } from '../core/ItemR
 import {
   BiomeType,
   CreatureEntity,
+  CreatureKind,
+  DeathBag,
   DroppedItem,
   EcologicalZone,
   FloatingText,
@@ -28,13 +30,21 @@ interface RenderableItem {
 }
 
 export interface AimedTargetInfo {
-  kind: 'station' | 'wild_animal' | 'tamed_animal' | 'villager' | 'node' | 'crop';
+  kind:
+    | 'station'
+    | 'wild_animal'
+    | 'tamed_animal'
+    | 'villager'
+    | 'node'
+    | 'crop'
+    | 'death_bag';
   label: string;
   actionHint: string;
   worldX: number;
   worldY: number;
   stationType?: PlaceableType;
   creatureId?: string;
+  deathBagId?: string;
   iconItemId?: string;
   structureId?: string;
   cropType?: string;
@@ -381,16 +391,19 @@ export class GameRenderer {
       const nextTimer = prevTimer + dt;
       if (nextTimer >= 0.28) {
         this.entityStepMap.set(cr.id, 0);
+        const inWater = Boolean(cr.isSwimming || world.isWorldPosInWater(cr.x, cr.y));
         const biome = world.getBiomeAtWorld(cr.x, cr.y + 6);
         this.footprints.push({
           x: cr.x + (Math.random() - 0.5) * 5,
-          y: cr.y + 8,
-          color:
-            biome === BiomeType.DESERT
-              ? 'rgba(146, 64, 14, 0.28)'
-              : 'rgba(20, 83, 45, 0.28)',
-          timer: 1.0,
-          maxTimer: 1.0,
+          y: inWater ? cr.y + 6 : cr.y + 8,
+          color: inWater
+            ? 'rgba(186, 230, 253, 0.5)'
+            : biome === BiomeType.DESERT
+            ? 'rgba(146, 64, 14, 0.28)'
+            : 'rgba(20, 83, 45, 0.28)',
+          timer: inWater ? 0.75 : 1.0,
+          maxTimer: inWater ? 0.75 : 1.0,
+          isRipple: inWater,
         });
       } else {
         this.entityStepMap.set(cr.id, nextTimer);
@@ -411,7 +424,8 @@ export class GameRenderer {
     targetBuildTile: { tx: number; ty: number } | null,
     aimedTarget: AimedTargetInfo | null,
     buildOptions?: BuildRenderOptions,
-    remotePlayers: RemotePlayerState[] = []
+    remotePlayers: RemotePlayerState[] = [],
+    deathBags: DeathBag[] = []
   ): void {
     const dt =
       this.lastRenderTime > 0
@@ -605,7 +619,7 @@ export class GameRenderer {
       this.drawHitboxOverlayAroundPlayer(ctx, world, player);
     }
 
-    // 2. Placement Grid & Connected Continuity Preview if player holds a PLACEABLE item
+    // 2. Placement Grid & Connected Continuity Preview if player holds a PLACEABLE item or WOOD_BOAT
     if (
       heldItem &&
       heldItem.category === ItemCategory.PLACEABLE &&
@@ -622,6 +636,27 @@ export class GameRenderer {
         globalTime,
         buildOptions
       );
+    } else if (heldItem && heldItem.id === 'wood_boat' && targetBuildTile) {
+      const canPlaceBoat = world.isTileSwimmableWater(
+        targetBuildTile.tx,
+        targetBuildTile.ty
+      );
+      const bx = targetBuildTile.tx * TILE_SIZE;
+      const by = targetBuildTile.ty * TILE_SIZE;
+      ctx.save();
+      ctx.fillStyle = canPlaceBoat
+        ? 'rgba(56, 189, 248, 0.24)'
+        : 'rgba(239, 68, 68, 0.26)';
+      ctx.fillRect(bx + 1, by + 1, TILE_SIZE - 2, TILE_SIZE - 2);
+      ctx.strokeStyle = canPlaceBoat
+        ? 'rgba(56, 189, 248, 0.92)'
+        : 'rgba(239, 68, 68, 0.92)';
+      ctx.lineWidth = 1.5;
+      ctx.strokeRect(bx + 1.5, by + 1.5, TILE_SIZE - 3, TILE_SIZE - 3);
+      const boatSprite = spriteAtlas.getCreatureSprite(CreatureKind.BOAT, 0, false);
+      ctx.globalAlpha = canPlaceBoat ? 0.82 : 0.45;
+      ctx.drawImage(boatSprite, bx - 4, by + 4, 40, 24);
+      ctx.restore();
     }
 
     // 2B. Aimed Target Reticle with Animated Corner Brackets & Ground Halo
@@ -727,6 +762,108 @@ export class GameRenderer {
       });
     }
 
+    // 3B. Interactive Death Bags ("Bolsinha de Espólios" — 10-minute timer)
+    for (const bag of deathBags) {
+      if (
+        bag.x < camera.x - halfW ||
+        bag.x > camera.x + halfW ||
+        bag.y < camera.y - halfH ||
+        bag.y > camera.y + halfH
+      ) {
+        continue;
+      }
+
+      lightSources.push({
+        x: bag.x,
+        y: bag.y,
+        radius: 105,
+        color: '250, 204, 21',
+      });
+
+      renderQueue.push({
+        ySort: bag.y + 8,
+        draw: (c) => {
+          const pulse = Math.sin(globalTime * 4.5) * 2;
+          const bob = Math.sin(globalTime * 3.2) * 1.5;
+          const bx = Math.round(bag.x);
+          const by = Math.round(bag.y + bob);
+
+          // Ground beacon aura ring
+          c.save();
+          c.strokeStyle =
+            bag.expiresTimer < 120
+              ? 'rgba(244, 63, 94, 0.78)'
+              : 'rgba(250, 204, 21, 0.65)';
+          c.lineWidth = 1.5;
+          c.beginPath();
+          c.ellipse(
+            bx,
+            Math.round(bag.y) + 7,
+            13 + pulse,
+            5.5 + pulse * 0.35,
+            0,
+            0,
+            Math.PI * 2
+          );
+          c.stroke();
+          c.restore();
+
+          // Ground shadow
+          c.fillStyle = 'rgba(0, 0, 0, 0.45)';
+          c.fillRect(bx - 9, Math.round(bag.y) + 5, 18, 4);
+
+          // Tied Leather Death Bag Sprite (Pixel-Art)
+          // Outer outline
+          c.fillStyle = '#1c1008';
+          c.fillRect(bx - 9, by - 8, 18, 15);
+          c.fillRect(bx - 5, by - 13, 10, 5);
+          // Main leather body
+          c.fillStyle = '#78350f';
+          c.fillRect(bx - 8, by - 7, 16, 13);
+          // Warm leather highlight
+          c.fillStyle = '#b45309';
+          c.fillRect(bx - 7, by - 6, 11, 10);
+          c.fillStyle = '#d97706';
+          c.fillRect(bx - 5, by - 4, 6, 6);
+          // Top ruffled neck
+          c.fillStyle = '#92400e';
+          c.fillRect(bx - 4, by - 12, 8, 4);
+          // Golden rope tie & clasp
+          c.fillStyle = '#facc15';
+          c.fillRect(bx - 5, by - 8, 10, 2);
+          c.fillStyle = '#fef08a';
+          c.fillRect(bx - 2, by - 8, 4, 3);
+          // Emblem on pouch
+          c.fillStyle = '#fde047';
+          c.fillRect(bx - 2, by - 2, 4, 4);
+          c.fillStyle = '#f43f5e';
+          c.fillRect(bx - 1, by - 1, 2, 2);
+
+          // Countdown timer & item count badge above the bag
+          const remSec = Math.max(0, Math.ceil(bag.expiresTimer));
+          const mm = String(Math.floor(remSec / 60)).padStart(2, '0');
+          const ss = String(remSec % 60).padStart(2, '0');
+          const totalStacks =
+            bag.items.length + (bag.goldCoins > 0 ? 1 : 0);
+          const badgeText = `🎒 Bolsinha (${totalStacks}) · ${mm}:${ss}`;
+
+          c.save();
+          c.font = 'bold 8px "Plus Jakarta Sans", sans-serif';
+          const tw = c.measureText(badgeText).width;
+          const px = bx - tw / 2 - 4;
+          const py = by - 26;
+          c.fillStyle = 'rgba(18, 11, 7, 0.88)';
+          c.fillRect(px, py, tw + 8, 12);
+          c.strokeStyle = bag.expiresTimer < 120 ? '#f43f5e' : '#f59e0b';
+          c.lineWidth = 1;
+          c.strokeRect(px, py, tw + 8, 12);
+          c.fillStyle = bag.expiresTimer < 120 ? '#fda4af' : '#fef08a';
+          c.fillText(badgeText, bx - tw / 2, py + 9);
+          c.restore();
+        },
+      });
+    }
+
     // 4. Creatures (Animals, Enemies & Villagers)
     for (const cr of creatures) {
       if (cr.isInsideHouse) continue;
@@ -738,9 +875,29 @@ export class GameRenderer {
       ) {
         continue;
       }
+      // Skip standalone rendering of a pet that is currently riding in the 2nd seat of a Boat
+      const isRidingInBoat = creatures.some(
+        (b) => b.kind === CreatureKind.BOAT && b.passengerPetId === cr.id
+      );
+      if (isRidingInBoat) {
+        continue;
+      }
+      const crSwimming =
+        cr.kind === CreatureKind.BOAT
+          ? false
+          : Boolean(cr.isSwimming || world.isWorldPosInWater(cr.x, cr.y));
       renderQueue.push({
         ySort: cr.y + 10,
-        draw: (c) => this.drawCreature(c, cr, globalTime, shadowDx, timeOfDay),
+        draw: (c) =>
+          this.drawCreature(
+            c,
+            cr,
+            globalTime,
+            shadowDx,
+            timeOfDay,
+            crSwimming,
+            creatures
+          ),
       });
     }
 
@@ -754,16 +911,91 @@ export class GameRenderer {
       ) {
         continue;
       }
+      const existingRpMount = rp.mountedEntityId
+        ? creatures.find((c) => c.id === rp.mountedEntityId) || null
+        : null;
+      const rpMount = existingRpMount || rp.mountedCreatureData || null;
+      if (rpMount && !existingRpMount) {
+        const syncedRpMount: CreatureEntity = {
+          ...rpMount,
+          x: rp.x,
+          y: rp.y,
+          direction: rp.direction,
+          animFrame: rp.animFrame,
+        };
+        const mountSwimming =
+          syncedRpMount.kind === 'BOAT'
+            ? false
+            : Boolean(
+                syncedRpMount.isSwimming ||
+                  world.isWorldPosInWater(syncedRpMount.x, syncedRpMount.y)
+              );
+        renderQueue.push({
+          ySort: syncedRpMount.y + 10,
+          draw: (c) =>
+            this.drawCreature(
+              c,
+              syncedRpMount,
+              globalTime,
+              shadowDx,
+              timeOfDay,
+              mountSwimming,
+              creatures
+            ),
+        });
+      }
+      const rpSwimming = rpMount
+        ? false
+        : Boolean(rp.isSwimming || world.isWorldPosInWater(rp.x, rp.y));
       renderQueue.push({
-        ySort: rp.y + 10,
-        draw: (c) => this.drawRemotePlayer(c, rp, globalTime, shadowDx),
+        ySort: (rpMount ? rpMount.y : rp.y) + 10.2,
+        draw: (c) =>
+          this.drawRemotePlayer(c, rp, globalTime, shadowDx, rpSwimming, rpMount),
       });
     }
 
     // 5. Local Player
+    const existingPlayerMount = player.mountedEntityId
+      ? creatures.find((c) => c.id === player.mountedEntityId) || null
+      : null;
+    const playerMount =
+      existingPlayerMount || player.mountedCreatureData || null;
+    if (playerMount && !existingPlayerMount) {
+      const syncedPlayerMount: CreatureEntity = {
+        ...playerMount,
+        x: player.x,
+        y: player.y,
+        direction: player.direction,
+        animFrame: player.animFrame,
+      };
+      const mountSwimming =
+        syncedPlayerMount.kind === 'BOAT'
+          ? false
+          : Boolean(
+              syncedPlayerMount.isSwimming ||
+                world.isWorldPosInWater(syncedPlayerMount.x, syncedPlayerMount.y)
+            );
+      renderQueue.push({
+        ySort: syncedPlayerMount.y + 10,
+        draw: (c) =>
+          this.drawCreature(
+            c,
+            syncedPlayerMount,
+            globalTime,
+            shadowDx,
+            timeOfDay,
+            mountSwimming,
+            creatures
+          ),
+      });
+    }
+    const playerSwimming = playerMount
+      ? false
+      : Boolean(player.isSwimming || world.isWorldPosInWater(player.x, player.y));
     renderQueue.push({
-      ySort: player.y + 10,
-      draw: (c) => this.drawPlayer(c, player, globalTime, shadowDx),
+      ySort: (playerMount ? playerMount.y : player.y) + 10.25,
+      draw: (c) =>
+        this.drawPlayer(c, player, globalTime, shadowDx, playerSwimming, playerMount),
     });
 
     // Sort by Y and draw all entities/objects
@@ -930,61 +1162,117 @@ export class GameRenderer {
         if (neLand) ctx.fillRect(wx + TILE_SIZE - 6, wy, 6, 6);
         if (swLand) ctx.fillRect(wx, wy + TILE_SIZE - 6, 6, 6);
         if (seLand) ctx.fillRect(wx + TILE_SIZE - 6, wy + TILE_SIZE - 6, 6, 6);
-        return;
-      }
+      } else {
+        const waveOffset = Math.round(
+          Math.sin(globalTime * 3.2 + tx * 0.8 + ty * 0.6) * 2
+        );
+        const foamDist = 5 + waveOffset;
 
-      const waveOffset = Math.round(
-        Math.sin(globalTime * 3.2 + tx * 0.8 + ty * 0.6) * 2
-      );
-      const foamDist = 5 + waveOffset;
+        // 1. Submerged warm sandbank shelf along land edges
+        ctx.fillStyle = 'rgba(217, 169, 92, 0.42)';
+        if (nLand) ctx.fillRect(wx, wy, TILE_SIZE, 8);
+        if (sLand) ctx.fillRect(wx, wy + TILE_SIZE - 8, TILE_SIZE, 8);
+        if (wLand) ctx.fillRect(wx, wy, 8, TILE_SIZE);
+        if (eLand) ctx.fillRect(wx + TILE_SIZE - 8, wy, 8, TILE_SIZE);
 
-      // 1. Submerged warm sandbank shelf along land edges
-      ctx.fillStyle = 'rgba(217, 169, 92, 0.42)';
-      if (nLand) ctx.fillRect(wx, wy, TILE_SIZE, 8);
-      if (sLand) ctx.fillRect(wx, wy + TILE_SIZE - 8, TILE_SIZE, 8);
-      if (wLand) ctx.fillRect(wx, wy, 8, TILE_SIZE);
-      if (eLand) ctx.fillRect(wx + TILE_SIZE - 8, wy, 8, TILE_SIZE);
+        // 2. Earthen / Sandy Shoreline Lip at immediate tile boundary
+        if (nLand) {
+          ctx.fillStyle = n === BiomeType.PLAINS ? '#4d6b2a' : '#b88c3e';
+          ctx.fillRect(wx, wy, TILE_SIZE, 3);
+          ctx.fillStyle = '#d6b065';
+          ctx.fillRect(wx, wy + 3, TILE_SIZE, 2);
+        }
+        if (sLand) {
+          ctx.fillStyle = s === BiomeType.PLAINS ? '#4d6b2a' : '#b88c3e';
+          ctx.fillRect(wx, wy + TILE_SIZE - 3, TILE_SIZE, 3);
+        }
+        if (wLand) {
+          ctx.fillStyle = w === BiomeType.PLAINS ? '#4d6b2a' : '#b88c3e';
+          ctx.fillRect(wx, wy, 3, TILE_SIZE);
+        }
+        if (eLand) {
+          ctx.fillStyle = e === BiomeType.PLAINS ? '#4d6b2a' : '#b88c3e';
+          ctx.fillRect(wx + TILE_SIZE - 3, wy, 3, TILE_SIZE);
+        }
 
-      // 2. Earthen / Sandy Shoreline Lip at immediate tile boundary
-      if (nLand) {
-        ctx.fillStyle = n === BiomeType.PLAINS ? '#4d6b2a' : '#b88c3e';
-        ctx.fillRect(wx, wy, TILE_SIZE, 3);
-        ctx.fillStyle = '#d6b065';
-        ctx.fillRect(wx, wy + 3, TILE_SIZE, 2);
-      }
-      if (sLand) {
-        ctx.fillStyle = s === BiomeType.PLAINS ? '#4d6b2a' : '#b88c3e';
-        ctx.fillRect(wx, wy + TILE_SIZE - 3, TILE_SIZE, 3);
-      }
-      if (wLand) {
-        ctx.fillStyle = w === BiomeType.PLAINS ? '#4d6b2a' : '#b88c3e';
-        ctx.fillRect(wx, wy, 3, TILE_SIZE);
-      }
-      if (eLand) {
-        ctx.fillStyle = e === BiomeType.PLAINS ? '#4d6b2a' : '#b88c3e';
-        ctx.fillRect(wx + TILE_SIZE - 3, wy, 3, TILE_SIZE);
-      }
-
-      // 3. Animated White-Turquoise Seafoam Wave Line
-      ctx.fillStyle = '#e0f2fe';
-      if (nLand) {
-        for (let px = 2; px < TILE_SIZE - 2; px += 6) {
-          ctx.fillRect(wx + px, wy + foamDist, 4, 2);
+        // 3. Animated White-Turquoise Seafoam Wave Line
+        ctx.fillStyle = '#e0f2fe';
+        if (nLand) {
+          for (let px = 2; px < TILE_SIZE - 2; px += 6) {
+            ctx.fillRect(wx + px, wy + foamDist, 4, 2);
+          }
+        }
+        if (sLand) {
+          for (let px = 2; px < TILE_SIZE - 2; px += 6) {
+            ctx.fillRect(wx + px, wy + TILE_SIZE - foamDist - 2, 4, 2);
+          }
+        }
+        if (wLand) {
+          for (let py = 2; py < TILE_SIZE - 2; py += 6) {
+            ctx.fillRect(wx + foamDist, wy + py, 2, 4);
+          }
+        }
+        if (eLand) {
+          for (let py = 2; py < TILE_SIZE - 2; py += 6) {
+            ctx.fillRect(wx + TILE_SIZE - foamDist - 2, wy + py, 2, 4);
+          }
         }
       }
-      if (sLand) {
-        for (let px = 2; px < TILE_SIZE - 2; px += 6) {
-          ctx.fillRect(wx + px, wy + TILE_SIZE - foamDist - 2, 4, 2);
+    }
+
+    // =========================================================================
+    // A2. RIVER CURRENT STREAKS & COASTAL SURF WAVES PUSHING TOWARD BEACH
+    // =========================================================================
+    if (biome === BiomeType.OCEAN) {
+      const current = world.getWaterCurrentAtTile(tx, ty, globalTime);
+      if (current.kind === 'river') {
+        const cMag = Math.hypot(current.vx, current.vy);
+        if (cMag > 0.1) {
+          const dirX = current.vx / cMag;
+          const dirY = current.vy / cMag;
+          const phase = (globalTime * 18 + (tx * 7 + ty * 11)) % 16;
+          const cx = wx + 16 + dirX * (phase - 8);
+          const cy = wy + 16 + dirY * (phase - 8);
+
+          ctx.strokeStyle = 'rgba(186, 230, 253, 0.58)';
+          ctx.lineWidth = 1.25;
+          ctx.beginPath();
+          ctx.moveTo(cx - dirX * 4, cy - dirY * 4);
+          ctx.lineTo(cx + dirX * 4, cy + dirY * 4);
+          ctx.stroke();
+
+          const phase2 = (globalTime * 18 + (tx * 13 + ty * 5) + 8) % 16;
+          const cx2 = wx + 16 - dirY * 6 + dirX * (phase2 - 8);
+          const cy2 = wy + 16 + dirX * 6 + dirY * (phase2 - 8);
+          ctx.strokeStyle = 'rgba(224, 242, 254, 0.42)';
+          ctx.beginPath();
+          ctx.moveTo(cx2 - dirX * 3, cy2 - dirY * 3);
+          ctx.lineTo(cx2 + dirX * 3, cy2 + dirY * 3);
+          ctx.stroke();
         }
-      }
-      if (wLand) {
-        for (let py = 2; py < TILE_SIZE - 2; py += 6) {
-          ctx.fillRect(wx + foamDist, wy + py, 2, 4);
-        }
-      }
-      if (eLand) {
-        for (let py = 2; py < TILE_SIZE - 2; py += 6) {
-          ctx.fillRect(wx + TILE_SIZE - foamDist - 2, wy + py, 2, 4);
+      } else if (
+        current.kind === 'ocean_shore' &&
+        (tx + ty) % 2 === 0
+      ) {
+        const cMag = Math.hypot(current.vx, current.vy);
+        if (cMag > 0.1) {
+          const dirX = current.vx / cMag;
+          const dirY = current.vy / cMag;
+          const perpX = -dirY;
+          const perpY = dirX;
+          const progress = (globalTime * 1.4 + (tx * 0.37 + ty * 0.53)) % 1;
+          const waveCx = wx + 16 + dirX * (progress * 14 - 7);
+          const waveCy = wy + 16 + dirY * (progress * 14 - 7);
+
+          ctx.strokeStyle = `rgba(224, 242, 254, ${(
+            (1 - Math.abs(progress - 0.5) * 1.8) *
+            0.55
+          ).toFixed(2)})`;
+          ctx.lineWidth = 1.4;
+          ctx.beginPath();
+          ctx.moveTo(waveCx - perpX * 5, waveCy - perpY * 5);
+          ctx.lineTo(waveCx + perpX * 5, waveCy + perpY * 5);
+          ctx.stroke();
         }
       }
       return;
@@ -1124,6 +1412,25 @@ export class GameRenderer {
         ctx.fillRect(wx + ox + 1, wy + oy, 4, 2);
         ctx.fillStyle = '#64748b';
         ctx.fillRect(wx + ox + 6, wy + oy + 2, 3, 2);
+        return;
+      }
+
+      if (zone === EcologicalZone.COASTAL_TROPICS) {
+        // Wide golden sandy beach with occasional seashells & starfish
+        if (h > 0.16) return;
+        if (h < 0.06) {
+          // Coral-pink starfish on beach sand
+          ctx.fillStyle = '#fb7185';
+          ctx.fillRect(wx + ox, wy + oy, 3, 3);
+          ctx.fillStyle = '#fda4af';
+          ctx.fillRect(wx + ox + 1, wy + oy + 1, 1, 1);
+        } else {
+          // Pearl-white beach seashell
+          ctx.fillStyle = '#d97706';
+          ctx.fillRect(wx + ox, wy + oy + 1, 4, 2);
+          ctx.fillStyle = '#fef3c7';
+          ctx.fillRect(wx + ox, wy + oy, 3, 2);
+        }
         return;
       }
 
@@ -3009,7 +3316,9 @@ export class GameRenderer {
     cr: CreatureEntity,
     globalTime: number,
     shadowDx: number,
-    timeOfDay = 12
+    timeOfDay = 12,
+    isSwimming = false,
+    allCreatures?: CreatureEntity[]
   ): void {
     const sprite = spriteAtlas.getCreatureSprite(
       cr.kind,
@@ -3028,12 +3337,17 @@ export class GameRenderer {
       cr.kind === 'WANDERER' ||
       cr.kind === 'BANDIT' ||
       cr.kind === 'ZOMBIE';
+    const isBoat = cr.kind === 'BOAT';
 
     // Independent individual build (width) and stature (height) variation
-    const wVar = isHumanoid
+    const wVar = isBoat
+      ? 1.0
+      : isHumanoid
       ? 0.94 + ((uHash % 13) / 12) * 0.12 // 0.94x .. 1.06x for humanoids
       : 0.88 + ((uHash % 19) / 18) * 0.24; // 0.88x .. 1.12x for fauna/monsters
-    const hVar = isHumanoid
+    const hVar = isBoat
+      ? 1.0
+      : isHumanoid
       ? 0.94 + (((uHash >> 5) % 13) / 12) * 0.12
       : 0.88 + (((uHash >> 5) % 19) / 18) * 0.24;
 
@@ -3051,10 +3365,20 @@ export class GameRenderer {
         baseW = 33;
         baseH = 23;
         break;
+      case 'HORSE':
+        // Sleek plains mount
+        baseW = 40;
+        baseH = 35;
+        break;
       case 'CAMEL':
         // Tall, long-legged desert dromedary towering above player
         baseW = 44;
         baseH = 44;
+        break;
+      case 'BOAT':
+        // Twin-seat wooden rowboat floating on water
+        baseW = 44;
+        baseH = 26;
         break;
       case 'FOREST_STALKER':
         // Wide, low-slung giant woodland spider
@@ -3092,15 +3416,61 @@ export class GameRenderer {
     const drawH = Math.round(baseH * hVar * eliteScale);
     const footY = cr.y + 10; // Ground contact anchor matching renderQueue ySort
 
-    // Directional Ground Shadow scaled to actual creature width
-    const shadowW = Math.round(drawW * 0.68);
-    ctx.fillStyle = 'rgba(0, 0, 0, 0.30)';
-    ctx.fillRect(
-      Math.round(cr.x - shadowW / 2 + shadowDx * 0.4),
-      footY - 3,
-      shadowW,
-      4
-    );
+    const isCrMoving = Math.hypot(cr.vx, cr.vy) > 4;
+
+    if (isBoat) {
+      // Water wake & ripple ring under the floating boat
+      const wakePulse = Math.sin(globalTime * (isCrMoving ? 8.5 : 3.5) + cr.x * 0.08) * 1.6;
+      ctx.save();
+      ctx.strokeStyle = 'rgba(186, 230, 253, 0.72)';
+      ctx.lineWidth = 1.3;
+      ctx.beginPath();
+      ctx.ellipse(
+        cr.x,
+        footY - 3,
+        drawW * 0.46 + wakePulse,
+        5.5 + wakePulse * 0.25,
+        0,
+        0,
+        Math.PI * 2
+      );
+      ctx.stroke();
+      ctx.restore();
+    } else if (isSwimming) {
+      // Submerged dark water silhouette & concentric ripple ring at waterline
+      const ripplePulse = Math.sin(globalTime * (isCrMoving ? 7.5 : 3.5) + cr.x * 0.1) * 1.4;
+      const waterLineY = footY - 2;
+      ctx.save();
+      ctx.fillStyle = 'rgba(8, 47, 73, 0.36)';
+      ctx.beginPath();
+      ctx.ellipse(cr.x, waterLineY + 1, drawW * 0.34, 4, 0, 0, Math.PI * 2);
+      ctx.fill();
+
+      ctx.strokeStyle = 'rgba(186, 230, 253, 0.62)';
+      ctx.lineWidth = 1.25;
+      ctx.beginPath();
+      ctx.ellipse(
+        cr.x,
+        waterLineY,
+        Math.max(6, drawW * 0.38 + ripplePulse),
+        Math.max(2.5, 4.2 + ripplePulse * 0.35),
+        0,
+        0,
+        Math.PI * 2
+      );
+      ctx.stroke();
+      ctx.restore();
+    } else {
+      // Directional Ground Shadow scaled to actual creature width
+      const shadowW = Math.round(drawW * 0.68);
+      ctx.fillStyle = 'rgba(0, 0, 0, 0.30)';
+      ctx.fillRect(
+        Math.round(cr.x - shadowW / 2 + shadowDx * 0.4),
+        footY - 3,
+        shadowW,
+        4
+      );
+    }
 
     if (
       (cr.isElite && cr.isHostile) ||
@@ -3122,14 +3492,23 @@ export class GameRenderer {
       ctx.restore();
     }
 
-    const isCrMoving = Math.hypot(cr.vx, cr.vy) > 4;
-    const walkBounce = isCrMoving
+    const walkBounce = isBoat
+      ? Math.sin(globalTime * (isCrMoving ? 6.5 : 2.8) + cr.x * 0.08) * 1.2
+      : isSwimming
+      ? Math.sin(globalTime * (isCrMoving ? 7 : 3.2) + cr.x * 0.1) * 1.1
+      : isCrMoving
       ? Math.abs(Math.sin(globalTime * 10 + cr.x * 0.1)) * 2.0
       : 0;
-    const breathScaleY = isCrMoving
+    const breathScaleY = isBoat
+      ? 1.0
+      : isCrMoving
       ? 1 + Math.sin(globalTime * 10 + cr.x * 0.1) * 0.035
       : 1 + Math.sin(globalTime * 3.2 + cr.x) * 0.022;
-    const breathScaleX = 2 - breathScaleY;
+    const breathScaleX = isBoat ? 1.0 : 2 - breathScaleY;
+
+    const visibleRatio = isSwimming ? 0.5 : 1.0;
+    const srcH = Math.max(1, Math.round(sprite.height * visibleRatio));
+    const visibleDrawH = Math.max(1, Math.round(drawH * visibleRatio));
 
     ctx.save();
     ctx.translate(cr.x, footY - walkBounce);
@@ -3141,10 +3520,64 @@ export class GameRenderer {
     } else {
       ctx.scale(breathScaleX, breathScaleY);
     }
-    ctx.drawImage(sprite, -drawW / 2, -drawH + 2, drawW, drawH);
+    if (isSwimming) {
+      ctx.drawImage(
+        sprite,
+        0,
+        0,
+        sprite.width,
+        srcH,
+        -drawW / 2,
+        -visibleDrawH,
+        drawW,
+        visibleDrawH
+      );
+    } else {
+      ctx.drawImage(sprite, -drawW / 2, -drawH + 2, drawW, drawH);
+    }
+
+    // Draw Saddle & 8-Slot Saddlebags on Horse or Camel when cr.hasSaddle is true
+    if ((cr.kind === 'HORSE' || cr.kind === 'CAMEL') && cr.hasSaddle) {
+      const saddleY = cr.kind === 'CAMEL' ? -drawH * 0.64 : -drawH * 0.61;
+      // Crimson saddle blanket
+      ctx.fillStyle = '#991b1b';
+      ctx.fillRect(-7, saddleY, 13, 7);
+      ctx.fillStyle = '#fbbf24';
+      ctx.fillRect(-7, saddleY + 6, 13, 1.2);
+      //Tooled leather saddle seat & side saddlebag pouch
+      ctx.fillStyle = '#451a03';
+      ctx.fillRect(-6, saddleY - 1.5, 11, 5);
+      ctx.fillStyle = '#92400e';
+      ctx.fillRect(-5, saddleY - 1, 9, 4);
+      // Saddlebag buckle & golden stirrup
+      ctx.fillStyle = '#fde047';
+      ctx.fillRect(-1, saddleY + 1, 2, 2);
+      ctx.fillRect(0, saddleY + 7, 2, 2);
+    }
+
+    // Draw Passenger Pet seated in the 2nd seat of a Boat
+    if (isBoat && cr.passengerPetId && allCreatures) {
+      const pet = allCreatures.find((p) => p.id === cr.passengerPetId);
+      if (pet) {
+        const petSprite = spriteAtlas.getCreatureSprite(pet.kind, pet.animFrame, false);
+        ctx.drawImage(petSprite, -16, -24, 22, 18);
+      }
+    }
     ctx.restore();
 
-    const headTopY = footY - drawH;
+    if (isSwimming) {
+      // Front waterline foam highlight across submerged waist
+      ctx.save();
+      ctx.strokeStyle = 'rgba(224, 242, 254, 0.75)';
+      ctx.lineWidth = 1.2;
+      ctx.beginPath();
+      ctx.moveTo(cr.x - drawW * 0.28, footY - 1);
+      ctx.lineTo(cr.x + drawW * 0.28, footY - 1);
+      ctx.stroke();
+      ctx.restore();
+    }
+
+    const headTopY = isSwimming ? footY - visibleDrawH - 2 : footY - drawH;
 
     // VILLAGE NPC & WANDERER Nameplate, Profession, Housing & Affinity / Hostility Status
     if (cr.kind === 'VILLAGER' || cr.kind === 'WANDERER') {
@@ -3221,7 +3654,17 @@ export class GameRenderer {
       return;
     }
 
-    if (cr.tamed) {
+    if (isBoat) {
+      const seatsOccupied =
+        (cr.riderPlayerId ? 1 : 0) +
+        (cr.passengerPlayerId || cr.passengerPetId ? 1 : 0);
+      ctx.save();
+      ctx.font = 'bold 7px "Plus Jakarta Sans", sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillStyle = '#38bdf8';
+      ctx.fillText(`⛵ Bote [${seatsOccupied}/2]`, cr.x, headTopY - 2);
+      ctx.restore();
+    } else if (cr.tamed) {
       const heartPulse = Math.sin(globalTime * 5) * 1;
       ctx.save();
       ctx.strokeStyle = 'rgba(74, 222, 128, 0.42)';
@@ -3233,10 +3676,11 @@ export class GameRenderer {
       ctx.font = 'bold 8px "Plus Jakarta Sans", sans-serif';
       ctx.textAlign = 'center';
       ctx.fillStyle = '#f43f5e';
-      ctx.fillText('♥', cr.x - 12, headTopY - 3 + heartPulse);
+      ctx.fillText('♥', cr.x - 14, headTopY - 3 + heartPulse);
       ctx.fillStyle = '#fde047';
+      const saddleBadge = cr.hasSaddle ? ' 鞍' : '';
       ctx.fillText(
-        cr.aiState === 'stay' ? '[Base]' : '[Aliado]',
+        `${cr.aiState === 'stay' ? '[Base]' : '[Aliado]'}${saddleBadge}`,
         cr.x + 4,
         headTopY - 3
       );
@@ -3274,9 +3718,11 @@ export class GameRenderer {
     ctx: CanvasRenderingContext2D,
     player: PlayerState,
     globalTime: number,
-    shadowDx: number
+    shadowDx: number,
+    isSwimming = false,
+    mountEntity: CreatureEntity | null = null
   ): void {
-    const frame = player.isMoving ? player.animFrame : 0;
+    const frame = player.isMoving && !mountEntity ? player.animFrame : 0;
     const sprite = spriteAtlas.getPlayerSprite(
       player.direction,
       frame,
@@ -3295,21 +3741,44 @@ export class GameRenderer {
       eq.legs === 'astral_leggings' ||
       eq.feet === 'astral_boots';
 
-    // Speed Buff / Astral Gear Afterimage Trail & Step Dust Puff when moving
-    if (player.isMoving) {
+    // Compute seat offset when mounted on Horse, Camel, or Boat
+    let mountOffsetX = 0;
+    let mountOffsetY = 0;
+    if (mountEntity) {
+      const dirSign = mountEntity.direction === 'left' ? -1 : 1;
+      if (mountEntity.kind === 'BOAT') {
+        const isPassenger = mountEntity.passengerPlayerId === 'LOCAL';
+        mountOffsetX = isPassenger ? -6 * dirSign : 5 * dirSign;
+        mountOffsetY = -5;
+      } else if (mountEntity.kind === 'CAMEL') {
+        mountOffsetX = -1 * dirSign;
+        mountOffsetY = -15;
+      } else {
+        mountOffsetX = -1 * dirSign;
+        mountOffsetY = -11;
+      }
+    }
+
+    const drawX = player.x + mountOffsetX;
+    const drawY = player.y + mountOffsetY;
+
+    // Speed Buff / Gallop / Astral Gear Afterimage Trail & Step Dust Puff when moving on dry land
+    if (player.isMoving && !isSwimming) {
       const puffPhase = (globalTime * 6) % 1;
       const puffX = player.x - Math.sign(player.vx || 0.1) * (6 + puffPhase * 8);
       const puffY = player.y + 8 - puffPhase * 3;
-      ctx.fillStyle = `rgba(226, 212, 183, ${(0.45 * (1 - puffPhase)).toFixed(2)})`;
-      ctx.fillRect(puffX - 2, puffY - 2, 3, 3);
+      ctx.fillStyle = player.isGalloping
+        ? `rgba(253, 224, 71, ${(0.55 * (1 - puffPhase)).toFixed(2)})`
+        : `rgba(226, 212, 183, ${(0.45 * (1 - puffPhase)).toFixed(2)})`;
+      ctx.fillRect(puffX - 2, puffY - 2, player.isGalloping ? 4 : 3, player.isGalloping ? 4 : 3);
 
-      if ((player.speedBuffTimer || 0) > 0 || hasAstralGear) {
+      if ((player.speedBuffTimer || 0) > 0 || hasAstralGear || player.isGalloping) {
         ctx.save();
         ctx.globalAlpha = 0.28;
         ctx.drawImage(
           sprite,
-          player.x - player.vx * 0.055 - 15,
-          player.y - player.vy * 0.055 - 19,
+          drawX - player.vx * 0.055 - 15,
+          drawY - player.vy * 0.055 - 19,
           30,
           30
         );
@@ -3332,13 +3801,40 @@ export class GameRenderer {
       ctx.restore();
     }
 
-    // Directional Ground Shadow
-    ctx.fillStyle = 'rgba(0, 0, 0, 0.32)';
-    ctx.fillRect(player.x - 8 + Math.round(shadowDx * 0.4), player.y + 7, 16, 4);
+    if (isSwimming) {
+      const ripplePulse = Math.sin(globalTime * (player.isMoving ? 7.5 : 3.5)) * 1.5;
+      const waterLineY = player.y + 6;
+      ctx.save();
+      ctx.fillStyle = 'rgba(8, 47, 73, 0.38)';
+      ctx.beginPath();
+      ctx.ellipse(player.x, waterLineY + 1, 9, 4, 0, 0, Math.PI * 2);
+      ctx.fill();
 
-    // Organic Walk Hop & Idle Breathing Squash-and-Stretch
-    const walkHop = player.isMoving
-      ? Math.abs(Math.sin(globalTime * 12)) * 1.8
+      ctx.strokeStyle = 'rgba(186, 230, 253, 0.68)';
+      ctx.lineWidth = 1.3;
+      ctx.beginPath();
+      ctx.ellipse(
+        player.x,
+        waterLineY,
+        10.5 + ripplePulse,
+        4.2 + ripplePulse * 0.35,
+        0,
+        0,
+        Math.PI * 2
+      );
+      ctx.stroke();
+      ctx.restore();
+    } else if (!mountEntity) {
+      // Directional Ground Shadow
+      ctx.fillStyle = 'rgba(0, 0, 0, 0.32)';
+      ctx.fillRect(player.x - 8 + Math.round(shadowDx * 0.4), player.y + 7, 16, 4);
+    }
+
+    // Organic Walk Hop / Swim Bob & Idle Breathing Squash-and-Stretch
+    const walkHop = isSwimming
+      ? Math.sin(globalTime * (player.isMoving ? 7 : 3.2)) * 1.1
+      : player.isMoving
+      ? Math.abs(Math.sin(globalTime * (player.isGalloping ? 16 : 12))) * (mountEntity ? 2.2 : 1.8)
       : 0;
     const breathScaleY = player.isMoving
       ? 1 + Math.sin(globalTime * 12) * 0.035
@@ -3346,13 +3842,45 @@ export class GameRenderer {
     const breathScaleX = 2 - breathScaleY;
 
     ctx.save();
-    ctx.translate(player.x, player.y - walkHop);
-    ctx.scale(breathScaleX, breathScaleY);
-    if (player.hitFlashTimer > 0) {
-      ctx.filter = 'brightness(2.0)';
+    if (isSwimming) {
+      const srcHalfH = Math.max(1, Math.round(sprite.height * 0.5));
+      const drawHalfH = 15; // Top 50% of 30px height
+      ctx.translate(drawX, drawY + 6 - walkHop);
+      ctx.scale(breathScaleX, breathScaleY);
+      if (player.hitFlashTimer > 0) {
+        ctx.filter = 'brightness(2.0)';
+      }
+      ctx.drawImage(
+        sprite,
+        0,
+        0,
+        sprite.width,
+        srcHalfH,
+        -15,
+        -drawHalfH,
+        30,
+        drawHalfH
+      );
+    } else {
+      ctx.translate(drawX, drawY - walkHop);
+      ctx.scale(breathScaleX, breathScaleY);
+      if (player.hitFlashTimer > 0) {
+        ctx.filter = 'brightness(2.0)';
+      }
+      ctx.drawImage(sprite, -15, -19, 30, 30);
     }
-    ctx.drawImage(sprite, -15, -19, 30, 30);
     ctx.restore();
+
+    if (isSwimming) {
+      ctx.save();
+      ctx.strokeStyle = 'rgba(224, 242, 254, 0.78)';
+      ctx.lineWidth = 1.25;
+      ctx.beginPath();
+      ctx.moveTo(player.x - 7.5, player.y + 6);
+      ctx.lineTo(player.x + 7.5, player.y + 6);
+      ctx.stroke();
+      ctx.restore();
+    }
 
     const slot = player.inventory[player.selectedHotbarIndex];
     if (slot) {
@@ -3383,8 +3911,10 @@ export class GameRenderer {
         offsetY = 0;
       }
 
+      const swimItemOffsetY = isSwimming ? 5 : 0;
+
       ctx.save();
-      ctx.translate(player.x + offsetX, player.y + offsetY);
+      ctx.translate(player.x + offsetX, player.y + offsetY + swimItemOffsetY);
 
       if (isSwinging) {
         const swingArc = (swingProgress - 0.5) * 2.2;
@@ -3435,20 +3965,111 @@ export class GameRenderer {
       }
       ctx.restore();
     }
+
+    // Active Fishing Line & Floating Bobber on Water
+    if (player.fishingState?.active) {
+      const fs = player.fishingState;
+      const rodTipX =
+        player.x +
+        (player.direction === 'left'
+          ? -12
+          : player.direction === 'right'
+          ? 12
+          : 5);
+      const rodTipY = player.y - 10 - walkHop;
+
+      const isBiting = fs.phase === 'biting';
+      const bobberDip = isBiting
+        ? Math.sin(globalTime * 28) * 2.8 + 1.8
+        : Math.sin(globalTime * 4.2) * 1.1;
+      const bx = fs.bobberX;
+      const by = fs.bobberY + bobberDip;
+
+      ctx.save();
+      // Curved Fishing Line
+      ctx.strokeStyle = isBiting
+        ? 'rgba(254, 240, 138, 0.92)'
+        : 'rgba(226, 232, 240, 0.82)';
+      ctx.lineWidth = isBiting ? 1.4 : 1.0;
+      ctx.beginPath();
+      ctx.moveTo(rodTipX, rodTipY);
+      const midX = (rodTipX + bx) * 0.5;
+      const midY = Math.min(rodTipY, by) + (isBiting ? 2 : 7);
+      ctx.quadraticCurveTo(midX, midY, bx, by);
+      ctx.stroke();
+
+      // Water ring around bobber
+      ctx.strokeStyle = isBiting
+        ? 'rgba(56, 189, 248, 0.85)'
+        : 'rgba(186, 230, 253, 0.45)';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.ellipse(
+        bx,
+        fs.bobberY + 2,
+        isBiting ? 6.5 : 4.5,
+        isBiting ? 3.2 : 2.2,
+        0,
+        0,
+        Math.PI * 2
+      );
+      ctx.stroke();
+
+      // Classic Red & White Pixel Bobber
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(Math.round(bx - 2), Math.round(by - 2), 4, 2);
+      ctx.fillStyle = '#ef4444';
+      ctx.fillRect(Math.round(bx - 2), Math.round(by - 4), 4, 2);
+      ctx.fillStyle = '#fde047';
+      ctx.fillRect(Math.round(bx - 0.5), Math.round(by - 6), 1, 2);
+
+      // Pulsing "!" Alert above bobber when a fish is biting
+      if (isBiting) {
+        const alertBounce = Math.abs(Math.sin(globalTime * 16)) * 3;
+        ctx.font = 'bold 11px monospace';
+        ctx.textAlign = 'center';
+        ctx.fillStyle = '#1c1008';
+        ctx.fillText('!', bx + 1, by - 9 - alertBounce);
+        ctx.fillStyle = '#fde047';
+        ctx.fillText('!', bx, by - 10 - alertBounce);
+      }
+      ctx.restore();
+    }
   }
 
   private drawRemotePlayer(
     ctx: CanvasRenderingContext2D,
     rp: RemotePlayerState,
     globalTime: number,
-    shadowDx: number
+    shadowDx: number,
+    isSwimming = false,
+    mountEntity: CreatureEntity | null = null
   ): void {
-    const frame = rp.isMoving ? rp.animFrame : 0;
+    const frame = rp.isMoving && !mountEntity ? rp.animFrame : 0;
     const sprite = spriteAtlas.getPlayerSprite(
       rp.direction,
       frame,
       rp as unknown as PlayerState
     );
+
+    let mountOffsetX = 0;
+    let mountOffsetY = 0;
+    if (mountEntity) {
+      const dirSign = mountEntity.direction === 'left' ? -1 : 1;
+      if (mountEntity.kind === 'BOAT') {
+        const isPassenger = mountEntity.passengerPlayerId === rp.peerId;
+        mountOffsetX = isPassenger ? -6 * dirSign : 5 * dirSign;
+        mountOffsetY = -5;
+      } else if (mountEntity.kind === 'CAMEL') {
+        mountOffsetX = -1 * dirSign;
+        mountOffsetY = -15;
+      } else {
+        mountOffsetX = -1 * dirSign;
+        mountOffsetY = -11;
+      }
+    }
+    const drawX = rp.x + mountOffsetX;
+    const drawY = rp.y + mountOffsetY;
 
     // Subtle allied player ground aura ring
     ctx.save();
@@ -3457,28 +4078,89 @@ export class GameRenderer {
       : 'rgba(56, 189, 248, 0.5)';
     ctx.lineWidth = 1.2;
     ctx.beginPath();
-    ctx.ellipse(rp.x, rp.y + 8, 10, 4, 0, 0, Math.PI * 2);
+    ctx.ellipse(rp.x, isSwimming ? rp.y + 6 : rp.y + 8, 10, 4, 0, 0, Math.PI * 2);
     ctx.stroke();
     ctx.restore();
 
-    // Directional Ground Shadow
-    ctx.fillStyle = 'rgba(0, 0, 0, 0.32)';
-    ctx.fillRect(rp.x - 8 + Math.round(shadowDx * 0.4), rp.y + 7, 16, 4);
+    if (isSwimming) {
+      const ripplePulse = Math.sin(globalTime * (rp.isMoving ? 7.5 : 3.5)) * 1.5;
+      const waterLineY = rp.y + 6;
+      ctx.save();
+      ctx.fillStyle = 'rgba(8, 47, 73, 0.38)';
+      ctx.beginPath();
+      ctx.ellipse(rp.x, waterLineY + 1, 9, 4, 0, 0, Math.PI * 2);
+      ctx.fill();
 
-    const walkHop = rp.isMoving ? Math.abs(Math.sin(globalTime * 12)) * 1.8 : 0;
+      ctx.strokeStyle = 'rgba(186, 230, 253, 0.68)';
+      ctx.lineWidth = 1.3;
+      ctx.beginPath();
+      ctx.ellipse(
+        rp.x,
+        waterLineY,
+        10.5 + ripplePulse,
+        4.2 + ripplePulse * 0.35,
+        0,
+        0,
+        Math.PI * 2
+      );
+      ctx.stroke();
+      ctx.restore();
+    } else if (!mountEntity) {
+      // Directional Ground Shadow
+      ctx.fillStyle = 'rgba(0, 0, 0, 0.32)';
+      ctx.fillRect(rp.x - 8 + Math.round(shadowDx * 0.4), rp.y + 7, 16, 4);
+    }
+
+    const walkHop = isSwimming
+      ? Math.sin(globalTime * (rp.isMoving ? 7 : 3.2)) * 1.1
+      : rp.isMoving
+      ? Math.abs(Math.sin(globalTime * 12)) * (mountEntity ? 2.2 : 1.8)
+      : 0;
     const breathScaleY = rp.isMoving
       ? 1 + Math.sin(globalTime * 12) * 0.035
       : 1 + Math.sin(globalTime * 3.5) * 0.022;
     const breathScaleX = 2 - breathScaleY;
 
     ctx.save();
-    ctx.translate(rp.x, rp.y - walkHop);
-    ctx.scale(breathScaleX, breathScaleY);
-    if (rp.hitFlashTimer > 0) {
-      ctx.filter = 'brightness(2.0)';
+    if (isSwimming) {
+      const srcHalfH = Math.max(1, Math.round(sprite.height * 0.5));
+      const drawHalfH = 15;
+      ctx.translate(drawX, drawY + 6 - walkHop);
+      ctx.scale(breathScaleX, breathScaleY);
+      if (rp.hitFlashTimer > 0) {
+        ctx.filter = 'brightness(2.0)';
+      }
+      ctx.drawImage(
+        sprite,
+        0,
+        0,
+        sprite.width,
+        srcHalfH,
+        -15,
+        -drawHalfH,
+        30,
+        drawHalfH
+      );
+    } else {
+      ctx.translate(drawX, drawY - walkHop);
+      ctx.scale(breathScaleX, breathScaleY);
+      if (rp.hitFlashTimer > 0) {
+        ctx.filter = 'brightness(2.0)';
+      }
+      ctx.drawImage(sprite, -15, -19, 30, 30);
     }
-    ctx.drawImage(sprite, -15, -19, 30, 30);
     ctx.restore();
+
+    if (isSwimming) {
+      ctx.save();
+      ctx.strokeStyle = 'rgba(224, 242, 254, 0.78)';
+      ctx.lineWidth = 1.25;
+      ctx.beginPath();
+      ctx.moveTo(rp.x - 7.5, rp.y + 6);
+      ctx.lineTo(rp.x + 7.5, rp.y + 6);
+      ctx.stroke();
+      ctx.restore();
+    }
 
     if (rp.heldItemId && ITEMS[rp.heldItemId]) {
       const itemCanvas = spriteAtlas.getItemCanvas(rp.heldItemId);
@@ -3508,8 +4190,10 @@ export class GameRenderer {
         offsetY = 0;
       }
 
+      const swimItemOffsetY = isSwimming ? 5 : 0;
+
       ctx.save();
-      ctx.translate(rp.x + offsetX, rp.y + offsetY);
+      ctx.translate(rp.x + offsetX, rp.y + offsetY + swimItemOffsetY);
 
       if (isSwinging) {
         const swingArc = (swingProgress - 0.5) * 2.2;
@@ -3530,7 +4214,7 @@ export class GameRenderer {
     }
 
     // Overhead Name Tag, Role Badge, HP Bar & Chat Bubble
-    const headTopY = rp.y - 22;
+    const headTopY = isSwimming ? rp.y - 13 : rp.y - 22;
     ctx.save();
     ctx.textAlign = 'center';
     ctx.font = 'bold 7px "Plus Jakarta Sans", sans-serif';

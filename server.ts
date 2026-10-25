@@ -60,6 +60,8 @@ interface OnlineWorldRoom {
   hostPeerId: string;
   hostName: string;
   gameVersion: string;
+  worldRevision: number;
+  nextEventId: number;
   worldSnapshot: any;
   peers: Map<string, ConnectedPeer>;
   createdAt: number;
@@ -110,21 +112,53 @@ function getRoomRemoteStates(room: OnlineWorldRoom, excludePeerId?: string) {
   return states;
 }
 
-function pushEventToPeer(peer: ConnectedPeer, payload: any) {
-  let sentViaWs = false;
+function pushEventToPeer(
+  room: OnlineWorldRoom,
+  peer: ConnectedPeer,
+  payload: any
+) {
+  const isHighFreqEphemeral = payload.type === 'remote_player_state';
+  const enriched = isHighFreqEphemeral
+    ? payload
+    : {
+        ...payload,
+        _eventId: payload._eventId || ++room.nextEventId,
+      };
+
   if (peer.ws && peer.ws.readyState === WebSocket.OPEN) {
     try {
-      peer.ws.send(JSON.stringify(payload));
-      sentViaWs = true;
+      peer.ws.send(JSON.stringify(enriched));
     } catch {
-      sentViaWs = false;
+      // ignore ws send error; HTTP sync queue below guarantees delivery
     }
   }
 
-  // Queue event for HTTP sync if WS is not connected or for reliable state transitions
-  if (!sentViaWs && payload.type !== 'remote_player_state') {
-    peer.pendingEvents.push(payload);
-    if (peer.pendingEvents.length > 120) {
+  // Always queue state/world events for HTTP sync (deduplicated by type/chunkKey)
+  // so even if WebSocket is stalled/half-open, HTTP sync delivers 100% of world interactions!
+  if (!isHighFreqEphemeral) {
+    if (enriched.type === 'chunk_sync' && enriched.chunkKey) {
+      const idx = peer.pendingEvents.findIndex(
+        (e) => e.type === 'chunk_sync' && e.chunkKey === enriched.chunkKey
+      );
+      if (idx !== -1) {
+        peer.pendingEvents[idx] = enriched;
+        return;
+      }
+    } else if (
+      enriched.type === 'creatures_sync' ||
+      enriched.type === 'drops_sync' ||
+      enriched.type === 'time_sync' ||
+      enriched.type === 'world_snapshot_sync'
+    ) {
+      const idx = peer.pendingEvents.findIndex((e) => e.type === enriched.type);
+      if (idx !== -1) {
+        peer.pendingEvents[idx] = enriched;
+        return;
+      }
+    }
+
+    peer.pendingEvents.push(enriched);
+    if (peer.pendingEvents.length > 160) {
       peer.pendingEvents.shift();
     }
   }
@@ -135,9 +169,16 @@ function broadcastToRoom(
   payload: any,
   excludePeerId?: string
 ) {
+  const isHighFreqEphemeral = payload.type === 'remote_player_state';
+  const sharedPayload = isHighFreqEphemeral
+    ? payload
+    : {
+        ...payload,
+        _eventId: payload._eventId || ++room.nextEventId,
+      };
   for (const peer of room.peers.values()) {
     if (excludePeerId && peer.peerId === excludePeerId) continue;
-    pushEventToPeer(peer, payload);
+    pushEventToPeer(room, peer, sharedPayload);
   }
 }
 
@@ -214,6 +255,7 @@ function applyRoomEvent(
         room.worldSnapshot.chunks = {};
       }
       room.worldSnapshot.chunks[chunkKey] = chunkData;
+      room.worldRevision = (room.worldRevision || 1) + 1;
       broadcastToRoom(
         room,
         {
@@ -221,6 +263,7 @@ function applyRoomEvent(
           peerId,
           chunkKey,
           chunkData,
+          worldRevision: room.worldRevision,
         },
         peerId
       );
@@ -240,11 +283,13 @@ function applyRoomEvent(
       if (!exists) {
         room.worldSnapshot.droppedItems.push(drop);
       }
+      room.worldRevision = (room.worldRevision || 1) + 1;
       broadcastToRoom(
         room,
         {
           type: 'spawn_drop',
           drop,
+          worldRevision: room.worldRevision,
         },
         peerId
       );
@@ -257,12 +302,14 @@ function applyRoomEvent(
     if (dropId && Array.isArray(room.worldSnapshot.droppedItems)) {
       room.worldSnapshot.droppedItems =
         room.worldSnapshot.droppedItems.filter((d: any) => d.id !== dropId);
+      room.worldRevision = (room.worldRevision || 1) + 1;
       broadcastToRoom(
         room,
         {
           type: 'pickup_drop',
           dropId,
           peerId,
+          worldRevision: room.worldRevision,
         },
         peerId
       );
@@ -317,6 +364,19 @@ function applyRoomEvent(
     return;
   }
 
+  if (msg.type === 'guest_mount_event') {
+    broadcastToRoom(
+      room,
+      {
+        type: 'guest_mount_event',
+        peerId,
+        event: msg.event,
+      },
+      peerId
+    );
+    return;
+  }
+
   if (msg.type === 'time_sync' && senderPeer.isHost) {
     if (room.worldSnapshot.metadata) {
       room.worldSnapshot.metadata.timeOfDay = msg.timeOfDay;
@@ -336,15 +396,43 @@ function applyRoomEvent(
 
   if (msg.type === 'host_snapshot' && senderPeer.isHost && msg.worldSnapshot) {
     room.worldSnapshot = msg.worldSnapshot;
+    room.worldRevision = (room.worldRevision || 1) + 1;
     if (msg.targetPeerId) {
       const targetPeer = room.peers.get(msg.targetPeerId);
       if (targetPeer) {
-        pushEventToPeer(targetPeer, {
+        pushEventToPeer(room, targetPeer, {
           type: 'world_snapshot_sync',
           worldSnapshot: room.worldSnapshot,
+          worldRevision: room.worldRevision,
         });
       }
+    } else {
+      broadcastToRoom(
+        room,
+        {
+          type: 'world_snapshot_sync',
+          worldSnapshot: room.worldSnapshot,
+          worldRevision: room.worldRevision,
+        },
+        peerId
+      );
     }
+    return;
+  }
+
+  if (msg.type === 'request_world_resync') {
+    const hostPeer = room.peers.get(room.hostPeerId);
+    if (hostPeer && hostPeer.peerId !== peerId) {
+      pushEventToPeer(room, hostPeer, {
+        type: 'request_host_snapshot',
+        targetPeerId: peerId,
+      });
+    }
+    pushEventToPeer(room, senderPeer, {
+      type: 'world_snapshot_sync',
+      worldSnapshot: room.worldSnapshot,
+      worldRevision: room.worldRevision,
+    });
     return;
   }
 }
@@ -374,6 +462,19 @@ function removePeerFromRoom(inviteCode: string, peerId: string) {
     }
     activeRooms.delete(inviteCode);
   } else {
+    const leavingMountedId = peer.lastState?.mountedEntityId;
+    if (Array.isArray(room.worldSnapshot?.creatures)) {
+      room.worldSnapshot.creatures = room.worldSnapshot.creatures.filter(
+        (c: any) =>
+          c.riderPlayerId !== peerId &&
+          (!leavingMountedId || c.id !== leavingMountedId)
+      );
+      for (const c of room.worldSnapshot.creatures) {
+        if (c.passengerPlayerId === peerId) {
+          c.passengerPlayerId = null;
+        }
+      }
+    }
     broadcastToRoom(room, {
       type: 'peer_left',
       peerId,
@@ -388,8 +489,17 @@ setInterval(() => {
   const now = Date.now();
   for (const [code, room] of activeRooms.entries()) {
     for (const [peerId, peer] of room.peers.entries()) {
+      // If a peer hasn't sent any WS or HTTP packet for > 45 seconds, close any half-open WS
+      if (now - peer.lastSeenAt > 45000 && peer.ws) {
+        try {
+          peer.ws.close();
+        } catch {
+          // ignore
+        }
+        peer.ws = null;
+      }
       const wsOpen = peer.ws && peer.ws.readyState === WebSocket.OPEN;
-      if (!wsOpen && now - peer.lastSeenAt > 35000) {
+      if (!wsOpen && now - peer.lastSeenAt > 55000) {
         removePeerFromRoom(code, peerId);
       }
     }
@@ -505,6 +615,8 @@ async function startServer() {
         hostPeerId,
         hostName,
         gameVersion: roomVersion,
+        worldRevision: (existingRoom?.worldRevision || 0) + 1,
+        nextEventId: existingRoom?.nextEventId || 1,
         worldSnapshot,
         peers: peersMap,
         createdAt: existingRoom?.createdAt || Date.now(),
@@ -520,6 +632,7 @@ async function startServer() {
         worldName: room.worldName,
         hostName: room.hostName,
         gameVersion: room.gameVersion,
+        worldRevision: room.worldRevision,
         peers: getRoomPeersSummary(room),
         serverTime: Date.now(),
       });
@@ -648,11 +761,17 @@ async function startServer() {
     }
   });
 
-  // 4. Real-time HTTP Sync (Heartbeat + State + Queued Events)
+  // 4. Real-time HTTP Sync (Heartbeat + State + Queued Events + Auto-Recovery)
   app.post('/api/mp/sync', (req, res) => {
     try {
-      const { inviteCode: rawCode, peerId, playerState, events } =
-        req.body || {};
+      const {
+        inviteCode: rawCode,
+        peerId,
+        playerName,
+        playerState,
+        events,
+        requestFullSnapshot,
+      } = req.body || {};
       const code = String(rawCode || '')
         .toUpperCase()
         .replace(/[^A-Z0-9]/g, '');
@@ -667,14 +786,51 @@ async function startServer() {
         return;
       }
 
-      const peer = room.peers.get(String(peerId || ''));
-      if (!peer) {
-        res.status(404).json({
-          ok: false,
-          roomClosed: true,
-          error: 'Sua conexão com a sala expirou.',
-        });
+      const cleanPeerId = String(peerId || '').trim();
+      if (!cleanPeerId) {
+        res.status(400).json({ ok: false, error: 'peerId ausente.' });
         return;
+      }
+
+      let peer = room.peers.get(cleanPeerId);
+      let autoRejoined = false;
+
+      // Self-healing: if the room is still open, and a peer reconnected after a temporary network drop,
+      // automatically restore them to `room.peers` instead of kicking them out!
+      if (!peer) {
+        const isHostPeer = cleanPeerId === room.hostPeerId;
+        const cleanName = String(
+          playerName ||
+            playerState?.name ||
+            (isHostPeer ? room.hostName : 'Viajante')
+        )
+          .trim()
+          .slice(0, 22);
+        peer = {
+          peerId: cleanPeerId,
+          name: cleanName,
+          isHost: isHostPeer,
+          ws: null,
+          lastSeenAt: Date.now(),
+          pendingEvents: [],
+          lastState: {
+            ...(playerState || {}),
+            peerId: cleanPeerId,
+            name: cleanName,
+            isHost: isHostPeer,
+          },
+        };
+        room.peers.set(cleanPeerId, peer);
+        autoRejoined = true;
+
+        broadcastToRoom(
+          room,
+          {
+            type: 'peers_updated',
+            peers: getRoomPeersSummary(room),
+          },
+          cleanPeerId
+        );
       }
 
       peer.lastSeenAt = Date.now();
@@ -695,16 +851,27 @@ async function startServer() {
         }
       }
 
-      const drainedEvents = peer.pendingEvents.splice(0, peer.pendingEvents.length);
+      const drainedEvents = peer.pendingEvents.splice(
+        0,
+        peer.pendingEvents.length
+      );
 
       res.json({
         ok: true,
         inviteCode: room.inviteCode,
+        worldRevision: room.worldRevision || 1,
         peers: getRoomPeersSummary(room),
         remoteStates: getRoomRemoteStates(room, peer.peerId),
         events: drainedEvents,
+        creatures: !peer.isHost ? room.worldSnapshot?.creatures : undefined,
+        droppedItems: !peer.isHost
+          ? room.worldSnapshot?.droppedItems
+          : undefined,
+        worldSnapshot:
+          autoRejoined || requestFullSnapshot ? room.worldSnapshot : undefined,
         timeOfDay: room.worldSnapshot?.metadata?.timeOfDay,
         dayCount: room.worldSnapshot?.metadata?.dayCount,
+        serverTime: Date.now(),
       });
     } catch (err: any) {
       res.status(500).json({
@@ -902,6 +1069,8 @@ async function startServer() {
                 worldSnapshot.metadata?.gameVersion ||
                 '0.4.2-beta'
             ).trim(),
+            worldRevision: 1,
+            nextEventId: 1,
             worldSnapshot,
             peers: new Map(),
             createdAt: Date.now(),
@@ -1045,6 +1214,19 @@ async function startServer() {
         if (!room) return;
         const senderPeer = room.peers.get(currentPeerId);
         if (!senderPeer) return;
+
+        if (msg.type === 'ws_ping') {
+          senderPeer.lastSeenAt = Date.now();
+          ws.send(
+            JSON.stringify({
+              type: 'ws_pong',
+              t: msg.t || Date.now(),
+              worldRevision: room.worldRevision || 1,
+              peersCount: room.peers.size,
+            })
+          );
+          return;
+        }
 
         if (msg.type === 'leave_room') {
           removePeerFromRoom(currentRoomCode, currentPeerId);

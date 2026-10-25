@@ -25,10 +25,12 @@ import {
 import { CONSTRUCTION_BLUEPRINTS, ITEMS } from '../game/core/ItemRegistry';
 import {
   BiomeType,
+  CreatureKind,
   GameSettings,
   HOTBAR_SIZE,
   HudElementKey,
   ItemCategory,
+  MOUNT_STORAGE_SIZE,
 } from '../game/core/types';
 import { GameEngine, HudSnapshot } from '../game/loop/GameEngine';
 import { SaveManager } from '../game/persistence/SaveManager';
@@ -48,6 +50,7 @@ interface MobileHudProps {
   onOpenCharacter: () => void;
   onOpenOnlineInvite: () => void;
   onOpenPause: () => void;
+  onMountSaddlebagToggle?: (open: boolean) => void;
 }
 
 const ELEMENT_LABELS: Record<HudElementKey, string> = {
@@ -74,6 +77,7 @@ export const MobileHud: React.FC<MobileHudProps> = ({
   onOpenCharacter,
   onOpenOnlineInvite,
   onOpenPause,
+  onMountSaddlebagToggle,
 }) => {
   const {
     player,
@@ -82,7 +86,15 @@ export const MobileHud: React.FC<MobileHudProps> = ({
     currentZoneName,
     currentLandmarkName,
     aimedTarget,
+    activeMount,
   } = snapshot;
+
+  const [showMountSaddlebag, setShowMountSaddlebag] = useState(false);
+
+  const toggleMountSaddlebag = (nextOpen: boolean) => {
+    setShowMountSaddlebag(nextOpen);
+    onMountSaddlebagToggle?.(nextOpen);
+  };
 
   // Virtual Joystick state (Play Mode)
   const joyContainerRef = useRef<HTMLDivElement | null>(null);
@@ -305,10 +317,14 @@ export const MobileHud: React.FC<MobileHudProps> = ({
     heldItem &&
     (heldItem.category === ItemCategory.PLACEABLE ||
       heldItem.category === ItemCategory.CONSUMABLE ||
-      heldItem.category === ItemCategory.ARMOR);
+      heldItem.category === ItemCategory.ARMOR ||
+      heldItem.id === 'saddle' ||
+      heldItem.id === 'wood_boat');
 
   const placeButtonLabel = () => {
     if (!heldItem) return 'Colocar';
+    if (heldItem.id === 'saddle') return 'Selar';
+    if (heldItem.id === 'wood_boat') return 'Lançar Bote';
     if (heldItem.specialUse === 'bomb') return 'Detonar';
     if (heldItem.specialUse === 'recall') return 'Teleportar';
     if (heldItem.category === ItemCategory.PLACEABLE) {
@@ -323,7 +339,7 @@ export const MobileHud: React.FC<MobileHudProps> = ({
     if (!aimedTarget) return 'Interagir';
     if (aimedTarget.kind === 'station') return aimedTarget.actionHint;
     if (aimedTarget.kind === 'wild_animal') return 'Domesticar';
-    if (aimedTarget.kind === 'tamed_animal') return 'Comando Pet';
+    if (aimedTarget.kind === 'tamed_animal') return aimedTarget.actionHint;
     return 'Inspecionar';
   };
 
@@ -1021,6 +1037,145 @@ export const MobileHud: React.FC<MobileHudProps> = ({
               </div>
             )}
           </div>
+
+          {/* ACTIVE MOUNT BAR (Horse / Camel with Stamina, Cavalgar & 8-Slot Saddlebag, OR 2-Seat Boat) */}
+          {activeMount && (
+            <div className="medieval-panel px-2.5 py-1.5 flex flex-wrap items-center justify-center gap-2 border-amber-500/70 shadow-[0_0_16px_rgba(0,0,0,0.75)]">
+              {activeMount.kind === CreatureKind.BOAT ? (
+                <>
+                  <div className="flex items-center gap-1.5">
+                    <img
+                      src={spriteAtlas.getItemIconUrl('wood_boat')}
+                      alt="Bote"
+                      className="w-4 h-4 pixelated"
+                    />
+                    <span className="font-pixel text-[9px] sm:text-[10px] text-sky-300 font-bold">
+                      {activeMount.name}
+                    </span>
+                    <span className="px-1.5 py-0.5 rounded bg-sky-950/90 border border-sky-500/50 text-[8px] font-mono-tabular text-sky-200 font-bold">
+                      Assentos:{' '}
+                      {(activeMount.riderPlayerId ? 1 : 0) +
+                        (activeMount.passengerPlayerId ||
+                        activeMount.passengerPetId
+                          ? 1
+                          : 0)}
+                      /2
+                    </span>
+                    <span className="hidden sm:inline text-[8px] text-emerald-300 font-semibold">
+                      · Imune à Correnteza · 0 Slots
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-1">
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        engine.dismountCreature();
+                      }}
+                      className="px-2 py-1 medieval-btn-wood text-[9px] font-bold text-amber-200"
+                    >
+                      Desembarcar
+                    </button>
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        engine.pickupBoat(activeMount.id);
+                      }}
+                      className="px-2 py-1 medieval-btn-gold text-[9px] font-bold"
+                    >
+                      Recolher Bote
+                    </button>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div className="flex items-center gap-1.5">
+                    <img
+                      src={spriteAtlas.getItemIconUrl('saddle')}
+                      alt="Sela"
+                      className="w-4 h-4 pixelated"
+                    />
+                    <span className="font-pixel text-[9px] sm:text-[10px] text-amber-300 font-bold">
+                      {activeMount.name}
+                    </span>
+                    <span className="px-1 py-0.5 rounded bg-[#120b07] border border-[#4a301e] text-[8px] font-mono-tabular text-emerald-300 font-bold">
+                      Vel {activeMount.mountSpeed || 145}
+                    </span>
+                  </div>
+
+                  {/* Mount Stamina (Fôlego) Bar */}
+                  <div className="flex items-center gap-1 min-w-[95px] sm:min-w-[115px]">
+                    <span className="text-[8px] font-mono-tabular font-bold text-amber-400">
+                      FÔLEGO
+                    </span>
+                    <div className="flex-1 h-2.5 medieval-inset overflow-hidden p-[1px]">
+                      <div
+                        className="h-full bg-amber-400 transition-all duration-100"
+                        style={{
+                          width: `${Math.max(
+                            0,
+                            Math.min(
+                              100,
+                              ((activeMount.mountStamina ?? 100) /
+                                Math.max(1, activeMount.mountMaxStamina || 100)) *
+                                100
+                            )
+                          )}%`,
+                        }}
+                      />
+                    </div>
+                    <span className="text-[8px] font-mono-tabular text-[#f3e5c8]">
+                      {Math.ceil(activeMount.mountStamina ?? 100)}/
+                      {activeMount.mountMaxStamina || 100}
+                    </span>
+                  </div>
+
+                  <div className="flex items-center gap-1">
+                    <button
+                      type="button"
+                      onPointerDown={(e) => {
+                        e.stopPropagation();
+                        engine.toggleGalloping();
+                      }}
+                      className={`px-2.5 py-1 font-pixel text-[9px] font-bold flex items-center gap-1 ${
+                        player.isGalloping
+                          ? 'medieval-btn-gold shadow-[0_0_12px_rgba(251,191,36,0.75)]'
+                          : 'medieval-btn-emerald'
+                      }`}
+                      title="Gasta fôlego da montaria para correr mais rápido"
+                    >
+                      <span>🐎 {player.isGalloping ? 'Cavalgando!' : 'Cavalgar'}</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        toggleMountSaddlebag(!showMountSaddlebag);
+                      }}
+                      className="px-2 py-1 medieval-btn-wood text-[9px] font-bold text-amber-300"
+                      title="Abrir inventário de 8 slots da sela"
+                    >
+                      🎒 Alforje (8)
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        toggleMountSaddlebag(false);
+                        engine.dismountCreature();
+                      }}
+                      className="px-2 py-1 medieval-btn-crimson text-[9px] font-bold"
+                    >
+                      Desmontar
+                    </button>
+                  </div>
+                </>
+              )}
+            </div>
+          )}
         </div>
 
         {/* 8 Slots Row (Sized to fit comfortably on 667x375 horizontal phones) */}
@@ -1091,7 +1246,15 @@ export const MobileHud: React.FC<MobileHudProps> = ({
           <Swords className="w-7 h-7 text-amber-200" />
         )}
         <span className="font-pixel text-[9px] font-bold tracking-tight">
-          {heldItem?.category === ItemCategory.TOOL ? 'Usar' : 'Atacar'}
+          {player.fishingState?.active
+            ? player.fishingState.phase === 'biting'
+              ? 'Fisgar!'
+              : 'Recolher'
+            : heldItem?.id === 'fishing_rod'
+            ? 'Pescar'
+            : heldItem?.category === ItemCategory.TOOL
+            ? 'Usar'
+            : 'Atacar'}
         </span>
       </button>
 
@@ -1186,6 +1349,193 @@ export const MobileHud: React.FC<MobileHudProps> = ({
           </span>
         </div>
       </button>
+
+      {/* =================================================================== */}
+      {/* 8. DEDICATED CAVALGAR BUTTON (RIGHT SIDE WHEN MOUNTED ON HORSE/CAMEL)*/}
+      {/* =================================================================== */}
+      {activeMount &&
+        (activeMount.kind === CreatureKind.HORSE ||
+          activeMount.kind === CreatureKind.CAMEL) && (
+          <button
+            type="button"
+            onPointerDown={(e) => {
+              e.stopPropagation();
+              engine.setGalloping(true);
+            }}
+            onPointerUp={(e) => {
+              e.stopPropagation();
+              engine.setGalloping(false);
+            }}
+            onPointerCancel={() => engine.setGalloping(false)}
+            className={`pointer-events-auto fixed bottom-38 right-4 z-40 min-h-[46px] min-w-[98px] sm:min-h-[50px] sm:min-w-[108px] px-2.5 py-1 flex flex-col items-center justify-center gap-0.5 select-none touch-none ${
+              player.isGalloping
+                ? 'medieval-btn-gold shadow-[0_0_16px_rgba(251,191,36,0.75)]'
+                : 'medieval-btn-emerald shadow-[0_0_12px_rgba(16,185,129,0.4)]'
+            }`}
+          >
+            <span className="font-pixel text-[9px] sm:text-[10px] font-bold">
+              🐎 Cavalgar
+            </span>
+            <span className="text-[8px] font-mono-tabular">
+              Fôlego {Math.ceil(activeMount.mountStamina ?? 100)}/
+              {activeMount.mountMaxStamina || 100}
+            </span>
+          </button>
+        )}
+
+      {/* =================================================================== */}
+      {/* 9. 8-SLOT MOUNT SADDLEBAG MODAL (ALFORJE DE 8 SLOTS)                */}
+      {/* =================================================================== */}
+      {showMountSaddlebag &&
+        activeMount &&
+        activeMount.hasSaddle &&
+        (activeMount.kind === CreatureKind.HORSE ||
+          activeMount.kind === CreatureKind.CAMEL) && (
+          <div
+            onClick={() => toggleMountSaddlebag(false)}
+            className="pointer-events-auto fixed inset-0 z-50 bg-black/75 flex items-center justify-center p-2"
+          >
+            <div
+              onClick={(e) => e.stopPropagation()}
+              className="w-full max-w-2xl medieval-panel p-3 space-y-3 max-h-[92dvh] overflow-y-auto"
+            >
+              <div className="flex items-center justify-between border-b border-[#4a301e] pb-2">
+                <div className="flex items-center gap-2">
+                  <img
+                    src={spriteAtlas.getItemIconUrl('saddle')}
+                    alt="Sela"
+                    className="w-5 h-5 pixelated"
+                  />
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <h3 className="font-pixel text-xs font-bold text-amber-400">
+                        ALFORJE DE {activeMount.name.toUpperCase()} (8 SLOTS)
+                      </h3>
+                      <span
+                        className={`px-1.5 py-0.5 text-[8px] font-bold border ${
+                          snapshot.isPaused
+                            ? 'bg-amber-950/80 border-amber-500/60 text-amber-300'
+                            : 'bg-sky-950/80 border-sky-500/60 text-sky-300'
+                        }`}
+                      >
+                        {snapshot.isPaused
+                          ? '⏸ JOGO PAUSADO'
+                          : '🌐 MULTIPLAYER ATIVO (SEM PAUSA)'}
+                      </span>
+                    </div>
+                    <p className="text-[10px] text-[#c4ab7d]">
+                      Velocidade Individual: {activeMount.mountSpeed} · Fôlego Máximo:{' '}
+                      {activeMount.mountMaxStamina || 100}
+                    </p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => toggleMountSaddlebag(false)}
+                  className="px-2.5 py-1 medieval-btn-crimson text-[10px] font-bold"
+                >
+                  Fechar
+                </button>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                {/* 8 Mount Slots */}
+                <div className="medieval-inset p-2.5 space-y-2">
+                  <div className="text-[10px] font-pixel text-amber-300 font-bold">
+                    INVENTÁRIO DA MONTARIA (8 SLOTS) — Clique para retirar
+                  </div>
+                  <div className="grid grid-cols-4 gap-1.5">
+                    {Array.from({ length: MOUNT_STORAGE_SIZE }).map((_, idx) => {
+                      const mSlot = activeMount.mountInventory?.[idx] || null;
+                      const def = mSlot ? ITEMS[mSlot.itemId] : null;
+                      return (
+                        <button
+                          key={idx}
+                          onClick={() =>
+                            mSlot &&
+                            engine.transferMountSlotToInventory(
+                              activeMount.id,
+                              idx,
+                              true
+                            )
+                          }
+                          className="h-12 mc-slot flex flex-col items-center justify-center relative"
+                          title={
+                            def
+                              ? `${def.name} (${mSlot?.count}x) — Clique para mover para sua mochila`
+                              : `Slot ${idx + 1} vazio`
+                          }
+                        >
+                          {mSlot && def ? (
+                            <>
+                              <img
+                                src={spriteAtlas.getItemIconUrl(mSlot.itemId)}
+                                alt={def.name}
+                                className="w-6 h-6 pixelated"
+                              />
+                              <span className="absolute bottom-0.5 right-1 text-[9px] font-mono-tabular font-bold text-amber-300">
+                                {mSlot.count}
+                              </span>
+                            </>
+                          ) : (
+                            <span className="text-[8px] text-[#5c3d28]">
+                              {idx + 1}
+                            </span>
+                          )}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {/* Player Inventory Slots to Store into Mount */}
+                <div className="medieval-inset p-2.5 space-y-2">
+                  <div className="text-[10px] font-pixel text-emerald-300 font-bold">
+                    SUA MOCHILA — Clique em um item para guardar no Alforje
+                  </div>
+                  <div className="grid grid-cols-8 gap-1 max-h-[160px] overflow-y-auto">
+                    {player.inventory.map((pSlot, pIdx) => {
+                      const def = pSlot ? ITEMS[pSlot.itemId] : null;
+                      return (
+                        <button
+                          key={pIdx}
+                          onClick={() =>
+                            pSlot &&
+                            engine.transferInventorySlotToMount(
+                              activeMount.id,
+                              pIdx,
+                              true
+                            )
+                          }
+                          className="h-9 mc-slot flex flex-col items-center justify-center relative"
+                          title={
+                            def
+                              ? `Guardar ${def.name} (${pSlot?.count}x) no Alforje`
+                              : 'Vazio'
+                          }
+                        >
+                          {pSlot && def ? (
+                            <>
+                              <img
+                                src={spriteAtlas.getItemIconUrl(pSlot.itemId)}
+                                alt={def.name}
+                                className="w-5 h-5 pixelated"
+                              />
+                              {pSlot.count > 1 && (
+                                <span className="absolute bottom-0 right-0.5 text-[8px] font-mono-tabular font-bold text-amber-200">
+                                  {pSlot.count}
+                                </span>
+                              )}
+                            </>
+                          ) : null}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
     </div>
   );
 };

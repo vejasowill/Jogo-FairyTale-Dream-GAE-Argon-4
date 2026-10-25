@@ -95,19 +95,25 @@ export const WorldSelectScreen: React.FC<WorldSelectScreenProps> = ({
     });
   }, [settings]);
 
+  const [isTransitioningWorld, setIsTransitioningWorld] = useState(false);
+
   const handleCreateWorld = (e: React.FormEvent) => {
     e.preventDefault();
+    if (isTransitioningWorld || isJoiningOnline) return;
+    setIsTransitioningWorld(true);
+    setShowCreateModal(false);
     const newSave = SaveManager.createNewWorld(worldName, seedInput, difficulty);
     if (settings.serverSyncEnabled) {
       SaveManager.syncWorldToServer(newSave, settings);
     }
-    setShowCreateModal(false);
     onStartWorld(newSave);
   };
 
   const handleLoadWorld = (id: string) => {
+    if (isTransitioningWorld || isJoiningOnline) return;
     const loaded = SaveManager.loadWorldLocal(id);
     if (loaded) {
+      setIsTransitioningWorld(true);
       onStartWorld(loaded);
     } else {
       setStatusMessage('Não foi possível carregar este mundo.');
@@ -116,6 +122,7 @@ export const WorldSelectScreen: React.FC<WorldSelectScreenProps> = ({
 
   const handleJoinByInviteCode = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (isJoiningOnline || isTransitioningWorld) return;
     const cleanCode = inviteCodeInput
       .trim()
       .toUpperCase()
@@ -156,6 +163,7 @@ export const WorldSelectScreen: React.FC<WorldSelectScreenProps> = ({
       return;
     }
 
+    setIsTransitioningWorld(true);
     setStatusMessage(null);
     onJoinOnlineWorld(res.worldSave, res.manager);
   };

@@ -106,7 +106,63 @@ export const RECIPES: CraftingRecipe[] = [
       { itemId: 'stone', count: 2 },
     ],
   },
-
+  {
+    id: 'craft_fishing_rod',
+    resultItemId: 'fishing_rod',
+    resultCount: 1,
+    requiredStation: null,
+    tier: RarityTier.BASIC,
+    ingredients: [
+      { itemId: 'wood', count: 3 },
+      { itemId: 'fiber', count: 2 },
+    ],
+  },
+  {
+    id: 'craft_cooked_fish_tilapia',
+    resultItemId: 'cooked_fish',
+    resultCount: 1,
+    requiredStation: null,
+    tier: RarityTier.BASIC,
+    ingredients: [
+      { itemId: 'fish_tilapia', count: 1 },
+      { itemId: 'wood', count: 1 },
+    ],
+  },
+  {
+    id: 'craft_cooked_fish_salmon',
+    resultItemId: 'cooked_fish',
+    resultCount: 2,
+    requiredStation: null,
+    tier: RarityTier.RARE,
+    ingredients: [
+      { itemId: 'fish_salmon', count: 1 },
+      { itemId: 'wood', count: 1 },
+    ],
+  },
+  {
+    id: 'craft_saddle',
+    resultItemId: 'saddle',
+    resultCount: 1,
+    requiredStation: null,
+    tier: RarityTier.RARE,
+    ingredients: [
+      { itemId: 'wool', count: 2 },
+      { itemId: 'fiber', count: 4 },
+      { itemId: 'wood', count: 2 },
+    ],
+  },
+  {
+    id: 'craft_wood_boat',
+    resultItemId: 'wood_boat',
+    resultCount: 1,
+    requiredStation: null,
+    tier: RarityTier.BASIC,
+    ingredients: [
+      { itemId: 'wood', count: 8 },
+      { itemId: 'fiber', count: 3 },
+    ],
+  },
+ 
   // =========================================================================
   // TIER 1: WORKBENCH RECIPES (BANCADA DE ARTESÃO)
   // =========================================================================

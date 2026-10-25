@@ -83,7 +83,125 @@ export class WorldManager {
     this.worldGenVersion = worldGenVersion;
     if (existingChunks) {
       this.chunks = existingChunks;
+      for (const chunk of Object.values(this.chunks)) {
+        if (chunk) {
+          this.hydrateChunk(chunk);
+        }
+      }
     }
+  }
+
+  /**
+   * Reconstructs deterministic terrain arrays (`tiles`, `tileVariants`, `ecologicalZones`),
+   * full 256-tile `explored` array, and static `NatureNode` blueprint properties when loading
+   * compact chunk saves from storage or network sync.
+   */
+  public hydrateChunk(chunk: ChunkData): ChunkData {
+    const totalTiles = CHUNK_SIZE * CHUNK_SIZE;
+    const needsTiles =
+      !Array.isArray(chunk.tiles) || chunk.tiles.length !== totalTiles;
+    const needsVariants =
+      !Array.isArray(chunk.tileVariants) ||
+      chunk.tileVariants.length !== totalTiles;
+    const needsZones =
+      !Array.isArray(chunk.ecologicalZones) ||
+      chunk.ecologicalZones.length !== totalTiles;
+
+    if (needsTiles) chunk.tiles = new Array(totalTiles);
+    if (needsVariants) chunk.tileVariants = new Array(totalTiles);
+    if (needsZones) chunk.ecologicalZones = new Array(totalTiles);
+
+    if (needsTiles || needsVariants || needsZones) {
+      for (let ly = 0; ly < CHUNK_SIZE; ly++) {
+        for (let lx = 0; lx < CHUNK_SIZE; lx++) {
+          const tx = chunk.cx * CHUNK_SIZE + lx;
+          const ty = chunk.cy * CHUNK_SIZE + ly;
+          const idx = ly * CHUNK_SIZE + lx;
+          const biome = needsTiles
+            ? this.computeBiomeAtTile(tx, ty)
+            : chunk.tiles[idx];
+          if (needsTiles) {
+            chunk.tiles[idx] = biome;
+          }
+          if (needsVariants) {
+            const r = hash2D(tx, ty, this.seed + 31);
+            chunk.tileVariants[idx] = Math.floor(r * 4);
+          }
+          if (needsZones && chunk.ecologicalZones) {
+            chunk.ecologicalZones[idx] = this.computeEcologicalZoneAtTile(
+              tx,
+              ty,
+              biome
+            );
+          }
+        }
+      }
+    }
+
+    if (!Array.isArray(chunk.explored)) {
+      chunk.explored = new Array(totalTiles).fill(0);
+    } else if (chunk.explored.length === 1) {
+      chunk.explored = new Array(totalTiles).fill(chunk.explored[0] ? 1 : 0);
+    } else if (chunk.explored.length === 0) {
+      chunk.explored = new Array(totalTiles).fill(0);
+    } else if (chunk.explored.length < totalTiles) {
+      const full = new Array(totalTiles).fill(0);
+      for (let i = 0; i < chunk.explored.length; i++) {
+        full[i] = chunk.explored[i] ? 1 : 0;
+      }
+      chunk.explored = full;
+    }
+
+    if (Array.isArray(chunk.nodes)) {
+      for (let i = chunk.nodes.length - 1; i >= 0; i--) {
+        const n = chunk.nodes[i];
+        const lx = ((n.tileX % CHUNK_SIZE) + CHUNK_SIZE) % CHUNK_SIZE;
+        const ly = ((n.tileY % CHUNK_SIZE) + CHUNK_SIZE) % CHUNK_SIZE;
+        const idx = ly * CHUNK_SIZE + lx;
+        const tileBiome = chunk.tiles?.[idx];
+        const tileZone = chunk.ecologicalZones?.[idx];
+
+        if (
+          tileBiome === BiomeType.OCEAN &&
+          n.type !== NatureNodeType.PEARL_CLAM
+        ) {
+          chunk.nodes.splice(i, 1);
+          continue;
+        }
+        if (
+          tileZone === EcologicalZone.COASTAL_TROPICS &&
+          (n.type === NatureNodeType.OAK_TREE ||
+            n.type === NatureNodeType.HARDWOOD_TREE ||
+            n.type === NatureNodeType.CACTUS ||
+            n.type === NatureNodeType.BERRY_BUSH)
+        ) {
+          n.type = NatureNodeType.PALM_TREE;
+        }
+
+        const bp = NATURE_BLUEPRINTS[n.type];
+        if (bp) {
+          if (typeof n.maxHp !== 'number') n.maxHp = bp.maxHp;
+          if (typeof n.hp !== 'number') n.hp = bp.maxHp;
+          if (!n.rarity) n.rarity = bp.rarity;
+          if (!n.requiredTool) n.requiredTool = bp.requiredTool;
+          if (typeof n.requiredTier !== 'number')
+            n.requiredTier = bp.requiredTier;
+          if (typeof n.hitFlashTimer !== 'number') n.hitFlashTimer = 0;
+          if (typeof n.animOffset !== 'number') {
+            const r = hash2D(n.tileX, n.tileY, this.seed + 31);
+            n.animOffset = Math.floor(r * 10);
+          }
+        }
+      }
+    } else {
+      chunk.nodes = [];
+    }
+
+    if (!Array.isArray(chunk.structures)) {
+      chunk.structures = [];
+    }
+
+    return chunk;
   }
 
   public static chunkKey(cx: number, cy: number): string {
@@ -108,18 +226,274 @@ export class WorldManager {
   public getOrCreateChunk(cx: number, cy: number): ChunkData {
     const key = WorldManager.chunkKey(cx, cy);
     if (!this.chunks[key]) {
-      this.chunks[key] =
-        this.worldGenVersion >= 2
-          ? this.generateChunkV2(cx, cy)
-          : this.generateChunkV1(cx, cy);
+      this.chunks[key] = this.generateChunkV2(cx, cy);
+    } else if (
+      !Array.isArray(this.chunks[key].tiles) ||
+      this.chunks[key].tiles.length !== CHUNK_SIZE * CHUNK_SIZE
+    ) {
+      this.hydrateChunk(this.chunks[key]);
     }
     return this.chunks[key];
   }
 
   /**
+   * Evaluates raw hydrological features at `(tx, ty)`:
+   * - Predominant dry land continent (`~84%+` of the world)
+   * - Immense Oceans very far apart (`continentalElev < 0.312` at low frequency `0.0038`)
+   * - Oceanic Islands inside the oceans (`islandNoise > 0.605`)
+   * - Rare meandering Rivers that flow downhill and empty directly into the Ocean (`waterKind === 'river'`)
+   * - Localized inland Lakes & Desert Oases (`waterKind === 'lake'`)
+   */
+  private getRawWaterAtTile(
+    tx: number,
+    ty: number
+  ): {
+    waterKind: 'none' | 'ocean' | 'river' | 'lake';
+    isIslandLand: boolean;
+    continentalElev: number;
+    riverMeander: number;
+    climate: number;
+  } {
+    const distFromOrigin = Math.hypot(tx, ty);
+
+    // Organic domain warping for natural coastlines, bays, and peninsulas
+    const warpX =
+      (smoothNoise(tx * 0.018, ty * 0.018, this.seed + 101) - 0.5) * 24;
+    const warpY =
+      (smoothNoise(tx * 0.018, ty * 0.018, this.seed + 202) - 0.5) * 24;
+    const wx = tx + warpX;
+    const wy = ty + warpY;
+
+    // Low-frequency continental elevation so dry land is predominant and oceans are immense and very far apart
+    let continentalElev = fbm(wx * 0.0038, wy * 0.0038, this.seed, 4);
+    if (distFromOrigin < 36) {
+      const boost = Math.max(0, (36 - distFromOrigin) / 36) * 0.25;
+      continentalElev += boost;
+    }
+
+    const climate = fbm(
+      wx * 0.016 + 150,
+      wy * 0.016 - 120,
+      this.seed + 777,
+      3
+    );
+    const riverMeander =
+      fbm(wx * 0.0078 + 310, wy * 0.0078 - 240, this.seed + 4409, 3) - 0.48;
+
+    const OCEAN_LEVEL = 0.312;
+
+    // 1. Immense Ocean Basins & Oceanic Islands
+    if (continentalElev < OCEAN_LEVEL) {
+      if (continentalElev < OCEAN_LEVEL - 0.016 && continentalElev > 0.12) {
+        const islandNoise = fbm(
+          tx * 0.025 + warpX * 0.25,
+          ty * 0.025 + warpY * 0.25,
+          this.seed + 1901,
+          3
+        );
+        if (islandNoise > 0.605) {
+          return {
+            waterKind: 'none',
+            isIslandLand: true,
+            continentalElev,
+            riverMeander,
+            climate,
+          };
+        }
+      }
+      return {
+        waterKind: 'ocean',
+        isIslandLand: false,
+        continentalElev,
+        riverMeander,
+        climate,
+      };
+    }
+
+    // Guarantee starter heartland around (0, 0) is open dry land
+    if (distFromOrigin < 16) {
+      return {
+        waterKind: 'none',
+        isIslandLand: false,
+        continentalElev,
+        riverMeander,
+        climate,
+      };
+    }
+
+    // 2. Rare Winding Rivers that empty into the Ocean
+    const riverGate = smoothNoise(
+      wx * 0.0032 - 90,
+      wy * 0.0032 + 140,
+      this.seed + 5503
+    );
+    const maxRiverElev =
+      OCEAN_LEVEL + Math.max(0, (riverGate - 0.535) * 0.62);
+    if (continentalElev < maxRiverElev) {
+      const riverProgress =
+        (continentalElev - OCEAN_LEVEL) /
+        Math.max(0.01, maxRiverElev - OCEAN_LEVEL);
+      // Widens at the estuary mouth where it meets the ocean, tapers at inland headwaters
+      const halfWidth = 0.0145 * (1 - 0.52 * riverProgress);
+      if (Math.abs(riverMeander) < halfWidth) {
+        return {
+          waterKind: 'river',
+          isIslandLand: false,
+          continentalElev,
+          riverMeander,
+          climate,
+        };
+      }
+    }
+
+    // 3. Localized Inland Lakes & Desert Oases (keeping dry land strongly predominant)
+    if (climate < 0.445) {
+      const oasisPotential = smoothNoise(
+        tx * 0.065,
+        ty * 0.065,
+        this.seed + 3307
+      );
+      if (
+        distFromOrigin > 20 &&
+        continentalElev > 0.37 &&
+        oasisPotential > 0.875
+      ) {
+        return {
+          waterKind: 'lake',
+          isIslandLand: false,
+          continentalElev,
+          riverMeander,
+          climate,
+        };
+      }
+    } else {
+      const lakeNoise = smoothNoise(tx * 0.052, ty * 0.052, this.seed + 2801);
+      if (distFromOrigin > 20 && continentalElev > 0.38 && lakeNoise > 0.858) {
+        return {
+          waterKind: 'lake',
+          isIslandLand: false,
+          continentalElev,
+          riverMeander,
+          climate,
+        };
+      }
+    }
+
+    return {
+      waterKind: 'none',
+      isIslandLand: false,
+      continentalElev,
+      riverMeander,
+      climate,
+    };
+  }
+
+  /**
+   * Returns complete hydrological & coastal beach classification at `(tx, ty)`.
+   * Every Ocean border (both mainland and oceanic islands) has a wide sandy beach (`isOceanBeach = true`).
+   */
+  public getHydrologyAtTile(tx: number, ty: number): {
+    waterKind: 'none' | 'ocean' | 'river' | 'lake';
+    isOceanBeach: boolean;
+    continentalElev: number;
+    riverMeander: number;
+    climate: number;
+  } {
+    const raw = this.getRawWaterAtTile(tx, ty);
+    if (raw.waterKind !== 'none') {
+      return {
+        waterKind: raw.waterKind,
+        isOceanBeach: false,
+        continentalElev: raw.continentalElev,
+        riverMeander: raw.riverMeander,
+        climate: raw.climate,
+      };
+    }
+
+    const OCEAN_LEVEL = 0.312;
+    // Fast O(1) early-out for inland continent tiles far from any ocean
+    if (!raw.isIslandLand && raw.continentalElev >= OCEAN_LEVEL + 0.056) {
+      return {
+        waterKind: 'none',
+        isOceanBeach: false,
+        continentalElev: raw.continentalElev,
+        riverMeander: raw.riverMeander,
+        climate: raw.climate,
+      };
+    }
+
+    // Wide sandy beach belt along the ocean coast (4 to 6 tiles wide)
+    const beachNoise =
+      smoothNoise(tx * 0.08, ty * 0.08, this.seed + 601) * 0.011;
+    if (
+      !raw.isIslandLand &&
+      raw.continentalElev < OCEAN_LEVEL + 0.025 + beachNoise
+    ) {
+      return {
+        waterKind: 'none',
+        isOceanBeach: true,
+        continentalElev: raw.continentalElev,
+        riverMeander: raw.riverMeander,
+        climate: raw.climate,
+      };
+    }
+
+    // Check up to 4 tiles around (tx, ty) so every ocean coast & island shore has a wide sandy beach
+    const beachProbeOffsets: [number, number][] = [
+      [1, 0],
+      [-1, 0],
+      [0, 1],
+      [0, -1],
+      [2, 0],
+      [-2, 0],
+      [0, 2],
+      [0, -2],
+      [2, 2],
+      [-2, 2],
+      [2, -2],
+      [-2, -2],
+      [3, 0],
+      [-3, 0],
+      [0, 3],
+      [0, -3],
+      [3, 2],
+      [-3, 2],
+      [3, -2],
+      [-3, -2],
+      [4, 0],
+      [-4, 0],
+      [0, 4],
+      [0, -4],
+      [3, 3],
+      [-3, 3],
+      [3, -3],
+      [-3, -3],
+    ];
+
+    for (let i = 0; i < beachProbeOffsets.length; i++) {
+      const [dx, dy] = beachProbeOffsets[i];
+      if (this.getRawWaterAtTile(tx + dx, ty + dy).waterKind === 'ocean') {
+        return {
+          waterKind: 'none',
+          isOceanBeach: true,
+          continentalElev: raw.continentalElev,
+          riverMeander: raw.riverMeander,
+          climate: raw.climate,
+        };
+      }
+    }
+
+    return {
+      waterKind: 'none',
+      isOceanBeach: false,
+      continentalElev: raw.continentalElev,
+      riverMeander: raw.riverMeander,
+      climate: raw.climate,
+    };
+  }
+
+  /**
    * Computes the macro BiomeType at a tile.
-   * Preserves v1 formula 100% intact for existing worlds (worldGenVersion === 1),
-   * while using coherent domain-warped continental & oasis geography for new worlds (v2).
    */
   public computeBiomeAtTile(tx: number, ty: number): BiomeType {
     if (this.worldGenVersion <= 1) {
@@ -129,66 +503,37 @@ export class WorldManager {
   }
 
   private computeBiomeAtTileV1(tx: number, ty: number): BiomeType {
-    const distFromOrigin = Math.hypot(tx, ty);
-    if (distFromOrigin < 9) {
-      return BiomeType.PLAINS;
-    }
-
-    const elevation = fbm(tx * 0.032, ty * 0.032, this.seed);
-    const moisture = fbm(tx * 0.025 + 100, ty * 0.025 + 100, this.seed + 777);
-
-    if (elevation < 0.36) {
-      return BiomeType.OCEAN;
-    }
-    if (moisture < 0.45) {
-      return BiomeType.DESERT;
-    }
-    return BiomeType.PLAINS;
+    return this.computeBiomeAtTileV2(tx, ty);
   }
 
   private computeBiomeAtTileV2(tx: number, ty: number): BiomeType {
     const distFromOrigin = Math.hypot(tx, ty);
-
-    // Guarantee a welcoming starting heartland around (0, 0) with organic edges
     if (distFromOrigin < 11) {
       return BiomeType.PLAINS;
     }
 
-    // Domain warping for natural peninsulas, bays, and continental curves
-    const warpX = (smoothNoise(tx * 0.04, ty * 0.04, this.seed + 101) - 0.5) * 14;
-    const warpY = (smoothNoise(tx * 0.04, ty * 0.04, this.seed + 202) - 0.5) * 14;
-    const wx = tx + warpX;
-    const wy = ty + warpY;
-
-    // Continental elevation + island archipelago peaks
-    let elevation = fbm(wx * 0.022, wy * 0.022, this.seed, 4);
-    if (distFromOrigin < 20) {
-      // Smoothly boost elevation near starting island so player isn't boxed in by tiny ocean strips
-      const boost = Math.max(0, (20 - distFromOrigin) / 20) * 0.18;
-      elevation += boost;
-    }
-
-    // Climate temperature/moisture gradient (smooth regional transitions)
-    const climate = fbm(wx * 0.017 + 150, wy * 0.017 - 120, this.seed + 777, 3);
-
-    // Ocean & Archipelago Islands
-    if (elevation < 0.345) {
-      // Occasional tropical island chains in the ocean
-      const islandPeak = smoothNoise(tx * 0.075, ty * 0.075, this.seed + 1901);
-      if (elevation > 0.27 && islandPeak > 0.78) {
-        return climate < 0.43 ? BiomeType.DESERT : BiomeType.PLAINS;
-      }
+    const hydro = this.getHydrologyAtTile(tx, ty);
+    if (hydro.waterKind !== 'none') {
       return BiomeType.OCEAN;
     }
 
-    // Arid Desert Continent with rare fertile Oasis Springs
-    if (climate < 0.445) {
-      const oasisPotential = smoothNoise(tx * 0.065, ty * 0.065, this.seed + 3307);
-      if (distFromOrigin > 20 && elevation > 0.44 && oasisPotential > 0.835) {
-        // Center of an oasis has a shallow lagoon spring surrounded by fertile green border
-        if (oasisPotential > 0.875) {
-          return BiomeType.OCEAN;
-        }
+    // Ocean borders (and island shores) are always wide sandy beaches
+    if (hydro.isOceanBeach) {
+      return BiomeType.DESERT;
+    }
+
+    // Arid Desert Continent with fertile Oasis Springs
+    if (hydro.climate < 0.445) {
+      const oasisPotential = smoothNoise(
+        tx * 0.065,
+        ty * 0.065,
+        this.seed + 3307
+      );
+      if (
+        distFromOrigin > 20 &&
+        hydro.continentalElev > 0.37 &&
+        oasisPotential > 0.835
+      ) {
         return BiomeType.PLAINS;
       }
       return BiomeType.DESERT;
@@ -206,15 +551,18 @@ export class WorldManager {
     ty: number,
     biome?: BiomeType
   ): EcologicalZone {
-    const b = biome ?? this.computeBiomeAtTile(tx, ty);
+    const hydro = this.getHydrologyAtTile(tx, ty);
+    const b = biome ?? (hydro.waterKind !== 'none' ? BiomeType.OCEAN : this.computeBiomeAtTile(tx, ty));
     const distFromOrigin = Math.hypot(tx, ty);
 
-    const n = this.computeBiomeAtTile(tx, ty - 1);
-    const s = this.computeBiomeAtTile(tx, ty + 1);
-    const e = this.computeBiomeAtTile(tx + 1, ty);
-    const w = this.computeBiomeAtTile(tx - 1, ty);
-
     if (b === BiomeType.OCEAN) {
+      if (hydro.waterKind === 'river' || hydro.waterKind === 'lake') {
+        return EcologicalZone.SHALLOW_REEF;
+      }
+      const n = this.computeBiomeAtTile(tx, ty - 1);
+      const s = this.computeBiomeAtTile(tx, ty + 1);
+      const e = this.computeBiomeAtTile(tx + 1, ty);
+      const w = this.computeBiomeAtTile(tx - 1, ty);
       if (
         n !== BiomeType.OCEAN ||
         s !== BiomeType.OCEAN ||
@@ -233,35 +581,35 @@ export class WorldManager {
       return EcologicalZone.MEADOW_CLEARING;
     }
 
+    // Wide sandy Ocean Beach (both mainland and oceanic islands) -> Costa de Coqueiros
+    if (hydro.isOceanBeach) {
+      return EcologicalZone.COASTAL_TROPICS;
+    }
+
+    const n = this.computeBiomeAtTile(tx, ty - 1);
+    const s = this.computeBiomeAtTile(tx, ty + 1);
+    const e = this.computeBiomeAtTile(tx + 1, ty);
+    const w = this.computeBiomeAtTile(tx - 1, ty);
+
     const vegNoise = fbm(tx * 0.055 + 40, ty * 0.055 + 40, this.seed + 511, 3);
     const rockNoise = fbm(tx * 0.065 - 80, ty * 0.065 + 90, this.seed + 883, 3);
     const sacredNoise = smoothNoise(tx * 0.038, ty * 0.038, this.seed + 1409);
 
-    const nearOcean =
+    const nearWater =
       n === BiomeType.OCEAN ||
       s === BiomeType.OCEAN ||
       e === BiomeType.OCEAN ||
       w === BiomeType.OCEAN;
 
     if (b === BiomeType.PLAINS) {
-      if (nearOcean) {
-        // Check if this is an inland desert oasis ring
-        const nearDesert =
-          this.computeBiomeAtTile(tx + 2, ty) === BiomeType.DESERT ||
-          this.computeBiomeAtTile(tx - 2, ty) === BiomeType.DESERT ||
-          this.computeBiomeAtTile(tx, ty + 2) === BiomeType.DESERT ||
-          this.computeBiomeAtTile(tx, ty - 2) === BiomeType.DESERT;
-        if (nearDesert) {
-          return EcologicalZone.DESERT_OASIS;
-        }
-        return EcologicalZone.COASTAL_TROPICS;
+      if (nearWater && hydro.climate < 0.46) {
+        return EcologicalZone.DESERT_OASIS;
       }
 
       if (rockNoise > 0.64) {
         return EcologicalZone.ROCKY_HIGHLANDS;
       }
 
-      // Clean open meadows vs Overgrown shrubland vs Dense forest vs Ancient grove
       if (vegNoise < 0.37) {
         return EcologicalZone.MEADOW_CLEARING;
       }
@@ -274,16 +622,18 @@ export class WorldManager {
       return EcologicalZone.DENSE_WOODLAND;
     }
 
-    // DESERT ecological sub-zones
+    // DESERT ecological sub-zones (inland desert)
+    if (nearWater) {
+      return EcologicalZone.DESERT_OASIS;
+    }
     if (
-      nearOcean ||
       n === BiomeType.PLAINS ||
       s === BiomeType.PLAINS ||
       e === BiomeType.PLAINS ||
       w === BiomeType.PLAINS
     ) {
       const oasisCheck = smoothNoise(tx * 0.065, ty * 0.065, this.seed + 3307);
-      if (oasisCheck > 0.76 || nearOcean) {
+      if (oasisCheck > 0.76) {
         return EcologicalZone.DESERT_OASIS;
       }
     }
@@ -378,8 +728,8 @@ export class WorldManager {
       return 2;
     }
 
-    if (this.worldGenVersion >= 2) {
-      const zone = this.getEcologicalZoneAtTile(tx, ty);
+    const zone = this.getEcologicalZoneAtTile(tx, ty);
+    if (true) {
       if (biome === BiomeType.PLAINS) {
         if (
           n === BiomeType.DESERT ||
@@ -400,7 +750,10 @@ export class WorldManager {
         return 1; // Sunlit Meadow Clearing tone
       }
 
-      // DESERT (v2)
+      // DESERT / BEACH (v2)
+      if (zone === EcologicalZone.COASTAL_TROPICS) {
+        return 1; // Bright Golden Beach Sand on all ocean beaches
+      }
       if (
         n === BiomeType.PLAINS ||
         s === BiomeType.PLAINS ||
@@ -690,12 +1043,18 @@ export class WorldManager {
           }
 
           case EcologicalZone.COASTAL_TROPICS: {
-            // Sandy palm beaches
-            if (spawnRoll < 0.11) {
+            // Wide sandy ocean beaches & island shores populated with Coconut Palm Trees (Coqueiros)
+            const immediateShore =
+              this.computeBiomeAtTileV2(tx + 1, ty) === BiomeType.OCEAN ||
+              this.computeBiomeAtTileV2(tx - 1, ty) === BiomeType.OCEAN ||
+              this.computeBiomeAtTileV2(tx, ty + 1) === BiomeType.OCEAN ||
+              this.computeBiomeAtTileV2(tx, ty - 1) === BiomeType.OCEAN;
+            const palmChance = immediateShore ? 0.065 : 0.145;
+            if (spawnRoll < palmChance) {
               nodeType =
-                rarityRoll < 0.8
+                rarityRoll < 0.92
                   ? NatureNodeType.PALM_TREE
-                  : NatureNodeType.BERRY_BUSH;
+                  : NatureNodeType.BOULDER;
             }
             break;
           }
@@ -1501,8 +1860,11 @@ export class WorldManager {
       return;
     }
 
-    // 6. DESERT CARAVAN POST (Posto de Caravana do Deserto)
-    if (centerBiome === BiomeType.DESERT) {
+    // 6. DESERT CARAVAN POST (Posto de Caravana do Deserto — only in true inland desert, not ocean beaches)
+    if (
+      centerBiome === BiomeType.DESERT &&
+      centerZone !== EcologicalZone.COASTAL_TROPICS
+    ) {
       clearNodesInBox(6, 6, 10, 10);
       chunk.landmarkName = 'Posto da Caravana';
       for (let ly = 7; ly <= 9; ly++) {
@@ -1559,9 +1921,7 @@ export class WorldManager {
 
   public getBiomeAtWorld(wx: number, wy: number): BiomeType {
     const { tx, ty } = this.worldToTile(wx, wy);
-    const { cx, cy, lx, ly } = this.tileToChunk(tx, ty);
-    const chunk = this.getOrCreateChunk(cx, cy);
-    return chunk.tiles[ly * CHUNK_SIZE + lx];
+    return this.getTileBiomeFast(tx, ty);
   }
 
   public revealAround(wx: number, wy: number, radiusTiles = 9): void {
@@ -1595,7 +1955,150 @@ export class WorldManager {
     return true;
   }
 
-  public isTileWalkable(tx: number, ty: number): boolean {
+  /**
+   * Returns true if tile `(tx, ty)` is open water (`BiomeType.OCEAN` without a Bridge or Ground Floor structure),
+   * meaning any entity or player on this tile is swimming.
+   */
+  public isTileSwimmableWater(tx: number, ty: number): boolean {
+    const biome = this.getTileBiomeFast(tx, ty);
+    if (biome !== BiomeType.OCEAN) return false;
+
+    const { cx, cy } = this.tileToChunk(tx, ty);
+    const chunk = this.chunks[WorldManager.chunkKey(cx, cy)];
+    if (!chunk) return true;
+
+    for (const st of chunk.structures) {
+      if (st.tileX === tx && st.tileY === ty) {
+        if (
+          st.isBridge ||
+          st.type === PlaceableType.WOOD_BRIDGE ||
+          CONSTRUCTION_BLUEPRINTS[st.type]?.layer === 'GROUND'
+        ) {
+          return false;
+        }
+      }
+    }
+    return true;
+  }
+
+  /**
+   * Returns true if world coordinate `(wx, wy)` is in open swimmable water (`BiomeType.OCEAN` without a bridge).
+   */
+  public isWorldPosInWater(wx: number, wy: number): boolean {
+    const { tx, ty } = this.worldToTile(wx, wy);
+    return this.isTileSwimmableWater(tx, ty);
+  }
+
+  /**
+   * Computes the active water current vector `(vx, vy)` at tile `(tx, ty)`:
+   * - `river`: River current that follows the winding river channel downstream toward the Ocean mouth.
+   * - `ocean_shore`: Coastal surf waves along the Ocean edge that push swimmers toward the sandy Beach (`o mar empurra para a areia`).
+   * - `none`: Calm inland lakes or deep open ocean far from shore.
+   */
+  public getWaterCurrentAtTile(
+    tx: number,
+    ty: number,
+    globalTime = 0
+  ): { vx: number; vy: number; kind: 'none' | 'river' | 'ocean_shore' } {
+    if (!this.isTileSwimmableWater(tx, ty)) {
+      return { vx: 0, vy: 0, kind: 'none' };
+    }
+
+    const raw = this.getRawWaterAtTile(tx, ty);
+
+    // 1. River Current: flows along the meandering channel downstream into the Ocean
+    if (raw.waterKind === 'river') {
+      const rE = this.getRawWaterAtTile(tx + 2, ty);
+      const rW = this.getRawWaterAtTile(tx - 2, ty);
+      const rS = this.getRawWaterAtTile(tx, ty + 2);
+      const rN = this.getRawWaterAtTile(tx, ty - 2);
+
+      const dMx = rE.riverMeander - rW.riverMeander;
+      const dMy = rS.riverMeander - rN.riverMeander;
+      const dEx = rE.continentalElev - rW.continentalElev;
+      const dEy = rS.continentalElev - rN.continentalElev;
+
+      let txVec = -dMy;
+      let tyVec = dMx;
+      // Orient tangent downstream toward decreasing continentalElev (toward the Ocean)
+      if (txVec * -dEx + tyVec * -dEy < 0) {
+        txVec = -txVec;
+        tyVec = -tyVec;
+      }
+
+      const tMag = Math.hypot(txVec, tyVec);
+      if (tMag > 0.00001) {
+        txVec /= tMag;
+        tyVec /= tMag;
+      }
+
+      const eMag = Math.hypot(dEx, dEy);
+      const downX = eMag > 0.00001 ? -dEx / eMag : 0;
+      const downY = eMag > 0.00001 ? -dEy / eMag : 0;
+
+      const fx = txVec * 0.76 + downX * 0.24;
+      const fy = tyVec * 0.76 + downY * 0.24;
+      const fMag = Math.hypot(fx, fy);
+      if (fMag > 0.001) {
+        const riverSpeed = 28;
+        return {
+          vx: (fx / fMag) * riverSpeed,
+          vy: (fy / fMag) * riverSpeed,
+          kind: 'river',
+        };
+      }
+    }
+
+    // 2. Ocean Coast Current: the sea pushes swimmers toward the sandy beach
+    if (raw.waterKind === 'ocean') {
+      let pushX = 0;
+      let pushY = 0;
+      let minDist = Infinity;
+
+      for (let dy = -4; dy <= 4; dy++) {
+        for (let dx = -4; dx <= 4; dx++) {
+          if (dx === 0 && dy === 0) continue;
+          const d = Math.hypot(dx, dy);
+          if (d > 4.2) continue;
+          if (this.getTileBiomeFast(tx + dx, ty + dy) !== BiomeType.OCEAN) {
+            const weight = (4.6 - d) / d;
+            pushX += dx * weight;
+            pushY += dy * weight;
+            if (d < minDist) minDist = d;
+          }
+        }
+      }
+
+      const pMag = Math.hypot(pushX, pushY);
+      if (pMag > 0.01 && minDist <= 4.2) {
+        const waveSurge =
+          0.84 + 0.26 * Math.sin(globalTime * 2.6 + (tx * 0.6 + ty * 0.5));
+        const proximityFactor = 0.55 + Math.max(0, (4.2 - minDist) / 4.2) * 0.45;
+        const shoreSpeed = 26 * waveSurge * proximityFactor;
+        return {
+          vx: (pushX / pMag) * shoreSpeed,
+          vy: (pushY / pMag) * shoreSpeed,
+          kind: 'ocean_shore',
+        };
+      }
+    }
+
+    return { vx: 0, vy: 0, kind: 'none' };
+  }
+
+  /**
+   * Computes the active water current vector `(vx, vy)` at world coordinates `(wx, wy)`.
+   */
+  public getWaterCurrentAtWorld(
+    wx: number,
+    wy: number,
+    globalTime = 0
+  ): { vx: number; vy: number; kind: 'none' | 'river' | 'ocean_shore' } {
+    const { tx, ty } = this.worldToTile(wx, wy);
+    return this.getWaterCurrentAtTile(tx, ty, globalTime);
+  }
+
+  public isTileWalkable(tx: number, ty: number, allowWater = true): boolean {
     const { cx, cy, lx, ly } = this.tileToChunk(tx, ty);
     const chunk = this.getOrCreateChunk(cx, cy);
     const biome = chunk.tiles[ly * CHUNK_SIZE + lx];
@@ -1603,7 +2106,11 @@ export class WorldManager {
     let hasBridge = false;
     for (const st of chunk.structures) {
       if (st.tileX === tx && st.tileY === ty) {
-        if (st.isBridge || st.type === PlaceableType.WOOD_BRIDGE) {
+        if (
+          st.isBridge ||
+          st.type === PlaceableType.WOOD_BRIDGE ||
+          CONSTRUCTION_BLUEPRINTS[st.type]?.layer === 'GROUND'
+        ) {
           hasBridge = true;
         }
         if (WorldManager.isStructureCurrentlySolid(st)) {
@@ -1612,7 +2119,7 @@ export class WorldManager {
       }
     }
 
-    if (biome === BiomeType.OCEAN && !hasBridge) {
+    if (!allowWater && biome === BiomeType.OCEAN && !hasBridge) {
       return false;
     }
 
@@ -1631,35 +2138,30 @@ export class WorldManager {
   /**
    * Sub-tile accurate world-space collision check for Player & Creatures.
    * - Respects passable objects (bushes, floors, carpets, torches, lanterns, banners, campfires, traps, open doors).
+   * - Allows swimming in water (`allowWater = true` by default) while supporting dry-land checks (`allowWater = false`).
    * - Uses full tile collision for continuous Walls & closed Doors.
    * - Uses compact radial collision for Trees, Boulders, Fences, and Furniture/Stations so movement never snags on corners.
    */
   public canEntityOccupyWorldCircle(
     wx: number,
     wy: number,
-    entityRadius = 6.2
+    entityRadius = 6.2,
+    allowWater = true
   ): boolean {
-    // 1. Check Ocean vs Bridge at the 4 footprint corners of the entity
-    const footMargin = 5.5;
-    const corners = [
-      { x: wx - footMargin, y: wy - footMargin },
-      { x: wx + footMargin, y: wy - footMargin },
-      { x: wx - footMargin, y: wy + footMargin },
-      { x: wx + footMargin, y: wy + footMargin },
-    ];
-    for (const pt of corners) {
-      const { tx, ty } = this.worldToTile(pt.x, pt.y);
-      const { cx, cy, lx, ly } = this.tileToChunk(tx, ty);
-      const chunk = this.getOrCreateChunk(cx, cy);
-      const biome = chunk.tiles[ly * CHUNK_SIZE + lx];
-      if (biome === BiomeType.OCEAN) {
-        const hasBridge = chunk.structures.some(
-          (s) =>
-            s.tileX === tx &&
-            s.tileY === ty &&
-            (s.isBridge || s.type === PlaceableType.WOOD_BRIDGE)
-        );
-        if (!hasBridge) return false;
+    // 1. Optional dry-land check at the 4 footprint corners when water is disallowed
+    if (!allowWater) {
+      const footMargin = 5.5;
+      const corners = [
+        { x: wx - footMargin, y: wy - footMargin },
+        { x: wx + footMargin, y: wy - footMargin },
+        { x: wx - footMargin, y: wy + footMargin },
+        { x: wx + footMargin, y: wy + footMargin },
+      ];
+      for (const pt of corners) {
+        const { tx, ty } = this.worldToTile(pt.x, pt.y);
+        if (this.isTileSwimmableWater(tx, ty)) {
+          return false;
+        }
       }
     }
 

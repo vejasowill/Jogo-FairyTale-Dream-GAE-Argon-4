@@ -2,6 +2,7 @@ import {
   ConstructionBlueprint,
   ItemCategory,
   ItemDefinition,
+  MaterialKind,
   NatureNodeType,
   PlaceableType,
   RarityTier,
@@ -85,9 +86,9 @@ export const ITEMS: Record<string, ItemDefinition> = {
     id: 'apple',
     name: 'Maçã Dourada do Bosque',
     description:
-      'Fruta nutritiva colhida de carvalhos e árvores douradas. Favorita de Javalis Silvestres e ingrediente de banquetes de força.',
+      'Fruta nutritiva colhida de carvalhos e árvores douradas. Favorita de Cavalos da Planície e Javalis Silvestres.',
     purposeSummary:
-      'Consumir (+25 Fome, +12 HP), Domesticar Javali Silvestre, ou cozinhar Banquete do Guerreiro (+35% Dano) e Ração Aromática.',
+      'Consumir (+25 Fome, +12 HP), Domesticar Cavalo da Planície e Javali Silvestre, ou cozinhar Banquete do Guerreiro.',
     category: ItemCategory.CONSUMABLE,
     rarity: RarityTier.BASIC,
     maxStack: 50,
@@ -505,6 +506,103 @@ export const ITEMS: Record<string, ItemDefinition> = {
     rarity: RarityTier.BASIC,
     maxStack: 99,
     placeableType: PlaceableType.TILLED_SOIL,
+  },
+
+  // === FISHING SYSTEM: ROD & FISH (FEW CURATED SPECIES) ===
+  fishing_rod: {
+    id: 'fishing_rod',
+    name: 'Vara de Pesca Rústica',
+    description:
+      'Vara flexível de madeira com linha de fibra e boia flutuante. Lance a linha na água e puxe quando o peixe fisgar!',
+    purposeSummary:
+      'Segure na mão perto da água e aperte o botão de Usar/Atacar para lançar a boia e puxar quando fisgar (!).',
+    category: ItemCategory.TOOL,
+    rarity: RarityTier.BASIC,
+    maxStack: 1,
+    toolType: ToolType.FISHING_ROD,
+    toolTier: 1,
+    attackDamage: 8,
+    attackRange: 96,
+  },
+  fish_tilapia: {
+    id: 'fish_tilapia',
+    name: 'Tilápia Prateada',
+    description:
+      'Peixe fresco de escamas prateadas muito comum nas costas e lagoas. Pode ser consumido cru ou assado na brasa.',
+    purposeSummary:
+      'Consumir (+20 Fome, +8 HP, +15 Energia) ou assar na Fogueira/Bancada para fazer Peixe Assado na Brasa.',
+    category: ItemCategory.CONSUMABLE,
+    rarity: RarityTier.BASIC,
+    maxStack: 50,
+    hungerRestore: 20,
+    hpRestore: 8,
+    staminaRestore: 15,
+  },
+  fish_salmon: {
+    id: 'fish_salmon',
+    name: 'Salmão Real',
+    description:
+      'Peixe nobre de carne rosada e nutritiva encontrado nas águas da fronteira. Excelente para assar ou vender.',
+    purposeSummary:
+      'Consumir (+34 Fome, +20 HP, +30 Energia), assar em dobro ou vender por bom preço em tendas.',
+    category: ItemCategory.CONSUMABLE,
+    rarity: RarityTier.RARE,
+    maxStack: 50,
+    hungerRestore: 34,
+    hpRestore: 20,
+    staminaRestore: 30,
+  },
+  fish_golden: {
+    id: 'fish_golden',
+    name: 'Peixe-Sol Dourado',
+    description:
+      'Espécie rara de escamas reluzentes como ouro solar. Concede vigor extraordinário e velocidade ao ser consumido.',
+    purposeSummary:
+      'Consumir (+55 Fome, +45 HP, +60 Energia e +30% Velocidade por 35s) ou vender por alto valor em moedas.',
+    category: ItemCategory.CONSUMABLE,
+    rarity: RarityTier.VERY_RARE,
+    maxStack: 30,
+    hungerRestore: 55,
+    hpRestore: 45,
+    staminaRestore: 60,
+    buffType: 'speed',
+    buffDuration: 35,
+  },
+  cooked_fish: {
+    id: 'cooked_fish',
+    name: 'Peixe Assado na Brasa',
+    description:
+      'Filé de peixe grelhado no calor da fogueira com aroma defumado. Restaura bastante fome, vida e energia.',
+    purposeSummary:
+      'Refeição de Pesca (+48 Fome, +30 HP, +35 Energia). Pode ser assado interagindo com uma Fogueira ou no menu de criação.',
+    category: ItemCategory.CONSUMABLE,
+    rarity: RarityTier.BASIC,
+    maxStack: 40,
+    hungerRestore: 48,
+    hpRestore: 30,
+    staminaRestore: 35,
+  },
+  saddle: {
+    id: 'saddle',
+    name: 'Sela de Montaria',
+    description:
+      'Sela reforçada com alforjes laterais. Equipe em um Cavalo ou Camelo domesticado para liberar montaria, botão de Cavalgar e 8 slots de inventário.',
+    purposeSummary:
+      'Segure na mão e interaja com um Cavalo ou Camelo domesticado para selá-lo (habilita Montaria + 8 Slots de Alforje).',
+    category: ItemCategory.TOOL,
+    rarity: RarityTier.RARE,
+    maxStack: 5,
+  },
+  wood_boat: {
+    id: 'wood_boat',
+    name: 'Bote de Madeira',
+    description:
+      'Embarcação leve e veloz para rios, lagos e oceanos. Só pode ser colocado na água, ignora a correnteza e comporta até 2 assentos (outro jogador ou pet seguindo).',
+    purposeSummary:
+      'Segure na mão e posicione sobre a água para lançar o Bote (2 Assentos, Rápido na Água, Imune à Correnteza, 0 Slots).',
+    category: ItemCategory.TOOL,
+    rarity: RarityTier.BASIC,
+    maxStack: 5,
   },
 
   // === RARE RESOURCES ===
@@ -1937,6 +2035,7 @@ export interface NatureNodeBlueprint {
   name: string;
   rarity: RarityTier;
   maxHp: number;
+  materialKind: MaterialKind;
   requiredTool: ToolType;
   requiredTier: number;
   xpReward: number;
@@ -1951,6 +2050,7 @@ export const NATURE_BLUEPRINTS: Record<NatureNodeType, NatureNodeBlueprint> = {
     name: 'Carvalho da Planície',
     rarity: RarityTier.BASIC,
     maxHp: 55,
+    materialKind: 'SOFT_WOOD',
     requiredTool: ToolType.AXE,
     requiredTier: 0,
     xpReward: 12,
@@ -1969,6 +2069,7 @@ export const NATURE_BLUEPRINTS: Record<NatureNodeType, NatureNodeBlueprint> = {
     name: 'Arbusto de Frutas',
     rarity: RarityTier.BASIC,
     maxHp: 25,
+    materialKind: 'FIBER_FOLIAGE',
     requiredTool: ToolType.NONE,
     requiredTier: 0,
     xpReward: 8,
@@ -1986,6 +2087,7 @@ export const NATURE_BLUEPRINTS: Record<NatureNodeType, NatureNodeBlueprint> = {
     name: 'Rocha Cinzenta',
     rarity: RarityTier.BASIC,
     maxHp: 60,
+    materialKind: 'ROUGH_STONE',
     requiredTool: ToolType.PICKAXE,
     requiredTier: 0,
     xpReward: 14,
@@ -2001,6 +2103,7 @@ export const NATURE_BLUEPRINTS: Record<NatureNodeType, NatureNodeBlueprint> = {
     name: 'Cacto Gigante',
     rarity: RarityTier.BASIC,
     maxHp: 40,
+    materialKind: 'FIBER_FOLIAGE',
     requiredTool: ToolType.AXE,
     requiredTier: 0,
     xpReward: 11,
@@ -2018,6 +2121,7 @@ export const NATURE_BLUEPRINTS: Record<NatureNodeType, NatureNodeBlueprint> = {
     name: 'Palmeira Costeira',
     rarity: RarityTier.BASIC,
     maxHp: 50,
+    materialKind: 'SOFT_WOOD',
     requiredTool: ToolType.AXE,
     requiredTier: 0,
     xpReward: 12,
@@ -2033,6 +2137,7 @@ export const NATURE_BLUEPRINTS: Record<NatureNodeType, NatureNodeBlueprint> = {
     name: 'Veio de Minério de Ferro',
     rarity: RarityTier.RARE,
     maxHp: 110,
+    materialKind: 'IRON_MINERAL',
     requiredTool: ToolType.PICKAXE,
     requiredTier: 1,
     xpReward: 28,
@@ -2048,6 +2153,7 @@ export const NATURE_BLUEPRINTS: Record<NatureNodeType, NatureNodeBlueprint> = {
     name: 'Árvore Ancestral Dourada',
     rarity: RarityTier.RARE,
     maxHp: 120,
+    materialKind: 'HARDWOOD',
     requiredTool: ToolType.AXE,
     requiredTier: 1,
     xpReward: 30,
@@ -2064,6 +2170,7 @@ export const NATURE_BLUEPRINTS: Record<NatureNodeType, NatureNodeBlueprint> = {
     name: 'Drusa de Cristal Solar',
     rarity: RarityTier.RARE,
     maxHp: 135,
+    materialKind: 'IRON_MINERAL',
     requiredTool: ToolType.PICKAXE,
     requiredTier: 1,
     xpReward: 35,
@@ -2079,6 +2186,7 @@ export const NATURE_BLUEPRINTS: Record<NatureNodeType, NatureNodeBlueprint> = {
     name: 'Obelisco Astral de Hélio',
     rarity: RarityTier.VERY_RARE,
     maxHp: 220,
+    materialKind: 'ASTRAL_MINERAL',
     requiredTool: ToolType.PICKAXE,
     requiredTier: 2,
     xpReward: 75,
@@ -2094,6 +2202,7 @@ export const NATURE_BLUEPRINTS: Record<NatureNodeType, NatureNodeBlueprint> = {
     name: 'Ostra Abissal Gigante',
     rarity: RarityTier.VERY_RARE,
     maxHp: 190,
+    materialKind: 'ASTRAL_MINERAL',
     requiredTool: ToolType.PICKAXE,
     requiredTier: 2,
     xpReward: 70,
@@ -2109,6 +2218,7 @@ export const NATURE_BLUEPRINTS: Record<NatureNodeType, NatureNodeBlueprint> = {
     name: 'Árvore-Coração Primordial',
     rarity: RarityTier.VERY_RARE,
     maxHp: 240,
+    materialKind: 'PRIMORDIAL_WOOD',
     requiredTool: ToolType.AXE,
     requiredTier: 2,
     xpReward: 80,
@@ -2167,12 +2277,17 @@ export const ITEM_BASE_PRICES: Record<string, number> = {
   furnace: 45,
 
   // Consumíveis & Culinária Inicial
+  fish_tilapia: 6,
   wool_bandage: 8,
   fresh_bread: 10,
   farm_feed: 11,
+  cooked_fish: 14,
+  fish_salmon: 16,
   vegetable_stew: 26,
+  fish_golden: 65,
 
   // Ferramentas & Armas Nv.1
+  fishing_rod: 10,
   stone_hoe: 12,
   watering_can: 12,
   watering_can_full: 14,
@@ -2222,6 +2337,8 @@ export const ITEM_BASE_PRICES: Record<string, number> = {
   iron_gate: 62,
   market_stall: 145,
   explorer_tent: 195,
+  saddle: 75,
+  wood_boat: 60,
   solar_altar: 540, // 4x Barra de Ferro (192) + 4x Cristal Solar (180) + 4x Madeira Nobre (72) + Consagração
 
   // Ferramentas & Armas Nv.2 (Ferro Forjado & Monstros)
@@ -2378,5 +2495,657 @@ export function evaluateStallPriceDeal(
     maxBuyQty,
   };
 }
+
+// ============================================================================
+// SISTEMA DE REQUISITOS DE QUEBRA E MATRIZ DE FORÇA POR MATERIAL (MÃO & FERRAMENTAS)
+// ============================================================================
+
+export const MATERIAL_LABELS: Record<MaterialKind, string> = {
+  FIBER_FOLIAGE: 'Fibra & Folhagem',
+  SOFT_WOOD: 'Madeira Rústica',
+  ROUGH_STONE: 'Rocha & Alvenaria Básica',
+  HARDWOOD: 'Madeira Nobre Ancestral',
+  IRON_MINERAL: 'Minério de Ferro & Cristal Solar',
+  PRIMORDIAL_WOOD: 'Madeira-Coração Primordial',
+  ASTRAL_MINERAL: 'Rocha Astral & Abissal',
+};
+
+export interface ElementBreakRequirement {
+  materialKind: MaterialKind;
+  materialLabel: string;
+  requiredTool: ToolType;
+  requiredTier: number;
+  requirementLabel: string;
+  recommendedToolLabel: string;
+}
+
+export const STRUCTURE_MATERIAL_REQUIREMENTS: Record<
+  PlaceableType,
+  {
+    materialKind: MaterialKind;
+    requiredTool: ToolType;
+    requiredTier: number;
+    requirementLabel: string;
+  }
+> = {
+  // === FOLHAGEM, TECIDO & SOLO (Quebrável com a Mão ou Qualquer Ferramenta) ===
+  [PlaceableType.TORCH]: {
+    materialKind: 'FIBER_FOLIAGE',
+    requiredTool: ToolType.NONE,
+    requiredTier: 0,
+    requirementLabel: 'Mão Livre ou Qualquer Ferramenta',
+  },
+  [PlaceableType.ROYAL_CARPET]: {
+    materialKind: 'FIBER_FOLIAGE',
+    requiredTool: ToolType.NONE,
+    requiredTier: 0,
+    requirementLabel: 'Mão Livre ou Qualquer Ferramenta',
+  },
+  [PlaceableType.ROYAL_BANNER]: {
+    materialKind: 'FIBER_FOLIAGE',
+    requiredTool: ToolType.NONE,
+    requiredTier: 0,
+    requirementLabel: 'Mão Livre ou Machado',
+  },
+  [PlaceableType.EXPLORER_TENT]: {
+    materialKind: 'FIBER_FOLIAGE',
+    requiredTool: ToolType.NONE,
+    requiredTier: 0,
+    requirementLabel: 'Mão Livre ou Machado',
+  },
+  [PlaceableType.TILLED_SOIL]: {
+    materialKind: 'FIBER_FOLIAGE',
+    requiredTool: ToolType.HOE,
+    requiredTier: 0,
+    requirementLabel: 'Mão Livre ou Enxada',
+  },
+
+  // === MADEIRA RÚSTICA (Quebrável com a Mão com força menor; ideal com Machado) ===
+  [PlaceableType.WOOD_FLOOR]: {
+    materialKind: 'SOFT_WOOD',
+    requiredTool: ToolType.AXE,
+    requiredTier: 0,
+    requirementLabel: 'Mão Livre ou Machado (Ideal: Machado)',
+  },
+  [PlaceableType.WOOD_BRIDGE]: {
+    materialKind: 'SOFT_WOOD',
+    requiredTool: ToolType.AXE,
+    requiredTier: 0,
+    requirementLabel: 'Mão Livre ou Machado (Ideal: Machado)',
+  },
+  [PlaceableType.WOOD_WALL]: {
+    materialKind: 'SOFT_WOOD',
+    requiredTool: ToolType.AXE,
+    requiredTier: 0,
+    requirementLabel: 'Mão Livre ou Machado (Ideal: Machado)',
+  },
+  [PlaceableType.WOOD_WINDOW]: {
+    materialKind: 'SOFT_WOOD',
+    requiredTool: ToolType.AXE,
+    requiredTier: 0,
+    requirementLabel: 'Mão Livre ou Machado (Ideal: Machado)',
+  },
+  [PlaceableType.WOOD_DOOR]: {
+    materialKind: 'SOFT_WOOD',
+    requiredTool: ToolType.AXE,
+    requiredTier: 0,
+    requirementLabel: 'Mão Livre ou Machado (Ideal: Machado)',
+  },
+  [PlaceableType.WOOD_FENCE]: {
+    materialKind: 'SOFT_WOOD',
+    requiredTool: ToolType.AXE,
+    requiredTier: 0,
+    requirementLabel: 'Mão Livre ou Machado (Ideal: Machado)',
+  },
+  [PlaceableType.WORKBENCH]: {
+    materialKind: 'SOFT_WOOD',
+    requiredTool: ToolType.AXE,
+    requiredTier: 0,
+    requirementLabel: 'Mão Livre ou Machado (Ideal: Machado)',
+  },
+  [PlaceableType.CHEST]: {
+    materialKind: 'SOFT_WOOD',
+    requiredTool: ToolType.AXE,
+    requiredTier: 0,
+    requirementLabel: 'Mão Livre, Arma ou Machado (Ideal: Machado)',
+  },
+  [PlaceableType.MARKET_STALL]: {
+    materialKind: 'SOFT_WOOD',
+    requiredTool: ToolType.AXE,
+    requiredTier: 0,
+    requirementLabel: 'Mão Livre, Arma ou Machado (Ideal: Machado)',
+  },
+  [PlaceableType.SPIKE_TRAP]: {
+    materialKind: 'SOFT_WOOD',
+    requiredTool: ToolType.AXE,
+    requiredTier: 0,
+    requirementLabel: 'Mão Livre ou Machado',
+  },
+
+  // === ROCHA & ALVENARIA BÁSICA (Quebrável com a Mão lentamente; ideal com Picareta) ===
+  [PlaceableType.CAMPFIRE]: {
+    materialKind: 'ROUGH_STONE',
+    requiredTool: ToolType.PICKAXE,
+    requiredTier: 0,
+    requirementLabel: 'Mão Livre ou Picareta (Ideal: Picareta)',
+  },
+  [PlaceableType.STONE_FLOOR]: {
+    materialKind: 'ROUGH_STONE',
+    requiredTool: ToolType.PICKAXE,
+    requiredTier: 0,
+    requirementLabel: 'Mão Livre ou Picareta (Ideal: Picareta)',
+  },
+  [PlaceableType.FURNACE]: {
+    materialKind: 'ROUGH_STONE',
+    requiredTool: ToolType.PICKAXE,
+    requiredTier: 1,
+    requirementLabel: 'Requer Picareta de Pedra+ (Nv.1+)',
+  },
+  [PlaceableType.STONE_WALL]: {
+    materialKind: 'ROUGH_STONE',
+    requiredTool: ToolType.PICKAXE,
+    requiredTier: 1,
+    requirementLabel: 'Requer Picareta de Pedra+ (Nv.1+)',
+  },
+  [PlaceableType.STONE_WINDOW]: {
+    materialKind: 'ROUGH_STONE',
+    requiredTool: ToolType.PICKAXE,
+    requiredTier: 1,
+    requirementLabel: 'Requer Picareta de Pedra+ (Nv.1+)',
+  },
+  [PlaceableType.BRICK_FLOOR]: {
+    materialKind: 'ROUGH_STONE',
+    requiredTool: ToolType.PICKAXE,
+    requiredTier: 1,
+    requirementLabel: 'Requer Picareta de Pedra+ (Nv.1+)',
+  },
+  [PlaceableType.BRICK_WALL]: {
+    materialKind: 'IRON_MINERAL',
+    requiredTool: ToolType.PICKAXE,
+    requiredTier: 1,
+    requirementLabel: 'Requer Picareta de Pedra+ (Nv.1+)',
+  },
+  [PlaceableType.VILLAGE_WELL]: {
+    materialKind: 'ROUGH_STONE',
+    requiredTool: ToolType.PICKAXE,
+    requiredTier: 1,
+    requirementLabel: 'Requer Picareta de Pedra+ (Nv.1+)',
+  },
+
+  // === MADEIRA NOBRE & EDIFICAÇÕES REFORÇADAS ===
+  [PlaceableType.VILLAGE_HOUSE]: {
+    materialKind: 'HARDWOOD',
+    requiredTool: ToolType.AXE,
+    requiredTier: 1,
+    requirementLabel: 'Requer Machado de Pedra+ (Nv.1+)',
+  },
+
+  // === FERRO FORJADO & CRISTAL SOLAR ===
+  [PlaceableType.IRON_GATE]: {
+    materialKind: 'IRON_MINERAL',
+    requiredTool: ToolType.PICKAXE,
+    requiredTier: 1,
+    requirementLabel: 'Requer Picareta de Pedra+ (Nv.1+)',
+  },
+  [PlaceableType.IRON_LANTERN]: {
+    materialKind: 'IRON_MINERAL',
+    requiredTool: ToolType.PICKAXE,
+    requiredTier: 1,
+    requirementLabel: 'Requer Picareta de Pedra+ (Nv.1+)',
+  },
+  [PlaceableType.SOLAR_ALTAR]: {
+    materialKind: 'ASTRAL_MINERAL',
+    requiredTool: ToolType.PICKAXE,
+    requiredTier: 2,
+    requirementLabel: 'Requer Picareta de Ferro+ (Nv.2+)',
+  },
+
+  // === ESTRUTURAS PRIMORDIAIS & ASTRAIS ===
+  [PlaceableType.GUARDIAN_TOTEM]: {
+    materialKind: 'PRIMORDIAL_WOOD',
+    requiredTool: ToolType.AXE,
+    requiredTier: 2,
+    requirementLabel: 'Requer Machado de Ferro+ (Nv.2+)',
+  },
+  [PlaceableType.HEALING_FOUNTAIN]: {
+    materialKind: 'ASTRAL_MINERAL',
+    requiredTool: ToolType.PICKAXE,
+    requiredTier: 2,
+    requirementLabel: 'Requer Picareta de Ferro+ (Nv.2+)',
+  },
+};
+
+// Populate materialKind, requiredTool, and requiredTier onto CONSTRUCTION_BLUEPRINTS
+for (const key of Object.keys(CONSTRUCTION_BLUEPRINTS) as PlaceableType[]) {
+  const req = STRUCTURE_MATERIAL_REQUIREMENTS[key];
+  if (req && CONSTRUCTION_BLUEPRINTS[key]) {
+    CONSTRUCTION_BLUEPRINTS[key].materialKind = req.materialKind;
+    CONSTRUCTION_BLUEPRINTS[key].requiredTool = req.requiredTool;
+    CONSTRUCTION_BLUEPRINTS[key].requiredTier = req.requiredTier;
+  }
+}
+
+/**
+ * TABELA EXPLÍCITA DE FORÇA DE QUEBRA POR MATERIAL (Mão Livre e cada Ferramenta/Arma).
+ * Define exatamente quanta força base cada item (ou a mão livre) exerce contra cada tipo de material.
+ */
+export const HAND_AND_TOOL_MATERIAL_STRENGTH: Record<
+  string,
+  {
+    label: string;
+    toolType: ToolType;
+    toolTier: number;
+    forceByMaterial: Record<MaterialKind, number>;
+  }
+> = {
+  // === MÃO LIVRE (Tier 0) — Permite coletar recursos básicos iniciais sem itens ===
+  bare_hand: {
+    label: 'Mão Livre (Desarmado)',
+    toolType: ToolType.NONE,
+    toolTier: 0,
+    forceByMaterial: {
+      FIBER_FOLIAGE: 9, // Quebra Arbusto (25 HP) em 3 golpes e Cacto (40 HP) em 5 golpes
+      SOFT_WOOD: 7, // Quebra Carvalho (55 HP) em 8 golpes e Palmeira (50 HP) em 8 golpes
+      ROUGH_STONE: 6, // Quebra Rocha Cinzenta (60 HP) em 10 golpes para obter as primeiras pedras
+      HARDWOOD: 0, // Bloqueado (Requer Machado de Pedra Nv.1+)
+      IRON_MINERAL: 0, // Bloqueado (Requer Picareta de Pedra Nv.1+)
+      PRIMORDIAL_WOOD: 0, // Bloqueado (Requer Machado de Ferro Nv.2+)
+      ASTRAL_MINERAL: 0, // Bloqueado (Requer Picareta de Ferro Nv.2+)
+    },
+  },
+
+  // === MACHADOS (Especializados em FIBER_FOLIAGE, SOFT_WOOD, HARDWOOD e PRIMORDIAL_WOOD) ===
+  stone_axe: {
+    label: 'Machado de Pedra (Nv.1)',
+    toolType: ToolType.AXE,
+    toolTier: 1,
+    forceByMaterial: {
+      FIBER_FOLIAGE: 22,
+      SOFT_WOOD: 24, // Derruba Carvalho (55 HP) em 3 golpes
+      ROUGH_STONE: 7, // Fraco contra rocha
+      HARDWOOD: 22, // Desbloqueia Árvore Ancestral Dourada (120 HP -> 6 golpes)
+      IRON_MINERAL: 0,
+      PRIMORDIAL_WOOD: 0,
+      ASTRAL_MINERAL: 0,
+    },
+  },
+  iron_axe: {
+    label: 'Machado de Ferro Forjado (Nv.2)',
+    toolType: ToolType.AXE,
+    toolTier: 2,
+    forceByMaterial: {
+      FIBER_FOLIAGE: 42,
+      SOFT_WOOD: 46, // Derruba Carvalho em 2 golpes
+      ROUGH_STONE: 12,
+      HARDWOOD: 42, // Derruba Árvore Ancestral em 3 golpes
+      IRON_MINERAL: 0,
+      PRIMORDIAL_WOOD: 40, // Desbloqueia Árvore-Coração Primordial (240 HP -> 6 golpes)
+      ASTRAL_MINERAL: 0,
+    },
+  },
+  primordial_axe: {
+    label: 'Machado Primordial do Bosque (Nv.3)',
+    toolType: ToolType.AXE,
+    toolTier: 3,
+    forceByMaterial: {
+      FIBER_FOLIAGE: 85,
+      SOFT_WOOD: 90, // Derruba Carvalho em 1 golpe
+      ROUGH_STONE: 20,
+      HARDWOOD: 85, // Derruba Árvore Ancestral em 2 golpes
+      IRON_MINERAL: 0,
+      PRIMORDIAL_WOOD: 85, // Derruba Árvore-Coração Primordial em 3 golpes
+      ASTRAL_MINERAL: 0,
+    },
+  },
+
+  // === PICARETAS (Especializadas em ROUGH_STONE, IRON_MINERAL e ASTRAL_MINERAL) ===
+  stone_pickaxe: {
+    label: 'Picareta de Pedra (Nv.1)',
+    toolType: ToolType.PICKAXE,
+    toolTier: 1,
+    forceByMaterial: {
+      FIBER_FOLIAGE: 12,
+      SOFT_WOOD: 7, // Fraca contra madeira
+      ROUGH_STONE: 24, // Quebra Rocha Cinzenta (60 HP) em 3 golpes
+      HARDWOOD: 0,
+      IRON_MINERAL: 22, // Desbloqueia Minério de Ferro (110 HP -> 5 golpes) e Cristal Solar (135 HP -> 7 golpes)
+      PRIMORDIAL_WOOD: 0,
+      ASTRAL_MINERAL: 0,
+    },
+  },
+  iron_pickaxe: {
+    label: 'Picareta de Ferro Forjado (Nv.2)',
+    toolType: ToolType.PICKAXE,
+    toolTier: 2,
+    forceByMaterial: {
+      FIBER_FOLIAGE: 20,
+      SOFT_WOOD: 12,
+      ROUGH_STONE: 46, // Quebra Rocha Cinzenta em 2 golpes
+      HARDWOOD: 0,
+      IRON_MINERAL: 44, // Quebra Minério de Ferro em 3 golpes
+      PRIMORDIAL_WOOD: 0,
+      ASTRAL_MINERAL: 42, // Desbloqueia Obelisco Astral (220 HP -> 6 golpes) e Ostra Abissal (190 HP -> 5 golpes)
+    },
+  },
+  primordial_pickaxe: {
+    label: 'Picareta Astral de Hélio (Nv.3)',
+    toolType: ToolType.PICKAXE,
+    toolTier: 3,
+    forceByMaterial: {
+      FIBER_FOLIAGE: 36,
+      SOFT_WOOD: 20,
+      ROUGH_STONE: 90, // Quebra Rocha Cinzenta em 1 golpe
+      HARDWOOD: 0,
+      IRON_MINERAL: 86, // Quebra Minério de Ferro em 2 golpes
+      PRIMORDIAL_WOOD: 0,
+      ASTRAL_MINERAL: 85, // Quebra Obelisco Astral e Ostra Abissal em 3 golpes
+    },
+  },
+
+  // === ENXADAS (Especializadas em Solo Agrícola e FIBER_FOLIAGE) ===
+  stone_hoe: {
+    label: 'Enxada de Pedra (Nv.1)',
+    toolType: ToolType.HOE,
+    toolTier: 1,
+    forceByMaterial: {
+      FIBER_FOLIAGE: 18,
+      SOFT_WOOD: 8,
+      ROUGH_STONE: 7,
+      HARDWOOD: 0,
+      IRON_MINERAL: 0,
+      PRIMORDIAL_WOOD: 0,
+      ASTRAL_MINERAL: 0,
+    },
+  },
+  iron_hoe: {
+    label: 'Enxada de Ferro Forjado (Nv.2)',
+    toolType: ToolType.HOE,
+    toolTier: 2,
+    forceByMaterial: {
+      FIBER_FOLIAGE: 34,
+      SOFT_WOOD: 14,
+      ROUGH_STONE: 11,
+      HARDWOOD: 0,
+      IRON_MINERAL: 0,
+      PRIMORDIAL_WOOD: 0,
+      ASTRAL_MINERAL: 0,
+    },
+  },
+
+  // === ARMAS DE COMBATE (Cortam Folhagem rapidamente e causam dano moderado em Madeira/Estruturas básicas) ===
+  wood_sword: {
+    label: 'Espada de Sílex & Madeira (Nv.1)',
+    toolType: ToolType.SWORD,
+    toolTier: 1,
+    forceByMaterial: {
+      FIBER_FOLIAGE: 18,
+      SOFT_WOOD: 10,
+      ROUGH_STONE: 6,
+      HARDWOOD: 0,
+      IRON_MINERAL: 0,
+      PRIMORDIAL_WOOD: 0,
+      ASTRAL_MINERAL: 0,
+    },
+  },
+  flint_spear: {
+    label: 'Lança de Sílex Caçadora (Nv.1)',
+    toolType: ToolType.SWORD,
+    toolTier: 1,
+    forceByMaterial: {
+      FIBER_FOLIAGE: 19,
+      SOFT_WOOD: 10,
+      ROUGH_STONE: 7,
+      HARDWOOD: 0,
+      IRON_MINERAL: 0,
+      PRIMORDIAL_WOOD: 0,
+      ASTRAL_MINERAL: 0,
+    },
+  },
+  iron_sword: {
+    label: 'Espada Longa de Ferro (Nv.2)',
+    toolType: ToolType.SWORD,
+    toolTier: 2,
+    forceByMaterial: {
+      FIBER_FOLIAGE: 28,
+      SOFT_WOOD: 15,
+      ROUGH_STONE: 9,
+      HARDWOOD: 0,
+      IRON_MINERAL: 0,
+      PRIMORDIAL_WOOD: 0,
+      ASTRAL_MINERAL: 0,
+    },
+  },
+  shadow_blade: {
+    label: 'Foice Sombria Vampírica (Nv.2)',
+    toolType: ToolType.SWORD,
+    toolTier: 2,
+    forceByMaterial: {
+      FIBER_FOLIAGE: 35,
+      SOFT_WOOD: 16,
+      ROUGH_STONE: 9,
+      HARDWOOD: 0,
+      IRON_MINERAL: 0,
+      PRIMORDIAL_WOOD: 0,
+      ASTRAL_MINERAL: 0,
+    },
+  },
+  scorpion_dagger: {
+    label: 'Adaga de Ferrão Solar (Nv.2)',
+    toolType: ToolType.SWORD,
+    toolTier: 2,
+    forceByMaterial: {
+      FIBER_FOLIAGE: 30,
+      SOFT_WOOD: 14,
+      ROUGH_STONE: 8,
+      HARDWOOD: 0,
+      IRON_MINERAL: 0,
+      PRIMORDIAL_WOOD: 0,
+      ASTRAL_MINERAL: 0,
+    },
+  },
+  ogre_club: {
+    label: 'Clava Brutal de Ogro (Nv.2)',
+    toolType: ToolType.SWORD,
+    toolTier: 2,
+    forceByMaterial: {
+      FIBER_FOLIAGE: 26,
+      SOFT_WOOD: 24,
+      ROUGH_STONE: 20,
+      HARDWOOD: 0,
+      IRON_MINERAL: 0,
+      PRIMORDIAL_WOOD: 0,
+      ASTRAL_MINERAL: 0,
+    },
+  },
+  abyssal_trident: {
+    label: 'Tridente Abissal dos Mares (Nv.3)',
+    toolType: ToolType.SWORD,
+    toolTier: 3,
+    forceByMaterial: {
+      FIBER_FOLIAGE: 38,
+      SOFT_WOOD: 22,
+      ROUGH_STONE: 16,
+      HARDWOOD: 0,
+      IRON_MINERAL: 0,
+      PRIMORDIAL_WOOD: 0,
+      ASTRAL_MINERAL: 0,
+    },
+  },
+  astral_sword: {
+    label: 'Lâmina Astral do Hélio (Nv.3)',
+    toolType: ToolType.SWORD,
+    toolTier: 3,
+    forceByMaterial: {
+      FIBER_FOLIAGE: 45,
+      SOFT_WOOD: 26,
+      ROUGH_STONE: 18,
+      HARDWOOD: 0,
+      IRON_MINERAL: 0,
+      PRIMORDIAL_WOOD: 0,
+      ASTRAL_MINERAL: 0,
+    },
+  },
+};
+
+export function getNatureBreakRequirement(
+  type: NatureNodeType
+): ElementBreakRequirement {
+  const bp = NATURE_BLUEPRINTS[type];
+  const materialKind = bp.materialKind || 'SOFT_WOOD';
+  const materialLabel = MATERIAL_LABELS[materialKind];
+  const recommendedToolLabel =
+    bp.requiredTool === ToolType.PICKAXE
+      ? 'Picareta'
+      : bp.requiredTool === ToolType.AXE
+      ? 'Machado'
+      : 'Mão Livre / Qualquer';
+
+  let requirementLabel = 'Mão Livre ou Qualquer Ferramenta';
+  if (bp.requiredTier >= 2) {
+    requirementLabel =
+      bp.requiredTool === ToolType.PICKAXE
+        ? 'Requer Picareta de Ferro+ (Nv.2+)'
+        : 'Requer Machado de Ferro+ (Nv.2+)';
+  } else if (bp.requiredTier === 1) {
+    requirementLabel =
+      bp.requiredTool === ToolType.PICKAXE
+        ? 'Requer Picareta de Pedra+ (Nv.1+)'
+        : 'Requer Machado de Pedra+ (Nv.1+)';
+  } else if (bp.requiredTool === ToolType.AXE) {
+    requirementLabel = 'Quebrável à Mão (Força 7) · Ideal: Machado (Força 24+)';
+  } else if (bp.requiredTool === ToolType.PICKAXE) {
+    requirementLabel = 'Quebrável à Mão (Força 6) · Ideal: Picareta (Força 24+)';
+  }
+
+  return {
+    materialKind,
+    materialLabel,
+    requiredTool: bp.requiredTool,
+    requiredTier: bp.requiredTier,
+    requirementLabel,
+    recommendedToolLabel,
+  };
+}
+
+export function getStructureBreakRequirement(
+  type: PlaceableType
+): ElementBreakRequirement {
+  const req = STRUCTURE_MATERIAL_REQUIREMENTS[type] || {
+    materialKind: 'SOFT_WOOD' as MaterialKind,
+    requiredTool: ToolType.AXE,
+    requiredTier: 0,
+    requirementLabel: 'Mão Livre ou Machado',
+  };
+  const recommendedToolLabel =
+    req.requiredTool === ToolType.PICKAXE
+      ? 'Picareta'
+      : req.requiredTool === ToolType.AXE
+      ? 'Machado'
+      : req.requiredTool === ToolType.HOE
+      ? 'Enxada'
+      : 'Mão Livre';
+
+  return {
+    materialKind: req.materialKind,
+    materialLabel: MATERIAL_LABELS[req.materialKind],
+    requiredTool: req.requiredTool,
+    requiredTier: req.requiredTier,
+    requirementLabel: req.requirementLabel,
+    recommendedToolLabel,
+  };
+}
+
+export interface MaterialBreakEvaluation {
+  canBreak: boolean;
+  force: number;
+  baseMaterialForce: number;
+  blockReason: string | null;
+  actorLabel: string;
+  materialLabel: string;
+}
+
+/**
+ * Calcula se o jogador pode quebrar um elemento (recurso natural ou estrutura) com a mão ou ferramenta equipada,
+ * e retorna a força exata aplicada contra o material específico daquele elemento.
+ */
+export function evaluateMaterialBreak(
+  heldItemId: string | null,
+  toolType: ToolType,
+  toolTier: number,
+  playerStrengthMult: number,
+  materialKind: MaterialKind,
+  requiredTool: ToolType,
+  requiredTier: number
+): MaterialBreakEvaluation {
+  const materialLabel = MATERIAL_LABELS[materialKind] || 'Material';
+  const entry =
+    heldItemId && HAND_AND_TOOL_MATERIAL_STRENGTH[heldItemId]
+      ? HAND_AND_TOOL_MATERIAL_STRENGTH[heldItemId]
+      : HAND_AND_TOOL_MATERIAL_STRENGTH.bare_hand;
+
+  // 1. Verificar requisito estrito de ferramenta e nível (requiredTier >= 1)
+  if (requiredTier > 0) {
+    const toolMatches =
+      requiredTool === ToolType.NONE || toolType === requiredTool;
+    const tierMatches = toolTier >= requiredTier;
+    if (!toolMatches || !tierMatches) {
+      const toolName =
+        requiredTool === ToolType.PICKAXE
+          ? 'Picareta'
+          : requiredTool === ToolType.AXE
+          ? 'Machado'
+          : 'Ferramenta';
+      const tierName =
+        requiredTier >= 3
+          ? 'Primordial/Astral (Nv.3)'
+          : requiredTier === 2
+          ? 'de Ferro+ (Nv.2+)'
+          : 'de Pedra+ (Nv.1+)';
+      return {
+        canBreak: false,
+        force: 0,
+        baseMaterialForce: 0,
+        blockReason: `Requer ${toolName} ${tierName} (${materialLabel})`,
+        actorLabel: entry.label,
+        materialLabel,
+      };
+    }
+  }
+
+  // 2. Obter a força específica da mão ou ferramenta contra este material
+  let baseMaterialForce = entry.forceByMaterial[materialKind] ?? 0;
+
+  // Fallback seguro caso um item customizado tenha toolType/toolTier compatível
+  if (baseMaterialForce <= 0 && requiredTier === 0) {
+    baseMaterialForce =
+      HAND_AND_TOOL_MATERIAL_STRENGTH.bare_hand.forceByMaterial[materialKind] || 6;
+  }
+
+  if (baseMaterialForce <= 0) {
+    return {
+      canBreak: false,
+      force: 0,
+      baseMaterialForce: 0,
+      blockReason: `Força insuficiente contra ${materialLabel}`,
+      actorLabel: entry.label,
+      materialLabel,
+    };
+  }
+
+  const finalForce = Math.max(
+    1,
+    Math.round(baseMaterialForce * Math.max(1, playerStrengthMult))
+  );
+
+  return {
+    canBreak: true,
+    force: finalForce,
+    baseMaterialForce,
+    blockReason: null,
+    actorLabel: entry.label,
+    materialLabel,
+  };
+}
+
 
 

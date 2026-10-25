@@ -1,7 +1,10 @@
 import {
   CONSTRUCTION_BLUEPRINTS,
+  evaluateMaterialBreak,
   evaluateStallPriceDeal,
   getItemBasePrice,
+  getNatureBreakRequirement,
+  getStructureBreakRequirement,
   ITEMS,
   NATURE_BLUEPRINTS,
 } from '../core/ItemRegistry';
@@ -12,6 +15,7 @@ import {
   CHEST_STORAGE_SIZE,
   CreatureEntity,
   CreatureKind,
+  DeathBag,
   DroppedItem,
   EquipmentSlot,
   FloatingText,
@@ -24,6 +28,7 @@ import {
   MARKET_STALL_SIZE,
   MarketPurchaseOffer,
   MarketStallSlot,
+  MOUNT_STORAGE_SIZE,
   OnlineSessionInfo,
   PlaceableType,
   PlacedStructure,
@@ -31,6 +36,7 @@ import {
   PlayerAttributes,
   PlayerState,
   RemotePlayerState,
+  TOTAL_INVENTORY_SIZE,
   ToolType,
   WorldMetadata,
   WorldSaveData,
@@ -65,9 +71,12 @@ export interface HudSnapshot {
   aimedTarget: AimedTargetInfo | null;
   nearbyWildAnimal: CreatureEntity | null;
   nearbyTamedAnimal: CreatureEntity | null;
+  activeMount: CreatureEntity | null;
   tamedAnimals: CreatureEntity[];
   waypoints: MapWaypoint[];
+  deathBags: DeathBag[];
   isPaused: boolean;
+  canPause: boolean;
   isGameOver: boolean;
   lastSaveStatus: string;
   buildDemolishMode: boolean;
@@ -87,6 +96,7 @@ export class GameEngine {
   public metadata: WorldMetadata;
   public player: PlayerState;
   public droppedItems: DroppedItem[] = [];
+  public deathBags: DeathBag[] = [];
   public floatingTexts: FloatingText[] = [];
   public waypoints: MapWaypoint[] = [];
   public settings: GameSettings;
@@ -94,6 +104,7 @@ export class GameEngine {
   public remotePlayersList: RemotePlayerState[] = [];
 
   public isPaused = false;
+  private uiPauseRequested = false;
   public isGameOver = false;
   public lastSaveStatus = 'Salvo';
   public buildDemolishMode = false;
@@ -198,10 +209,18 @@ export class GameEngine {
       saveData.chunks,
       this.metadata.worldGenVersion ?? 1
     );
+    if (!this.player.swimSpeed || this.player.swimSpeed <= 0) {
+      this.player.swimSpeed = 58;
+    }
+    this.player.isSwimming = this.world.isWorldPosInWater(
+      this.player.x,
+      this.player.y
+    );
     // Ensure the player never spawns trapped inside a newly built structure or solid hitbox
     this.pushPlayerOutOfHitbox(0, true);
     this.entities = new EntityManager(saveData.creatures);
     this.droppedItems = saveData.droppedItems || [];
+    this.deathBags = Array.isArray(saveData.deathBags) ? saveData.deathBags : [];
     this.waypoints = saveData.waypoints || [];
     this.settings = settings;
     this.onUiChange = onUiChange || null;
@@ -218,6 +237,9 @@ export class GameEngine {
         settings.customServerUrl
       );
     this.bindMultiplayerCallbacks();
+
+    // Restore any active mount integrated with the player's body from saved state
+    this.restoreIntegratedPlayerMount();
 
     this.input = new InputManager();
     this.camera = new Camera();
@@ -271,13 +293,61 @@ export class GameEngine {
     this.multiplayer.disconnect(false);
   }
 
+  /**
+   * Returns true if the world currently has active network multiplayer players connected.
+   * When playing solo (even with an invite code open waiting for guests), returns false so the game CAN be paused.
+   * When playing as a Guest or as a Host with at least 1 connected Guest, returns true so the game CANNOT be paused.
+   */
+  public hasConnectedNetworkPlayers(): boolean {
+    if (!this.multiplayer.isOnline) return false;
+    if (this.multiplayer.role === 'GUEST') return true;
+    if (this.multiplayer.remotePlayers.size > 0) return true;
+    if (
+      this.multiplayer.connectedPeers.some(
+        (p) => p.peerId !== this.multiplayer.peerId
+      )
+    ) {
+      return true;
+    }
+    return false;
+  }
+
+  /**
+   * Requests or releases a real game pause from UI screens (Map, Inventory, Craft, Pause, Saddlebag, HUD Edit).
+   * Automatically respects the multiplayer rule: never pauses when network players are connected.
+   */
+  public setUiPauseRequested(requested: boolean): void {
+    this.uiPauseRequested = Boolean(requested);
+    this.syncPauseState();
+  }
+
+  public syncPauseState(): void {
+    const canPauseNow = !this.hasConnectedNetworkPlayers();
+    const shouldPause = this.uiPauseRequested && canPauseNow;
+    if (this.isPaused !== shouldPause) {
+      this.isPaused = shouldPause;
+      this.lastTimestamp = performance.now();
+      if (shouldPause) {
+        this.player.vx = 0;
+        this.player.vy = 0;
+        this.player.isMoving = false;
+      }
+      this.emitUiSnapshot();
+    }
+  }
+
   private loop = (timestamp: number): void => {
     const rawDt = (timestamp - this.lastTimestamp) / 1000;
     this.lastTimestamp = timestamp;
     const dt = Math.min(0.1, Math.max(0.001, rawDt));
 
+    this.syncPauseState();
+
     if (!this.isPaused && !this.isGameOver) {
       this.update(dt);
+    } else if (this.isPaused && this.multiplayer.isOnline) {
+      // Keep network heartbeats alive if needed
+      this.updateMultiplayerSync(dt);
     }
     this.render();
 
@@ -326,6 +396,7 @@ export class GameEngine {
 
     // Update Player movement & animations
     this.updatePlayer(dt);
+    this.updateFishing(dt);
 
     // Update Camera
     this.camera.zoom = this.settings.cameraZoom;
@@ -416,7 +487,8 @@ export class GameEngine {
         orientation: this.buildOrientation,
         showHitboxPreview: this.showHitboxPreview,
       },
-      this.remotePlayersList
+      this.remotePlayersList,
+      this.deathBags
     );
   }
 
@@ -436,7 +508,38 @@ export class GameEngine {
         Math.hypot(c.x - this.player.x, c.y - this.player.y) < 180
     );
 
+    // Check active mount (Saddled Horse, Saddled Camel, or Boat) — integrated with the player's body
+    let activeMount = this.getActiveMount();
+    if (this.player.mountedEntityId && !activeMount) {
+      activeMount = this.restoreIntegratedPlayerMount();
+      if (!activeMount) {
+        this.player.mountedEntityId = null;
+        this.player.mountedCreatureData = null;
+        this.player.isGalloping = false;
+      }
+    }
+
+    // Regenerate stamina for all unmounted or idle saddled horses & camels
+    for (const cr of this.entities.creatures) {
+      if (
+        (cr.kind === CreatureKind.HORSE || cr.kind === CreatureKind.CAMEL) &&
+        cr.tamed
+      ) {
+        const maxStam =
+          cr.mountMaxStamina || (cr.kind === CreatureKind.CAMEL ? 165 : 100);
+        cr.mountMaxStamina = maxStam;
+        if (cr.mountStamina === undefined) cr.mountStamina = maxStam;
+        if (!activeMount || activeMount.id !== cr.id) {
+          cr.mountStamina = Math.min(maxStam, cr.mountStamina + dt * 16);
+        }
+      }
+    }
+
     const pTile = this.world.worldToTile(this.player.x, this.player.y);
+    const inWater = this.world.isTileSwimmableWater(pTile.tx, pTile.ty);
+    const isBoatMount = activeMount?.kind === CreatureKind.BOAT;
+    this.player.isSwimming = isBoatMount ? false : inWater;
+
     const groundStruct =
       this.world.getGroundStructureAtTile(pTile.tx, pTile.ty) ||
       this.world.getStructureAtTile(pTile.tx, pTile.ty);
@@ -450,49 +553,218 @@ export class GameEngine {
     const agilityMult = 1 + (this.player.attributes.agility - 1) * 0.06;
     const equipSpeedMult = 1 + this.getTotalEquipmentSpeedBonus();
     const camelMult = hasCamelBuff ? 1.18 : 1.0;
-    const baseSpeed =
+    const playerSwimSpeed =
+      (this.player.swimSpeed || 58) *
+      agilityMult *
+      equipSpeedMult *
+      speedBuffMult;
+    const normalLandSpeed =
       96 * agilityMult * equipSpeedMult * camelMult * floorMult * speedBuffMult;
 
-    this.player.vx = move.x * baseSpeed;
-    this.player.vy = move.y * baseSpeed;
-    this.player.isMoving = Math.hypot(move.x, move.y) > 0.05;
+    let baseSpeed = inWater ? playerSwimSpeed : normalLandSpeed;
+    const isInputMoving = Math.hypot(move.x, move.y) > 0.05;
 
-    // If the player is overlapping any solid hitbox (e.g. structure built on last location, closed door, etc.), push out smoothly
-    if (!this.canEntityOccupy(this.player.x, this.player.y)) {
-      this.pushPlayerOutOfHitbox(dt, false);
-    }
+    if (activeMount) {
+      if (isBoatMount) {
+        // Boat is fast on water (152 px/s) and never suffers water current drift
+        baseSpeed = (activeMount.mountSpeed || 152) * speedBuffMult;
+        this.player.isGalloping = false;
+      } else {
+        // Saddled Horse or Camel: uses its specific individual mountSpeed
+        const mountBaseSpeed =
+          activeMount.mountSpeed ||
+          (activeMount.kind === CreatureKind.CAMEL ? 142 : 150);
+        const maxStam =
+          activeMount.mountMaxStamina ||
+          (activeMount.kind === CreatureKind.CAMEL ? 165 : 100);
+        activeMount.mountMaxStamina = maxStam;
+        if (activeMount.mountStamina === undefined) {
+          activeMount.mountStamina = maxStam;
+        }
 
-    if (this.player.isMoving) {
-      this.player.direction = EntityManager.vectorToDirection(
-        move.x,
-        move.y,
-        this.player.direction
-      );
-      this.customTargetTile = null;
-      this.player.animTimer += dt;
-      if (this.player.animTimer >= 0.14) {
-        this.player.animTimer = 0;
-        this.player.animFrame = (this.player.animFrame + 1) % 4;
+        if (this.player.isGalloping && isInputMoving && !inWater) {
+          if (activeMount.mountStamina > 1) {
+            activeMount.mountStamina = Math.max(
+              0,
+              activeMount.mountStamina - dt * 24
+            );
+            if (activeMount.mountStamina <= 0.5) {
+              this.player.isGalloping = false;
+            }
+          } else {
+            this.player.isGalloping = false;
+          }
+        } else {
+          const regen = isInputMoving ? 14 : 22;
+          activeMount.mountStamina = Math.min(
+            maxStam,
+            activeMount.mountStamina + dt * regen
+          );
+        }
+
+        const gallopMult =
+          this.player.isGalloping && isInputMoving && !inWater ? 1.42 : 1.0;
+        baseSpeed = inWater
+          ? (activeMount.swimSpeed || 34) * speedBuffMult
+          : mountBaseSpeed * gallopMult * floorMult * speedBuffMult;
       }
-
-      const nextX = this.player.x + this.player.vx * dt;
-      const nextY = this.player.y + this.player.vy * dt;
-
-      if (this.canEntityOccupy(nextX, this.player.y)) {
-        this.player.x = nextX;
-      }
-      if (this.canEntityOccupy(this.player.x, nextY)) {
-        this.player.y = nextY;
-      }
-
-      const revealRad = Math.max(10, Math.min(20, Math.round(13 / Math.max(0.55, this.camera.zoom))));
-      this.world.revealAround(this.player.x, this.player.y, revealRad);
     } else {
-      this.player.animFrame = 0;
+      this.player.isGalloping = false;
     }
+
+    // Boats ignore water current completely!
+    const waterCurrent =
+      inWater && !isBoatMount
+        ? this.world.getWaterCurrentAtWorld(
+            this.player.x,
+            this.player.y,
+            this.globalTime
+          )
+        : { vx: 0, vy: 0, kind: 'none' as const };
+
+    // If the local player is a 2nd-seat passenger on a Boat driven by another online player, follow the boat
+    const isLocalPassenger =
+      activeMount?.passengerPlayerId === 'LOCAL' ||
+      activeMount?.passengerPlayerId === this.multiplayer.peerId;
+    const isLocalPrimaryRider =
+      activeMount?.riderPlayerId === 'LOCAL' ||
+      activeMount?.riderPlayerId === this.multiplayer.peerId;
+    const isBoatPassengerOnly =
+      isBoatMount &&
+      isLocalPassenger &&
+      Boolean(activeMount!.riderPlayerId) &&
+      !isLocalPrimaryRider;
+
+    if (isBoatPassengerOnly && activeMount) {
+      this.player.x = activeMount.x;
+      this.player.y = activeMount.y;
+      this.player.vx = activeMount.vx;
+      this.player.vy = activeMount.vy;
+      this.player.direction = activeMount.direction;
+      this.player.isMoving = Math.hypot(activeMount.vx, activeMount.vy) > 2;
+      if (activeMount.passengerPetId) {
+        const pet = this.entities.creatures.find(
+          (c) => c.id === activeMount.passengerPetId
+        );
+        if (pet) {
+          pet.x = activeMount.x;
+          pet.y = activeMount.y;
+          pet.vx = 0;
+          pet.vy = 0;
+        }
+      }
+    } else {
+      this.player.vx = move.x * baseSpeed + waterCurrent.vx;
+      this.player.vy = move.y * baseSpeed + waterCurrent.vy;
+      this.player.isMoving = isInputMoving;
+
+      // If the player is overlapping any solid hitbox (e.g. structure built on last location, closed door, etc.), push out smoothly
+      if (!isBoatMount && !this.canEntityOccupy(this.player.x, this.player.y)) {
+        this.pushPlayerOutOfHitbox(dt, false);
+      }
+
+      if (this.player.isMoving) {
+        this.player.direction = EntityManager.vectorToDirection(
+          move.x,
+          move.y,
+          this.player.direction
+        );
+        this.customTargetTile = null;
+        this.player.animTimer += dt;
+        const animInterval = inWater && !isBoatMount ? 0.19 : this.player.isGalloping ? 0.09 : 0.14;
+        if (this.player.animTimer >= animInterval) {
+          this.player.animTimer = 0;
+          this.player.animFrame = (this.player.animFrame + 1) % 4;
+        }
+
+        const nextX = this.player.x + this.player.vx * dt;
+        const nextY = this.player.y + this.player.vy * dt;
+
+        const canMoveTo = (wx: number, wy: number): boolean => {
+          if (isBoatMount) {
+            const t = this.world.worldToTile(wx, wy);
+            return (
+              this.world.isTileSwimmableWater(t.tx, t.ty) &&
+              this.world.canEntityOccupyWorldCircle(wx, wy, 6.2, true)
+            );
+          }
+          return this.canEntityOccupy(wx, wy);
+        };
+
+        if (canMoveTo(nextX, this.player.y)) {
+          this.player.x = nextX;
+        }
+        if (canMoveTo(this.player.x, nextY)) {
+          this.player.y = nextY;
+        }
+
+        const revealRad = Math.max(
+          10,
+          Math.min(20, Math.round(13 / Math.max(0.55, this.camera.zoom)))
+        );
+        this.world.revealAround(this.player.x, this.player.y, revealRad);
+      } else {
+        this.player.animFrame = 0;
+        // Passive drift when floating in a river current or ocean coastal surf (never when in a Boat!)
+        if (inWater && !isBoatMount && waterCurrent.kind !== 'none') {
+          const nextX = this.player.x + waterCurrent.vx * dt;
+          const nextY = this.player.y + waterCurrent.vy * dt;
+          if (this.canEntityOccupy(nextX, this.player.y)) {
+            this.player.x = nextX;
+          }
+          if (this.canEntityOccupy(this.player.x, nextY)) {
+            this.player.y = nextY;
+          }
+          const revealRad = Math.max(
+            10,
+            Math.min(20, Math.round(13 / Math.max(0.55, this.camera.zoom)))
+          );
+          this.world.revealAround(this.player.x, this.player.y, revealRad);
+        }
+      }
+
+      // Sync activeMount position, direction, and animation with the rider
+      if (activeMount) {
+        activeMount.x = this.player.x;
+        activeMount.y = this.player.y;
+        activeMount.vx = this.player.vx;
+        activeMount.vy = this.player.vy;
+        activeMount.direction = this.player.direction;
+        activeMount.isSwimming = isBoatMount ? true : inWater;
+        if (this.player.isMoving) {
+          activeMount.animTimer += dt;
+          const mStep = this.player.isGalloping ? 0.08 : 0.13;
+          if (activeMount.animTimer >= mStep) {
+            activeMount.animTimer = 0;
+            activeMount.animFrame = (activeMount.animFrame + 1) % 4;
+          }
+        } else {
+          activeMount.animFrame = 0;
+        }
+        // Keep any pet seated in the 2nd seat of the Boat synced with the Boat
+        if (isBoatMount && activeMount.passengerPetId) {
+          const pet = this.entities.creatures.find(
+            (c) => c.id === activeMount.passengerPetId
+          );
+          if (pet) {
+            pet.x = activeMount.x;
+            pet.y = activeMount.y;
+            pet.vx = 0;
+            pet.vy = 0;
+            pet.direction = activeMount.direction;
+            pet.isSwimming = false;
+          } else {
+            activeMount.passengerPetId = null;
+          }
+        }
+      }
+    }
+
+    // Keep player.mountedCreatureData continuously synchronized with activeMount (integrated with player body)
+    this.syncPlayerMountedCreatureData();
 
     // Secondary post-movement check to guarantee the character never stays stuck inside a hitbox
-    if (!this.canEntityOccupy(this.player.x, this.player.y)) {
+    if (!isBoatMount && !this.canEntityOccupy(this.player.x, this.player.y)) {
       this.pushPlayerOutOfHitbox(dt, false);
     }
 
@@ -1001,6 +1273,28 @@ export class GameEngine {
       }
 
       cr.faction = EntityManager.getFaction(cr);
+      cr.swimSpeed = EntityManager.getCreatureSwimSpeed(cr);
+      // Skip AI & current drift for any creature currently mounted by a player, or a Boat, or a pet seated in a Boat
+      if (
+        cr.kind === CreatureKind.BOAT ||
+        this.player.mountedEntityId === cr.id ||
+        this.entities.creatures.some(
+          (b) => b.kind === CreatureKind.BOAT && b.passengerPetId === cr.id
+        ) ||
+        this.remotePlayersList.some((rp) => rp.mountedEntityId === cr.id)
+      ) {
+        if (cr.hitFlashTimer > 0) {
+          cr.hitFlashTimer = Math.max(0, cr.hitFlashTimer - dt);
+        }
+        if (cr.kind === CreatureKind.BOAT) {
+          cr.vx = 0;
+          cr.vy = 0;
+          cr.isSwimming = true;
+        }
+        continue;
+      }
+
+      cr.isSwimming = this.world.isWorldPosInWater(cr.x, cr.y);
 
       if (cr.hitFlashTimer > 0) cr.hitFlashTimer = Math.max(0, cr.hitFlashTimer - dt);
       if (cr.attackTimer > 0) cr.attackTimer = Math.max(0, cr.attackTimer - dt);
@@ -1361,8 +1655,9 @@ export class GameEngine {
           if (distToTarget > attackReach) {
             let speedMult = 1.0;
 
-            // FOREST_STALKER Ambush Lunge
+            // FOREST_STALKER Ambush Lunge (land only)
             if (
+              !cr.isSwimming &&
               cr.kind === CreatureKind.FOREST_STALKER &&
               distToTarget < 125 &&
               distToTarget > 42 &&
@@ -1373,8 +1668,9 @@ export class GameEngine {
               this.addFloatingText('Salto de Teia!', cr.x, cr.y - 18, '#a855f7');
             }
 
-            // DESERT_SCORPION Imperial Sting Dash
+            // DESERT_SCORPION Imperial Sting Dash (land only)
             if (
+              !cr.isSwimming &&
               cr.kind === CreatureKind.DESERT_SCORPION &&
               distToTarget < 105 &&
               distToTarget > 36 &&
@@ -1486,17 +1782,31 @@ export class GameEngine {
       // =====================================================================
       // 5. SMOOTH KINEMATIC INTEGRATION & SLIDING OBSTACLE RESOLUTION
       // =====================================================================
-      const speed = Math.hypot(cr.vx, cr.vy);
+      const crCurrent = cr.isSwimming
+        ? this.world.getWaterCurrentAtWorld(cr.x, cr.y, this.globalTime)
+        : { vx: 0, vy: 0, kind: 'none' as const };
+      const effVx = cr.vx + crCurrent.vx;
+      const effVy = cr.vy + crCurrent.vy;
+      const speed = Math.hypot(effVx, effVy);
+      const intentionalSpeed = Math.hypot(cr.vx, cr.vy);
+
       if (speed > 1.2) {
-        cr.direction = EntityManager.vectorToDirection(cr.vx, cr.vy, cr.direction);
+        if (intentionalSpeed > 1.2) {
+          cr.direction = EntityManager.vectorToDirection(
+            cr.vx,
+            cr.vy,
+            cr.direction
+          );
+        }
         cr.animTimer += dt;
-        if (cr.animTimer >= 0.18) {
+        const animStep = cr.isSwimming ? 0.22 : 0.18;
+        if (cr.animTimer >= animStep) {
           cr.animTimer = 0;
           cr.animFrame = (cr.animFrame + 1) % 4;
         }
 
-        const stepX = cr.vx * dt;
-        const stepY = cr.vy * dt;
+        const stepX = effVx * dt;
+        const stepY = effVy * dt;
         const nx = cr.x + stepX;
         const ny = cr.y + stepY;
 
@@ -1518,7 +1828,7 @@ export class GameEngine {
 
           // If blocked on both axes, probe tangential slide angles so the creature glides around corners instead of stalling
           if (!movedX && !movedY) {
-            const baseAng = Math.atan2(cr.vy, cr.vx);
+            const baseAng = Math.atan2(effVy, effVx);
             const sign = cr.orbitSign || 1;
             const slideAngles = [
               baseAng + 0.65 * sign,
@@ -1576,15 +1886,59 @@ export class GameEngine {
   }
 
   /**
+   * Determines whether a creature has a genuine reason to enter water (swim).
+   * Naturally, all mobs avoid entering water during idle/wandering routines,
+   * and only enter water if they have a specific motive (combat pursuit, retaliating,
+   * tamed pet following its owner, cornered while fleeing, or already in water).
+   */
+  private doesCreatureHaveReasonToSwim(
+    cr: CreatureEntity,
+    goalX?: number,
+    goalY?: number
+  ): boolean {
+    if (this.world.isWorldPosInWater(cr.x, cr.y)) {
+      return true;
+    }
+    if (cr.aiState === 'chase' || Boolean(cr.retaliateTargetId)) {
+      return true;
+    }
+    if (cr.tamed && cr.aiState === 'follow') {
+      if (
+        this.world.isWorldPosInWater(this.player.x, this.player.y) ||
+        Math.hypot(this.player.x - cr.x, this.player.y - cr.y) > 90
+      ) {
+        return true;
+      }
+    }
+    if (goalX !== undefined && goalY !== undefined) {
+      if (this.world.isWorldPosInWater(goalX, goalY)) {
+        return true;
+      }
+      if (
+        (cr.kind === CreatureKind.VILLAGER || cr.kind === CreatureKind.WANDERER) &&
+        (cr.attractedStallId ||
+          cr.homeHouseId ||
+          this.metadata.timeOfDay >= 17.5 ||
+          this.metadata.timeOfDay < 5.5)
+      ) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /**
    * Checks whether tile `(tx, ty)` is walkable for creature pathfinding.
-   * When `allowClosedDoors` is true (for Villagers, Wanderers, and Bandits), closed doors are treated as passable.
+   * - Respects `allowWater`: when false, swimmable water tiles are avoided by pathfinding.
+   * - When `allowClosedDoors` is true (for Villagers, Wanderers, and Bandits), closed doors are treated as passable.
    */
   private isTileWalkableForCreature(
     tx: number,
     ty: number,
-    allowClosedDoors = false
+    allowClosedDoors = false,
+    allowWater = false
   ): boolean {
-    if (this.world.isTileWalkable(tx, ty)) return true;
+    if (this.world.isTileWalkable(tx, ty, allowWater)) return true;
     if (!allowClosedDoors) return false;
 
     const { cx, cy, lx, ly } = this.world.tileToChunk(tx, ty);
@@ -1594,7 +1948,11 @@ export class GameEngine {
     let hasBridge = false;
     for (const st of chunk.structures) {
       if (st.tileX === tx && st.tileY === ty) {
-        if (st.isBridge || st.type === PlaceableType.WOOD_BRIDGE) {
+        if (
+          st.isBridge ||
+          st.type === PlaceableType.WOOD_BRIDGE ||
+          CONSTRUCTION_BLUEPRINTS[st.type]?.layer === 'GROUND'
+        ) {
           hasBridge = true;
         }
         if (
@@ -1608,7 +1966,7 @@ export class GameEngine {
         }
       }
     }
-    if (biome === BiomeType.OCEAN && !hasBridge) return false;
+    if (!allowWater && biome === BiomeType.OCEAN && !hasBridge) return false;
 
     const hasSolidNode = chunk.nodes.some(
       (n) =>
@@ -1621,14 +1979,15 @@ export class GameEngine {
 
   /**
    * Raycasts along the world segment `(x0, y0) -> (x1, y1)` to verify whether a creature
-   * has a clear, unobstructed line of movement without hitting trees, boulders, walls, or water.
+   * has a clear, unobstructed line of movement without hitting trees, boulders, walls, or unintended water.
    */
   private hasClearLineOfSight(
     x0: number,
     y0: number,
     x1: number,
     y1: number,
-    allowClosedDoors = false
+    allowClosedDoors = false,
+    allowWater = false
   ): boolean {
     const dist = Math.hypot(x1 - x0, y1 - y0);
     if (dist <= 10) return true;
@@ -1637,7 +1996,7 @@ export class GameEngine {
       const t = i / steps;
       const px = x0 + (x1 - x0) * t;
       const py = y0 + (y1 - y0) * t;
-      if (!this.world.canEntityOccupyWorldCircle(px, py, 6.8)) {
+      if (!this.world.canEntityOccupyWorldCircle(px, py, 6.8, allowWater)) {
         if (allowClosedDoors) {
           const tile = this.world.worldToTile(px, py);
           const st = this.world.getStructureAtTile(tile.tx, tile.ty);
@@ -1657,25 +2016,31 @@ export class GameEngine {
 
   /**
    * Lightweight bounded 8-directional A* pathfinder on the tile grid.
-   * Finds the smartest obstacle-free intermediate world waypoint toward `(goalX, goalY)`,
-   * using Line-of-Sight string-pulling so trajectories are smooth and diagonal rather than staircase-shaped.
+   * Finds the smartest obstacle-free intermediate world waypoint toward `(goalX, goalY)`.
+   * Naturally penalizes water tiles (`2.8x` cost) so mobs prefer bridges and dry land,
+   * only swimming through water when necessary to reach their objective!
    */
   private computeNextPathWaypoint(
     startX: number,
     startY: number,
     goalX: number,
     goalY: number,
-    allowClosedDoors = false
+    allowClosedDoors = false,
+    allowWater = false
   ): { x: number; y: number } | null {
     const startTile = this.world.worldToTile(startX, startY);
     const goalTile = this.world.worldToTile(goalX, goalY);
+    const startInWater = this.world.isTileSwimmableWater(
+      startTile.tx,
+      startTile.ty
+    );
+    const canTraverseWater = allowWater || startInWater;
 
     if (startTile.tx === goalTile.tx && startTile.ty === goalTile.ty) {
       return { x: goalX, y: goalY };
     }
 
     const maxTileDist = 14;
-    // If target is beyond local A* window, project an intermediate goal on the window boundary
     let targetTx = goalTile.tx;
     let targetTy = goalTile.ty;
     const dtx = targetTx - startTile.tx;
@@ -1739,11 +2104,15 @@ export class GameEngine {
         bestNode = current;
       }
 
-      // Reached goal tile (or adjacent tile if goal tile itself is a house/station structure)
       if (
         (current.tx === targetTx && current.ty === targetTy) ||
         (h <= 1.45 &&
-          !this.isTileWalkableForCreature(targetTx, targetTy, allowClosedDoors))
+          !this.isTileWalkableForCreature(
+            targetTx,
+            targetTy,
+            allowClosedDoors,
+            canTraverseWater
+          ))
       ) {
         bestNode = current;
         break;
@@ -1768,7 +2137,12 @@ export class GameEngine {
         const isGoalTile = ntx === targetTx && nty === targetTy;
         if (
           !isGoalTile &&
-          !this.isTileWalkableForCreature(ntx, nty, allowClosedDoors)
+          !this.isTileWalkableForCreature(
+            ntx,
+            nty,
+            allowClosedDoors,
+            canTraverseWater
+          )
         ) {
           continue;
         }
@@ -1779,19 +2153,25 @@ export class GameEngine {
             !this.isTileWalkableForCreature(
               current.tx + dx,
               current.ty,
-              allowClosedDoors
+              allowClosedDoors,
+              canTraverseWater
             ) ||
             !this.isTileWalkableForCreature(
               current.tx,
               current.ty + dy,
-              allowClosedDoors
+              allowClosedDoors,
+              canTraverseWater
             )
           ) {
             continue;
           }
         }
 
-        const ng = current.g + cost;
+        // Apply higher traversal cost to swimmable water tiles so mobs naturally prefer bridges and dry shores
+        const isStepWater = this.world.isTileSwimmableWater(ntx, nty);
+        const stepCost = isStepWater ? cost * 2.8 : cost;
+
+        const ng = current.g + stepCost;
         const nf = ng + Math.hypot(targetTx - ntx, targetTy - nty) * 1.05;
         const existing = open.find((o) => o.tx === ntx && o.ty === nty);
         if (!existing) {
@@ -1804,7 +2184,6 @@ export class GameEngine {
       }
     }
 
-    // Reconstruct path from startTile to bestNode
     const path: { tx: number; ty: number }[] = [];
     let curr: AStarNode | null = bestNode;
     while (curr && curr.parent) {
@@ -1814,13 +2193,25 @@ export class GameEngine {
 
     if (path.length === 0) return null;
 
-    // String-pulling: pick the furthest tile along the path (up to index 3) that has clear line of sight
     let chosenIdx = 0;
     const maxLookIdx = Math.min(path.length - 1, 3);
     for (let i = maxLookIdx; i >= 1; i--) {
       const wx = path[i].tx * TILE_SIZE + TILE_SIZE / 2;
       const wy = path[i].ty * TILE_SIZE + TILE_SIZE / 2;
-      if (this.hasClearLineOfSight(startX, startY, wx, wy, allowClosedDoors)) {
+      const destIsWater = this.world.isTileSwimmableWater(
+        path[i].tx,
+        path[i].ty
+      );
+      if (
+        this.hasClearLineOfSight(
+          startX,
+          startY,
+          wx,
+          wy,
+          allowClosedDoors,
+          startInWater || destIsWater
+        )
+      ) {
         chosenIdx = i;
         break;
       }
@@ -1834,10 +2225,9 @@ export class GameEngine {
 
   /**
    * Unified obstacle-aware steering controller for all NPCs & Mobs toward `(targetX, targetY)`:
-   * 1. Uses bounded A* + Line-of-Sight string-pulling when an obstacle blocks the direct trajectory.
-   * 2. Uses 16-direction Context Steering with short/medium whisker feelers + shoulder clearance.
-   * 3. Applies soft creature separation (flocking) so mobs/allies fan out naturally instead of stacking.
-   * 4. Smoothly interpolates velocity `(vx, vy)` for realistic curved turns and acceleration.
+   * 1. Evaluates whether the mob has a reason to enter water (`hasReasonToSwim`).
+   * 2. Uses bounded A* + Line-of-Sight string-pulling when an obstacle or water body blocks the direct trajectory.
+   * 3. Uses 16-direction Context Steering with water avoidance and species-specific `swimSpeed` when in water.
    */
   private steerCreatureToward(
     cr: CreatureEntity,
@@ -1853,6 +2243,13 @@ export class GameEngine {
       cr.orbitSign = h % 2 === 0 ? 1 : -1;
     }
 
+    const hasReasonToSwim = this.doesCreatureHaveReasonToSwim(
+      cr,
+      targetX,
+      targetY
+    );
+    const crInWater = this.world.isWorldPosInWater(cr.x, cr.y);
+
     // 1. Determine immediate steering target (Direct Line-of-Sight vs A* Waypoint)
     let aimX = targetX;
     let aimY = targetY;
@@ -1862,9 +2259,17 @@ export class GameEngine {
       cr.navRecalcTimer = Math.max(0, cr.navRecalcTimer - dt);
     }
 
+    // Only treat water as a direct line-of-sight if the creature is already in water
     if (
       distToGoal > 22 &&
-      !this.hasClearLineOfSight(cr.x, cr.y, targetX, targetY, allowClosedDoors)
+      !this.hasClearLineOfSight(
+        cr.x,
+        cr.y,
+        targetX,
+        targetY,
+        allowClosedDoors,
+        crInWater
+      )
     ) {
       const reachedWp =
         cr.navWaypointX !== undefined &&
@@ -1882,7 +2287,8 @@ export class GameEngine {
           cr.y,
           targetX,
           targetY,
-          allowClosedDoors
+          allowClosedDoors,
+          hasReasonToSwim
         );
         if (wp) {
           cr.navWaypointX = wp.x;
@@ -1906,24 +2312,33 @@ export class GameEngine {
       desiredAngle,
       desiredSpeed,
       dt,
-      allowClosedDoors
+      allowClosedDoors,
+      hasReasonToSwim
     );
   }
 
   /**
    * 16-Ray Context Steering along `desiredAngle` with multi-distance obstacle feelers,
-   * shoulder clearance, momentum hysteresis, and soft creature separation.
+   * natural water avoidance, species `swimSpeed` enforcement in water, and soft creature separation.
    */
   private steerCreatureAlongAngle(
     cr: CreatureEntity,
     desiredAngle: number,
     desiredSpeed: number,
     dt: number,
-    allowClosedDoors = false
+    allowClosedDoors = false,
+    allowWater = false
   ): void {
     if (!cr.orbitSign) {
       cr.orbitSign = 1;
     }
+
+    const crInWater = this.world.isWorldPosInWater(cr.x, cr.y);
+    cr.isSwimming = crInWater;
+
+    // Enforce the creature's specific swimming speed whenever it is in water!
+    const swimSpeed = EntityManager.getCreatureSwimSpeed(cr);
+    const activeSpeed = crInWater ? swimSpeed : desiredSpeed;
 
     // Automatically open a closed door immediately in front of an intelligent humanoid (Villager, Wanderer, Bandit)
     if (allowClosedDoors) {
@@ -1969,57 +2384,86 @@ export class GameEngine {
         ? Math.atan2(cr.vy, cr.vx)
         : desiredAngle;
 
-    let bestAngle = desiredAngle;
-    let bestScore = -Infinity;
+    const evaluateCandidates = (permitWaterEntry: boolean) => {
+      let chosenAngle = desiredAngle;
+      let highestScore = -Infinity;
 
-    for (const offset of candidateOffsets) {
-      const cand = desiredAngle + offset;
-      const cosC = Math.cos(cand);
-      const sinC = Math.sin(cand);
+      for (const offset of candidateOffsets) {
+        const cand = desiredAngle + offset;
+        const cosC = Math.cos(cand);
+        const sinC = Math.sin(cand);
 
-      // Short feeler (13px) — must be passable
-      const nearX = cr.x + cosC * 13;
-      const nearY = cr.y + sinC * 13;
-      if (!this.canEntityOccupy(nearX, nearY)) {
-        continue;
+        // Short feeler (13px) — must be collision-free
+        const nearX = cr.x + cosC * 13;
+        const nearY = cr.y + sinC * 13;
+        if (!this.canEntityOccupy(nearX, nearY)) {
+          continue;
+        }
+
+        const nearInWater = this.world.isWorldPosInWater(nearX, nearY);
+        if (!crInWater && !permitWaterEntry && nearInWater) {
+          continue; // Naturally avoid stepping into water when there is no reason!
+        }
+
+        // Goal alignment score (-1 .. +1)
+        let score = Math.cos(offset) * 2.2;
+
+        // Medium feeler (25px) — proactive curve before reaching trees/boulders/walls/water
+        const midX = cr.x + cosC * 25;
+        const midY = cr.y + sinC * 25;
+        const midInWater = this.world.isWorldPosInWater(midX, midY);
+
+        if (!this.canEntityOccupy(midX, midY)) {
+          score -= 1.35;
+        }
+
+        if (!crInWater) {
+          if (!permitWaterEntry && midInWater) {
+            score -= 1.75; // Curve away from the shoreline smoothly when wandering
+          } else if (permitWaterEntry && (nearInWater || midInWater)) {
+            // Even when allowed to swim, prefer dry land if a dry path alongside is similarly aligned
+            score -= nearInWater ? 0.95 : 0.45;
+          }
+        } else if (!allowWater && (!nearInWater || !midInWater)) {
+          // If already in water without a reason to stay, strongly favor rays leading back onto dry land!
+          score += !nearInWater ? 1.65 : 1.1;
+        }
+
+        // Shoulder clearance feelers (±0.38 rad at 15px)
+        const leftClear = this.canEntityOccupy(
+          cr.x + Math.cos(cand + 0.38) * 15,
+          cr.y + Math.sin(cand + 0.38) * 15
+        );
+        const rightClear = this.canEntityOccupy(
+          cr.x + Math.cos(cand - 0.38) * 15,
+          cr.y + Math.sin(cand - 0.38) * 15
+        );
+        if (leftClear && rightClear) {
+          score += 0.45;
+        } else if (!leftClear && !rightClear) {
+          score -= 0.65;
+        }
+
+        // Momentum continuity
+        score += Math.cos(cand - currentHeading) * 0.55;
+        if (offset !== 0 && offset * cr.orbitSign! > 0) {
+          score += 0.12;
+        }
+
+        if (score > highestScore) {
+          highestScore = score;
+          chosenAngle = cand;
+        }
       }
+      return { chosenAngle, highestScore };
+    };
 
-      // Goal alignment score (-1 .. +1)
-      let score = Math.cos(offset) * 2.2;
-
-      // Medium feeler (25px) — proactive curve before reaching trees/boulders/walls
-      const midX = cr.x + cosC * 25;
-      const midY = cr.y + sinC * 25;
-      if (!this.canEntityOccupy(midX, midY)) {
-        score -= 1.35;
-      }
-
-      // Shoulder clearance feelers (±0.38 rad at 15px) — keeps creatures centered in paths & clear of corners
-      const leftClear = this.canEntityOccupy(
-        cr.x + Math.cos(cand + 0.38) * 15,
-        cr.y + Math.sin(cand + 0.38) * 15
-      );
-      const rightClear = this.canEntityOccupy(
-        cr.x + Math.cos(cand - 0.38) * 15,
-        cr.y + Math.sin(cand - 0.38) * 15
-      );
-      if (leftClear && rightClear) {
-        score += 0.45;
-      } else if (!leftClear && !rightClear) {
-        score -= 0.65;
-      }
-
-      // Momentum continuity (prevents left-right oscillation around obstacles)
-      score += Math.cos(cand - currentHeading) * 0.55;
-      if (offset !== 0 && offset * cr.orbitSign > 0) {
-        score += 0.12;
-      }
-
-      if (score > bestScore) {
-        bestScore = score;
-        bestAngle = cand;
-      }
+    let evalRes = evaluateCandidates(allowWater);
+    // Fallback: if cornered on a tiny sandbar where every dry ray is blocked, allow entering water so the mob doesn't freeze
+    if (evalRes.highestScore === -Infinity && !allowWater) {
+      evalRes = evaluateCandidates(true);
     }
+    const bestAngle = evalRes.chosenAngle;
 
     if (cr.kind !== CreatureKind.WANDERER) {
       cr.wanderAngle = bestAngle;
@@ -2034,14 +2478,14 @@ export class GameEngine {
       const dy = cr.y - other.y;
       const d = Math.hypot(dx, dy);
       if (d > 0.1 && d < 20) {
-        const push = ((20 - d) / 20) * desiredSpeed * 0.55;
+        const push = ((20 - d) / 20) * activeSpeed * 0.55;
         sepX += (dx / d) * push;
         sepY += (dy / d) * push;
       }
     }
 
-    const targetVx = Math.cos(bestAngle) * desiredSpeed + sepX;
-    const targetVy = Math.sin(bestAngle) * desiredSpeed + sepY;
+    const targetVx = Math.cos(bestAngle) * activeSpeed + sepX;
+    const targetVy = Math.sin(bestAngle) * activeSpeed + sepY;
 
     // Smooth velocity interpolation for natural curved trajectories
     const turnBlend = Math.min(1, dt * 11);
@@ -2056,8 +2500,6 @@ export class GameEngine {
    * and if called outside by a door knock (`outsideNightTimer > 0`), return inside after inactivity.
    */
   private updateVillagerSunsetHomeRoutine(cr: CreatureEntity, dt: number): void {
-    // If the player knocked on the door to call this villager out at night,
-    // wait outside for the player to interact; if inactive until timer expires, go back inside!
     if (cr.outsideNightTimer !== undefined && cr.outsideNightTimer > 0) {
       cr.outsideNightTimer = Math.max(0, cr.outsideNightTimer - dt);
       if (cr.outsideNightTimer > 0) {
@@ -2080,7 +2522,6 @@ export class GameEngine {
       }
     }
 
-    // If villager lost or lacks a home anchor, try to claim an available nearby house
     if (cr.homeX === undefined || cr.homeY === undefined) {
       const nearbyHouse = this.findAvailableHouseNear(cr.x, cr.y, 280);
       if (nearbyHouse) {
@@ -2097,7 +2538,6 @@ export class GameEngine {
     const dy = cr.homeY - cr.y;
     const distHome = Math.hypot(dx, dy);
 
-    // Arrived at house entrance -> Enter the house and disappear from the map until dawn!
     if (distHome <= 26) {
       cr.isInsideHouse = true;
       cr.outsideNightTimer = 0;
@@ -2132,7 +2572,8 @@ export class GameEngine {
   /**
    * Directional walking AI for `CreatureKind.WANDERER`:
    * Follows a single straight-line trajectory (`wanderAngle`) and only changes direction
-   * when blocked/impeded by an impassable barrier or coastline, never walking in circles.
+   * when blocked/impeded by an impassable barrier or water coastline, never walking in circles.
+   * Only swims if already in water or completely surrounded by water with no dry land corridor.
    */
   private updateDirectionalWandererAi(cr: CreatureEntity, dt: number): void {
     if (cr.wanderAngle === undefined || !Number.isFinite(cr.wanderAngle)) {
@@ -2140,11 +2581,11 @@ export class GameEngine {
     }
 
     cr.aiState = 'wander';
+    const crInWater = this.world.isWorldPosInWater(cr.x, cr.y);
     const walkSpeed = cr.moveSpeed * 0.82;
     const cosA = Math.cos(cr.wanderAngle);
     const sinA = Math.sin(cr.wanderAngle);
 
-    // Track forward progress using targetX/targetY as the last progress checkpoint
     if (!Number.isFinite(cr.targetX) || !Number.isFinite(cr.targetY)) {
       cr.targetX = cr.x;
       cr.targetY = cr.y;
@@ -2155,7 +2596,7 @@ export class GameEngine {
     let isStuck = false;
     if (cr.aiTimer <= 0) {
       const movedDist = Math.hypot(cr.x - cr.targetX, cr.y - cr.targetY);
-      if (movedDist < 10) {
+      if (movedDist < 8) {
         isStuck = true;
       }
       cr.targetX = cr.x;
@@ -2163,30 +2604,41 @@ export class GameEngine {
       cr.aiTimer = 1.25;
     }
 
-    const clearNear = this.canEntityOccupy(cr.x + cosA * 15, cr.y + sinA * 15);
-    const clearMid = this.canEntityOccupy(cr.x + cosA * 30, cr.y + sinA * 30);
+    const isDryAndClear = (px: number, py: number) =>
+      this.canEntityOccupy(px, py) && !this.world.isWorldPosInWater(px, py);
+
+    const clearNear = crInWater
+      ? this.canEntityOccupy(cr.x + cosA * 15, cr.y + sinA * 15)
+      : isDryAndClear(cr.x + cosA * 15, cr.y + sinA * 15);
+    const clearMid = crInWater
+      ? this.canEntityOccupy(cr.x + cosA * 30, cr.y + sinA * 30)
+      : isDryAndClear(cr.x + cosA * 30, cr.y + sinA * 30);
 
     if (!isStuck && clearNear && clearMid) {
-      // Clear path directly ahead: walk straight along the fixed compass direction
-      this.steerCreatureAlongAngle(cr, cr.wanderAngle, walkSpeed, dt, true);
+      this.steerCreatureAlongAngle(
+        cr,
+        cr.wanderAngle,
+        walkSpeed,
+        dt,
+        true,
+        crInWater
+      );
       return;
     }
 
-    // Immediate path has an obstacle: check if a point further along the SAME straight trajectory is clear
-    // (e.g., stepping around a single tree or boulder while maintaining the same overall direction)
-    if (!isStuck) {
+    // Immediate path has a small obstacle (tree/boulder): check if a dry point further along the SAME trajectory is clear
+    if (!isStuck && !crInWater) {
       for (const lookAhead of [56, 84, 112]) {
         const ax = cr.x + cosA * lookAhead;
         const ay = cr.y + sinA * lookAhead;
-        if (this.canEntityOccupy(ax, ay)) {
+        if (isDryAndClear(ax, ay)) {
           this.steerCreatureToward(cr, ax, ay, walkSpeed, dt, true);
           return;
         }
       }
     }
 
-    // Genuinely blocked/impeded along current direction (e.g., ocean shore, wall, or stuck):
-    // Pick a new single straight-line direction with the longest clear corridor ahead.
+    // Impeded by coastline or barrier: pick a new single straight-line direction preferring dry land corridors!
     const turnSign = cr.orbitSign || 1;
     let bestNewAngle = cr.wanderAngle + Math.PI;
     let bestClearScore = -Infinity;
@@ -2199,26 +2651,40 @@ export class GameEngine {
       const cCos = Math.cos(candAngle);
       const cSin = Math.sin(candAngle);
 
-      let clearReach = 0;
+      let dryReach = 0;
       for (const dist of [16, 34, 56, 84, 116]) {
-        if (this.canEntityOccupy(cr.x + cCos * dist, cr.y + cSin * dist)) {
-          clearReach = dist;
+        if (isDryAndClear(cr.x + cCos * dist, cr.y + cSin * dist)) {
+          dryReach = dist;
         } else {
           break;
         }
       }
 
-      if (clearReach < 34) continue;
+      if (dryReach < 34) continue;
 
-      // Prefer long clear straight corridors while avoiding immediate 180-degree flip if a 45-90 deg turn is open
-      const score = clearReach + Math.cos(offset) * 18;
+      const score = dryReach + Math.cos(offset) * 18;
       if (score > bestClearScore) {
         bestClearScore = score;
         bestNewAngle = candAngle;
       }
     }
 
-    // Normalize angle to [-PI, PI]
+    // If no dry corridor was found (e.g. stranded on a tiny islet), allow swimming toward any open water direction
+    let mustSwim = false;
+    if (bestClearScore === -Infinity) {
+      mustSwim = true;
+      for (let i = 1; i <= 16; i++) {
+        const offset = i * (Math.PI / 8);
+        const candAngle = cr.wanderAngle + offset;
+        const cCos = Math.cos(candAngle);
+        const cSin = Math.sin(candAngle);
+        if (this.canEntityOccupy(cr.x + cCos * 34, cr.y + cSin * 34)) {
+          bestNewAngle = candAngle;
+          break;
+        }
+      }
+    }
+
     cr.wanderAngle = Math.atan2(Math.sin(bestNewAngle), Math.cos(bestNewAngle));
     cr.navWaypointX = undefined;
     cr.navWaypointY = undefined;
@@ -2226,14 +2692,41 @@ export class GameEngine {
     cr.targetY = cr.y;
     cr.aiTimer = 1.25;
 
-    this.steerCreatureAlongAngle(cr, cr.wanderAngle, walkSpeed, dt, true);
+    this.steerCreatureAlongAngle(
+      cr,
+      cr.wanderAngle,
+      walkSpeed,
+      dt,
+      true,
+      crInWater || mustSwim
+    );
   }
 
   /**
-   * Selects a realistic, obstacle-free wander destination `(targetX, targetY)` for a creature.
-   * Villagers naturally visit village landmarks (Well, Market Stall, Campfire) or clear village paths around their house.
+   * Selects a realistic, dry-land wander destination `(targetX, targetY)` for a creature.
+   * - Mobs naturally avoid water when picking wander destinations.
+   * - If a mob is currently in water (e.g. after a chase ended), it actively searches for the nearest dry land tile to swim out!
    */
   private pickWalkableWanderTarget(cr: CreatureEntity): { x: number; y: number } | null {
+    const crInWater = this.world.isWorldPosInWater(cr.x, cr.y);
+
+    // If currently in water, prioritize finding the nearest dry land tile to swim back ashore!
+    if (crInWater) {
+      for (let r = 28; r <= 220; r += 24) {
+        for (let i = 0; i < 12; i++) {
+          const ang = (i / 12) * Math.PI * 2;
+          const candX = cr.x + Math.cos(ang) * r;
+          const candY = cr.y + Math.sin(ang) * r;
+          if (
+            !this.world.isWorldPosInWater(candX, candY) &&
+            this.canEntityOccupy(candX, candY)
+          ) {
+            return { x: candX, y: candY };
+          }
+        }
+      }
+    }
+
     const anchorX = cr.homeX ?? cr.x;
     const anchorY = cr.homeY ?? cr.y;
     const maxRadius = cr.kind === CreatureKind.VILLAGER ? 115 : 135;
@@ -2261,6 +2754,7 @@ export class GameEngine {
               const sy = st.tileY * TILE_SIZE + TILE_SIZE / 2 + 22;
               if (
                 Math.hypot(sx - anchorX, sy - anchorY) <= maxRadius * 1.35 &&
+                !this.world.isWorldPosInWater(sx, sy) &&
                 this.canEntityOccupy(sx, sy)
               ) {
                 pois.push({ x: sx, y: sy });
@@ -2274,14 +2768,15 @@ export class GameEngine {
       }
     }
 
-    // Try up to 10 candidate points around the creature's home/current area to find a clear walkable destination
-    for (let attempt = 0; attempt < 10; attempt++) {
+    // Try up to 12 candidate points on dry land around the creature's home/current area
+    for (let attempt = 0; attempt < 12; attempt++) {
       const angle = Math.random() * Math.PI * 2;
       const dist = 36 + Math.random() * (maxRadius - 36);
       const candX = anchorX + Math.cos(angle) * dist;
       const candY = anchorY + Math.sin(angle) * dist;
       if (
         Math.hypot(candX - cr.x, candY - cr.y) >= 28 &&
+        !this.world.isWorldPosInWater(candX, candY) &&
         this.canEntityOccupy(candX, candY)
       ) {
         return { x: candX, y: candY };
@@ -2293,6 +2788,7 @@ export class GameEngine {
 
   private updateWanderAi(cr: CreatureEntity, dt: number): void {
     // 1. Wild Sheep smartly flee away from nearby hostile Monsters using obstacle-aware Context Steering
+    //    (They avoid water unless cornered against the shoreline with no dry escape route)
     if (!cr.tamed && cr.kind === CreatureKind.SHEEP) {
       let threatX = 0;
       let threatY = 0;
@@ -2315,16 +2811,30 @@ export class GameEngine {
       if (threatCount > 0) {
         cr.aiState = 'flee';
         const fleeAngle = Math.atan2(threatY, threatX);
-        this.steerCreatureAlongAngle(cr, fleeAngle, cr.moveSpeed * 1.2, dt, false);
+        this.steerCreatureAlongAngle(
+          cr,
+          fleeAngle,
+          cr.moveSpeed * 1.2,
+          dt,
+          false,
+          false
+        );
         return;
       }
     }
 
+    // If the creature is currently in water during normal wander/idle, do not pause in water — swim back to dry land!
+    const crInWater = this.world.isWorldPosInWater(cr.x, cr.y);
+
     // 2. Waypoint-based natural wandering & patrolling with pause intervals
     cr.aiTimer -= dt;
-    if (cr.aiTimer <= 0) {
-      // Decide whether to pause/rest briefly or pick a new walkable destination
-      if (cr.aiState === 'wander' && Math.random() < 0.36) {
+    if (
+      cr.aiTimer <= 0 ||
+      (crInWater &&
+        (cr.aiState === 'idle' ||
+          this.world.isWorldPosInWater(cr.targetX || cr.x, cr.targetY || cr.y)))
+    ) {
+      if (!crInWater && cr.aiState === 'wander' && Math.random() < 0.36) {
         cr.aiState = 'idle';
         cr.aiTimer = 1.6 + Math.random() * 2.2;
         cr.targetX = cr.x;
@@ -2354,8 +2864,7 @@ export class GameEngine {
     }
 
     const distToTarget = Math.hypot((cr.targetX || cr.x) - cr.x, (cr.targetY || cr.y) - cr.y);
-    if (distToTarget <= 16) {
-      // Arrived at wander waypoint -> pause naturally
+    if (distToTarget <= 16 && !crInWater) {
       cr.aiState = 'idle';
       cr.aiTimer = Math.min(cr.aiTimer, 1.4 + Math.random() * 1.8);
       cr.vx *= 0.5;
@@ -2409,6 +2918,22 @@ export class GameEngine {
           this.multiplayer.sendPickupDrop(pickedId);
           this.emitUiSnapshot();
         }
+      }
+    }
+
+    // Update 10-minute (600s) expiration countdown on all active Death Bags
+    for (let i = this.deathBags.length - 1; i >= 0; i--) {
+      const bag = this.deathBags[i];
+      bag.expiresTimer -= dt;
+      if (bag.expiresTimer <= 0) {
+        this.deathBags.splice(i, 1);
+        this.addFloatingText(
+          '⏳ Uma Bolsinha de Espólios desapareceu (10 min esgotados)!',
+          this.player.x,
+          this.player.y - 26,
+          '#f43f5e'
+        );
+        this.emitUiSnapshot();
       }
     }
   }
@@ -2526,6 +3051,15 @@ export class GameEngine {
 
     const heldSlot = this.player.inventory[this.player.selectedHotbarIndex];
     const heldItem = heldSlot ? ITEMS[heldSlot.itemId] : null;
+
+    if (
+      this.player.fishingState?.active ||
+      heldItem?.toolType === ToolType.FISHING_ROD ||
+      heldItem?.id === 'fishing_rod'
+    ) {
+      this.handleFishingRodAction();
+      return;
+    }
 
     const agilitySpeed = 1 + (this.player.attributes.agility - 1) * 0.06;
     this.player.swingDuration = Math.max(0.16, 0.28 / agilitySpeed);
@@ -2851,6 +3385,7 @@ export class GameEngine {
             );
           }
         }
+        this.syncChunkAtTile(tile.tx, tile.ty);
         this.emitUiSnapshot();
         return;
       }
@@ -2871,41 +3406,76 @@ export class GameEngine {
           const nx = node.tileX * TILE_SIZE + TILE_SIZE / 2;
           const ny = node.tileY * TILE_SIZE + TILE_SIZE / 2;
           if (Math.hypot(nx - hitCenterX, ny - hitCenterY) <= reach * 0.82) {
-            this.harvestNatureNode(chunk, ni, equippedTool, equippedTier, baseHarvest);
+            this.harvestNatureNode(
+              chunk,
+              ni,
+              heldItem?.id || null,
+              equippedTool,
+              equippedTier,
+              strengthMult
+            );
             return;
           }
         }
 
         for (let si = chunk.structures.length - 1; si >= 0; si--) {
           const st = chunk.structures[si];
-          const canBreakWithAnyAttack =
-            st.type === PlaceableType.CHEST ||
-            st.type === PlaceableType.MARKET_STALL;
-          if (
-            equippedTool !== ToolType.AXE &&
-            equippedTool !== ToolType.PICKAXE &&
-            !canBreakWithAnyAttack
-          ) {
-            continue;
-          }
-
           const sx = st.tileX * TILE_SIZE + TILE_SIZE / 2;
           const sy = st.tileY * TILE_SIZE + TILE_SIZE / 2;
           if (Math.hypot(sx - hitCenterX, sy - hitCenterY) <= reach * 0.72) {
-            const structDmg =
-              equippedTool === ToolType.AXE || equippedTool === ToolType.PICKAXE
-                ? baseHarvest
-                : Math.max(baseHarvest, baseAttack);
+            const isWorldFixedLandmark = Boolean(
+              (st.villageId || st.id.startsWith('world_struct_')) &&
+                (st.type === PlaceableType.VILLAGE_HOUSE ||
+                  st.type === PlaceableType.VILLAGE_WELL ||
+                  st.type === PlaceableType.HEALING_FOUNTAIN)
+            );
+            if (isWorldFixedLandmark) {
+              soundManager.playHitStone();
+              this.addFloatingText(
+                'Estrutura ancestral fixa do mundo',
+                sx,
+                sy - 16,
+                '#f43f5e'
+              );
+              return;
+            }
+
+            const req = getStructureBreakRequirement(st.type);
+            const evalBreak = evaluateMaterialBreak(
+              heldItem?.id || null,
+              equippedTool,
+              equippedTier,
+              strengthMult,
+              req.materialKind,
+              req.requiredTool,
+              req.requiredTier
+            );
+
+            if (!evalBreak.canBreak) {
+              soundManager.playHitStone();
+              this.addFloatingText(
+                evalBreak.blockReason || req.requirementLabel,
+                sx,
+                sy - 16,
+                '#f43f5e'
+              );
+              return;
+            }
+
+            const structDmg = evalBreak.force;
             st.hp -= structDmg;
             st.hitFlashTimer = 0.15;
-            soundManager.playHitWood();
-            this.renderer.spawnBurst(
-              sx,
-              sy,
-              equippedTool === ToolType.PICKAXE ? 'STONE' : 'WOOD',
-              st.hp <= 0 ? 14 : 7
-            );
+            if (req.requiredTool === ToolType.PICKAXE) {
+              soundManager.playHitStone();
+              this.renderer.spawnBurst(sx, sy, 'STONE', st.hp <= 0 ? 14 : 7);
+              this.renderer.spawnBurst(sx, sy, 'SPARK', 4);
+            } else {
+              soundManager.playHitWood();
+              this.renderer.spawnBurst(sx, sy, 'WOOD', st.hp <= 0 ? 14 : 7);
+            }
             this.renderer.spawnRipple(sx, sy, '#fbbf24', 18, 0.3);
+            this.addFloatingText(`-${structDmg}`, sx, sy - 12, '#fde047');
+
             if (st.villageId) {
               this.provokeVillage(
                 st.villageId,
@@ -2967,6 +3537,12 @@ export class GameEngine {
         this.player.y - 20,
         '#94a3b8'
       );
+      return;
+    }
+
+    // 0A. Interacting with a Player Death Bag ("Bolsinha de Espólios") -> Recover all items!
+    if (target.kind === 'death_bag' && target.deathBagId) {
+      this.lootDeathBag(target.deathBagId);
       return;
     }
 
@@ -3223,6 +3799,43 @@ export class GameEngine {
       }
 
       if (target.stationType === PlaceableType.CAMPFIRE) {
+        this.setPlayerRespawnPoint(
+          target.worldX,
+          target.worldY,
+          'Fogueira de Acampamento'
+        );
+        const heldSlot = this.player.inventory[this.player.selectedHotbarIndex];
+        if (
+          heldSlot &&
+          (heldSlot.itemId === 'fish_tilapia' || heldSlot.itemId === 'fish_salmon')
+        ) {
+          const rawName = ITEMS[heldSlot.itemId]?.name || 'Peixe';
+          const cookedYield = heldSlot.itemId === 'fish_salmon' ? 2 : 1;
+          heldSlot.count -= 1;
+          if (heldSlot.count <= 0) {
+            this.player.inventory[this.player.selectedHotbarIndex] = null;
+          }
+          if (!this.addItemToInventory('cooked_fish', cookedYield)) {
+            this.spawnDrop(
+              'cooked_fish',
+              cookedYield,
+              this.player.x,
+              this.player.y,
+              0.3
+            );
+          }
+          soundManager.playCraft();
+          this.renderer.spawnBurst(target.worldX, target.worldY - 4, 'SPARK', 10);
+          this.addFloatingText(
+            `Assou ${rawName} (+${cookedYield}x Peixe Assado) · Ponto de Renascimento salvo!`,
+            target.worldX,
+            target.worldY - 20,
+            '#fde047'
+          );
+          this.emitUiSnapshot();
+          return;
+        }
+
         if (this.campfireRestCooldown <= 0) {
           this.campfireRestCooldown = 8;
           this.player.hp = Math.min(this.player.maxHp, this.player.hp + 18);
@@ -3232,7 +3845,7 @@ export class GameEngine {
           this.renderer.spawnBurst(this.player.x, this.player.y, 'HEAL', 10);
           this.renderer.spawnRipple(this.player.x, this.player.y, '#fde047', 26, 0.5);
           this.addFloatingText(
-            'Aquecido na Fogueira (+18 HP / Energia Cheia)',
+            'Aquecido na Fogueira (+18 HP / Energia Cheia) · Ponto de Renascimento salvo!',
             this.player.x,
             this.player.y - 22,
             '#fde047'
@@ -3240,11 +3853,12 @@ export class GameEngine {
           this.emitUiSnapshot();
         } else {
           this.addFloatingText(
-            `Fogueira aquecendo... aguarde ${Math.ceil(this.campfireRestCooldown)}s`,
+            `⛺ Ponto de Renascimento definido na Fogueira (aguarde ${Math.ceil(this.campfireRestCooldown)}s para curar)`,
             target.worldX,
             target.worldY - 18,
             '#fb923c'
           );
+          this.emitUiSnapshot();
         }
         return;
       }
@@ -3265,6 +3879,12 @@ export class GameEngine {
             return;
           }
         }
+
+        const restLabel =
+          target.stationType === PlaceableType.VILLAGE_HOUSE
+            ? 'Cabana Medieval'
+            : 'Tenda de Explorador';
+        this.setPlayerRespawnPoint(target.worldX, target.worldY, restLabel);
 
         const isNightOrDusk =
           this.metadata.timeOfDay >= 18 || this.metadata.timeOfDay < 5.5;
@@ -3294,7 +3914,7 @@ export class GameEngine {
           }
           soundManager.playLevelUp();
           this.addFloatingText(
-            `Dormiu até o Amanhecer (Dia ${this.metadata.dayCount}) · 100% Vida!`,
+            `Dormiu até o Amanhecer (Dia ${this.metadata.dayCount}) · Ponto de Renascimento salvo!`,
             this.player.x,
             this.player.y - 24,
             '#fde047'
@@ -3307,7 +3927,7 @@ export class GameEngine {
         } else {
           soundManager.playTameSuccess();
           this.addFloatingText(
-            'Descansou no Abrigo (100% Vida & Energia!)',
+            `Descansou em ${restLabel} (100% Vida & Ponto de Renascimento salvo!)`,
             this.player.x,
             this.player.y - 22,
             '#4ade80'
@@ -3399,6 +4019,7 @@ export class GameEngine {
           }
 
           chestStruct.isOpen = true;
+          this.syncChunkAtTile(tx, ty);
           if (this.onChestInteract) {
             this.onChestInteract(chestStruct);
           }
@@ -3467,14 +4088,61 @@ export class GameEngine {
           '#f472b6'
         );
       }
+      if (this.multiplayer.isOnline && this.multiplayer.role === 'GUEST') {
+        this.multiplayer.sendGuestMountEvent({
+          action: 'tame',
+          creatureId: wild.id,
+          tamed: wild.tamed,
+          tameProgress: wild.tameProgress,
+          aiState: wild.aiState,
+          hp: wild.hp,
+        });
+      }
       this.emitUiSnapshot();
       return;
     }
 
-    // 3. Interacting with a Tamed Animal -> Toggle Follow / Stay
+    // 3. Interacting with a Tamed Animal or Boat
     if (target.kind === 'tamed_animal' && target.creatureId) {
       const tamed = this.entities.creatures.find((c) => c.id === target.creatureId);
       if (!tamed) return;
+
+      // 3A. Boat: Mount or Dismount
+      if (tamed.kind === CreatureKind.BOAT) {
+        if (this.player.mountedEntityId === tamed.id) {
+          this.dismountCreature();
+        } else {
+          this.mountCreature(tamed.id);
+        }
+        return;
+      }
+
+      // 3B. Horse or Camel: If holding a Saddle and unsaddled, equip the Saddle!
+      const heldSlot = this.player.inventory[this.player.selectedHotbarIndex];
+      if (
+        (tamed.kind === CreatureKind.HORSE || tamed.kind === CreatureKind.CAMEL) &&
+        !tamed.hasSaddle &&
+        heldSlot &&
+        heldSlot.itemId === 'saddle'
+      ) {
+        this.equipSaddleOnCreature(tamed.id);
+        return;
+      }
+
+      // 3C. Saddled Horse or Camel: Mount or Dismount!
+      if (
+        (tamed.kind === CreatureKind.HORSE || tamed.kind === CreatureKind.CAMEL) &&
+        tamed.hasSaddle
+      ) {
+        if (this.player.mountedEntityId === tamed.id) {
+          this.dismountCreature();
+        } else {
+          this.mountCreature(tamed.id);
+        }
+        return;
+      }
+
+      // 3D. Unsaddled Horse/Camel or Sheep/Boar: Standard Tamed Animal Follow/Stay interaction
       tamed.aiState = tamed.aiState === 'stay' ? 'follow' : 'stay';
       soundManager.playPickup();
       this.addFloatingText(
@@ -3575,6 +4243,7 @@ export class GameEngine {
         target.ty * TILE_SIZE,
         '#4ade80'
       );
+      this.syncChunkAtTile(target.tx, target.ty);
       this.emitUiSnapshot();
       return;
     }
@@ -3636,6 +4305,7 @@ export class GameEngine {
         target.ty * TILE_SIZE,
         '#fde047'
       );
+      this.syncChunkAtTile(target.tx, target.ty);
       this.emitUiSnapshot();
       return;
     }
@@ -3737,12 +4407,338 @@ export class GameEngine {
       return;
     }
 
+    if (
+      heldItem.toolType === ToolType.FISHING_ROD ||
+      heldItem.id === 'fishing_rod'
+    ) {
+      this.handleFishingRodAction();
+      return;
+    }
+
+    // 4. Saddle: Equip on nearby tamed Horse or Camel
+    if (heldItem.id === 'saddle') {
+      const nearbyMount = this.entities.creatures.find(
+        (c) =>
+          c.tamed &&
+          (c.kind === CreatureKind.HORSE || c.kind === CreatureKind.CAMEL) &&
+          !c.hasSaddle &&
+          Math.hypot(c.x - this.player.x, c.y - this.player.y) <= 78
+      );
+      if (nearbyMount) {
+        this.equipSaddleOnCreature(nearbyMount.id);
+      } else {
+        this.addFloatingText(
+          'Aproxime-se de um Cavalo ou Camelo domesticado sem sela!',
+          this.player.x,
+          this.player.y - 20,
+          '#fde047'
+        );
+      }
+      return;
+    }
+
+    // 5. Wood Boat: Place exclusively on swimmable water
+    if (heldItem.id === 'wood_boat') {
+      const target = this.getTargetTileForPlacement();
+      if (!target) return;
+      if (!this.world.isTileSwimmableWater(target.tx, target.ty)) {
+        soundManager.playHitWood();
+        this.addFloatingText(
+          '⛵ O Bote só pode ser colocado na água!',
+          this.player.x,
+          this.player.y - 20,
+          '#f43f5e'
+        );
+        return;
+      }
+      const wx = target.tx * TILE_SIZE + TILE_SIZE * 0.5;
+      const wy = target.ty * TILE_SIZE + TILE_SIZE * 0.5;
+      const boat = this.entities.trySpawnCreatureAt(
+        this.world,
+        CreatureKind.BOAT,
+        wx,
+        wy
+      );
+      if (boat) {
+        this.consumeInventoryAt(this.player.selectedHotbarIndex, 1);
+        soundManager.playTameSuccess();
+        this.renderer.spawnBurst(wx, wy, 'WATER', 14);
+        this.renderer.spawnRipple(wx, wy, '#38bdf8', 28, 0.5);
+        this.addFloatingText(
+          '⛵ Bote lançado na água! (Interaja para embarcar)',
+          wx,
+          wy - 18,
+          '#38bdf8'
+        );
+        if (this.multiplayer.isOnline && this.multiplayer.role === 'HOST') {
+          this.multiplayer.sendCreaturesSync(this.entities.creatures);
+        } else if (this.multiplayer.isOnline && this.multiplayer.role === 'GUEST') {
+          this.multiplayer.sendGuestMountEvent({
+            action: 'spawn_boat',
+            creature: JSON.parse(JSON.stringify(boat)),
+          });
+        }
+        this.emitUiSnapshot();
+      }
+      return;
+    }
+
     this.addFloatingText(
       `${heldItem.name}: use o Botão de Ataque/Coleta`,
       this.player.x,
       this.player.y - 20,
       '#fde047'
     );
+  }
+
+  private handleFishingRodAction(): void {
+    const fs = this.player.fishingState;
+    if (fs && fs.active) {
+      if (fs.phase === 'biting') {
+        const roll = Math.random();
+        let fishId = 'fish_tilapia';
+        let xpGain = 14;
+        let textColor = '#38bdf8';
+
+        if (roll < 0.12) {
+          fishId = 'fish_golden';
+          xpGain = 55;
+          textColor = '#fde047';
+        } else if (roll < 0.4) {
+          fishId = 'fish_salmon';
+          xpGain = 26;
+          textColor = '#fb7185';
+        }
+
+        if (!this.addItemToInventory(fishId, 1)) {
+          this.spawnDrop(fishId, 1, this.player.x, this.player.y, 0.3);
+        }
+
+        this.gainXp(xpGain);
+        soundManager.playTameSuccess();
+        this.renderer.spawnBurst(fs.bobberX, fs.bobberY, 'WATER', 14);
+        this.renderer.spawnRipple(fs.bobberX, fs.bobberY, textColor, 26, 0.48);
+
+        const fishDef = ITEMS[fishId];
+        this.addFloatingText(
+          `Pescou ${fishDef ? fishDef.name : 'Peixe'}! (+${xpGain} XP)`,
+          this.player.x,
+          this.player.y - 24,
+          textColor
+        );
+
+        this.player.fishingState = null;
+        this.player.swingDuration = 0.22;
+        this.player.swingTimer = 0.22;
+        this.emitUiSnapshot();
+      } else {
+        this.renderer.spawnRipple(
+          fs.bobberX,
+          fs.bobberY,
+          'rgba(186, 230, 253, 0.6)',
+          14,
+          0.3
+        );
+        soundManager.playSwing();
+        this.player.fishingState = null;
+        this.addFloatingText(
+          'Linha recolhida cedo demais',
+          this.player.x,
+          this.player.y - 22,
+          '#94a3b8'
+        );
+        this.emitUiSnapshot();
+      }
+      return;
+    }
+
+    if (this.player.stamina < 4) {
+      this.addFloatingText(
+        'Sem energia para lançar a linha!',
+        this.player.x,
+        this.player.y - 20,
+        '#fb7185'
+      );
+      return;
+    }
+
+    const dirVec = this.getDirectionOffset(this.player.direction);
+    let targetBobberX: number | null = null;
+    let targetBobberY: number | null = null;
+
+    // 1. Check along the player's facing direction first
+    const castDistances = [44, 58, 72, 34, 86];
+    for (let i = 0; i < castDistances.length; i++) {
+      const d = castDistances[i];
+      const wx = this.player.x + dirVec.x * d;
+      const wy = this.player.y + dirVec.y * d;
+      const tx = Math.floor(wx / TILE_SIZE);
+      const ty = Math.floor(wy / TILE_SIZE);
+      if (this.world.isTileSwimmableWater(tx, ty)) {
+        targetBobberX = tx * TILE_SIZE + TILE_SIZE * 0.5;
+        targetBobberY = ty * TILE_SIZE + TILE_SIZE * 0.5;
+        break;
+      }
+    }
+
+    // 2. If not directly in front, scan nearby water tiles within 3 tiles so shoreline fishing is effortless
+    if (targetBobberX === null || targetBobberY === null) {
+      const ptx = Math.floor(this.player.x / TILE_SIZE);
+      const pty = Math.floor(this.player.y / TILE_SIZE);
+      let bestScore = Infinity;
+
+      for (let dy = -3; dy <= 3; dy++) {
+        for (let dx = -3; dx <= 3; dx++) {
+          if (dx === 0 && dy === 0) continue;
+          const tx = ptx + dx;
+          const ty = pty + dy;
+          if (!this.world.isTileSwimmableWater(tx, ty)) continue;
+          const wx = tx * TILE_SIZE + TILE_SIZE * 0.5;
+          const wy = ty * TILE_SIZE + TILE_SIZE * 0.5;
+          const dist = Math.hypot(wx - this.player.x, wy - this.player.y);
+          if (dist < 24 || dist > 96) continue;
+          const dot =
+            ((wx - this.player.x) * dirVec.x + (wy - this.player.y) * dirVec.y) /
+            Math.max(1, dist);
+          const score = dist - dot * 18;
+          if (score < bestScore) {
+            bestScore = score;
+            targetBobberX = wx;
+            targetBobberY = wy;
+          }
+        }
+      }
+    }
+
+    if (targetBobberX === null || targetBobberY === null) {
+      soundManager.playSwing();
+      this.addFloatingText(
+        'Aponte para a água para pescar!',
+        this.player.x,
+        this.player.y - 22,
+        '#38bdf8'
+      );
+      return;
+    }
+
+    // Face the water tile where the bobber landed
+    const dx = targetBobberX - this.player.x;
+    const dy = targetBobberY - this.player.y;
+    if (Math.abs(dx) > Math.abs(dy)) {
+      this.player.direction = dx >= 0 ? 'right' : 'left';
+    } else {
+      this.player.direction = dy >= 0 ? 'down' : 'up';
+    }
+
+    this.player.stamina = Math.max(0, this.player.stamina - 4);
+    this.player.swingDuration = 0.22;
+    this.player.swingTimer = 0.22;
+
+    this.player.fishingState = {
+      active: true,
+      bobberX: targetBobberX,
+      bobberY: targetBobberY,
+      phase: 'waiting',
+      timer: 2.2 + Math.random() * 2.8,
+      biteWindowTimer: 1.85,
+      rippleTimer: 0.25,
+    };
+
+    soundManager.playSwing();
+    this.renderer.spawnBurst(targetBobberX, targetBobberY, 'WATER', 6);
+    this.renderer.spawnRipple(targetBobberX, targetBobberY, '#38bdf8', 18, 0.45);
+    this.addFloatingText(
+      'Linha na água... aguarde fisgar!',
+      this.player.x,
+      this.player.y - 22,
+      '#bae6fd'
+    );
+    this.emitUiSnapshot();
+  }
+
+  private updateFishing(dt: number): void {
+    const fs = this.player.fishingState;
+    if (!fs || !fs.active) return;
+
+    const heldSlot = this.player.inventory[this.player.selectedHotbarIndex];
+    const heldItem = heldSlot ? ITEMS[heldSlot.itemId] : null;
+    const holdingRod =
+      heldItem?.toolType === ToolType.FISHING_ROD ||
+      heldItem?.id === 'fishing_rod';
+
+    const distToBobber = Math.hypot(
+      this.player.x - fs.bobberX,
+      this.player.y - fs.bobberY
+    );
+
+    // Cancel if player walks away or unequips the fishing rod
+    if (!holdingRod || distToBobber > 125 || this.player.isSwimming) {
+      this.player.fishingState = null;
+      this.addFloatingText(
+        'Linha de pesca recolhida',
+        this.player.x,
+        this.player.y - 20,
+        '#94a3b8'
+      );
+      this.emitUiSnapshot();
+      return;
+    }
+
+    fs.rippleTimer -= dt;
+    if (fs.rippleTimer <= 0) {
+      if (fs.phase === 'waiting') {
+        fs.rippleTimer = 0.9 + Math.random() * 0.45;
+        this.renderer.spawnRipple(
+          fs.bobberX,
+          fs.bobberY,
+          'rgba(186, 230, 253, 0.55)',
+          13,
+          0.45
+        );
+      } else {
+        fs.rippleTimer = 0.24;
+        this.renderer.spawnRipple(fs.bobberX, fs.bobberY, '#38bdf8', 21, 0.35);
+      }
+    }
+
+    if (fs.phase === 'waiting') {
+      fs.timer -= dt;
+      if (fs.timer <= 0) {
+        fs.phase = 'biting';
+        fs.biteWindowTimer = 1.9;
+        fs.rippleTimer = 0.05;
+        soundManager.playPickup();
+        this.renderer.spawnBurst(fs.bobberX, fs.bobberY, 'WATER', 9);
+        this.renderer.spawnRipple(fs.bobberX, fs.bobberY, '#fde047', 22, 0.4);
+        this.addFloatingText(
+          '! FISGOU ! Puxe agora!',
+          fs.bobberX,
+          fs.bobberY - 18,
+          '#fde047'
+        );
+        this.emitUiSnapshot();
+      }
+    } else if (fs.phase === 'biting') {
+      fs.biteWindowTimer -= dt;
+      if (fs.biteWindowTimer <= 0) {
+        this.player.fishingState = null;
+        soundManager.playSwing();
+        this.renderer.spawnRipple(
+          fs.bobberX,
+          fs.bobberY,
+          'rgba(244, 63, 94, 0.55)',
+          16,
+          0.35
+        );
+        this.addFloatingText(
+          'O peixe escapou!',
+          fs.bobberX,
+          fs.bobberY - 16,
+          '#fb7185'
+        );
+        this.emitUiSnapshot();
+      }
+    }
   }
 
   // Legacy alias
@@ -3757,6 +4753,31 @@ export class GameEngine {
     const dirVec = this.getDirectionOffset(this.player.direction);
     const aimPointX = this.player.x + dirVec.x * 28;
     const aimPointY = this.player.y + dirVec.y * 28;
+
+    // 0A. Check nearby Interactive Death Bag ("Bolsinha de Espólios") — Top Priority so the player can recover their items immediately
+    let bestBag: { bag: DeathBag; dist: number } | null = null;
+    for (const bag of this.deathBags) {
+      const d = Math.hypot(bag.x - this.player.x, bag.y - this.player.y);
+      if (d <= 72 && (!bestBag || d < bestBag.dist)) {
+        bestBag = { bag, dist: d };
+      }
+    }
+    if (bestBag) {
+      const bag = bestBag.bag;
+      const remSec = Math.max(0, Math.ceil(bag.expiresTimer));
+      const mm = String(Math.floor(remSec / 60)).padStart(2, '0');
+      const ss = String(remSec % 60).padStart(2, '0');
+      const totalStacks = bag.items.length + (bag.goldCoins > 0 ? 1 : 0);
+      return {
+        kind: 'death_bag',
+        label: `Bolsinha de Espólios (${totalStacks} itens · ${mm}:${ss})`,
+        actionHint: 'Recuperar Todos os Itens 🎒 (E / Interagir)',
+        worldX: bag.x,
+        worldY: bag.y,
+        deathBagId: bag.id,
+        iconItemId: bag.items[0]?.itemId || 'leather_tunic',
+      };
+    }
 
     // 0. Check nearby Village NPC or Wanderer (Priority so player can easily talk/trade, settle a wanderer, or pay peace tribute)
     let bestNpc: { npc: CreatureEntity; dist: number } | null = null;
@@ -3931,13 +4952,63 @@ export class GameEngine {
       };
     }
 
-    // 3. Check nearby Tamed Animal
+    // 3. Check nearby Tamed Animal or Boat
     const tamed = this.getNearbyTamedAnimal();
     if (tamed) {
+      const heldSlot = this.player.inventory[this.player.selectedHotbarIndex];
+      const isHoldingSaddle = Boolean(heldSlot && heldSlot.itemId === 'saddle');
+      const isMountSpecies =
+        tamed.kind === CreatureKind.HORSE || tamed.kind === CreatureKind.CAMEL;
+
+      if (tamed.kind === CreatureKind.BOAT) {
+        const isMountedHere = this.player.mountedEntityId === tamed.id;
+        return {
+          kind: 'tamed_animal',
+          label: `${tamed.name} (2 Assentos · Sem Correnteza)`,
+          actionHint: isMountedHere
+            ? 'Desmontar do Bote ⛵'
+            : 'Embarcar no Bote (Rápido na Água) ⛵',
+          worldX: tamed.x,
+          worldY: tamed.y,
+          creatureId: tamed.id,
+          iconItemId: 'wood_boat',
+        };
+      }
+
+      if (isMountSpecies && !tamed.hasSaddle && isHoldingSaddle) {
+        return {
+          kind: 'tamed_animal',
+          label: `${tamed.name} (Sem Sela)`,
+          actionHint: 'Equipar Sela de Montaria (Libera 8 Slots + Montar) 鞍',
+          worldX: tamed.x,
+          worldY: tamed.y,
+          creatureId: tamed.id,
+          iconItemId: 'saddle',
+        };
+      }
+
+      if (isMountSpecies && tamed.hasSaddle) {
+        const isMountedHere = this.player.mountedEntityId === tamed.id;
+        return {
+          kind: 'tamed_animal',
+          label: `${tamed.name} [Selado · Vel ${tamed.mountSpeed || 145}]`,
+          actionHint: isMountedHere
+            ? 'Desmontar / Abrir Alforje (8 Slots)'
+            : 'Montar / Cavalgar (8 Slots de Alforje)',
+          worldX: tamed.x,
+          worldY: tamed.y,
+          creatureId: tamed.id,
+          iconItemId: 'saddle',
+        };
+      }
+
       return {
         kind: 'tamed_animal',
         label: tamed.name,
-        actionHint: tamed.aiState === 'stay' ? 'Chamar para Seguir' : 'Mandar Guardar Base',
+        actionHint:
+          tamed.aiState === 'stay'
+            ? 'Chamar para Seguir'
+            : 'Mandar Guardar Base',
         worldX: tamed.x,
         worldY: tamed.y,
         creatureId: tamed.id,
@@ -3956,16 +5027,31 @@ export class GameEngine {
     );
     if (node) {
       const bp = NATURE_BLUEPRINTS[node.type];
-      const toolLabel =
-        bp.requiredTool === ToolType.PICKAXE
-          ? 'Picareta'
-          : bp.requiredTool === ToolType.AXE
-          ? 'Machado'
-          : 'Mãos/Qualquer';
+      const req = getNatureBreakRequirement(node.type);
+      const heldSlot = this.player.inventory[this.player.selectedHotbarIndex];
+      const heldItem = heldSlot ? ITEMS[heldSlot.itemId] : null;
+      const strengthBuff =
+        this.player.strengthBuffTimer && this.player.strengthBuffTimer > 0
+          ? 1.35
+          : 1.0;
+      const strengthMult =
+        (1 + (this.player.attributes.strength - 1) * 0.12) * strengthBuff;
+      const evalBreak = evaluateMaterialBreak(
+        heldItem?.id || null,
+        heldItem?.toolType || ToolType.NONE,
+        heldItem?.toolTier || 0,
+        strengthMult,
+        req.materialKind,
+        bp.requiredTool,
+        bp.requiredTier
+      );
+      const forceHint = evalBreak.canBreak
+        ? `Força: ${evalBreak.force} (${evalBreak.actorLabel}) · ${req.requirementLabel}`
+        : `🔒 ${evalBreak.blockReason}`;
       return {
         kind: 'node',
-        label: bp.name,
-        actionHint: `Inspecionar (${toolLabel})`,
+        label: `${bp.name} (${Math.ceil(node.hp)}/${bp.maxHp} HP · ${req.materialLabel})`,
+        actionHint: forceHint,
         worldX: node.tileX * TILE_SIZE + TILE_SIZE / 2,
         worldY: node.tileY * TILE_SIZE + TILE_SIZE / 2,
         iconItemId: bp.drops[0]?.itemId || 'wood',
@@ -4066,36 +5152,38 @@ export class GameEngine {
   private harvestNatureNode(
     chunk: { nodes: any[] },
     nodeIndex: number,
+    heldItemId: string | null,
     toolType: ToolType,
     toolTier: number,
-    harvestPower: number
+    playerStrengthMult: number
   ): void {
     const node = chunk.nodes[nodeIndex];
     const bp = NATURE_BLUEPRINTS[node.type as keyof typeof NATURE_BLUEPRINTS];
     const nx = node.tileX * TILE_SIZE + TILE_SIZE / 2;
     const ny = node.tileY * TILE_SIZE + TILE_SIZE / 2;
 
-    if (bp.requiredTier > 0) {
-      if (toolType !== bp.requiredTool || toolTier < bp.requiredTier) {
-        const toolName =
-          bp.requiredTool === ToolType.PICKAXE ? 'Picareta' : 'Machado';
-        const tierLabel = bp.requiredTier >= 2 ? 'de Ferro+' : 'de Pedra+';
-        this.addFloatingText(
-          `Requer ${toolName} ${tierLabel}`,
-          nx,
-          ny - 16,
-          '#f43f5e'
-        );
-        soundManager.playHitStone();
-        return;
-      }
+    const evalBreak = evaluateMaterialBreak(
+      heldItemId,
+      toolType,
+      toolTier,
+      playerStrengthMult,
+      bp.materialKind,
+      bp.requiredTool,
+      bp.requiredTier
+    );
+
+    if (!evalBreak.canBreak) {
+      this.addFloatingText(
+        evalBreak.blockReason || 'Ferramenta inadequada para este material',
+        nx,
+        ny - 16,
+        '#f43f5e'
+      );
+      soundManager.playHitStone();
+      return;
     }
 
-    let power = harvestPower;
-    if (bp.requiredTool !== ToolType.NONE && toolType !== bp.requiredTool) {
-      power = Math.max(4, harvestPower * 0.35);
-    }
-
+    const power = evalBreak.force;
     node.hp -= power;
     node.hitFlashTimer = 0.16;
 
@@ -4139,10 +5227,20 @@ export class GameEngine {
     sourceX: number,
     sourceY: number,
     knockbackMult = 1.0,
-    attackerCreature?: CreatureEntity
+    attackerCreature?: CreatureEntity,
+    fromNetwork = false
   ): void {
     // Villagers inside their houses cannot be damaged
     if (cr.isInsideHouse) return;
+
+    // Mounts currently ridden by a player are integrated with the player's body and cannot be killed/damaged separately
+    if (
+      cr.id === this.player.mountedEntityId ||
+      Boolean(cr.riderPlayerId) ||
+      this.remotePlayersList.some((rp) => rp.mountedEntityId === cr.id)
+    ) {
+      return;
+    }
 
     // Safety protection: Player attacks can never harm tamed allies, nor peaceful NPCs when "Fogo Inocente" is OFF
     if (!attackerCreature) {
@@ -4217,6 +5315,7 @@ export class GameEngine {
     cr.hitFlashTimer = 0.18;
     soundManager.playHitEnemy();
     if (
+      !fromNetwork &&
       !this.isApplyingNetworkEvent &&
       this.multiplayer.isOnline &&
       !attackerCreature
@@ -4340,11 +5439,17 @@ export class GameEngine {
       } else if (cr.kind === CreatureKind.CAMEL) {
         this.spawnDrop('cactus_fruit', 2, cr.x, cr.y);
         grantPlayerXp(25);
+      } else if (cr.kind === CreatureKind.HORSE) {
+        this.spawnDrop('apple', 2, cr.x, cr.y);
+        grantPlayerXp(22);
       }
 
       const idx = this.entities.creatures.indexOf(cr);
       if (idx !== -1) {
         this.entities.creatures.splice(idx, 1);
+      }
+      if (this.multiplayer.isOnline && this.multiplayer.role === 'HOST') {
+        this.multiplayer.sendCreaturesSync(this.entities.creatures);
       }
       this.emitUiSnapshot();
     }
@@ -4683,18 +5788,214 @@ export class GameEngine {
     }
   }
 
+  public setPlayerRespawnPoint(
+    worldX: number,
+    worldY: number,
+    label: string
+  ): void {
+    const safePos = this.world.findNearestSafePosition(
+      worldX,
+      worldY + 14,
+      6.2
+    );
+    this.player.respawnX = safePos.x;
+    this.player.respawnY = safePos.y;
+    this.player.respawnLabel = label;
+  }
+
+  public lootDeathBag(bagId: string): boolean {
+    const idx = this.deathBags.findIndex((b) => b.id === bagId);
+    if (idx === -1) return false;
+    const bag = this.deathBags[idx];
+
+    let recoveredStacks = 0;
+
+    // 1. Recover Gold Coins
+    if (bag.goldCoins > 0) {
+      this.player.goldCoins = (this.player.goldCoins || 0) + bag.goldCoins;
+      bag.goldCoins = 0;
+      recoveredStacks++;
+    }
+
+    // 2. Recover items into player's inventory (or auto-equip armor if slot is empty)
+    const remainingItems: InventorySlot[] = [];
+    for (const slot of bag.items) {
+      if (!slot || slot.count <= 0) continue;
+      const itemDef = ITEMS[slot.itemId];
+      // If it's a piece of armor and the player's corresponding armor slot is empty, equip it directly if count === 1
+      if (
+        itemDef &&
+        itemDef.category === ItemCategory.ARMOR &&
+        slot.count === 1
+      ) {
+        if (!this.player.equippedBySlot) {
+          this.player.equippedBySlot = {
+            head: null,
+            body: null,
+            legs: null,
+            feet: null,
+          };
+        }
+        const eqSlot: EquipmentSlot = itemDef.equipSlot || 'body';
+        if (!this.player.equippedBySlot[eqSlot]) {
+          this.player.equippedBySlot[eqSlot] = itemDef.id;
+          this.player.equippedArmorId = this.player.equippedBySlot.body;
+          if (itemDef.maxHpBonus) {
+            this.player.maxHp += itemDef.maxHpBonus;
+            this.player.hp = Math.min(
+              this.player.maxHp,
+              this.player.hp + itemDef.maxHpBonus
+            );
+          }
+          recoveredStacks++;
+          continue;
+        }
+      }
+
+      if (this.addItemToInventory(slot.itemId, slot.count)) {
+        recoveredStacks++;
+      } else {
+        remainingItems.push(slot);
+      }
+    }
+
+    bag.items = remainingItems;
+    if (bag.items.length === 0 && bag.goldCoins <= 0) {
+      this.deathBags.splice(idx, 1);
+      soundManager.playLevelUp();
+      this.renderer.spawnBurst(bag.x, bag.y, 'GOLD', 18);
+      this.renderer.spawnRipple(bag.x, bag.y, '#4ade80', 30, 0.55);
+      this.addFloatingText(
+        '🎒 Bolsinha recuperada! Todos os itens voltaram!',
+        this.player.x,
+        this.player.y - 24,
+        '#4ade80'
+      );
+    } else {
+      soundManager.playPickup();
+      this.renderer.spawnBurst(bag.x, bag.y, 'GOLD', 10);
+      this.addFloatingText(
+        recoveredStacks > 0
+          ? `🎒 Recuperou parte dos itens (Mochila cheia: restam ${bag.items.length} na bolsinha)`
+          : 'Mochila cheia! Libere espaço para recolher o restante da bolsinha',
+        this.player.x,
+        this.player.y - 24,
+        '#fde047'
+      );
+    }
+
+    void this.saveGame(true);
+    this.emitUiSnapshot();
+    return true;
+  }
+
   private handlePlayerDeath(): void {
     if (this.metadata.difficulty === 'hardcore') {
       this.isGameOver = true;
       this.emitUiSnapshot();
       return;
     }
-    this.player.x = 16;
-    this.player.y = 16;
+
+    const deathX = this.player.x;
+    const deathY = this.player.y;
+
+    // Collect all items the player possessed (inventory + equipped armor + goldCoins) into a DeathBag
+    const bagItems: InventorySlot[] = [];
+    if (Array.isArray(this.player.inventory)) {
+      for (let i = 0; i < this.player.inventory.length; i++) {
+        const slot = this.player.inventory[i];
+        if (slot && slot.count > 0) {
+          bagItems.push({ itemId: slot.itemId, count: slot.count });
+          this.player.inventory[i] = null;
+        }
+      }
+    } else {
+      this.player.inventory = new Array(TOTAL_INVENTORY_SIZE).fill(null);
+    }
+
+    if (this.player.equippedBySlot) {
+      for (const eqSlot of ['head', 'body', 'legs', 'feet'] as EquipmentSlot[]) {
+        const eqId = this.player.equippedBySlot[eqSlot];
+        if (eqId) {
+          const def = ITEMS[eqId];
+          if (def?.maxHpBonus) {
+            this.player.maxHp = Math.max(50, this.player.maxHp - def.maxHpBonus);
+          }
+          bagItems.push({ itemId: eqId, count: 1 });
+          this.player.equippedBySlot[eqSlot] = null;
+        }
+      }
+    }
+    this.player.equippedArmorId = null;
+
+    const droppedGold = Math.max(0, Math.floor(this.player.goldCoins || 0));
+    this.player.goldCoins = 0;
+
+    let droppedBag = false;
+    if (bagItems.length > 0 || droppedGold > 0) {
+      droppedBag = true;
+      const newBag: DeathBag = {
+        id: `deathbag_${Date.now()}_${Math.floor(Math.random() * 9999)}`,
+        ownerName: this.settings.playerName || 'Aventureiro',
+        x: deathX,
+        y: deathY,
+        items: bagItems,
+        goldCoins: droppedGold,
+        createdAt: Date.now(),
+        expiresTimer: 600, // 10 minutes (600 seconds)
+        maxTimer: 600,
+      };
+      this.deathBags.push(newBag);
+      this.world.revealAround(deathX, deathY, 6);
+      this.renderer.spawnBurst(deathX, deathY, 'GOLD', 14);
+      this.renderer.spawnRipple(deathX, deathY, '#f43f5e', 30, 0.6);
+    }
+
+    // Respawn at the last rest point the player interacted with or used
+    const targetRespawnX =
+      typeof this.player.respawnX === 'number' &&
+      Number.isFinite(this.player.respawnX)
+        ? this.player.respawnX
+        : 16;
+    const targetRespawnY =
+      typeof this.player.respawnY === 'number' &&
+      Number.isFinite(this.player.respawnY)
+        ? this.player.respawnY
+        : 16;
+    const safeRespawn = this.world.findNearestSafePosition(
+      targetRespawnX,
+      targetRespawnY,
+      6.2
+    );
+    const respawnLabel = this.player.respawnLabel || 'Acampamento Inicial';
+
+    this.player.x = safeRespawn.x;
+    this.player.y = safeRespawn.y;
     this.player.hp = Math.round(this.player.maxHp * 0.7);
     this.player.hunger = Math.round(this.player.maxHunger * 0.7);
     this.player.stamina = this.player.maxStamina;
-    this.addFloatingText('Renascido no Acampamento Inicial', 16, 0, '#38bdf8');
+    const mount = this.getActiveMount();
+    if (mount) {
+      if (mount.kind === CreatureKind.BOAT) {
+        this.dismountCreature();
+      } else {
+        mount.x = this.player.x;
+        mount.y = this.player.y;
+        mount.vx = 0;
+        mount.vy = 0;
+        this.syncPlayerMountedCreatureData();
+      }
+    }
+    this.world.revealAround(this.player.x, this.player.y, 10);
+    this.addFloatingText(
+      droppedBag
+        ? `Renascido em ${respawnLabel} · 🎒 Bolsinha marcada no Mapa (10 min)!`
+        : `Renascido em ${respawnLabel}`,
+      this.player.x,
+      this.player.y - 24,
+      '#38bdf8'
+    );
+    void this.saveGame(true);
     this.emitUiSnapshot();
   }
 
@@ -4758,7 +6059,14 @@ export class GameEngine {
             const nx = node.tileX * TILE_SIZE + TILE_SIZE / 2;
             const ny = node.tileY * TILE_SIZE + TILE_SIZE / 2;
             if (Math.hypot(nx - bx, ny - by) <= 92) {
-              this.harvestNatureNode(chunk, ni, ToolType.PICKAXE, 2, 90);
+              this.harvestNatureNode(
+                chunk,
+                ni,
+                'iron_pickaxe',
+                ToolType.PICKAXE,
+                2,
+                2.0
+              );
             }
           }
         }
@@ -4782,8 +6090,28 @@ export class GameEngine {
       this.player.hp = Math.min(this.player.maxHp, this.player.hp + 50);
       this.player.stamina = this.player.maxStamina;
 
+      const activeMount = this.getActiveMount();
+      if (activeMount) {
+        if (
+          activeMount.kind === CreatureKind.BOAT &&
+          !this.world.isWorldPosInWater(destX, destY)
+        ) {
+          this.dismountCreature();
+        } else {
+          activeMount.x = destX;
+          activeMount.y = destY;
+          activeMount.vx = 0;
+          activeMount.vy = 0;
+          this.syncPlayerMountedCreatureData();
+        }
+      }
+
       for (const pet of this.entities.creatures) {
-        if (pet.tamed && pet.aiState === 'follow') {
+        if (
+          pet.tamed &&
+          pet.aiState === 'follow' &&
+          pet.id !== this.player.mountedEntityId
+        ) {
           pet.x = destX + (Math.random() - 0.5) * 36;
           pet.y = destY + (Math.random() - 0.5) * 36;
         }
@@ -5125,6 +6453,17 @@ export class GameEngine {
       dy,
       this.player.direction
     );
+
+    // Check if the player tapped directly on a Death Bag within reach
+    const tappedBag = this.deathBags.find(
+      (b) =>
+        Math.hypot(b.x - wx, b.y - wy) <= 28 &&
+        Math.hypot(b.x - this.player.x, b.y - this.player.y) <= TILE_SIZE * 2.8
+    );
+    if (tappedBag) {
+      this.lootDeathBag(tappedBag.id);
+      return;
+    }
 
     // Check if the player tapped directly on a placed Crafting Station or Interactive Structure within reach
     const chunk = this.world.getOrCreateChunk(
@@ -5493,6 +6832,7 @@ export class GameEngine {
     const clean = newName.trim().slice(0, 28);
     chest.customName = clean || undefined;
     soundManager.playPickup();
+    this.syncChunkAtTile(chest.tileX, chest.tileY);
     this.emitUiSnapshot();
   }
 
@@ -5579,6 +6919,7 @@ export class GameEngine {
 
     this.consumeInventoryAt(playerSlotIdx, moved);
     soundManager.playPickup();
+    this.syncChunkAtTile(chest.tileX, chest.tileY);
     this.emitUiSnapshot();
     return true;
   }
@@ -5610,6 +6951,7 @@ export class GameEngine {
         slots[chestSlotIdx] = null;
       }
       soundManager.playPickup();
+      this.syncChunkAtTile(chest.tileX, chest.tileY);
       this.emitUiSnapshot();
       return true;
     }
@@ -5672,6 +7014,7 @@ export class GameEngine {
       slots[chestSlotIdx] = null;
     }
     soundManager.playPickup();
+    this.syncChunkAtTile(chest.tileX, chest.tileY);
     this.emitUiSnapshot();
     return true;
   }
@@ -5703,6 +7046,7 @@ export class GameEngine {
           slots[indexA] = null;
         }
         soundManager.playPickup();
+        this.syncChunkAtTile(chest.tileX, chest.tileY);
         this.emitUiSnapshot();
         return;
       }
@@ -5711,6 +7055,7 @@ export class GameEngine {
     slots[indexA] = slotB;
     slots[indexB] = slotA;
     soundManager.playPickup();
+    this.syncChunkAtTile(chest.tileX, chest.tileY);
     this.emitUiSnapshot();
   }
 
@@ -5753,6 +7098,7 @@ export class GameEngine {
         this.player.y - 22,
         '#4ade80'
       );
+      this.syncChunkAtTile(chest.tileX, chest.tileY);
       this.emitUiSnapshot();
     }
     return totalMoved;
@@ -5785,6 +7131,7 @@ export class GameEngine {
         this.player.y - 22,
         '#38bdf8'
       );
+      this.syncChunkAtTile(chest.tileX, chest.tileY);
       this.emitUiSnapshot();
     }
     return totalMoved;
@@ -5816,6 +7163,7 @@ export class GameEngine {
         this.player.y - 22,
         '#fde047'
       );
+      this.syncChunkAtTile(chest.tileX, chest.tileY);
       this.emitUiSnapshot();
     }
     return totalTaken;
@@ -5870,6 +7218,7 @@ export class GameEngine {
 
     chest.storageSlots = newSlots;
     soundManager.playPickup();
+    this.syncChunkAtTile(chest.tileX, chest.tileY);
     this.emitUiSnapshot();
   }
 
@@ -6029,6 +7378,7 @@ export class GameEngine {
     const clean = newName.trim().slice(0, 28);
     stall.customName = clean || undefined;
     soundManager.playPickup();
+    this.syncChunkAtTile(stall.tileX, stall.tileY);
     this.emitUiSnapshot();
   }
 
@@ -6040,6 +7390,7 @@ export class GameEngine {
       stall.pendingCustomerOffer = null;
     }
     soundManager.playPickup();
+    this.syncChunkAtTile(stall.tileX, stall.tileY);
     this.emitUiSnapshot();
   }
 
@@ -6049,6 +7400,7 @@ export class GameEngine {
     stall.orientation =
       stall.orientation === 'vertical' ? 'horizontal' : 'vertical';
     soundManager.playPickup();
+    this.syncChunkAtTile(stall.tileX, stall.tileY);
     this.emitUiSnapshot();
   }
 
@@ -6079,6 +7431,7 @@ export class GameEngine {
       stall.villageId = undefined;
       stall.pendingCustomerOffer = null;
       soundManager.playCraft();
+      this.syncChunkAtTile(stall.tileX, stall.tileY);
       this.emitUiSnapshot();
       return {
         ok: true,
@@ -6103,6 +7456,7 @@ export class GameEngine {
       : 'Mercador da Vila';
     stall.pendingCustomerOffer = null;
     soundManager.playPickup();
+    this.syncChunkAtTile(stall.tileX, stall.tileY);
     this.emitUiSnapshot();
     return {
       ok: true,
@@ -6212,6 +7566,7 @@ export class GameEngine {
 
     this.consumeInventoryAt(playerSlotIdx, moved);
     soundManager.playPickup();
+    this.syncChunkAtTile(stall.tileX, stall.tileY);
     this.emitUiSnapshot();
     return true;
   }
@@ -6263,6 +7618,7 @@ export class GameEngine {
     }
 
     soundManager.playPickup();
+    this.syncChunkAtTile(stall.tileX, stall.tileY);
     this.emitUiSnapshot();
     return true;
   }
@@ -6290,6 +7646,7 @@ export class GameEngine {
         stall.pendingCustomerOffer.quantity * clamped;
     }
     soundManager.playPickup();
+    this.syncChunkAtTile(stall.tileX, stall.tileY);
     this.emitUiSnapshot();
   }
 
@@ -6303,6 +7660,7 @@ export class GameEngine {
       sl.unitPrice = Math.max(1, Math.round(base * multiplier));
     }
     soundManager.playPickup();
+    this.syncChunkAtTile(stall.tileX, stall.tileY);
     this.emitUiSnapshot();
   }
 
@@ -6321,6 +7679,7 @@ export class GameEngine {
       stall.pendingCustomerOffer = null;
     }
     soundManager.playPickup();
+    this.syncChunkAtTile(stall.tileX, stall.tileY);
     this.emitUiSnapshot();
   }
 
@@ -6392,6 +7751,7 @@ export class GameEngine {
       sy - 24,
       '#fde047'
     );
+    this.syncChunkAtTile(stall.tileX, stall.tileY);
     this.emitUiSnapshot();
     return {
       ok: true,
@@ -6593,6 +7953,7 @@ export class GameEngine {
           sy - 28,
           '#fde047'
         );
+        this.syncChunkAtTile(stall.tileX, stall.tileY);
         this.emitUiSnapshot();
         return false;
       } else {
@@ -6930,7 +8291,15 @@ export class GameEngine {
   private getTargetTileForPlacement(): { tx: number; ty: number } | null {
     const heldSlot = this.player.inventory[this.player.selectedHotbarIndex];
     const heldItem = heldSlot ? ITEMS[heldSlot.itemId] : null;
-    if (!heldItem || heldItem.category !== ItemCategory.PLACEABLE) return null;
+    if (
+      !heldItem ||
+      (heldItem.category !== ItemCategory.PLACEABLE &&
+        heldItem.id !== 'wood_boat' &&
+        !heldItem.seedCropType &&
+        heldItem.id !== 'bone_fertilizer')
+    ) {
+      return null;
+    }
 
     if (this.customTargetTile) return this.customTargetTile;
 
@@ -6977,7 +8346,8 @@ export class GameEngine {
         !cr.isHostile &&
         !cr.tamed &&
         cr.kind !== CreatureKind.VILLAGER &&
-        cr.kind !== CreatureKind.WANDERER
+        cr.kind !== CreatureKind.WANDERER &&
+        cr.kind !== CreatureKind.BOAT
       ) {
         const d = Math.hypot(cr.x - this.player.x, cr.y - this.player.y);
         if (d < bestDist) {
@@ -6991,9 +8361,9 @@ export class GameEngine {
 
   public getNearbyTamedAnimal(): CreatureEntity | null {
     let best: CreatureEntity | null = null;
-    let bestDist = 64;
+    let bestDist = 68;
     for (const cr of this.entities.creatures) {
-      if (cr.tamed) {
+      if (cr.tamed || cr.kind === CreatureKind.BOAT) {
         const d = Math.hypot(cr.x - this.player.x, cr.y - this.player.y);
         if (d < bestDist) {
           bestDist = d;
@@ -7002,6 +8372,811 @@ export class GameEngine {
       }
     }
     return best;
+  }
+
+  // =========================================================================
+  // MOUNTS, SADDLES (8-SLOT INVENTORY), GALLOP & 2-SEAT BOAT SYSTEM
+  // =========================================================================
+
+  private getLocalRiderId(): string {
+    return this.multiplayer.isOnline ? this.multiplayer.peerId : 'LOCAL';
+  }
+
+  public getActiveMount(): CreatureEntity | null {
+    if (!this.player.mountedEntityId) return null;
+    return (
+      this.entities.creatures.find(
+        (c) => c.id === this.player.mountedEntityId && c.hp > 0
+      ) || null
+    );
+  }
+
+  /**
+   * Restores or synchronizes the player's integrated mount entity in `this.entities.creatures`
+   * using `this.player.mountedCreatureData`. Ensures that if a player (Host or Guest)
+   * returns to the world while mounted, their mount returns with them immediately.
+   */
+  public restoreIntegratedPlayerMount(): CreatureEntity | null {
+    if (!this.player.mountedEntityId) {
+      this.player.mountedCreatureData = null;
+      return null;
+    }
+
+    const riderId = this.getLocalRiderId();
+    let mount =
+      this.entities.creatures.find(
+        (c) => c.id === this.player.mountedEntityId && c.hp > 0
+      ) || null;
+
+    if (!mount && this.player.mountedCreatureData) {
+      const savedMount: CreatureEntity = JSON.parse(
+        JSON.stringify(this.player.mountedCreatureData)
+      );
+      savedMount.id = this.player.mountedEntityId;
+      savedMount.x = this.player.x;
+      savedMount.y = this.player.y;
+      savedMount.vx = 0;
+      savedMount.vy = 0;
+      savedMount.direction = this.player.direction;
+      savedMount.hp = Math.max(1, savedMount.hp || savedMount.maxHp || 100);
+      savedMount.tamed = true;
+      savedMount.riderPlayerId = riderId;
+      if (
+        savedMount.kind === CreatureKind.HORSE ||
+        savedMount.kind === CreatureKind.CAMEL
+      ) {
+        savedMount.hasSaddle = true;
+        this.ensureMountInventoryInitialized(savedMount);
+      }
+      this.entities.creatures.push(savedMount);
+      mount = savedMount;
+    } else if (mount) {
+      mount.x = this.player.x;
+      mount.y = this.player.y;
+      mount.direction = this.player.direction;
+      if (
+        !mount.riderPlayerId ||
+        mount.riderPlayerId === 'LOCAL' ||
+        mount.riderPlayerId === riderId
+      ) {
+        mount.riderPlayerId = riderId;
+      }
+      if (this.player.mountedCreatureData) {
+        if (this.player.mountedCreatureData.hasSaddle) {
+          mount.hasSaddle = true;
+        }
+        if (this.player.mountedCreatureData.mountSpeed) {
+          mount.mountSpeed = this.player.mountedCreatureData.mountSpeed;
+        }
+        if (this.player.mountedCreatureData.mountMaxStamina) {
+          mount.mountMaxStamina =
+            this.player.mountedCreatureData.mountMaxStamina;
+        }
+        if (this.player.mountedCreatureData.mountStamina !== undefined) {
+          mount.mountStamina = this.player.mountedCreatureData.mountStamina;
+        }
+        if (Array.isArray(this.player.mountedCreatureData.mountInventory)) {
+          mount.mountInventory = JSON.parse(
+            JSON.stringify(this.player.mountedCreatureData.mountInventory)
+          );
+        }
+      }
+      if (
+        (mount.kind === CreatureKind.HORSE ||
+          mount.kind === CreatureKind.CAMEL) &&
+        mount.hasSaddle
+      ) {
+        this.ensureMountInventoryInitialized(mount);
+      }
+    }
+
+    this.syncPlayerMountedCreatureData();
+    return mount;
+  }
+
+  /**
+   * Snapshots the active mount's state onto `this.player.mountedCreatureData`
+   * so the mount is always saved and transmitted as an integrated part of the player's body.
+   */
+  private syncPlayerMountedCreatureData(): void {
+    if (!this.player.mountedEntityId) {
+      this.player.mountedCreatureData = null;
+      return;
+    }
+    const mount = this.getActiveMount();
+    if (!mount) return;
+    this.player.mountedCreatureData = {
+      ...mount,
+      x: this.player.x,
+      y: this.player.y,
+      direction: this.player.direction,
+      riderPlayerId:
+        mount.riderPlayerId === 'LOCAL'
+          ? this.getLocalRiderId()
+          : mount.riderPlayerId || this.getLocalRiderId(),
+      mountInventory: Array.isArray(mount.mountInventory)
+        ? mount.mountInventory.map((s) => (s ? { ...s } : null))
+        : undefined,
+    };
+  }
+
+  /**
+   * Ensures that any remote player who is mounted has their mount entity present and synchronized
+   * in `this.entities.creatures` (so when a Guest reconnects mounted, the mount returns with them).
+   */
+  private reconcileRemotePlayerMounts(): void {
+    for (const rp of this.multiplayer.remotePlayers.values()) {
+      if (rp.mountedEntityId && rp.mountedCreatureData) {
+        let mount = this.entities.creatures.find(
+          (c) => c.id === rp.mountedEntityId
+        );
+        if (!mount) {
+          const spawned: CreatureEntity = {
+            ...JSON.parse(JSON.stringify(rp.mountedCreatureData)),
+            id: rp.mountedEntityId,
+            x: rp.x,
+            y: rp.y,
+            vx: rp.vx,
+            vy: rp.vy,
+            direction: rp.direction,
+            hp: Math.max(
+              1,
+              rp.mountedCreatureData.hp || rp.mountedCreatureData.maxHp || 100
+            ),
+            tamed: true,
+            riderPlayerId: rp.peerId,
+          };
+          if (
+            spawned.kind === CreatureKind.HORSE ||
+            spawned.kind === CreatureKind.CAMEL
+          ) {
+            spawned.hasSaddle = true;
+            this.ensureMountInventoryInitialized(spawned);
+          }
+          this.entities.creatures.push(spawned);
+        } else {
+          mount.x = rp.x;
+          mount.y = rp.y;
+          mount.vx = rp.vx;
+          mount.vy = rp.vy;
+          mount.direction = rp.direction;
+          mount.animFrame = rp.animFrame;
+          mount.tamed = true;
+          if (!mount.riderPlayerId || mount.riderPlayerId === rp.peerId) {
+            mount.riderPlayerId = rp.peerId;
+          }
+          if (rp.mountedCreatureData.hasSaddle) {
+            mount.hasSaddle = true;
+          }
+          if (rp.mountedCreatureData.mountSpeed) {
+            mount.mountSpeed = rp.mountedCreatureData.mountSpeed;
+          }
+          if (rp.mountedCreatureData.mountMaxStamina) {
+            mount.mountMaxStamina = rp.mountedCreatureData.mountMaxStamina;
+          }
+          if (rp.mountedCreatureData.mountStamina !== undefined) {
+            mount.mountStamina = rp.mountedCreatureData.mountStamina;
+          }
+          if (Array.isArray(rp.mountedCreatureData.mountInventory)) {
+            mount.mountInventory = rp.mountedCreatureData.mountInventory;
+          }
+        }
+      } else {
+        for (const cr of this.entities.creatures) {
+          if (cr.riderPlayerId === rp.peerId && rp.mountedEntityId !== cr.id) {
+            cr.riderPlayerId = null;
+          }
+          if (
+            cr.passengerPlayerId === rp.peerId &&
+            rp.mountedEntityId !== cr.id
+          ) {
+            cr.passengerPlayerId = null;
+          }
+        }
+      }
+    }
+  }
+
+  /**
+   * When a Guest leaves the game while mounted, their mount is part of their body
+   * and disappears from the world with them (and returns when they reconnect).
+   */
+  private handleRemotePeerLeft(peerId: string): void {
+    if (!peerId) return;
+    let removedAny = false;
+    for (let i = this.entities.creatures.length - 1; i >= 0; i--) {
+      const cr = this.entities.creatures[i];
+      if (cr.riderPlayerId === peerId) {
+        if (this.player.mountedEntityId === cr.id) {
+          this.player.mountedEntityId = null;
+          this.player.mountedCreatureData = null;
+          this.player.isGalloping = false;
+        }
+        this.entities.creatures.splice(i, 1);
+        removedAny = true;
+        continue;
+      }
+      if (cr.passengerPlayerId === peerId) {
+        cr.passengerPlayerId = null;
+        removedAny = true;
+      }
+    }
+    if (
+      removedAny &&
+      this.multiplayer.isOnline &&
+      this.multiplayer.role === 'HOST'
+    ) {
+      this.multiplayer.sendCreaturesSync(this.entities.creatures);
+    }
+    this.syncPauseState();
+    this.emitUiSnapshot();
+  }
+
+  /**
+   * Processes mount/taming/boat actions sent from a Guest to the Host so the Host's
+   * authoritative creature list stays 100% synchronized.
+   */
+  private handleGuestMountEvent(peerId: string, event: any): void {
+    if (!event || typeof event.action !== 'string') return;
+    switch (event.action) {
+      case 'tame': {
+        const cr = this.entities.creatures.find(
+          (c) => c.id === event.creatureId
+        );
+        if (cr) {
+          cr.tamed = Boolean(event.tamed);
+          cr.tameProgress =
+            typeof event.tameProgress === 'number'
+              ? event.tameProgress
+              : cr.tameProgress;
+          if (event.aiState) cr.aiState = event.aiState;
+          if (typeof event.hp === 'number') cr.hp = event.hp;
+        }
+        break;
+      }
+      case 'saddle': {
+        const cr = this.entities.creatures.find(
+          (c) => c.id === event.creatureId
+        );
+        if (cr) {
+          cr.tamed = true;
+          cr.hasSaddle = true;
+          this.ensureMountInventoryInitialized(cr);
+        }
+        break;
+      }
+      case 'spawn_boat': {
+        if (
+          event.creature &&
+          event.creature.id &&
+          !this.entities.creatures.some((c) => c.id === event.creature.id)
+        ) {
+          this.entities.creatures.push(event.creature);
+        }
+        break;
+      }
+      case 'pickup_boat': {
+        const idx = this.entities.creatures.findIndex(
+          (c) => c.id === event.creatureId && c.kind === CreatureKind.BOAT
+        );
+        if (idx !== -1) {
+          this.entities.creatures.splice(idx, 1);
+        }
+        break;
+      }
+      case 'mount': {
+        let cr = this.entities.creatures.find(
+          (c) => c.id === event.creatureId
+        );
+        if (!cr && event.creature) {
+          cr = {
+            ...event.creature,
+            id: event.creatureId,
+            riderPlayerId: peerId,
+          };
+          this.entities.creatures.push(cr!);
+        }
+        if (cr) {
+          if (event.isPassenger) {
+            cr.passengerPlayerId = peerId;
+          } else {
+            cr.riderPlayerId = peerId;
+          }
+          if (event.passengerPetId !== undefined) {
+            cr.passengerPetId = event.passengerPetId;
+          }
+        }
+        break;
+      }
+      case 'dismount': {
+        const cr = this.entities.creatures.find(
+          (c) => c.id === event.creatureId
+        );
+        if (cr) {
+          if (cr.riderPlayerId === peerId) cr.riderPlayerId = null;
+          if (cr.passengerPlayerId === peerId) cr.passengerPlayerId = null;
+          if (typeof event.x === 'number') cr.x = event.x;
+          if (typeof event.y === 'number') cr.y = event.y;
+          cr.vx = 0;
+          cr.vy = 0;
+        }
+        break;
+      }
+      case 'mount_inventory': {
+        const cr = this.entities.creatures.find(
+          (c) => c.id === event.creatureId
+        );
+        if (cr && Array.isArray(event.mountInventory)) {
+          cr.mountInventory = event.mountInventory;
+        }
+        break;
+      }
+    }
+
+    if (this.multiplayer.isOnline && this.multiplayer.role === 'HOST') {
+      this.multiplayer.sendCreaturesSync(this.entities.creatures);
+    }
+    this.emitUiSnapshot();
+  }
+
+  public ensureMountInventoryInitialized(cr: CreatureEntity): void {
+    if (!Array.isArray(cr.mountInventory) || cr.mountInventory.length !== MOUNT_STORAGE_SIZE) {
+      const prev = Array.isArray(cr.mountInventory) ? cr.mountInventory : [];
+      cr.mountInventory = Array.from({ length: MOUNT_STORAGE_SIZE }, (_, idx) => prev[idx] || null);
+    }
+    if (!cr.mountSpeed) {
+      cr.mountSpeed = cr.kind === CreatureKind.CAMEL ? 142 : 150;
+    }
+    if (!cr.mountMaxStamina) {
+      cr.mountMaxStamina = cr.kind === CreatureKind.CAMEL ? 165 : 100;
+    }
+    if (cr.mountStamina === undefined) {
+      cr.mountStamina = cr.mountMaxStamina;
+    }
+  }
+
+  public equipSaddleOnCreature(creatureId: string): boolean {
+    const cr = this.entities.creatures.find(
+      (c) =>
+        c.id === creatureId &&
+        c.tamed &&
+        (c.kind === CreatureKind.HORSE || c.kind === CreatureKind.CAMEL)
+    );
+    if (!cr || cr.hasSaddle) return false;
+
+    const saddleSlotIdx =
+      this.player.inventory[this.player.selectedHotbarIndex]?.itemId === 'saddle'
+        ? this.player.selectedHotbarIndex
+        : this.player.inventory.findIndex((s) => s !== null && s.itemId === 'saddle');
+
+    if (saddleSlotIdx === -1) {
+      this.addFloatingText(
+        'Você precisa de uma Sela de Montaria na mochila!',
+        cr.x,
+        cr.y - 20,
+        '#f43f5e'
+      );
+      return false;
+    }
+
+    this.consumeInventoryAt(saddleSlotIdx, 1);
+    cr.hasSaddle = true;
+    this.ensureMountInventoryInitialized(cr);
+
+    if (this.multiplayer.isOnline && this.multiplayer.role === 'GUEST') {
+      this.multiplayer.sendGuestMountEvent({
+        action: 'saddle',
+        creatureId: cr.id,
+      });
+    } else if (this.multiplayer.isOnline && this.multiplayer.role === 'HOST') {
+      this.multiplayer.sendCreaturesSync(this.entities.creatures);
+    }
+
+    soundManager.playLevelUp();
+    this.renderer.spawnBurst(cr.x, cr.y - 6, 'GOLD', 14);
+    this.renderer.spawnRipple(cr.x, cr.y, '#fde047', 26, 0.5);
+    this.addFloatingText(
+      `鞍 Sela Equipada em ${cr.name}! (Montável + 8 Slots de Alforje)`,
+      cr.x,
+      cr.y - 24,
+      '#fde047'
+    );
+    this.emitUiSnapshot();
+    return true;
+  }
+
+  public mountCreature(creatureId: string): boolean {
+    const cr = this.entities.creatures.find((c) => c.id === creatureId && c.hp > 0);
+    if (!cr) return false;
+
+    if (this.player.mountedEntityId) {
+      this.dismountCreature();
+    }
+
+    const localRiderId = this.getLocalRiderId();
+
+    if (cr.kind === CreatureKind.BOAT) {
+      // Check Boat 2-seat capacity
+      const hasPrimaryRider =
+        Boolean(
+          cr.riderPlayerId &&
+            cr.riderPlayerId !== 'LOCAL' &&
+            cr.riderPlayerId !== localRiderId
+        ) &&
+        this.remotePlayersList.some((rp) => rp.mountedEntityId === cr.id);
+      const hasSecondPlayer =
+        Boolean(
+          cr.passengerPlayerId &&
+            cr.passengerPlayerId !== 'LOCAL' &&
+            cr.passengerPlayerId !== localRiderId
+        ) &&
+        this.remotePlayersList.some((rp) => rp.mountedEntityId === cr.id);
+
+      if (hasPrimaryRider && hasSecondPlayer) {
+        this.addFloatingText(
+          '⛵ O Bote já está com os 2 assentos ocupados!',
+          cr.x,
+          cr.y - 20,
+          '#f43f5e'
+        );
+        return false;
+      }
+
+      const isPassenger = hasPrimaryRider;
+      if (!hasPrimaryRider) {
+        cr.riderPlayerId = localRiderId;
+      } else {
+        // Board 2nd seat as passenger! (Displace pet if one was in 2nd seat)
+        cr.passengerPetId = null;
+        cr.passengerPlayerId = localRiderId;
+      }
+
+      // If the 2nd seat is free and the player has a tamed pet currently following ('follow'), seat it in Seat 2!
+      if (!cr.passengerPlayerId && !cr.passengerPetId) {
+        const followingPet = this.entities.creatures.find(
+          (p) =>
+            p.id !== cr.id &&
+            p.tamed &&
+            p.kind !== CreatureKind.BOAT &&
+            p.aiState === 'follow' &&
+            Math.hypot(p.x - this.player.x, p.y - this.player.y) <= 170
+        );
+        if (followingPet) {
+          cr.passengerPetId = followingPet.id;
+          followingPet.x = cr.x;
+          followingPet.y = cr.y;
+          followingPet.vx = 0;
+          followingPet.vy = 0;
+        }
+      }
+
+      this.player.mountedEntityId = cr.id;
+      this.player.isGalloping = false;
+      this.player.x = cr.x;
+      this.player.y = cr.y;
+      this.syncPlayerMountedCreatureData();
+
+      if (this.multiplayer.isOnline && this.multiplayer.role === 'GUEST') {
+        this.multiplayer.sendGuestMountEvent({
+          action: 'mount',
+          creatureId: cr.id,
+          isPassenger,
+          passengerPetId: cr.passengerPetId || null,
+          creature: this.player.mountedCreatureData,
+        });
+        this.multiplayer.sendPlayerState(this.player);
+      } else if (this.multiplayer.isOnline && this.multiplayer.role === 'HOST') {
+        this.multiplayer.sendCreaturesSync(this.entities.creatures);
+        this.multiplayer.sendPlayerState(this.player);
+      }
+
+      void this.saveGame(true);
+      soundManager.playPickup();
+      this.renderer.spawnRipple(cr.x, cr.y, '#38bdf8', 24, 0.4);
+      this.addFloatingText(
+        cr.passengerPetId
+          ? '⛵ Embarcou no Bote com seu Pet! (2/2 Assentos)'
+          : '⛵ Embarcou no Bote!',
+        cr.x,
+        cr.y - 20,
+        '#38bdf8'
+      );
+      this.emitUiSnapshot();
+      return true;
+    }
+
+    if (cr.kind === CreatureKind.HORSE || cr.kind === CreatureKind.CAMEL) {
+      if (!cr.tamed) return false;
+      if (!cr.hasSaddle) {
+        this.addFloatingText(
+          `Equipe uma Sela em ${cr.name} para poder montar!`,
+          cr.x,
+          cr.y - 20,
+          '#fde047'
+        );
+        return false;
+      }
+      this.ensureMountInventoryInitialized(cr);
+      cr.riderPlayerId = localRiderId;
+      this.player.mountedEntityId = cr.id;
+      this.player.isGalloping = false;
+      this.player.x = cr.x;
+      this.player.y = cr.y;
+      this.syncPlayerMountedCreatureData();
+
+      if (this.multiplayer.isOnline && this.multiplayer.role === 'GUEST') {
+        this.multiplayer.sendGuestMountEvent({
+          action: 'mount',
+          creatureId: cr.id,
+          isPassenger: false,
+          creature: this.player.mountedCreatureData,
+        });
+        this.multiplayer.sendPlayerState(this.player);
+      } else if (this.multiplayer.isOnline && this.multiplayer.role === 'HOST') {
+        this.multiplayer.sendCreaturesSync(this.entities.creatures);
+        this.multiplayer.sendPlayerState(this.player);
+      }
+
+      void this.saveGame(true);
+      soundManager.playPickup();
+      this.renderer.spawnRipple(cr.x, cr.y, '#fde047', 22, 0.4);
+      this.addFloatingText(
+        `Montou em ${cr.name} (Velocidade ${cr.mountSpeed})`,
+        cr.x,
+        cr.y - 22,
+        '#fde047'
+      );
+      this.emitUiSnapshot();
+      return true;
+    }
+
+    return false;
+  }
+
+  public dismountCreature(): void {
+    const mount = this.getActiveMount();
+    const localRiderId = this.getLocalRiderId();
+    this.player.mountedEntityId = null;
+    this.player.mountedCreatureData = null;
+    this.player.isGalloping = false;
+    if (!mount) {
+      this.emitUiSnapshot();
+      return;
+    }
+
+    if (
+      mount.riderPlayerId === 'LOCAL' ||
+      mount.riderPlayerId === localRiderId
+    ) {
+      mount.riderPlayerId = null;
+    }
+    if (
+      mount.passengerPlayerId === 'LOCAL' ||
+      mount.passengerPlayerId === localRiderId
+    ) {
+      mount.passengerPlayerId = null;
+    }
+
+    if (mount.kind === CreatureKind.BOAT) {
+      // Try to step onto an adjacent dry land / beach tile if one is right next to the boat
+      let exitPos = { x: mount.x, y: mount.y };
+      const mTile = this.world.worldToTile(mount.x, mount.y);
+      for (let r = 1; r <= 2; r++) {
+        let foundLand = false;
+        for (let dy = -r; dy <= r && !foundLand; dy++) {
+          for (let dx = -r; dx <= r && !foundLand; dx++) {
+            const tx = mTile.tx + dx;
+            const ty = mTile.ty + dy;
+            if (
+              !this.world.isTileSwimmableWater(tx, ty) &&
+              this.world.isTileWalkable(tx, ty, false)
+            ) {
+              exitPos = {
+                x: tx * TILE_SIZE + TILE_SIZE * 0.5,
+                y: ty * TILE_SIZE + TILE_SIZE * 0.5,
+              };
+              foundLand = true;
+            }
+          }
+        }
+        if (foundLand) break;
+      }
+
+      this.player.x = exitPos.x;
+      this.player.y = exitPos.y;
+
+      if (mount.passengerPetId) {
+        const pet = this.entities.creatures.find(
+          (p) => p.id === mount.passengerPetId
+        );
+        if (pet) {
+          pet.x = exitPos.x + 12;
+          pet.y = exitPos.y + 8;
+        }
+        mount.passengerPetId = null;
+      }
+      this.addFloatingText('Desembarcou do Bote', this.player.x, this.player.y - 20, '#38bdf8');
+    } else {
+      mount.vx = 0;
+      mount.vy = 0;
+      this.addFloatingText(
+        `Desmontou de ${mount.name}`,
+        this.player.x,
+        this.player.y - 20,
+        '#fde047'
+      );
+    }
+
+    if (this.multiplayer.isOnline && this.multiplayer.role === 'GUEST') {
+      this.multiplayer.sendGuestMountEvent({
+        action: 'dismount',
+        creatureId: mount.id,
+        x: mount.x,
+        y: mount.y,
+      });
+      this.multiplayer.sendPlayerState(this.player);
+    } else if (this.multiplayer.isOnline && this.multiplayer.role === 'HOST') {
+      this.multiplayer.sendCreaturesSync(this.entities.creatures);
+      this.multiplayer.sendPlayerState(this.player);
+    }
+
+    void this.saveGame(true);
+    soundManager.playPickup();
+    this.emitUiSnapshot();
+  }
+
+  public pickupBoat(boatId: string): boolean {
+    const idx = this.entities.creatures.findIndex(
+      (c) => c.id === boatId && c.kind === CreatureKind.BOAT
+    );
+    if (idx === -1) return false;
+    const boat = this.entities.creatures[idx];
+    if (this.player.mountedEntityId === boat.id) {
+      this.dismountCreature();
+    }
+    boat.passengerPetId = null;
+    this.entities.creatures.splice(idx, 1);
+    if (!this.addItemToInventory('wood_boat', 1)) {
+      this.spawnDrop('wood_boat', 1, this.player.x, this.player.y);
+    }
+    soundManager.playPickup();
+    this.addFloatingText('+1 Bote de Madeira recolhido', this.player.x, this.player.y - 20, '#38bdf8');
+    if (this.multiplayer.isOnline && this.multiplayer.role === 'HOST') {
+      this.multiplayer.sendCreaturesSync(this.entities.creatures);
+    } else if (this.multiplayer.isOnline && this.multiplayer.role === 'GUEST') {
+      this.multiplayer.sendGuestMountEvent({
+        action: 'pickup_boat',
+        creatureId: boat.id,
+      });
+    }
+    this.emitUiSnapshot();
+    return true;
+  }
+
+  public setGalloping(galloping: boolean): void {
+    const mount = this.getActiveMount();
+    if (
+      !mount ||
+      (mount.kind !== CreatureKind.HORSE && mount.kind !== CreatureKind.CAMEL)
+    ) {
+      this.player.isGalloping = false;
+      return;
+    }
+    if (galloping && (mount.mountStamina ?? 100) <= 4) {
+      this.player.isGalloping = false;
+      this.addFloatingText('Sem fôlego para cavalgar!', this.player.x, this.player.y - 20, '#fb923c');
+      return;
+    }
+    this.player.isGalloping = galloping;
+    this.emitUiSnapshot();
+  }
+
+  public toggleGalloping(): void {
+    this.setGalloping(!this.player.isGalloping);
+  }
+
+  public transferMountSlotToInventory(
+    creatureId: string,
+    mountSlotIndex: number,
+    moveAll = true
+  ): void {
+    const cr = this.entities.creatures.find(
+      (c) => c.id === creatureId && c.tamed && c.hasSaddle
+    );
+    if (!cr) return;
+    this.ensureMountInventoryInitialized(cr);
+    const slot = cr.mountInventory![mountSlotIndex];
+    if (!slot || slot.count <= 0) return;
+
+    const amountToMove = moveAll ? slot.count : 1;
+    let movedCount = 0;
+    for (let i = 0; i < amountToMove; i++) {
+      if (this.addItemToInventory(slot.itemId, 1)) {
+        movedCount++;
+      } else {
+        break;
+      }
+    }
+
+    if (movedCount > 0) {
+      slot.count -= movedCount;
+      if (slot.count <= 0) {
+        cr.mountInventory![mountSlotIndex] = null;
+      }
+      this.syncPlayerMountedCreatureData();
+      if (this.multiplayer.isOnline && this.multiplayer.role === 'GUEST') {
+        this.multiplayer.sendGuestMountEvent({
+          action: 'mount_inventory',
+          creatureId: cr.id,
+          mountInventory: cr.mountInventory,
+        });
+      }
+      void this.saveGame(true);
+      soundManager.playPickup();
+      this.emitUiSnapshot();
+    } else {
+      this.addFloatingText('Mochila cheia!', this.player.x, this.player.y - 20, '#f43f5e');
+    }
+  }
+
+  public transferInventorySlotToMount(
+    creatureId: string,
+    playerSlotIndex: number,
+    moveAll = true
+  ): void {
+    const cr = this.entities.creatures.find(
+      (c) => c.id === creatureId && c.tamed && c.hasSaddle
+    );
+    if (!cr) return;
+    this.ensureMountInventoryInitialized(cr);
+    const pSlot = this.player.inventory[playerSlotIndex];
+    if (!pSlot || pSlot.count <= 0) return;
+
+    const itemDef = ITEMS[pSlot.itemId];
+    const maxStack = itemDef?.maxStack || 99;
+    let remaining = moveAll ? pSlot.count : 1;
+    let movedAny = false;
+
+    for (let i = 0; i < MOUNT_STORAGE_SIZE && remaining > 0; i++) {
+      const mSlot = cr.mountInventory![i];
+      if (mSlot && mSlot.itemId === pSlot.itemId && mSlot.count < maxStack) {
+        const add = Math.min(remaining, maxStack - mSlot.count);
+        mSlot.count += add;
+        pSlot.count -= add;
+        remaining -= add;
+        movedAny = true;
+      }
+    }
+
+    for (let i = 0; i < MOUNT_STORAGE_SIZE && remaining > 0; i++) {
+      if (!cr.mountInventory![i]) {
+        const add = Math.min(remaining, maxStack);
+        cr.mountInventory![i] = { itemId: pSlot.itemId, count: add };
+        pSlot.count -= add;
+        remaining -= add;
+        movedAny = true;
+      }
+    }
+
+    if (pSlot.count <= 0) {
+      this.player.inventory[playerSlotIndex] = null;
+    }
+
+    if (movedAny) {
+      this.syncPlayerMountedCreatureData();
+      if (this.multiplayer.isOnline && this.multiplayer.role === 'GUEST') {
+        this.multiplayer.sendGuestMountEvent({
+          action: 'mount_inventory',
+          creatureId: cr.id,
+          mountInventory: cr.mountInventory,
+        });
+      }
+      void this.saveGame(true);
+      soundManager.playPickup();
+      this.emitUiSnapshot();
+    } else {
+      this.addFloatingText('Alforje cheio (8/8 Slots)!', this.player.x, this.player.y - 20, '#f43f5e');
+    }
   }
 
   // =========================================================================
@@ -7014,13 +9189,23 @@ export class GameEngine {
         this.remotePlayersList = Array.from(
           this.multiplayer.remotePlayers.values()
         );
+        this.reconcileRemotePlayerMounts();
+        this.syncPauseState();
         this.emitUiSnapshot();
       },
       onRemotePlayersChanged: () => {
         this.remotePlayersList = Array.from(
           this.multiplayer.remotePlayers.values()
         );
+        this.reconcileRemotePlayerMounts();
+        this.syncPauseState();
         this.emitUiSnapshot();
+      },
+      onPeerLeft: (peerId) => {
+        this.handleRemotePeerLeft(peerId);
+      },
+      onGuestMountEventReceived: (peerId, event) => {
+        this.handleGuestMountEvent(peerId, event);
       },
       onRequestHostSnapshot: () => {
         return this.buildSaveData();
@@ -7042,6 +9227,9 @@ export class GameEngine {
         if (Array.isArray(snapshot.droppedItems)) {
           this.droppedItems = snapshot.droppedItems;
         }
+        // Keep the player's integrated mount restored after a snapshot sync
+        this.restoreIntegratedPlayerMount();
+        this.reconcileRemotePlayerMounts();
         this.pushPlayerOutOfHitbox(0, true);
         this.emitUiSnapshot();
       },
@@ -7076,9 +9264,59 @@ export class GameEngine {
         for (const c of this.entities.creatures) {
           existingMap.set(c.id, c);
         }
+        const getDefaultFavFoods = (kind: CreatureKind): string[] => {
+          if (kind === CreatureKind.SHEEP) return ['berry', 'coconut', 'taming_treat'];
+          if (kind === CreatureKind.BOAR) return ['apple', 'coconut', 'taming_treat'];
+          if (kind === CreatureKind.CAMEL) return ['cactus_fruit', 'coconut', 'taming_treat'];
+          if (kind === CreatureKind.HORSE) return ['apple', 'taming_treat'];
+          if (kind === CreatureKind.VILLAGER || kind === CreatureKind.WANDERER) {
+            return ['gold_coin', 'apple', 'solar_crystal', 'warrior_feast'];
+          }
+          return [];
+        };
+
         const merged: CreatureEntity[] = [];
         for (const inc of incomingCreatures) {
           const prev = existingMap.get(inc.id);
+          const restoredTrades =
+            Array.isArray(inc.trades) && inc.trades.length > 0
+              ? inc.trades
+              : prev?.trades && prev.trades.length > 0
+              ? prev.trades
+              : inc.kind === CreatureKind.VILLAGER || inc.kind === CreatureKind.WANDERER
+              ? EntityManager.getDefaultTradesForRole(
+                  inc.npcRole || (inc.kind === CreatureKind.WANDERER ? 'andarilho' : 'mercador')
+                )
+              : undefined;
+          const restoredFavFoods =
+            Array.isArray(inc.favoriteFoodIds) && inc.favoriteFoodIds.length > 0
+              ? inc.favoriteFoodIds
+              : prev?.favoriteFoodIds && prev.favoriteFoodIds.length > 0
+              ? prev.favoriteFoodIds
+              : getDefaultFavFoods(inc.kind);
+
+          // If this creature is the local player's active mount, keep local player's position & stamina authoritative
+          if (this.player.mountedEntityId === inc.id) {
+            merged.push({
+              ...(prev || inc),
+              ...inc,
+              x: this.player.x,
+              y: this.player.y,
+              direction: this.player.direction,
+              mountStamina:
+                prev?.mountStamina !== undefined
+                  ? prev.mountStamina
+                  : inc.mountStamina,
+              mountInventory:
+                prev?.mountInventory && prev.mountInventory.length > 0
+                  ? prev.mountInventory
+                  : inc.mountInventory,
+              trades: restoredTrades,
+              favoriteFoodIds: restoredFavFoods,
+            });
+            continue;
+          }
+
           if (prev) {
             const dist = Math.hypot(inc.x - prev.x, inc.y - prev.y);
             const smoothX =
@@ -7086,18 +9324,28 @@ export class GameEngine {
             const smoothY =
               dist > 64 || dist < 1 ? inc.y : prev.y + (inc.y - prev.y) * 0.45;
             merged.push({
+              ...prev,
               ...inc,
               x: smoothX,
               y: smoothY,
+              trades: restoredTrades,
+              favoriteFoodIds: restoredFavFoods,
               animFrame: prev.animFrame,
               animTimer: prev.animTimer,
               hitFlashTimer: Math.max(prev.hitFlashTimer || 0, inc.hitFlashTimer || 0),
             });
           } else {
-            merged.push(inc);
+            merged.push({
+              ...inc,
+              trades: restoredTrades,
+              favoriteFoodIds: restoredFavFoods,
+            });
           }
         }
         this.entities.creatures = merged;
+        // Ensure local player's integrated mount and remote players' mounts are never lost during sync
+        this.restoreIntegratedPlayerMount();
+        this.reconcileRemotePlayerMounts();
       },
       onCreatureHitReceived: (
         creatureId,
@@ -7110,12 +9358,15 @@ export class GameEngine {
           (c) => c.id === creatureId && c.hp > 0
         );
         if (!target) return;
-        this.isApplyingNetworkEvent = true;
-        try {
-          this.damageCreature(target, damage, sourceX, sourceY, knockbackMult);
-        } finally {
-          this.isApplyingNetworkEvent = false;
-        }
+        this.damageCreature(
+          target,
+          damage,
+          sourceX,
+          sourceY,
+          knockbackMult,
+          undefined,
+          true
+        );
       },
       onTimeSyncReceived: (timeOfDay, dayCount) => {
         if (typeof timeOfDay === 'number') {
@@ -7231,6 +9482,18 @@ export class GameEngine {
     }
   }
 
+  public forceMultiplayerResync(): void {
+    if (!this.multiplayer.isOnline) return;
+    this.multiplayer.forceResyncNow();
+    this.addFloatingText(
+      '🔄 Ressincronizando estado do mundo...',
+      this.player.x,
+      this.player.y - 26,
+      '#38bdf8'
+    );
+    this.emitUiSnapshot();
+  }
+
   private updateMultiplayerSync(dt: number): void {
     if (!this.multiplayer.isOnline) return;
 
@@ -7277,12 +9540,16 @@ export class GameEngine {
       }
     }
 
+    // Keep remote player mounts locked to their riders' interpolated positions
+    this.reconcileRemotePlayerMounts();
+
     // 2. Periodically broadcast local player state
     this.netStateTimer += dt;
     const sendInterval =
       this.player.isMoving || this.player.swingTimer > 0 ? 0.065 : 0.4;
     if (this.netStateTimer >= sendInterval) {
       this.netStateTimer = 0;
+      this.syncPlayerMountedCreatureData();
       this.multiplayer.sendPlayerState(this.player);
     }
 
@@ -7304,6 +9571,7 @@ export class GameEngine {
           this.metadata.timeOfDay,
           this.metadata.dayCount
         );
+        this.multiplayer.sendDropsSync(this.droppedItems);
       }
     }
   }
@@ -7311,6 +9579,12 @@ export class GameEngine {
   private updateGuestCreatures(dt: number): void {
     for (const cr of this.entities.creatures) {
       if (!cr || cr.hp <= 0 || cr.isInsideHouse) continue;
+      if (
+        cr.id === this.player.mountedEntityId ||
+        this.remotePlayersList.some((rp) => rp.mountedEntityId === cr.id)
+      ) {
+        continue;
+      }
       if (cr.hitFlashTimer > 0) {
         cr.hitFlashTimer = Math.max(0, cr.hitFlashTimer - dt);
       }
@@ -7337,6 +9611,7 @@ export class GameEngine {
       } else {
         cr.animFrame = 0;
       }
+      cr.isSwimming = this.world.isWorldPosInWater(cr.x, cr.y);
 
       // Hostile monsters near the Guest can still deal melee contact damage to the Guest
       if (
@@ -7353,6 +9628,7 @@ export class GameEngine {
   }
 
   public buildSaveData(): WorldSaveData {
+    this.syncPlayerMountedCreatureData();
     this.metadata.updatedAt = Date.now();
     this.metadata.playerLevel = this.player.level;
     this.metadata.exploredChunksCount = this.world.getExploredChunksCount();
@@ -7365,10 +9641,12 @@ export class GameEngine {
       creatures: this.entities.creatures,
       droppedItems: this.droppedItems,
       waypoints: this.waypoints,
+      deathBags: this.deathBags,
     };
   }
 
   public async saveGame(isAuto = false): Promise<void> {
+    this.syncPlayerMountedCreatureData();
     if (this.multiplayer.role === 'GUEST') {
       try {
         localStorage.setItem(
@@ -7423,6 +9701,22 @@ export class GameEngine {
     const chunk = this.world.chunks[WorldManager.chunkKey(pChunk.cx, pChunk.cy)];
     const zone = this.world.getEcologicalZoneAtTile(pTile.tx, pTile.ty);
 
+    // Build dynamic map markers for any active Death Bags (they exist on the map while the bag exists)
+    const deathBagWaypoints: MapWaypoint[] = this.deathBags.map((bag) => {
+      const remSec = Math.max(0, Math.ceil(bag.expiresTimer));
+      const mm = String(Math.floor(remSec / 60)).padStart(2, '0');
+      const ss = String(remSec % 60).padStart(2, '0');
+      return {
+        id: `death_bag_wp_${bag.id}`,
+        label: `🎒 Bolsinha (${mm}:${ss})`,
+        tileX: Math.floor(bag.x / TILE_SIZE),
+        tileY: Math.floor(bag.y / TILE_SIZE),
+        color: '#f43f5e',
+        isDeathBag: true,
+        expiresTimer: bag.expiresTimer,
+      };
+    });
+
     return {
       metadata: { ...this.metadata },
       player: this.player,
@@ -7433,9 +9727,14 @@ export class GameEngine {
       aimedTarget: this.getAimedTarget(),
       nearbyWildAnimal: this.getNearbyWildAnimal(),
       nearbyTamedAnimal: this.getNearbyTamedAnimal(),
-      tamedAnimals: this.entities.creatures.filter((c) => c.tamed),
-      waypoints: this.waypoints,
+      activeMount: this.getActiveMount(),
+      tamedAnimals: this.entities.creatures.filter(
+        (c) => c.tamed && c.kind !== CreatureKind.BOAT
+      ),
+      waypoints: [...deathBagWaypoints, ...this.waypoints],
+      deathBags: this.deathBags,
       isPaused: this.isPaused,
+      canPause: !this.hasConnectedNetworkPlayers(),
       isGameOver: this.isGameOver,
       lastSaveStatus: this.lastSaveStatus,
       buildDemolishMode: this.buildDemolishMode,

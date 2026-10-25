@@ -179,42 +179,72 @@ export const OnlineInviteModal: React.FC<OnlineInviteModalProps> = ({
                         : 'HTTP + P2P TEMPO REAL'}
                     </span>
                   )}
+                  {session.isOnline && (
+                    <span
+                      className={`ml-1.5 px-1.5 py-0.5 rounded border text-[9px] font-bold ${
+                        session.syncStatus === 'RESYNCING'
+                          ? 'bg-amber-950/90 border-amber-500/50 text-amber-300 animate-pulse'
+                          : 'bg-sky-950/80 border-sky-500/40 text-sky-300'
+                      }`}
+                    >
+                      {session.syncStatus === 'RESYNCING'
+                        ? '🔄 RESSINCRONIZANDO...'
+                        : '✓ SINCRONIA ATIVA'}
+                    </span>
+                  )}
                 </div>
               </div>
             </div>
 
-            {session.role !== 'GUEST' && (
-              <button
-                onClick={() => {
-                  setShowDiagnostics(true);
-                  onToggleOnline();
-                }}
-                disabled={isActivating}
-                className={`flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-extrabold uppercase tracking-wider border transition cursor-pointer ${
-                  isActivating
-                    ? 'bg-amber-900/40 border-amber-600/50 text-amber-200 opacity-75 cursor-wait'
-                    : session.isOnline
-                    ? 'bg-rose-950/70 hover:bg-rose-900/80 border-rose-500/50 text-rose-200'
-                    : 'bg-emerald-700 hover:bg-emerald-600 border-emerald-400/60 text-white shadow-lg shadow-emerald-950/50'
-                }`}
-              >
-                {isActivating ? (
-                  <>
-                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                    Ativando...
-                  </>
-                ) : (
-                  <>
-                    <Power className="w-3.5 h-3.5" />
-                    {session.isOnline
-                      ? 'Desativar Online'
-                      : hasError
-                      ? 'Tentar Novamente'
-                      : 'Abrir Mundo Online'}
-                  </>
-                )}
-              </button>
-            )}
+            <div className="flex items-center gap-1.5">
+              {session.isOnline && (
+                <button
+                  onClick={() => engine.forceMultiplayerResync()}
+                  className="flex items-center gap-1 px-2.5 py-2 rounded-xl text-[11px] font-extrabold uppercase tracking-wider bg-sky-950/80 hover:bg-sky-900/90 border border-sky-500/50 text-sky-200 transition cursor-pointer"
+                  title="Forçar ressincronização imediata do mundo e jogadores"
+                >
+                  <RefreshCw
+                    className={`w-3.5 h-3.5 ${
+                      session.syncStatus === 'RESYNCING' ? 'animate-spin' : ''
+                    }`}
+                  />
+                  <span>Ressincronizar</span>
+                </button>
+              )}
+
+              {session.role !== 'GUEST' && (
+                <button
+                  onClick={() => {
+                    setShowDiagnostics(true);
+                    onToggleOnline();
+                  }}
+                  disabled={isActivating}
+                  className={`flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-extrabold uppercase tracking-wider border transition cursor-pointer ${
+                    isActivating
+                      ? 'bg-amber-900/40 border-amber-600/50 text-amber-200 opacity-75 cursor-wait'
+                      : session.isOnline
+                      ? 'bg-rose-950/70 hover:bg-rose-900/80 border-rose-500/50 text-rose-200'
+                      : 'bg-emerald-700 hover:bg-emerald-600 border-emerald-400/60 text-white shadow-lg shadow-emerald-950/50'
+                  }`}
+                >
+                  {isActivating ? (
+                    <>
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                      Ativando...
+                    </>
+                  ) : (
+                    <>
+                      <Power className="w-3.5 h-3.5" />
+                      {session.isOnline
+                        ? 'Desativar Online'
+                        : hasError
+                        ? 'Tentar Novamente'
+                        : 'Abrir Mundo Online'}
+                    </>
+                  )}
+                </button>
+              )}
+            </div>
           </div>
 
           {/* Fast Activation Loading & Verification Checklist */}

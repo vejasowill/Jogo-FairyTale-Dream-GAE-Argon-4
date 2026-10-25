@@ -205,20 +205,44 @@ export const CharacterPetsModal: React.FC<CharacterPetsModalProps> = ({
     },
   ];
 
-  const petBonusDescription = (kind: CreatureEntity['kind']) => {
-    switch (kind) {
+  const petBonusDescription = (pet: CreatureEntity) => {
+    switch (pet.kind) {
       case 'SHEEP':
         return 'Produz Lã Macia e regenera sua vida ao redor.';
       case 'BOAR':
         return 'Ataca Zumbis e Ogros próximos para defender você!';
+      case 'HORSE':
+        return pet.hasSaddle
+          ? `Selado · Vel. Individual ${pet.mountSpeed || 148} · Fôlego ${
+              pet.mountMaxStamina || 100
+            } · Alforje 8 Slots`
+          : `Sem Sela (Vel. ${pet.mountSpeed || 148}) — Equipe uma Sela para montar e ter 8 Slots!`;
       case 'CAMEL':
-        return 'Concede +18% Velocidade e regeneração de Energia.';
+        return pet.hasSaddle
+          ? `Selado · Vel. Individual ${pet.mountSpeed || 142} · Fôlego Maior ${
+              pet.mountMaxStamina || 165
+            } · Alforje 8 Slots`
+          : `Sem Sela (Vel. ${pet.mountSpeed || 142}, Fôlego Maior) — Equipe uma Sela para montar e ter 8 Slots!`;
       default:
         return 'Companheiro fiel.';
     }
   };
 
   const tamingGuide = [
+    {
+      kind: CreatureKind.HORSE,
+      name: 'Cavalo da Planície',
+      foodId: 'apple',
+      biome: 'Planície',
+      perk: 'Montável com Sela · 8 Slots · Botão Cavalgar',
+    },
+    {
+      kind: CreatureKind.CAMEL,
+      name: 'Camelo do Deserto (Muito Raro)',
+      foodId: 'cactus_fruit',
+      biome: 'Deserto',
+      perk: 'Montável com Sela · 8 Slots · Fôlego Maior (165)',
+    },
     {
       kind: CreatureKind.SHEEP,
       name: 'Ovelha da Planície',
@@ -232,13 +256,6 @@ export const CharacterPetsModal: React.FC<CharacterPetsModalProps> = ({
       foodId: 'apple',
       biome: 'Planície',
       perk: 'Guardião (14 Dano)',
-    },
-    {
-      kind: CreatureKind.CAMEL,
-      name: 'Camelo do Deserto',
-      foodId: 'cactus_fruit',
-      biome: 'Deserto',
-      perk: '+18% Velocidade & Energia',
     },
   ];
 
@@ -795,39 +812,89 @@ export const CharacterPetsModal: React.FC<CharacterPetsModalProps> = ({
                   </p>
                 </div>
               ) : (
-                <div className="space-y-1.5 max-h-[210px] overflow-y-auto pr-0.5">
-                  {tamedAnimals.map((pet) => (
-                    <div
-                      key={pet.id}
-                      className="mc-slot p-2 flex items-center justify-between gap-2"
-                    >
-                      <div className="space-y-0.5 min-w-0">
-                        <div className="flex items-center gap-1.5">
-                          <span className="text-rose-400 text-xs">♥</span>
-                          <span className="font-pixel text-[11px] font-bold text-white truncate">
-                            {pet.name}
-                          </span>
-                          <span className="text-[10px] font-mono-tabular text-emerald-400">
-                            {Math.round(pet.hp)}/{pet.maxHp}
-                          </span>
-                        </div>
-                        <p className="text-[10px] text-[#c4ab7d] truncate">
-                          {petBonusDescription(pet.kind)}
-                        </p>
-                      </div>
+                <div className="space-y-1.5 max-h-[240px] overflow-y-auto pr-0.5">
+                  {tamedAnimals.map((pet) => {
+                    const isMountableSpecies =
+                      pet.kind === CreatureKind.HORSE ||
+                      pet.kind === CreatureKind.CAMEL;
+                    const hasSaddleInBag = player.inventory.some(
+                      (s) => s !== null && s.itemId === 'saddle' && s.count > 0
+                    );
+                    const isCurrentlyMounted = player.mountedEntityId === pet.id;
 
-                      <button
-                        onClick={() => engine.toggleTamedAnimalState(pet.id)}
-                        className={`min-h-[34px] px-2.5 py-1 text-[10px] font-bold whitespace-nowrap shrink-0 ${
-                          pet.aiState === 'follow'
-                            ? 'medieval-btn-emerald'
-                            : 'medieval-btn-gold'
-                        }`}
+                    return (
+                      <div
+                        key={pet.id}
+                        className="mc-slot p-2 flex flex-col gap-1.5"
                       >
-                        {pet.aiState === 'follow' ? 'Seguindo' : 'Na Base'}
-                      </button>
-                    </div>
-                  ))}
+                        <div className="flex items-center justify-between gap-2">
+                          <div className="space-y-0.5 min-w-0">
+                            <div className="flex items-center gap-1.5">
+                              <span className="text-rose-400 text-xs">♥</span>
+                              <span className="font-pixel text-[11px] font-bold text-white truncate">
+                                {pet.name}
+                              </span>
+                              <span className="text-[10px] font-mono-tabular text-emerald-400">
+                                {Math.round(pet.hp)}/{pet.maxHp}
+                              </span>
+                              {pet.hasSaddle && (
+                                <span className="px-1 py-0.2 rounded bg-amber-950/90 border border-amber-500/60 text-[8px] font-bold text-amber-300">
+                                  Selado (8 Slots)
+                                </span>
+                              )}
+                            </div>
+                            <p className="text-[10px] text-[#c4ab7d] truncate">
+                              {petBonusDescription(pet)}
+                            </p>
+                          </div>
+
+                          <div className="flex items-center gap-1 shrink-0">
+                            {isMountableSpecies && !pet.hasSaddle && (
+                              <button
+                                disabled={!hasSaddleInBag}
+                                onClick={() => engine.equipSaddleOnCreature(pet.id)}
+                                className={`min-h-[32px] px-2 py-1 text-[9px] font-bold ${
+                                  hasSaddleInBag
+                                    ? 'medieval-btn-gold'
+                                    : 'medieval-btn-wood opacity-45 cursor-not-allowed'
+                                }`}
+                                title="Requer 1x Sela de Montaria na mochila"
+                              >
+                                Equipar Sela
+                              </button>
+                            )}
+
+                            {isMountableSpecies && pet.hasSaddle && (
+                              <button
+                                onClick={() => {
+                                  if (isCurrentlyMounted) {
+                                    engine.dismountCreature();
+                                  } else {
+                                    engine.mountCreature(pet.id);
+                                    onClose();
+                                  }
+                                }}
+                                className="min-h-[32px] px-2.5 py-1 text-[9px] font-bold medieval-btn-gold"
+                              >
+                                {isCurrentlyMounted ? 'Desmontar' : 'Montar'}
+                              </button>
+                            )}
+
+                            <button
+                              onClick={() => engine.toggleTamedAnimalState(pet.id)}
+                              className={`min-h-[32px] px-2.5 py-1 text-[10px] font-bold whitespace-nowrap ${
+                                pet.aiState === 'follow'
+                                  ? 'medieval-btn-emerald'
+                                  : 'medieval-btn-wood'
+                              }`}
+                            >
+                              {pet.aiState === 'follow' ? 'Seguindo' : 'Na Base'}
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
                 </div>
               )}
             </div>
