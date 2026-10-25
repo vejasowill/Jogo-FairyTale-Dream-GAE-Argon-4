@@ -66,6 +66,17 @@ export const ITEMS: Record<string, ItemDefinition> = {
     rarity: RarityTier.BASIC,
     maxStack: 99,
   },
+  charcoal: {
+    id: 'charcoal',
+    name: 'Carvão Vegetal',
+    description:
+      'Combustível de alta pureza térmica obtido ao queimar Madeira Rústica ou Madeira Nobre na Fogueira ou Fornalha. Possui 5x mais eficiência energética que a madeira comum como lenha!',
+    purposeSummary:
+      'Combustível Nobre (60s de queima no Slot de Lenha — 5x mais eficiente que Madeira!), além de criar Tochas em lote e Bombas Solares.',
+    category: ItemCategory.RESOURCE,
+    rarity: RarityTier.BASIC,
+    maxStack: 99,
+  },
 
   // === CONSUMABLES / TAMING FOODS & POTIONS ===
   berry: {
@@ -1114,9 +1125,9 @@ export const ITEMS: Record<string, ItemDefinition> = {
     id: 'campfire',
     name: 'Fogueira de Acampamento',
     description:
-      'Lareira circular de pedra sem bloqueio físico. Ilumina a noite (190px), regenera vida/energia passivamente ao redor e permite aquecer-se ao interagir.',
+      'Estação culinária e de descanso. Interaja para abrir a Grelha da Fogueira: adicione lenha (Madeira ou Carvão Vegetal) para assar alimentos, pães, ensopados, rações, elixires e Carvão Vegetal com tempo de preparo, além de aquecer-se e salvar seu Ponto de Renascimento.',
     purposeSummary:
-      'Lareira Interativa (Sem Hitbox · Luz 190px): Cura passivamente ao redor e restaura +18 HP + Energia Cheia ao interagir.',
+      'Estação Culinária & Descanso (Sem Hitbox · Luz 190px): Prepara comidas/ingredientes no fogo com Slot de Lenha e salva seu Ponto de Renascimento.',
     category: ItemCategory.PLACEABLE,
     rarity: RarityTier.BASIC,
     maxStack: 20,
@@ -1126,9 +1137,9 @@ export const ITEMS: Record<string, ItemDefinition> = {
     id: 'furnace',
     name: 'Fornalha de Fundição',
     description:
-      'Forja de alvenaria com chaminé térmica e alinhamento rotacionável (H/V). Interaja para fundir Ferro, forjar muralhas, portões, vitrais, armas raras e o Altar Solar.',
+      'Alto-forno metalúrgico de pedra e sílex. Interaja para abastecer o Slot de Lenha (Madeira ou Carvão Vegetal de alta eficiência) e fundir Minério de Ferro, queimar madeira em Carvão Vegetal e forjar tijolos e equipamentos pesados com tempo de preparo.',
     purposeSummary:
-      'Estação Nv.2 (Hitbox Compacta 10px · Luz 150px): Funde Minério de Ferro e desbloqueia arquitetura pesada e armas raras.',
+      'Estação de Fundição Nv.2 (Hitbox Compacta 10px · Luz 150px): Funde Minério de Ferro, produz Carvão Vegetal e forja metais usando lenha.',
     category: ItemCategory.PLACEABLE,
     rarity: RarityTier.RARE,
     maxStack: 10,
@@ -2251,6 +2262,7 @@ export const ITEM_BASE_PRICES: Record<string, number> = {
   berry_seeds: 3,
   carrot_seeds: 3,
   bone_fertilizer: 3,
+  charcoal: 4,
   flint: 4,
   cactus_fruit: 4,
   coconut: 5,
@@ -3146,6 +3158,65 @@ export function evaluateMaterialBreak(
     materialLabel,
   };
 }
+
+// ============================================================================
+// SISTEMA DE COMBUSTÍVEL / SLOT DE LENHA (FOGUEIRA & FORNALHA — ESTILO MINECRAFT)
+// ============================================================================
+
+export interface FuelDefinition {
+  itemId: string;
+  name: string;
+  burnTimeSec: number;
+  efficiencyLabel: string;
+  smeltCapacityHint: string;
+}
+
+/**
+ * Poucos itens básicos selecionados que podem ser usados como Lenha (Combustível)
+ * no Slot de Lenha da Fogueira e da Fornalha.
+ * O Carvão Vegetal possui muito mais eficiência (60s = 5x a Madeira Rústica).
+ */
+export const FUEL_ITEMS: Record<string, FuelDefinition> = {
+  fiber: {
+    itemId: 'fiber',
+    name: 'Fibra Vegetal',
+    burnTimeSec: 4,
+    efficiencyLabel: 'Graveto Rápido (4s)',
+    smeltCapacityHint: '0.5x preparo (Fogo curto)',
+  },
+  wood: {
+    itemId: 'wood',
+    name: 'Madeira Rústica',
+    burnTimeSec: 12,
+    efficiencyLabel: 'Lenha Básica (12s)',
+    smeltCapacityHint: '1.5x preparos por tora',
+  },
+  hardwood: {
+    itemId: 'hardwood',
+    name: 'Madeira Nobre',
+    burnTimeSec: 24,
+    efficiencyLabel: 'Lenha Densa (24s)',
+    smeltCapacityHint: '3x preparos por tora',
+  },
+  charcoal: {
+    itemId: 'charcoal',
+    name: 'Carvão Vegetal',
+    burnTimeSec: 60,
+    efficiencyLabel: 'Alta Eficiência (60s · 5x Madeira!)',
+    smeltCapacityHint: 'Até 10–12 preparos por unidade!',
+  },
+};
+
+export const FUEL_ITEM_ORDER: string[] = ['charcoal', 'hardwood', 'wood', 'fiber'];
+
+export function isFuelItem(itemId: string): boolean {
+  return Boolean(FUEL_ITEMS[itemId]);
+}
+
+export function getFuelBurnTimeSec(itemId: string): number {
+  return FUEL_ITEMS[itemId]?.burnTimeSec || 0;
+}
+
 
 
 

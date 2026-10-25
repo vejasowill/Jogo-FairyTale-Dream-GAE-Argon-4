@@ -754,6 +754,30 @@ class SpriteAtlasManager {
       { d: '#1e293b', f: '#f8fafc', l: '#cbd5e1', m: '#64748b' }
     );
 
+    // Charcoal (Carvão Vegetal — dark carbon chunks with warm glowing ember cracks)
+    registerItem(
+      'charcoal',
+      [
+        '................',
+        '.....dddddd.....',
+        '...ddccccccdd...',
+        '..dccccyrrcccd..',
+        '.dccssccrcccccd.',
+        '.dccsccccccssdd.',
+        '..ddccryycccdd..',
+        '...dddddddddd...',
+        '................',
+        '................',
+        '................',
+        '................',
+        '................',
+        '................',
+        '................',
+        '................',
+      ],
+      { d: '#09090b', c: '#27272a', s: '#52525b', r: '#ea580c', y: '#facc15' }
+    );
+
     // Solar Crystal
     registerItem(
       'solar_crystal',

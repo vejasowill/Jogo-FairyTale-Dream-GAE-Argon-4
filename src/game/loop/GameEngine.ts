@@ -2,9 +2,13 @@ import {
   CONSTRUCTION_BLUEPRINTS,
   evaluateMaterialBreak,
   evaluateStallPriceDeal,
+  FUEL_ITEM_ORDER,
+  FUEL_ITEMS,
+  getFuelBurnTimeSec,
   getItemBasePrice,
   getNatureBreakRequirement,
   getStructureBreakRequirement,
+  isFuelItem,
   ITEMS,
   NATURE_BLUEPRINTS,
 } from '../core/ItemRegistry';
@@ -126,6 +130,8 @@ export class GameEngine {
   private totemZapTimer = 0;
   private spikeTrapTimer = 0;
   private campfireRestCooldown = 0;
+  public activeStationStructureId: string | null = null;
+  private fallbackThermalStations: Record<string, PlacedStructure> = {};
   private customTargetTile: { tx: number; ty: number } | null = null;
   private onUiChange: ((snapshot: HudSnapshot) => void) | null = null;
   private onStationInteract: ((station: PlaceableType) => void) | null = null;
@@ -345,9 +351,20 @@ export class GameEngine {
 
     if (!this.isPaused && !this.isGameOver) {
       this.update(dt);
-    } else if (this.isPaused && this.multiplayer.isOnline) {
-      // Keep network heartbeats alive if needed
-      this.updateMultiplayerSync(dt);
+    } else if (this.isPaused && !this.isGameOver) {
+      // Keep Campfire & Furnace thermal stations smelting/cooking in real time while the player watches the station HUD!
+      if (this.campfireRestCooldown > 0) {
+        this.campfireRestCooldown = Math.max(0, this.campfireRestCooldown - dt);
+      }
+      this.updateThermalStations(dt);
+      this.uiUpdateTimer += dt;
+      if (this.uiUpdateTimer >= 0.12) {
+        this.uiUpdateTimer = 0;
+        this.emitUiSnapshot();
+      }
+      if (this.multiplayer.isOnline) {
+        this.updateMultiplayerSync(dt);
+      }
     }
     this.render();
 
@@ -2941,6 +2958,8 @@ export class GameEngine {
   private updateWorldObjects(dt: number): void {
     // Advance moisture evaporation and crop growth stages in loaded chunks
     this.world.updateAgriculture(dt, false);
+    // Advance active Campfire & Furnace smelting/cooking queues
+    this.updateThermalStations(dt);
 
     const pTile = this.world.worldToTile(this.player.x, this.player.y);
     const pChunk = this.world.tileToChunk(pTile.tx, pTile.ty);
@@ -3501,6 +3520,11 @@ export class GameEngine {
                   sy - 20,
                   '#fde047'
                 );
+              } else if (
+                st.type === PlaceableType.CAMPFIRE ||
+                st.type === PlaceableType.FURNACE
+              ) {
+                this.dropThermalStationContents(st, sx, sy, false);
               }
               this.spawnDrop(st.itemId, 1, sx, sy);
               chunk.structures.splice(si, 1);
@@ -3766,6 +3790,11 @@ export class GameEngine {
         target.stationType === PlaceableType.FURNACE ||
         target.stationType === PlaceableType.SOLAR_ALTAR
       ) {
+        const { tx, ty } = this.world.worldToTile(target.worldX, target.worldY);
+        const stAtTile = this.world.getStructureAtTile(tx, ty);
+        if (stAtTile) {
+          this.activeStationStructureId = stAtTile.id;
+        }
         soundManager.playPickup();
         this.renderer.spawnRipple(
           target.worldX,
@@ -3799,67 +3828,29 @@ export class GameEngine {
       }
 
       if (target.stationType === PlaceableType.CAMPFIRE) {
+        const { tx, ty } = this.world.worldToTile(target.worldX, target.worldY);
+        const stAtTile = this.world.getStructureAtTile(tx, ty);
+        if (stAtTile) {
+          this.activeStationStructureId = stAtTile.id;
+        }
         this.setPlayerRespawnPoint(
           target.worldX,
           target.worldY,
           'Fogueira de Acampamento'
         );
-        const heldSlot = this.player.inventory[this.player.selectedHotbarIndex];
-        if (
-          heldSlot &&
-          (heldSlot.itemId === 'fish_tilapia' || heldSlot.itemId === 'fish_salmon')
-        ) {
-          const rawName = ITEMS[heldSlot.itemId]?.name || 'Peixe';
-          const cookedYield = heldSlot.itemId === 'fish_salmon' ? 2 : 1;
-          heldSlot.count -= 1;
-          if (heldSlot.count <= 0) {
-            this.player.inventory[this.player.selectedHotbarIndex] = null;
-          }
-          if (!this.addItemToInventory('cooked_fish', cookedYield)) {
-            this.spawnDrop(
-              'cooked_fish',
-              cookedYield,
-              this.player.x,
-              this.player.y,
-              0.3
-            );
-          }
-          soundManager.playCraft();
-          this.renderer.spawnBurst(target.worldX, target.worldY - 4, 'SPARK', 10);
-          this.addFloatingText(
-            `Assou ${rawName} (+${cookedYield}x Peixe Assado) · Ponto de Renascimento salvo!`,
-            target.worldX,
-            target.worldY - 20,
-            '#fde047'
-          );
-          this.emitUiSnapshot();
-          return;
-        }
-
         if (this.campfireRestCooldown <= 0) {
           this.campfireRestCooldown = 8;
           this.player.hp = Math.min(this.player.maxHp, this.player.hp + 18);
           this.player.stamina = this.player.maxStamina;
-          soundManager.playTameSuccess();
-          this.renderer.spawnBurst(target.worldX, target.worldY - 4, 'SPARK', 12);
-          this.renderer.spawnBurst(this.player.x, this.player.y, 'HEAL', 10);
-          this.renderer.spawnRipple(this.player.x, this.player.y, '#fde047', 26, 0.5);
-          this.addFloatingText(
-            'Aquecido na Fogueira (+18 HP / Energia Cheia) · Ponto de Renascimento salvo!',
-            this.player.x,
-            this.player.y - 22,
-            '#fde047'
-          );
-          this.emitUiSnapshot();
-        } else {
-          this.addFloatingText(
-            `⛺ Ponto de Renascimento definido na Fogueira (aguarde ${Math.ceil(this.campfireRestCooldown)}s para curar)`,
-            target.worldX,
-            target.worldY - 18,
-            '#fb923c'
-          );
-          this.emitUiSnapshot();
+          this.renderer.spawnBurst(target.worldX, target.worldY - 4, 'SPARK', 10);
+          this.renderer.spawnBurst(this.player.x, this.player.y, 'HEAL', 8);
         }
+        soundManager.playPickup();
+        this.renderer.spawnRipple(target.worldX, target.worldY, '#fb923c', 24, 0.45);
+        if (this.onStationInteract) {
+          this.onStationInteract(PlaceableType.CAMPFIRE);
+        }
+        this.emitUiSnapshot();
         return;
       }
 
@@ -4916,16 +4907,24 @@ export class GameEngine {
           : st.type === PlaceableType.VILLAGE_HOUSE
           ? `Descansar na Casa · Moradores: ${houseResidents}/${MAX_VILLAGERS_PER_HOUSE} 🏠`
           : st.type === PlaceableType.CAMPFIRE
-          ? 'Aquecer & Descansar'
+          ? st.outputCount && st.outputCount > 0
+            ? `Pronto na Fogueira: ${st.outputCount}x ${ITEMS[st.outputItemId || '']?.name || 'Item'}! 🔥`
+            : st.cookingInputCount && st.cookingInputCount > 0
+            ? 'Cozinhando na Fogueira... 🔥'
+            : 'Abrir Fogueira (Comidas, Ingredientes & Descanso) 🔥'
           : st.type === PlaceableType.EXPLORER_TENT
           ? `Dormir / Descansar · Moradores: ${houseResidents}/${MAX_VILLAGERS_PER_HOUSE} 🏠`
           : st.type === PlaceableType.HEALING_FOUNTAIN
           ? 'Bênção de Cura'
           : st.type === PlaceableType.WORKBENCH
-          ? 'Abrir Bancada'
+          ? 'Abrir Bancada de Trabalho 🔨'
           : st.type === PlaceableType.FURNACE
-          ? 'Abrir Fornalha'
-          : 'Abrir Altar Solar';
+          ? st.outputCount && st.outputCount > 0
+            ? `Pronto na Fornalha: ${st.outputCount}x ${ITEMS[st.outputItemId || '']?.name || 'Item'}! 🔥`
+            : st.cookingInputCount && st.cookingInputCount > 0
+            ? 'Fundindo na Fornalha... 🔥'
+            : 'Abrir Fornalha de Fundição 🔥'
+          : 'Abrir Altar Solar ✦';
       return {
         kind: 'station',
         label: st.customName || st.landmarkName || itemDef?.name || 'Estação',
@@ -6699,6 +6698,16 @@ export class GameEngine {
         ty * TILE_SIZE + 16,
         true
       );
+    } else if (
+      st.type === PlaceableType.CAMPFIRE ||
+      st.type === PlaceableType.FURNACE
+    ) {
+      this.dropThermalStationContents(
+        st,
+        tx * TILE_SIZE + 16,
+        ty * TILE_SIZE + 16,
+        true
+      );
     }
 
     chunk.structures.splice(targetIdx, 1);
@@ -8066,7 +8075,7 @@ export class GameEngine {
     recipe: CraftingRecipe,
     activeStation: PlaceableType | null
   ): boolean {
-    if (recipe.requiredStation !== null && recipe.requiredStation !== activeStation) {
+    if (recipe.requiredStation !== activeStation) {
       return false;
     }
     return this.getMaxCraftableCount(recipe) >= 1;
@@ -8080,6 +8089,15 @@ export class GameEngine {
     const recipe = RECIPES.find((r) => r.id === recipeId);
     if (!recipe) return false;
     if (!this.canCraftRecipe(recipe, activeStation)) return false;
+
+    // If this recipe belongs to a Thermal Station (CAMPFIRE or FURNACE) with preparation time, queue it in the station!
+    if (
+      (activeStation === PlaceableType.CAMPFIRE ||
+        activeStation === PlaceableType.FURNACE) &&
+      (recipe.craftTimeSec || 0) > 0
+    ) {
+      return this.queueThermalStationRecipe(activeStation, recipeId, times);
+    }
 
     const maxPossible = this.getMaxCraftableCount(recipe);
     const actualTimes = Math.min(times, maxPossible);
@@ -8111,6 +8129,477 @@ export class GameEngine {
     );
     this.emitUiSnapshot();
     return true;
+  }
+
+  // === THERMAL STATIONS (CAMPFIRE & FURNACE — FUEL + TIMED PREPARATION) ===
+
+  private ensureThermalStationInitialized(st: PlacedStructure): PlacedStructure {
+    if (st.fuelItemId === undefined) st.fuelItemId = null;
+    if (st.fuelCount === undefined) st.fuelCount = 0;
+    if (st.fuelBurnRemaining === undefined) st.fuelBurnRemaining = 0;
+    if (st.fuelBurnMax === undefined) st.fuelBurnMax = 12;
+    if (st.cookingRecipeId === undefined) st.cookingRecipeId = null;
+    if (st.cookingInputCount === undefined) st.cookingInputCount = 0;
+    if (st.cookingProgress === undefined) st.cookingProgress = 0;
+    if (st.cookingDuration === undefined) st.cookingDuration = 6;
+    if (st.outputItemId === undefined) st.outputItemId = null;
+    if (st.outputCount === undefined) st.outputCount = 0;
+    return st;
+  }
+
+  public getActiveThermalStation(
+    stationType: PlaceableType.CAMPFIRE | PlaceableType.FURNACE
+  ): PlacedStructure {
+    // 1. Check explicitly interacted structure ID first
+    if (this.activeStationStructureId) {
+      for (const chunk of Object.values(this.world.chunks)) {
+        if (!chunk || !Array.isArray(chunk.structures)) continue;
+        const found = chunk.structures.find(
+          (s) => s.id === this.activeStationStructureId && s.type === stationType
+        );
+        if (found) {
+          return this.ensureThermalStationInitialized(found);
+        }
+      }
+    }
+
+    // 2. Otherwise find the nearest placed structure of this stationType within reach
+    const pTile = this.world.worldToTile(this.player.x, this.player.y);
+    const pChunk = this.world.tileToChunk(pTile.tx, pTile.ty);
+    let best: PlacedStructure | null = null;
+    let bestDist = Infinity;
+
+    for (let dy = -1; dy <= 1; dy++) {
+      for (let dx = -1; dx <= 1; dx++) {
+        const chunk =
+          this.world.chunks[
+            WorldManager.chunkKey(pChunk.cx + dx, pChunk.cy + dy)
+          ];
+        if (!chunk) continue;
+        for (const st of chunk.structures) {
+          if (st.type === stationType) {
+            const sx = st.tileX * TILE_SIZE + TILE_SIZE / 2;
+            const sy = st.tileY * TILE_SIZE + TILE_SIZE / 2;
+            const d = Math.hypot(sx - this.player.x, sy - this.player.y);
+            if (d < bestDist) {
+              bestDist = d;
+              best = st;
+            }
+          }
+        }
+      }
+    }
+
+    if (best) {
+      this.activeStationStructureId = best.id;
+      return this.ensureThermalStationInitialized(best);
+    }
+
+    // 3. Fallback in-memory station state if none found in loaded chunks
+    if (!this.fallbackThermalStations[stationType]) {
+      this.fallbackThermalStations[stationType] = {
+        id: `fallback_${stationType}`,
+        type: stationType,
+        itemId: stationType === PlaceableType.CAMPFIRE ? 'campfire' : 'furnace',
+        tileX: pTile.tx,
+        tileY: pTile.ty,
+        hp: 100,
+        maxHp: 100,
+        solid: false,
+        hitFlashTimer: 0,
+      };
+    }
+    return this.ensureThermalStationInitialized(
+      this.fallbackThermalStations[stationType]
+    );
+  }
+
+  public addFuelToThermalStation(
+    stationType: PlaceableType.CAMPFIRE | PlaceableType.FURNACE,
+    fuelItemId: string,
+    amount = 1
+  ): boolean {
+    if (!isFuelItem(fuelItemId)) return false;
+    const have = this.getItemCount(fuelItemId);
+    if (have <= 0) return false;
+
+    const st = this.getActiveThermalStation(stationType);
+    // If another fuel type is currently sitting in the fuel slot, return it to the player first
+    if (st.fuelItemId && st.fuelItemId !== fuelItemId && (st.fuelCount || 0) > 0) {
+      if (!this.addItemToInventory(st.fuelItemId, st.fuelCount!)) {
+        this.spawnDrop(st.fuelItemId, st.fuelCount!, this.player.x, this.player.y);
+      }
+      st.fuelItemId = null;
+      st.fuelCount = 0;
+    }
+
+    const currentCount = st.fuelCount || 0;
+    const maxStack = ITEMS[fuelItemId]?.maxStack || 99;
+    const space = Math.max(0, maxStack - currentCount);
+    const toAdd = Math.min(amount, have, space);
+    if (toAdd <= 0) return false;
+
+    this.removeItemFromInventory(fuelItemId, toAdd);
+    st.fuelItemId = fuelItemId;
+    st.fuelCount = currentCount + toAdd;
+    soundManager.playPickup();
+    this.syncChunkAtTile(st.tileX, st.tileY);
+    this.emitUiSnapshot();
+    return true;
+  }
+
+  public removeFuelFromThermalStation(
+    stationType: PlaceableType.CAMPFIRE | PlaceableType.FURNACE
+  ): boolean {
+    const st = this.getActiveThermalStation(stationType);
+    if (!st.fuelItemId || !st.fuelCount || st.fuelCount <= 0) return false;
+
+    const itemId = st.fuelItemId;
+    const count = st.fuelCount;
+    st.fuelItemId = null;
+    st.fuelCount = 0;
+
+    if (!this.addItemToInventory(itemId, count)) {
+      this.spawnDrop(itemId, count, this.player.x, this.player.y);
+    }
+    soundManager.playPickup();
+    this.syncChunkAtTile(st.tileX, st.tileY);
+    this.emitUiSnapshot();
+    return true;
+  }
+
+  public queueThermalStationRecipe(
+    stationType: PlaceableType.CAMPFIRE | PlaceableType.FURNACE,
+    recipeId: string,
+    batches = 1
+  ): boolean {
+    const recipe = RECIPES.find((r) => r.id === recipeId);
+    if (!recipe || recipe.requiredStation !== stationType) return false;
+
+    const maxPossible = this.getMaxCraftableCount(recipe);
+    const toQueue = Math.min(batches, maxPossible);
+    if (toQueue <= 0) return false;
+
+    const st = this.getActiveThermalStation(stationType);
+
+    // If the output slot holds a DIFFERENT finished item, auto-collect it to the player first
+    if (
+      st.outputItemId &&
+      st.outputItemId !== recipe.resultItemId &&
+      (st.outputCount || 0) > 0
+    ) {
+      this.collectThermalStationOutput(stationType);
+    }
+
+    // If a different recipe was previously queued in the input slot, refund its remaining batches first
+    if (
+      st.cookingRecipeId &&
+      st.cookingRecipeId !== recipe.id &&
+      (st.cookingInputCount || 0) > 0
+    ) {
+      this.cancelThermalStationQueue(stationType);
+    }
+
+    for (const ing of recipe.ingredients) {
+      this.removeItemFromInventory(ing.itemId, ing.count * toQueue);
+    }
+
+    st.cookingRecipeId = recipe.id;
+    st.cookingInputCount = (st.cookingInputCount || 0) + toQueue;
+    st.cookingDuration = Math.max(1, recipe.craftTimeSec || 6);
+    if ((st.cookingInputCount || 0) === toQueue) {
+      st.cookingProgress = 0;
+    }
+
+    // Auto-insert 1 fuel unit from inventory if the station has no fuel and isn't currently burning
+    if (
+      (st.fuelBurnRemaining || 0) <= 0 &&
+      (!st.fuelItemId || (st.fuelCount || 0) <= 0)
+    ) {
+      for (const fuelId of FUEL_ITEM_ORDER) {
+        if (this.getItemCount(fuelId) > 0) {
+          this.addFuelToThermalStation(stationType, fuelId, 1);
+          break;
+        }
+      }
+    }
+
+    soundManager.playPickup();
+    this.syncChunkAtTile(st.tileX, st.tileY);
+    this.emitUiSnapshot();
+    return true;
+  }
+
+  public cancelThermalStationQueue(
+    stationType: PlaceableType.CAMPFIRE | PlaceableType.FURNACE
+  ): boolean {
+    const st = this.getActiveThermalStation(stationType);
+    if (
+      !st.cookingRecipeId ||
+      !st.cookingInputCount ||
+      st.cookingInputCount <= 0
+    ) {
+      return false;
+    }
+
+    const recipe = RECIPES.find((r) => r.id === st.cookingRecipeId);
+    const batches = st.cookingInputCount;
+    st.cookingRecipeId = null;
+    st.cookingInputCount = 0;
+    st.cookingProgress = 0;
+
+    if (recipe) {
+      for (const ing of recipe.ingredients) {
+        const refundCount = ing.count * batches;
+        if (!this.addItemToInventory(ing.itemId, refundCount)) {
+          this.spawnDrop(ing.itemId, refundCount, this.player.x, this.player.y);
+        }
+      }
+    }
+
+    soundManager.playPickup();
+    this.syncChunkAtTile(st.tileX, st.tileY);
+    this.emitUiSnapshot();
+    return true;
+  }
+
+  public collectThermalStationOutput(
+    stationType: PlaceableType.CAMPFIRE | PlaceableType.FURNACE
+  ): boolean {
+    const st = this.getActiveThermalStation(stationType);
+    if (!st.outputItemId || !st.outputCount || st.outputCount <= 0) {
+      return false;
+    }
+
+    const itemId = st.outputItemId;
+    const count = st.outputCount;
+    st.outputItemId = null;
+    st.outputCount = 0;
+
+    if (!this.addItemToInventory(itemId, count)) {
+      this.spawnDrop(itemId, count, this.player.x, this.player.y + 10);
+    }
+
+    soundManager.playCraft();
+    const outDef = ITEMS[itemId];
+    this.addFloatingText(
+      `+${count}x ${outDef?.name || itemId}`,
+      this.player.x,
+      this.player.y - 20,
+      '#4ade80'
+    );
+    this.syncChunkAtTile(st.tileX, st.tileY);
+    this.emitUiSnapshot();
+    return true;
+  }
+
+  public restAtCampfireStation(): { ok: boolean; message: string } {
+    const st = this.getActiveThermalStation(PlaceableType.CAMPFIRE);
+    const wx = st.tileX * TILE_SIZE + TILE_SIZE / 2;
+    const wy = st.tileY * TILE_SIZE + TILE_SIZE / 2;
+    this.setPlayerRespawnPoint(wx, wy, 'Fogueira de Acampamento');
+
+    if (this.campfireRestCooldown > 0) {
+      this.emitUiSnapshot();
+      return {
+        ok: true,
+        message: `⛺ Ponto de Renascimento salvo! Aguarde ${Math.ceil(this.campfireRestCooldown)}s para aquecer novamente.`,
+      };
+    }
+
+    this.campfireRestCooldown = 8;
+    this.player.hp = Math.min(this.player.maxHp, this.player.hp + 18);
+    this.player.stamina = this.player.maxStamina;
+    soundManager.playTameSuccess();
+    this.renderer.spawnBurst(wx, wy - 4, 'SPARK', 12);
+    this.renderer.spawnBurst(this.player.x, this.player.y, 'HEAL', 10);
+    this.addFloatingText(
+      'Aquecido na Fogueira (+18 HP / Energia Cheia) · Renascimento salvo!',
+      this.player.x,
+      this.player.y - 22,
+      '#fde047'
+    );
+    this.emitUiSnapshot();
+    return {
+      ok: true,
+      message:
+        '🔥 Você se aqueceu na Fogueira (+18 HP, 100% Energia e Ponto de Renascimento salvo)!',
+    };
+  }
+
+  private dropThermalStationContents(
+    st: PlacedStructure,
+    wx: number,
+    wy: number,
+    tryAddToPlayerFirst = false
+  ): void {
+    const emitOrGive = (itemId: string, count: number) => {
+      if (count <= 0 || !ITEMS[itemId]) return;
+      if (tryAddToPlayerFirst && this.addItemToInventory(itemId, count)) {
+        return;
+      }
+      this.spawnDrop(
+        itemId,
+        count,
+        wx + (Math.random() - 0.5) * 16,
+        wy + (Math.random() - 0.5) * 16
+      );
+    };
+
+    if (st.fuelItemId && (st.fuelCount || 0) > 0) {
+      emitOrGive(st.fuelItemId, st.fuelCount!);
+      st.fuelItemId = null;
+      st.fuelCount = 0;
+    }
+    if (st.cookingRecipeId && (st.cookingInputCount || 0) > 0) {
+      const recipe = RECIPES.find((r) => r.id === st.cookingRecipeId);
+      if (recipe) {
+        for (const ing of recipe.ingredients) {
+          emitOrGive(ing.itemId, ing.count * st.cookingInputCount!);
+        }
+      }
+      st.cookingRecipeId = null;
+      st.cookingInputCount = 0;
+      st.cookingProgress = 0;
+    }
+    if (st.outputItemId && (st.outputCount || 0) > 0) {
+      emitOrGive(st.outputItemId, st.outputCount!);
+      st.outputItemId = null;
+      st.outputCount = 0;
+    }
+  }
+
+  private tickSingleThermalStation(st: PlacedStructure, dt: number): boolean {
+    let changed = false;
+    const hasQueue =
+      Boolean(st.cookingRecipeId) && (st.cookingInputCount || 0) > 0;
+
+    // 1. Decay active fuel burn timer
+    if ((st.fuelBurnRemaining || 0) > 0) {
+      st.fuelBurnRemaining = Math.max(0, (st.fuelBurnRemaining || 0) - dt);
+      changed = true;
+    }
+
+    // 2. If fuel flame ran out and we still have batches queued, consume 1 fuel item from the fuel slot
+    if (
+      (st.fuelBurnRemaining || 0) <= 0 &&
+      hasQueue &&
+      st.fuelItemId &&
+      (st.fuelCount || 0) > 0
+    ) {
+      const burnSec = getFuelBurnTimeSec(st.fuelItemId);
+      if (burnSec > 0) {
+        st.fuelCount = (st.fuelCount || 0) - 1;
+        if (st.fuelCount <= 0) {
+          st.fuelItemId = null;
+          st.fuelCount = 0;
+        }
+        st.fuelBurnRemaining = burnSec;
+        st.fuelBurnMax = burnSec;
+        changed = true;
+      }
+    }
+
+    // 3. Advance cooking / smelting progress if burning and queued
+    if (hasQueue && (st.fuelBurnRemaining || 0) > 0) {
+      const recipe = RECIPES.find((r) => r.id === st.cookingRecipeId);
+      if (!recipe) {
+        st.cookingRecipeId = null;
+        st.cookingInputCount = 0;
+        st.cookingProgress = 0;
+        return true;
+      }
+      const duration = Math.max(1, st.cookingDuration || recipe.craftTimeSec || 6);
+      st.cookingDuration = duration;
+      st.cookingProgress = (st.cookingProgress || 0) + dt;
+      changed = true;
+
+      if (st.cookingProgress >= duration) {
+        st.cookingProgress -= duration;
+        st.cookingInputCount = Math.max(0, (st.cookingInputCount || 0) - 1);
+
+        if (
+          st.outputItemId &&
+          st.outputItemId !== recipe.resultItemId &&
+          (st.outputCount || 0) > 0
+        ) {
+          this.spawnDrop(
+            st.outputItemId,
+            st.outputCount!,
+            st.tileX * TILE_SIZE + 16,
+            st.tileY * TILE_SIZE + 16
+          );
+          st.outputCount = 0;
+        }
+
+        st.outputItemId = recipe.resultItemId;
+        st.outputCount = (st.outputCount || 0) + recipe.resultCount;
+
+        if (st.cookingInputCount <= 0) {
+          st.cookingRecipeId = null;
+          st.cookingInputCount = 0;
+          st.cookingProgress = 0;
+        }
+
+        const sx = st.tileX * TILE_SIZE + TILE_SIZE / 2;
+        const sy = st.tileY * TILE_SIZE + TILE_SIZE / 2;
+        if (Math.hypot(sx - this.player.x, sy - this.player.y) <= 260) {
+          soundManager.playCraft();
+          this.renderer.spawnBurst(sx, sy - 6, 'SPARK', 8);
+          const outName = ITEMS[recipe.resultItemId]?.name || recipe.resultItemId;
+          this.addFloatingText(
+            `🔥 Pronto: +${recipe.resultCount}x ${outName}`,
+            sx,
+            sy - 20,
+            '#fde047'
+          );
+        }
+        this.gainXp(18);
+      }
+    } else if (hasQueue && (st.fuelBurnRemaining || 0) <= 0) {
+      // Without fire, progress cools down gently
+      if ((st.cookingProgress || 0) > 0) {
+        st.cookingProgress = Math.max(0, (st.cookingProgress || 0) - dt * 0.5);
+        changed = true;
+      }
+    }
+
+    return changed;
+  }
+
+  private updateThermalStations(dt: number): void {
+    let anyChanged = false;
+    for (const chunk of Object.values(this.world.chunks)) {
+      if (!chunk || !Array.isArray(chunk.structures)) continue;
+      for (const st of chunk.structures) {
+        if (
+          st.type === PlaceableType.CAMPFIRE ||
+          st.type === PlaceableType.FURNACE
+        ) {
+          if (
+            (st.fuelBurnRemaining || 0) > 0 ||
+            (st.cookingInputCount || 0) > 0
+          ) {
+            if (this.tickSingleThermalStation(st, dt)) {
+              anyChanged = true;
+            }
+          }
+        }
+      }
+    }
+    for (const st of Object.values(this.fallbackThermalStations)) {
+      if (
+        (st.fuelBurnRemaining || 0) > 0 ||
+        (st.cookingInputCount || 0) > 0
+      ) {
+        if (this.tickSingleThermalStation(st, dt)) {
+          anyChanged = true;
+        }
+      }
+    }
+    if (anyChanged && this.isPaused) {
+      this.emitUiSnapshot();
+    }
   }
 
   public addItemToInventory(itemId: string, count: number): boolean {

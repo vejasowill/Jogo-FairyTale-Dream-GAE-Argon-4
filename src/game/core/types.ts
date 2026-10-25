@@ -244,6 +244,17 @@ export interface PlacedStructure {
   pendingCustomerOffer?: MarketPurchaseOffer | null;
   stallSalesCount?: number;
   stallTotalGoldEarned?: number;
+  // Thermal Station Processing (CAMPFIRE & FURNACE — Minecraft-inspired Fuel + Timed Prep)
+  fuelItemId?: string | null;
+  fuelCount?: number;
+  fuelBurnRemaining?: number; // Seconds of active fire remaining from current fuel unit
+  fuelBurnMax?: number; // Total burn seconds of the currently burning fuel unit
+  cookingRecipeId?: string | null;
+  cookingInputCount?: number; // Number of recipe batches queued in the input slot
+  cookingProgress?: number; // Elapsed preparation seconds for current batch
+  cookingDuration?: number; // Required preparation seconds per batch
+  outputItemId?: string | null;
+  outputCount?: number;
 }
 
 export interface ChunkData {
