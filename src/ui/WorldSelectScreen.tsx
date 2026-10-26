@@ -550,7 +550,19 @@ export const WorldSelectScreen: React.FC<WorldSelectScreenProps> = ({
                           : 'Normal'}
                       </span>
                       <span>·</span>
-                      <span>{w.exploredChunksCount || 1} Chunks Explorados</span>
+                      <span className="text-sky-300 font-semibold">
+                        {w.exploredChunksCount || 1} Chunks Preservados
+                      </span>
+                      <span>·</span>
+                      <span
+                        className="px-1.5 py-0.5 rounded bg-amber-950/70 border border-amber-500/35 text-[9px] font-mono text-amber-200"
+                        title="Chunks explorados ficam congelados e intactos; novas atualizações só geram terreno em chunks inexplorados desta seed."
+                      >
+                        {w.createdGameVersion &&
+                        w.createdGameVersion !== (w.gameVersion || GAME_VERSION)
+                          ? `v${w.createdGameVersion} → v${w.gameVersion || GAME_VERSION}`
+                          : `v${w.gameVersion || GAME_VERSION}`}
+                      </span>
                     </div>
                   </div>
 

@@ -26,6 +26,7 @@ import {
   DEFAULT_PLAYER_APPEARANCE,
   spriteAtlas,
 } from '../game/rendering/SpriteAtlas';
+import { WindowHelpButton, WindowHelpModal } from './UiTooltipAndHelp';
 
 interface CharacterPetsModalProps {
   engine: GameEngine;
@@ -44,25 +45,25 @@ const SLOT_META: {
     slot: 'head',
     label: 'Cabeça',
     shortLabel: 'Cabeça',
-    emptyHint: 'Capuz, Elmo ou Diadema',
+    emptyHint: 'Elmo / Capuz',
   },
   {
     slot: 'body',
-    label: 'Parte Superior',
+    label: 'Superior',
     shortLabel: 'Superior',
-    emptyHint: 'Túnica, Couraça ou Peitoral',
+    emptyHint: 'Túnica / Peitoral',
   },
   {
     slot: 'legs',
-    label: 'Parte Inferior',
+    label: 'Inferior',
     shortLabel: 'Inferior',
-    emptyHint: 'Calças, Grevas ou Perneiras',
+    emptyHint: 'Calça / Grevas',
   },
   {
     slot: 'feet',
     label: 'Pés',
     shortLabel: 'Pés',
-    emptyHint: 'Botas de Trilha, Ferro ou Astrais',
+    emptyHint: 'Botas',
   },
 ];
 
@@ -77,9 +78,9 @@ const SKIN_TONES = [
 
 const HAIR_STYLES: { id: HairStyleId; label: string }[] = [
   { id: 'adventurer', label: 'Aventureiro' },
-  { id: 'warrior_crest', label: 'Crista Guerreira' },
-  { id: 'long_mane', label: 'Crina Longa' },
-  { id: 'braided', label: 'Tranças Reais' },
+  { id: 'warrior_crest', label: 'Crista' },
+  { id: 'long_mane', label: 'Longo' },
+  { id: 'braided', label: 'Tranças' },
 ];
 
 const HAIR_COLORS = [
@@ -124,9 +125,14 @@ export const CharacterPetsModal: React.FC<CharacterPetsModalProps> = ({
   tamedAnimals,
   onClose,
 }) => {
-  const [activeTab, setActiveTab] = useState<'custom' | 'stats' | 'pets'>('custom');
+  const [activeTab, setActiveTab] = useState<'custom' | 'stats' | 'pets'>(
+    'custom'
+  );
   const [previewDir, setPreviewDir] = useState<Direction>('down');
-  const [selectedSlotFilter, setSelectedSlotFilter] = useState<EquipmentSlot | 'ALL'>('ALL');
+  const [selectedSlotFilter, setSelectedSlotFilter] = useState<
+    EquipmentSlot | 'ALL'
+  >('ALL');
+  const [showHelp, setShowHelp] = useState(false);
 
   const eq = player.equippedBySlot || {
     head: null,
@@ -153,7 +159,6 @@ export const CharacterPetsModal: React.FC<CharacterPetsModalProps> = ({
     setPreviewDir(order[(idx + 1) % order.length]);
   };
 
-  // Find all equippable armor items currently in the player's 32-slot inventory
   const inventoryArmorItems = player.inventory
     .map((slot, index) => {
       if (!slot) return null;
@@ -178,29 +183,29 @@ export const CharacterPetsModal: React.FC<CharacterPetsModalProps> = ({
     {
       key: 'vitality',
       name: 'Vitalidade',
-      desc: '+18 Vida Máx. por ponto.',
-      bonusText: `HP Máx: ${player.maxHp}`,
+      desc: '+18 Vida Máx.',
+      bonusText: `HP: ${player.maxHp}`,
       icon: <Heart className="w-4 h-4 text-rose-400" />,
     },
     {
       key: 'strength',
-      name: 'Força Bruta',
-      desc: '+12% Dano e Coleta.',
-      bonusText: `Bônus: +${Math.round((player.attributes.strength - 1) * 12)}%`,
+      name: 'Força',
+      desc: '+12% Dano/Coleta',
+      bonusText: `+${Math.round((player.attributes.strength - 1) * 12)}%`,
       icon: <Swords className="w-4 h-4 text-amber-400" />,
     },
     {
       key: 'agility',
       name: 'Agilidade',
-      desc: '+6% Velocidade e Golpe.',
-      bonusText: `Bônus: +${Math.round((player.attributes.agility - 1) * 6)}%`,
+      desc: '+6% Velocidade',
+      bonusText: `+${Math.round((player.attributes.agility - 1) * 6)}%`,
       icon: <Wind className="w-4 h-4 text-sky-400" />,
     },
     {
       key: 'survival',
       name: 'Sobrevivência',
-      desc: '-8% Fome e +10% Drop Extra.',
-      bonusText: `Extra: +${Math.round((player.attributes.survival - 1) * 10)}%`,
+      desc: '-8% Fome / +10% Drop',
+      bonusText: `+${Math.round((player.attributes.survival - 1) * 10)}%`,
       icon: <Shield className="w-4 h-4 text-emerald-400" />,
     },
   ];
@@ -208,56 +213,20 @@ export const CharacterPetsModal: React.FC<CharacterPetsModalProps> = ({
   const petBonusDescription = (pet: CreatureEntity) => {
     switch (pet.kind) {
       case 'SHEEP':
-        return 'Produz Lã Macia e regenera sua vida ao redor.';
+        return 'Lã Macia & Cura Passiva';
       case 'BOAR':
-        return 'Ataca Zumbis e Ogros próximos para defender você!';
+        return 'Guardião de Combate';
       case 'HORSE':
-        return pet.hasSaddle
-          ? `Selado · Vel. Individual ${pet.mountSpeed || 148} · Fôlego ${
-              pet.mountMaxStamina || 100
-            } · Alforje 8 Slots`
-          : `Sem Sela (Vel. ${pet.mountSpeed || 148}) — Equipe uma Sela para montar e ter 8 Slots!`;
       case 'CAMEL':
         return pet.hasSaddle
-          ? `Selado · Vel. Individual ${pet.mountSpeed || 142} · Fôlego Maior ${
-              pet.mountMaxStamina || 165
-            } · Alforje 8 Slots`
-          : `Sem Sela (Vel. ${pet.mountSpeed || 142}, Fôlego Maior) — Equipe uma Sela para montar e ter 8 Slots!`;
+          ? `Vel. ${pet.mountSpeed || 145} · Fôlego ${
+              pet.mountMaxStamina || 100
+            } · 8 Slots`
+          : 'Requer Sela para montar';
       default:
-        return 'Companheiro fiel.';
+        return 'Companheiro fiel';
     }
   };
-
-  const tamingGuide = [
-    {
-      kind: CreatureKind.HORSE,
-      name: 'Cavalo da Planície',
-      foodId: 'apple',
-      biome: 'Planície',
-      perk: 'Montável com Sela · 8 Slots · Botão Cavalgar',
-    },
-    {
-      kind: CreatureKind.CAMEL,
-      name: 'Camelo do Deserto (Muito Raro)',
-      foodId: 'cactus_fruit',
-      biome: 'Deserto',
-      perk: 'Montável com Sela · 8 Slots · Fôlego Maior (165)',
-    },
-    {
-      kind: CreatureKind.SHEEP,
-      name: 'Ovelha da Planície',
-      foodId: 'berry',
-      biome: 'Planície',
-      perk: 'Lã Macia & Cura Passiva',
-    },
-    {
-      kind: CreatureKind.BOAR,
-      name: 'Javali Silvestre',
-      foodId: 'apple',
-      biome: 'Planície',
-      perk: 'Guardião (14 Dano)',
-    },
-  ];
 
   const heldSlot = player.inventory[player.selectedHotbarIndex];
   const heldItem = heldSlot ? ITEMS[heldSlot.itemId] : null;
@@ -265,28 +234,38 @@ export const CharacterPetsModal: React.FC<CharacterPetsModalProps> = ({
   const totalAttack = Math.round((heldItem?.attackDamage || 8) * strengthMult);
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-1.5 sm:p-3">
-      <div className="w-full max-w-4xl medieval-panel flex flex-col max-h-[96dvh] overflow-hidden">
-        {/* Compact Horizontal-Friendly Top Bar */}
+    <div
+      className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-1.5 sm:p-3"
+      onClick={onClose}
+    >
+      <div
+        className="w-full max-w-4xl medieval-panel flex flex-col max-h-[96dvh] overflow-hidden"
+        onClick={(e) => e.stopPropagation()}
+      >
+        {/* Top Bar */}
         <div className="flex items-center justify-between gap-2 px-3 py-1.5 bg-[#1a110b] border-b-2 border-[#4a301e] shrink-0">
           <div className="flex items-center gap-1.5 overflow-x-auto">
             <button
               onClick={() => setActiveTab('custom')}
               className={`min-h-[34px] px-2.5 sm:px-3 py-1 text-[10px] sm:text-[11px] font-pixel font-bold flex items-center gap-1.5 whitespace-nowrap ${
-                activeTab === 'custom' ? 'medieval-btn-gold' : 'medieval-btn-wood'
+                activeTab === 'custom'
+                  ? 'medieval-btn-gold'
+                  : 'medieval-btn-wood'
               }`}
             >
               <Palette className="w-3.5 h-3.5 text-amber-300" />
-              <span>Trajes & Aparência (4 Slots)</span>
+              <span>Trajes</span>
             </button>
             <button
               onClick={() => setActiveTab('stats')}
               className={`min-h-[34px] px-2.5 sm:px-3 py-1 text-[10px] sm:text-[11px] font-pixel font-bold flex items-center gap-1.5 whitespace-nowrap ${
-                activeTab === 'stats' ? 'medieval-btn-gold' : 'medieval-btn-wood'
+                activeTab === 'stats'
+                  ? 'medieval-btn-gold'
+                  : 'medieval-btn-wood'
               }`}
             >
               <User className="w-3.5 h-3.5" />
-              <span>Atributos RPG</span>
+              <span>Atributos</span>
               {player.attributePoints > 0 && (
                 <span className="px-1 bg-emerald-500 text-black text-[9px] font-extrabold rounded">
                   +{player.attributePoints}
@@ -304,20 +283,18 @@ export const CharacterPetsModal: React.FC<CharacterPetsModalProps> = ({
             </button>
           </div>
 
-          <div className="flex items-center gap-2 shrink-0">
-            <div
-              title="Saldo de Moedas de Ouro do Personagem (não ocupa espaço na mochila)"
-              className="flex items-center gap-1.5 px-2.5 py-1 mc-slot border-amber-500/50 bg-[#120b07]"
-            >
+          <div className="flex items-center gap-1.5 shrink-0">
+            <div className="flex items-center gap-1 px-2 py-1 mc-slot border-amber-500/50 bg-[#120b07]">
               <img
                 src={spriteAtlas.getItemIconUrl('gold_coin')}
                 alt="Ouro"
                 className="w-4 h-4 pixelated"
               />
               <span className="text-[10px] font-mono-tabular font-bold text-amber-300">
-                {player.goldCoins ?? 0} Ouro
+                {player.goldCoins ?? 0}
               </span>
             </div>
+            <WindowHelpButton onClick={() => setShowHelp(true)} />
             <button
               onClick={onClose}
               className="min-h-[34px] min-w-[34px] medieval-btn-crimson flex items-center justify-center shrink-0"
@@ -327,16 +304,13 @@ export const CharacterPetsModal: React.FC<CharacterPetsModalProps> = ({
           </div>
         </div>
 
-        {/* ================================================================= */}
-        {/* TAB 1: 4-SLOT EQUIPMENT (HEAD, BODY, LEGS, FEET) & CUSTOMIZATION  */}
-        {/* ================================================================= */}
+        {/* TAB 1: EQUIPMENT & CUSTOMIZATION */}
         {activeTab === 'custom' ? (
           <div className="flex-1 overflow-y-auto p-2.5 sm:p-3.5 grid grid-cols-1 sm:grid-cols-12 gap-3 items-start">
-            {/* LEFT COLUMN (6 cols): 4-Slot Equipment Paper-Doll + Quick Equip from Backpack */}
             <div className="sm:col-span-6 medieval-inset p-2.5 space-y-2.5">
               <div className="flex items-center justify-between border-b border-[#3d281a] pb-1.5">
                 <h3 className="font-pixel text-[10px] font-bold text-amber-400">
-                  EQUIPAMENTOS DO HERÓI (4 ESPAÇOS)
+                  EQUIPAMENTOS (4 SLOTS)
                 </h3>
                 <div className="flex items-center gap-2 text-[10px] font-mono-tabular">
                   <span className="text-sky-300 font-bold">
@@ -350,9 +324,7 @@ export const CharacterPetsModal: React.FC<CharacterPetsModalProps> = ({
                 </div>
               </div>
 
-              {/* Paper-Doll + Live Pixel Character Preview */}
               <div className="grid grid-cols-12 gap-2 items-center bg-[#120b07] p-2.5 border border-[#4a301e]">
-                {/* Live Rotatable Character Preview */}
                 <div className="col-span-5 flex flex-col items-center justify-center gap-1.5 border-r border-[#3d281a] pr-2">
                   <div className="w-20 h-20 bg-[#1a110b] border-2 border-[#6e4930] flex items-center justify-center relative shadow-inner">
                     <img
@@ -360,26 +332,16 @@ export const CharacterPetsModal: React.FC<CharacterPetsModalProps> = ({
                       alt="Herói"
                       className="w-16 h-16 pixelated"
                     />
-                    <span className="absolute bottom-0.5 right-1 text-[8px] font-mono-tabular text-[#c4ab7d] uppercase">
-                      {previewDir === 'down'
-                        ? 'Frente'
-                        : previewDir === 'up'
-                        ? 'Costas'
-                        : previewDir === 'left'
-                        ? 'Esq.'
-                        : 'Dir.'}
-                    </span>
                   </div>
                   <button
                     onClick={cyclePreviewDir}
                     className="w-full py-1 medieval-btn-wood text-[9px] font-bold flex items-center justify-center gap-1"
                   >
                     <RotateCw className="w-3 h-3 text-amber-300" />
-                    <span>Girar Herói</span>
+                    <span>Girar</span>
                   </button>
                 </div>
 
-                {/* 4 Equipment Slots (Head, Upper, Lower, Feet) */}
                 <div className="col-span-7 space-y-1.5">
                   {SLOT_META.map((meta) => {
                     const equippedId = eq[meta.slot];
@@ -399,50 +361,37 @@ export const CharacterPetsModal: React.FC<CharacterPetsModalProps> = ({
                         }`}
                       >
                         <div className="flex items-center gap-2 min-w-0">
-                          <div className="w-8 h-8 bg-[#120b07] border border-[#4a301e] flex items-center justify-center shrink-0">
+                          <div className="w-7 h-7 bg-[#120b07] border border-[#4a301e] flex items-center justify-center shrink-0">
                             {itemDef ? (
                               <img
                                 src={spriteAtlas.getItemIconUrl(itemDef.id)}
                                 alt={itemDef.name}
-                                className="w-6 h-6 pixelated"
+                                className="w-5 h-5 pixelated"
                               />
                             ) : (
                               <Shield className="w-3.5 h-3.5 text-[#5c3d28]" />
                             )}
                           </div>
                           <div className="min-w-0">
-                            <div className="flex items-center gap-1">
-                              <span className="text-[9px] font-pixel text-amber-400 uppercase">
-                                {meta.label}
-                              </span>
+                            <span className="text-[9px] font-pixel text-amber-400 uppercase block">
+                              {meta.label}
+                            </span>
+                            <div className="text-[10px] font-bold text-white truncate">
+                              {itemDef ? itemDef.name : meta.emptyHint}
                             </div>
-                            {itemDef ? (
-                              <div className="text-[10px] font-bold text-white truncate">
-                                {itemDef.name}
-                              </div>
-                            ) : (
-                              <div className="text-[9px] text-[#8c6d46] truncate">
-                                {meta.emptyHint}
-                              </div>
-                            )}
                           </div>
                         </div>
 
-                        {itemDef ? (
+                        {itemDef && (
                           <button
                             onClick={(e) => {
                               e.stopPropagation();
                               engine.unequipArmorSlot(meta.slot);
                             }}
-                            className="px-2 py-1 medieval-btn-crimson text-[9px] font-bold shrink-0"
-                            title="Desequipar para a mochila"
+                            className="px-2 py-0.5 medieval-btn-crimson text-[9px] font-bold shrink-0"
                           >
                             Tirar
                           </button>
-                        ) : (
-                          <span className="text-[8px] text-[#8c6d46] pr-1">
-                            Vazio
-                          </span>
                         )}
                       </div>
                     );
@@ -450,87 +399,75 @@ export const CharacterPetsModal: React.FC<CharacterPetsModalProps> = ({
                 </div>
               </div>
 
-              {/* Quick-Equip List of Armors in Player's Inventory */}
               <div className="space-y-1.5">
                 <div className="flex items-center justify-between text-[10px]">
                   <span className="font-pixel text-[#c4ab7d]">
-                    PEÇAS NA MOCHILA PARA EQUIPAR ({inventoryArmorItems.length})
+                    NA MOCHILA ({inventoryArmorItems.length})
                   </span>
                   {selectedSlotFilter !== 'ALL' && (
                     <button
                       onClick={() => setSelectedSlotFilter('ALL')}
                       className="text-amber-400 underline text-[9px]"
                     >
-                      Mostrar Todos Slots
+                      Todos
                     </button>
                   )}
                 </div>
 
                 {inventoryArmorItems.length === 0 ? (
                   <div className="mc-slot p-2.5 text-center text-[10px] text-[#8c6d46]">
-                    Nenhuma veste/armadura disponível na mochila para este espaço. Crie peças de Cabeça, Superior, Inferior e Pés na Bancada, Fornalha ou Altar Solar!
+                    Sem armaduras na mochila.
                   </div>
                 ) : (
                   <div className="grid grid-cols-1 gap-1.5 max-h-[135px] overflow-y-auto pr-0.5">
-                    {inventoryArmorItems.map(({ index, def }) => {
-                      const slotName =
-                        SLOT_META.find((s) => s.slot === (def.equipSlot || 'body'))
-                          ?.label || 'Parte Superior';
-                      return (
-                        <div
-                          key={`${def.id}_${index}`}
-                          className="mc-slot p-1.5 flex items-center justify-between gap-2"
-                        >
-                          <div className="flex items-center gap-2 min-w-0">
-                            <img
-                              src={spriteAtlas.getItemIconUrl(def.id)}
-                              alt={def.name}
-                              className="w-6 h-6 pixelated shrink-0"
-                            />
-                            <div className="min-w-0">
-                              <div className="text-[10px] font-bold text-white truncate">
-                                {def.name}
-                              </div>
-                              <div className="flex items-center gap-1.5 text-[9px] font-mono-tabular">
-                                <span className="text-amber-300">[{slotName}]</span>
-                                {def.defenseBonus && (
-                                  <span className="text-sky-300">
-                                    -{Math.round(def.defenseBonus * 100)}% Dano
-                                  </span>
-                                )}
-                                {def.speedBonus && (
-                                  <span className="text-emerald-400">
-                                    +{Math.round(def.speedBonus * 100)}% Vel
-                                  </span>
-                                )}
-                                {def.maxHpBonus && (
-                                  <span className="text-rose-300">
-                                    +{def.maxHpBonus} HP
-                                  </span>
-                                )}
-                              </div>
+                    {inventoryArmorItems.map(({ index, def }) => (
+                      <div
+                        key={`${def.id}_${index}`}
+                        className="mc-slot p-1.5 flex items-center justify-between gap-2"
+                      >
+                        <div className="flex items-center gap-2 min-w-0">
+                          <img
+                            src={spriteAtlas.getItemIconUrl(def.id)}
+                            alt={def.name}
+                            className="w-6 h-6 pixelated shrink-0"
+                          />
+                          <div className="min-w-0">
+                            <div className="text-[10px] font-bold text-white truncate">
+                              {def.name}
+                            </div>
+                            <div className="flex items-center gap-1.5 text-[9px] font-mono-tabular">
+                              {def.defenseBonus && (
+                                <span className="text-sky-300">
+                                  -{Math.round(def.defenseBonus * 100)}% Dano
+                                </span>
+                              )}
+                              {def.speedBonus && (
+                                <span className="text-emerald-400">
+                                  +{Math.round(def.speedBonus * 100)}% Vel
+                                </span>
+                              )}
                             </div>
                           </div>
-
-                          <button
-                            onClick={() => engine.equipArmorFromSlot(index)}
-                            className="px-2.5 py-1 medieval-btn-gold text-[10px] font-bold shrink-0"
-                          >
-                            Equipar
-                          </button>
                         </div>
-                      );
-                    })}
+
+                        <button
+                          onClick={() => engine.equipArmorFromSlot(index)}
+                          className="px-2.5 py-1 medieval-btn-gold text-[10px] font-bold shrink-0"
+                        >
+                          Equipar
+                        </button>
+                      </div>
+                    ))}
                   </div>
                 )}
               </div>
             </div>
 
-            {/* RIGHT COLUMN (6 cols): Character Appearance Customization */}
+            {/* RIGHT COLUMN (6 cols): Appearance */}
             <div className="sm:col-span-6 medieval-inset p-2.5 space-y-2.5">
               <div className="flex items-center justify-between border-b border-[#3d281a] pb-1.5">
                 <h3 className="font-pixel text-[10px] font-bold text-amber-400">
-                  CUSTOMIZAÇÃO VISUAL DO PERSONAGEM
+                  APARÊNCIA
                 </h3>
                 <button
                   onClick={() =>
@@ -538,16 +475,15 @@ export const CharacterPetsModal: React.FC<CharacterPetsModalProps> = ({
                   }
                   className="text-[9px] text-[#c4ab7d] hover:text-amber-300 underline"
                 >
-                  Restaurar Padrão
+                  Padrão
                 </button>
               </div>
 
-              {/* 1. Hair Style */}
               <div className="space-y-1">
                 <span className="text-[10px] text-[#e5d5b5] font-bold block">
-                  Estilo de Cabelo:
+                  Cabelo:
                 </span>
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-1">
+                <div className="grid grid-cols-4 gap-1">
                   {HAIR_STYLES.map((st) => (
                     <button
                       key={st.id}
@@ -566,10 +502,9 @@ export const CharacterPetsModal: React.FC<CharacterPetsModalProps> = ({
                 </div>
               </div>
 
-              {/* 2. Skin Tone */}
               <div className="space-y-1">
                 <span className="text-[10px] text-[#e5d5b5] font-bold block">
-                  Tom de Pele:
+                  Pele:
                 </span>
                 <div className="flex flex-wrap gap-1.5">
                   {SKIN_TONES.map((tone) => (
@@ -579,9 +514,9 @@ export const CharacterPetsModal: React.FC<CharacterPetsModalProps> = ({
                         engine.updatePlayerAppearance({ skinColor: tone.color })
                       }
                       title={tone.label}
-                      className={`w-7 h-7 rounded border-2 flex items-center justify-center transition-transform ${
+                      className={`w-6 h-6 rounded border-2 ${
                         app.skinColor === tone.color
-                          ? 'border-amber-400 scale-110 shadow-[0_0_8px_rgba(251,191,36,0.6)]'
+                          ? 'border-amber-400 scale-110'
                           : 'border-[#4a301e]'
                       }`}
                       style={{ backgroundColor: tone.color }}
@@ -590,11 +525,10 @@ export const CharacterPetsModal: React.FC<CharacterPetsModalProps> = ({
                 </div>
               </div>
 
-              {/* 3. Hair Color & Eye Color */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+              <div className="grid grid-cols-2 gap-2">
                 <div className="space-y-1">
                   <span className="text-[10px] text-[#e5d5b5] font-bold block">
-                    Cor do Cabelo:
+                    Cor Cabelo:
                   </span>
                   <div className="flex flex-wrap gap-1.5">
                     {HAIR_COLORS.map((hc) => (
@@ -617,7 +551,7 @@ export const CharacterPetsModal: React.FC<CharacterPetsModalProps> = ({
 
                 <div className="space-y-1">
                   <span className="text-[10px] text-[#e5d5b5] font-bold block">
-                    Cor dos Olhos:
+                    Olhos:
                   </span>
                   <div className="flex flex-wrap gap-1.5">
                     {EYE_COLORS.map((ec) => (
@@ -639,18 +573,19 @@ export const CharacterPetsModal: React.FC<CharacterPetsModalProps> = ({
                 </div>
               </div>
 
-              {/* 4. Base Tunic & Base Pants Colors */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1 border-t border-[#3d281a]">
+              <div className="grid grid-cols-2 gap-2 pt-1 border-t border-[#3d281a]">
                 <div className="space-y-1">
                   <span className="text-[10px] text-[#e5d5b5] font-bold block">
-                    Veste Superior Base:
+                    Camisa:
                   </span>
                   <div className="flex flex-wrap gap-1.5">
                     {SHIRT_COLORS.map((sc) => (
                       <button
                         key={sc.color}
                         onClick={() =>
-                          engine.updatePlayerAppearance({ shirtColor: sc.color })
+                          engine.updatePlayerAppearance({
+                            shirtColor: sc.color,
+                          })
                         }
                         title={sc.label}
                         className={`w-6 h-6 rounded border-2 ${
@@ -666,14 +601,16 @@ export const CharacterPetsModal: React.FC<CharacterPetsModalProps> = ({
 
                 <div className="space-y-1">
                   <span className="text-[10px] text-[#e5d5b5] font-bold block">
-                    Calça Base (Inferior):
+                    Calça:
                   </span>
                   <div className="flex flex-wrap gap-1.5">
                     {PANTS_COLORS.map((pc) => (
                       <button
                         key={pc.color}
                         onClick={() =>
-                          engine.updatePlayerAppearance({ pantsColor: pc.color })
+                          engine.updatePlayerAppearance({
+                            pantsColor: pc.color,
+                          })
                         }
                         title={pc.label}
                         className={`w-6 h-6 rounded border-2 ${
@@ -687,27 +624,20 @@ export const CharacterPetsModal: React.FC<CharacterPetsModalProps> = ({
                   </div>
                 </div>
               </div>
-
-              <div className="bg-[#120b07] p-2 border border-[#3d281a] text-[10px] text-[#c4ab7d] leading-snug">
-                <strong className="text-amber-300">Como funciona:</strong> Sua
-                aparência e cada peça equipada nos 4 slots (Cabeça, Superior,
-                Inferior e Pés) alteram em tempo real o visual do seu personagem
-                no mapa!
-              </div>
             </div>
           </div>
         ) : activeTab === 'stats' ? (
+          /* TAB 2: ATTRIBUTES */
           <div className="flex-1 overflow-y-auto p-2.5 sm:p-3.5 space-y-2.5">
-            {/* Hero Summary Banner */}
             <div className="medieval-inset p-2 grid grid-cols-2 sm:grid-cols-5 gap-2 text-center">
               <div className="mc-slot p-1.5">
-                <div className="text-[9px] text-[#c4ab7d]">Nível & XP</div>
+                <div className="text-[9px] text-[#c4ab7d]">Nível</div>
                 <div className="font-pixel text-[11px] text-amber-400 font-bold">
                   NV.{player.level} ({player.xp}/{player.xpToNext})
                 </div>
               </div>
               <div className="mc-slot p-1.5">
-                <div className="text-[9px] text-[#c4ab7d]">Moedas de Ouro</div>
+                <div className="text-[9px] text-[#c4ab7d]">Ouro</div>
                 <div className="font-mono-tabular text-[11px] text-amber-300 font-bold flex items-center justify-center gap-1">
                   <img
                     src={spriteAtlas.getItemIconUrl('gold_coin')}
@@ -718,26 +648,25 @@ export const CharacterPetsModal: React.FC<CharacterPetsModalProps> = ({
                 </div>
               </div>
               <div className="mc-slot p-1.5">
-                <div className="text-[9px] text-[#c4ab7d]">Dano Atual</div>
+                <div className="text-[9px] text-[#c4ab7d]">Ataque</div>
                 <div className="font-mono-tabular text-[11px] text-rose-400 font-bold">
                   {totalAttack} ATQ
                 </div>
               </div>
               <div className="mc-slot p-1.5">
-                <div className="text-[9px] text-[#c4ab7d]">Defesa Total (4 Slots)</div>
-                <div className="font-mono-tabular text-[11px] text-sky-300 font-bold truncate">
-                  {totalDefPct > 0 ? `-${totalDefPct}% Dano` : '0% (Sem Armadura)'}
+                <div className="text-[9px] text-[#c4ab7d]">Defesa</div>
+                <div className="font-mono-tabular text-[11px] text-sky-300 font-bold">
+                  -{totalDefPct}%
                 </div>
               </div>
               <div className="mc-slot p-1.5 col-span-2 sm:col-span-1">
-                <div className="text-[9px] text-[#c4ab7d]">Pontos Livres</div>
+                <div className="text-[9px] text-[#c4ab7d]">Pontos</div>
                 <div className="font-pixel text-[11px] text-emerald-400 font-bold">
                   {player.attributePoints} PTS
                 </div>
               </div>
             </div>
 
-            {/* Attributes Upgrade 2x2 Grid for Horizontal Screens */}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
               {attributesList.map((attr) => (
                 <div
@@ -754,16 +683,15 @@ export const CharacterPetsModal: React.FC<CharacterPetsModalProps> = ({
                         Nv.{player.attributes[attr.key]}
                       </span>
                     </div>
-                    <p className="text-[10px] text-[#e5d5b5] truncate">{attr.desc}</p>
-                    <div className="text-[10px] font-mono-tabular text-emerald-400 font-bold">
-                      {attr.bonusText}
-                    </div>
+                    <p className="text-[10px] text-[#e5d5b5] truncate">
+                      {attr.desc} ({attr.bonusText})
+                    </p>
                   </div>
 
                   <button
                     disabled={player.attributePoints <= 0}
                     onClick={() => engine.upgradeAttribute(attr.key)}
-                    className={`min-h-[38px] min-w-[38px] flex items-center justify-center shrink-0 ${
+                    className={`min-h-[36px] min-w-[36px] flex items-center justify-center shrink-0 ${
                       player.attributePoints > 0
                         ? 'medieval-btn-gold'
                         : 'medieval-btn-wood opacity-40 cursor-not-allowed'
@@ -776,43 +704,48 @@ export const CharacterPetsModal: React.FC<CharacterPetsModalProps> = ({
             </div>
           </div>
         ) : (
-          /* TAB 3: PETS & TAMING GUIDE — Side-by-Side on Horizontal Mobile */
-          <div className="flex-1 overflow-y-auto p-2.5 sm:p-3.5 grid grid-cols-1 sm:grid-cols-12 gap-2.5">
-            {/* Active Tamed Companions (Left 7 cols) */}
-            <div className="sm:col-span-7 medieval-inset p-2.5 flex flex-col gap-2">
-              <div className="flex flex-wrap items-center justify-between gap-1.5 border-b border-[#3d281a] pb-1.5">
+          /* TAB 3: PETS */
+          <div className="flex-1 overflow-y-auto p-2.5 sm:p-3.5 space-y-2.5">
+            <div className="medieval-inset p-2.5 flex flex-col gap-2">
+              <div className="flex items-center justify-between gap-1.5 border-b border-[#3d281a] pb-1.5 flex-wrap">
                 <h3 className="font-pixel text-[10px] font-bold text-amber-400">
                   SEUS COMPANHEIROS ({tamedAnimals.length})
                 </h3>
                 {tamedAnimals.length > 0 && (
                   <div className="flex items-center gap-1">
                     <button
-                      onClick={() => engine.setAllTamedAnimalsState('follow')}
-                      className="px-2 py-0.5 medieval-btn-emerald text-[9px] font-bold"
-                    >
-                      Seguir
-                    </button>
-                    <button
                       onClick={() => engine.setAllTamedAnimalsState('stay')}
                       className="px-2 py-0.5 medieval-btn-wood text-[9px] font-bold"
                     >
-                      Ficar Base
+                      Base
+                    </button>
+                    <button
+                      onClick={() => engine.setAllTamedAnimalsState('follow')}
+                      className="px-2 py-0.5 medieval-btn-emerald text-[9px] font-bold"
+                    >
+                      Seguindo
+                    </button>
+                    <button
+                      onClick={() => engine.setAllTamedAnimalsState('graze')}
+                      className="px-2 py-0.5 medieval-btn-gold text-[9px] font-bold"
+                    >
+                      Pastar
                     </button>
                   </div>
                 )}
               </div>
 
               {tamedAnimals.length === 0 ? (
-                <div className="mc-slot p-4 text-center space-y-1 my-auto">
+                <div className="mc-slot p-5 text-center space-y-1">
                   <p className="text-xs font-bold text-white">
-                    Nenhum animal domesticado ainda
+                    Nenhum pet domesticado
                   </p>
                   <p className="text-[10px] text-[#c4ab7d]">
-                    Chegue perto de Ovelha, Javali ou Camelo com a comida favorita ou Petisco e use o botão Interagir!
+                    Toque no botão ? no topo para ver a comida favorita de cada animal.
                   </p>
                 </div>
               ) : (
-                <div className="space-y-1.5 max-h-[240px] overflow-y-auto pr-0.5">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-[300px] overflow-y-auto pr-0.5">
                   {tamedAnimals.map((pet) => {
                     const isMountableSpecies =
                       pet.kind === CreatureKind.HORSE ||
@@ -820,7 +753,14 @@ export const CharacterPetsModal: React.FC<CharacterPetsModalProps> = ({
                     const hasSaddleInBag = player.inventory.some(
                       (s) => s !== null && s.itemId === 'saddle' && s.count > 0
                     );
-                    const isCurrentlyMounted = player.mountedEntityId === pet.id;
+                    const isCurrentlyMounted =
+                      player.mountedEntityId === pet.id;
+                    const currentPetState: 'stay' | 'follow' | 'graze' =
+                      pet.aiState === 'stay'
+                        ? 'stay'
+                        : pet.aiState === 'graze'
+                        ? 'graze'
+                        : 'follow';
 
                     return (
                       <div
@@ -829,7 +769,7 @@ export const CharacterPetsModal: React.FC<CharacterPetsModalProps> = ({
                       >
                         <div className="flex items-center justify-between gap-2">
                           <div className="space-y-0.5 min-w-0">
-                            <div className="flex items-center gap-1.5">
+                            <div className="flex items-center gap-1.5 flex-wrap">
                               <span className="text-rose-400 text-xs">♥</span>
                               <span className="font-pixel text-[11px] font-bold text-white truncate">
                                 {pet.name}
@@ -839,11 +779,11 @@ export const CharacterPetsModal: React.FC<CharacterPetsModalProps> = ({
                               </span>
                               {pet.hasSaddle && (
                                 <span className="px-1 py-0.2 rounded bg-amber-950/90 border border-amber-500/60 text-[8px] font-bold text-amber-300">
-                                  Selado (8 Slots)
+                                  Selado
                                 </span>
                               )}
                             </div>
-                            <p className="text-[10px] text-[#c4ab7d] truncate">
+                            <p className="text-[9px] text-[#c4ab7d] truncate">
                               {petBonusDescription(pet)}
                             </p>
                           </div>
@@ -852,15 +792,16 @@ export const CharacterPetsModal: React.FC<CharacterPetsModalProps> = ({
                             {isMountableSpecies && !pet.hasSaddle && (
                               <button
                                 disabled={!hasSaddleInBag}
-                                onClick={() => engine.equipSaddleOnCreature(pet.id)}
-                                className={`min-h-[32px] px-2 py-1 text-[9px] font-bold ${
+                                onClick={() =>
+                                  engine.equipSaddleOnCreature(pet.id)
+                                }
+                                className={`min-h-[28px] px-2 text-[9px] font-bold ${
                                   hasSaddleInBag
                                     ? 'medieval-btn-gold'
                                     : 'medieval-btn-wood opacity-45 cursor-not-allowed'
                                 }`}
-                                title="Requer 1x Sela de Montaria na mochila"
                               >
-                                Equipar Sela
+                                Selar
                               </button>
                             )}
 
@@ -874,23 +815,52 @@ export const CharacterPetsModal: React.FC<CharacterPetsModalProps> = ({
                                     onClose();
                                   }
                                 }}
-                                className="min-h-[32px] px-2.5 py-1 text-[9px] font-bold medieval-btn-gold"
+                                className="min-h-[28px] px-2 text-[9px] font-bold medieval-btn-gold"
                               >
-                                {isCurrentlyMounted ? 'Desmontar' : 'Montar'}
+                                {isCurrentlyMounted ? 'Sair' : 'Montar'}
                               </button>
                             )}
-
-                            <button
-                              onClick={() => engine.toggleTamedAnimalState(pet.id)}
-                              className={`min-h-[32px] px-2.5 py-1 text-[10px] font-bold whitespace-nowrap ${
-                                pet.aiState === 'follow'
-                                  ? 'medieval-btn-emerald'
-                                  : 'medieval-btn-wood'
-                              }`}
-                            >
-                              {pet.aiState === 'follow' ? 'Seguindo' : 'Na Base'}
-                            </button>
                           </div>
+                        </div>
+
+                        {/* 3-State Selector: Base | Seguindo | Pastar */}
+                        <div className="grid grid-cols-3 gap-1 pt-1 border-t border-[#3d281a]/70">
+                          <button
+                            onClick={() =>
+                              engine.setTamedAnimalState(pet.id, 'stay')
+                            }
+                            className={`min-h-[26px] text-[9px] font-bold ${
+                              currentPetState === 'stay'
+                                ? 'medieval-btn-gold'
+                                : 'medieval-btn-wood opacity-75'
+                            }`}
+                          >
+                            Base
+                          </button>
+                          <button
+                            onClick={() =>
+                              engine.setTamedAnimalState(pet.id, 'follow')
+                            }
+                            className={`min-h-[26px] text-[9px] font-bold ${
+                              currentPetState === 'follow'
+                                ? 'medieval-btn-emerald'
+                                : 'medieval-btn-wood opacity-75'
+                            }`}
+                          >
+                            Seguindo
+                          </button>
+                          <button
+                            onClick={() =>
+                              engine.setTamedAnimalState(pet.id, 'graze')
+                            }
+                            className={`min-h-[26px] text-[9px] font-bold ${
+                              currentPetState === 'graze'
+                                ? 'medieval-btn-gold'
+                                : 'medieval-btn-wood opacity-75'
+                            }`}
+                          >
+                            Pastar
+                          </button>
                         </div>
                       </div>
                     );
@@ -898,41 +868,35 @@ export const CharacterPetsModal: React.FC<CharacterPetsModalProps> = ({
                 </div>
               )}
             </div>
-
-            {/* Taming Encyclopedia (Right 5 cols) */}
-            <div className="sm:col-span-5 medieval-inset p-2.5 space-y-2">
-              <h3 className="font-pixel text-[10px] font-bold text-amber-400 border-b border-[#3d281a] pb-1.5">
-                GUIA DE DOMESTICAÇÃO
-              </h3>
-              <div className="space-y-1.5">
-                {tamingGuide.map((g) => (
-                  <div key={g.kind} className="mc-slot p-2 space-y-0.5">
-                    <div className="flex items-center justify-between">
-                      <span className="font-bold text-[11px] text-white">
-                        {g.name}
-                      </span>
-                      <span className="text-[9px] text-amber-300">
-                        {g.biome}
-                      </span>
-                    </div>
-                    <div className="flex items-center gap-1.5 text-[10px] text-[#e5d5b5]">
-                      <img
-                        src={spriteAtlas.getItemIconUrl(g.foodId)}
-                        alt=""
-                        className="w-3.5 h-3.5 pixelated"
-                      />
-                      <span>Comida: {ITEMS[g.foodId]?.name}</span>
-                    </div>
-                    <div className="text-[9px] text-emerald-400 font-semibold">
-                      {g.perk}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
           </div>
         )}
       </div>
+
+      {showHelp && (
+        <WindowHelpModal
+          title="Ajuda — Herói, Atributos & Pets"
+          subtitle="Como equipar armaduras, evoluir atributos e comandar seus aliados"
+          onClose={() => setShowHelp(false)}
+          sections={[
+            {
+              title: '1. Trajes & Aparência (4 Slots)',
+              body: 'Equipe peças de Cabeça, Superior, Inferior e Pés para reduzir o dano recebido e ganhar velocidade. Tudo altera o visual do seu personagem em tempo real.',
+            },
+            {
+              title: '2. Atributos RPG',
+              body: 'Ao subir de nível você ganha Pontos de Atributo para elevar Vitalidade (+Vida), Força (+Dano/Coleta), Agilidade (+Velocidade) ou Sobrevivência (-Fome/+Drop).',
+            },
+            {
+              title: '3. Estados dos Pets (Base, Seguindo e Pastar)',
+              body: 'Base: o pet fica parado no local. Seguindo: acompanha você como aliado de combate (ataca quem você atacar ou quem atacar você, focando em 1 inimigo por vez, e recua se você se afastar da área de batalha). Pastar: anda livremente pelo terreno mantendo-se domesticado.',
+            },
+            {
+              title: '4. Sela & Posse Exclusiva',
+              body: 'Cada pet pertence unicamente ao jogador que o domesticou. Cavalos e Camelos selados têm 1 único assento e um Alforje de 8 slots.',
+            },
+          ]}
+        />
+      )}
     </div>
   );
 };

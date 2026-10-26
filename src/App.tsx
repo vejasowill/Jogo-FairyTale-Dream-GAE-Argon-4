@@ -115,6 +115,8 @@ export default function App() {
   const [isPortraitMobile, setIsPortraitMobile] = useState<boolean>(false);
   const [dismissedPortraitHint, setDismissedPortraitHint] =
     useState<boolean>(false);
+  const [statusBannerVisible, setStatusBannerVisible] =
+    useState<boolean>(false);
 
   const appRootRef = useRef<HTMLDivElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -125,8 +127,32 @@ export default function App() {
     setFullscreenToast(msg);
     window.setTimeout(() => {
       setFullscreenToast((prev) => (prev === msg ? null : prev));
-    }, 2600);
+    }, 5000);
   };
+
+  // Auto-disappear after 5 seconds for Pause / Active Multiplayer visual status banner
+  const isOverlayOpen =
+    activeModal !== 'NONE' || isEditingHud || isMountSaddlebagOpen;
+  useEffect(() => {
+    if (!isOverlayOpen) {
+      setStatusBannerVisible(false);
+      return;
+    }
+    setStatusBannerVisible(true);
+    const timer = window.setTimeout(() => {
+      setStatusBannerVisible(false);
+    }, 5000);
+    return () => window.clearTimeout(timer);
+  }, [isOverlayOpen, snapshot?.isPaused]);
+
+  // Auto-disappear after 5 seconds for Portrait orientation helper pill
+  useEffect(() => {
+    if (!isPortraitMobile || dismissedPortraitHint) return;
+    const timer = window.setTimeout(() => {
+      setDismissedPortraitHint(true);
+    }, 5000);
+    return () => window.clearTimeout(timer);
+  }, [isPortraitMobile, dismissedPortraitHint]);
 
   useEffect(() => {
     const syncFullscreenState = () => {
@@ -736,27 +762,24 @@ export default function App() {
             className="block w-full h-full pixelated cursor-crosshair touch-none"
           />
 
-          {/* Real Pause / Active Multiplayer Indicator Pill when interacting with Map, Inventory, Craft, Pause, or Saddlebag */}
-          {snapshot &&
-            (activeModal !== 'NONE' ||
-              isEditingHud ||
-              isMountSaddlebagOpen) && (
-              <div className="fixed top-2 left-1/2 -translate-x-1/2 z-[55] pointer-events-none">
-                <div
-                  className={`medieval-panel px-3 py-1 flex items-center gap-2 text-[10px] font-pixel font-bold shadow-lg ${
-                    snapshot.isPaused
-                      ? 'border-amber-500/80 text-amber-300'
-                      : 'border-sky-500/80 text-sky-300'
-                  }`}
-                >
-                  <span>
-                    {snapshot.isPaused
-                      ? '⏸ JOGO PAUSADO'
-                      : '🌐 MULTIPLAYER EM REDE ATIVO — O MUNDO CONTINUA EM TEMPO REAL'}
-                  </span>
-                </div>
+          {/* Real Pause / Active Multiplayer Indicator Pill (auto-disappears after 5s so it never obstructs UI) */}
+          {snapshot && isOverlayOpen && statusBannerVisible && (
+            <div className="fixed top-2 left-1/2 -translate-x-1/2 z-[55] pointer-events-none">
+              <div
+                className={`medieval-panel px-3 py-1 flex items-center gap-2 text-[10px] font-pixel font-bold shadow-lg ${
+                  snapshot.isPaused
+                    ? 'border-amber-500/80 text-amber-300'
+                    : 'border-sky-500/80 text-sky-300'
+                }`}
+              >
+                <span>
+                  {snapshot.isPaused
+                    ? '⏸ JOGO PAUSADO'
+                    : '🌐 MULTIPLAYER EM REDE ATIVO — O MUNDO CONTINUA EM TEMPO REAL'}
+                </span>
               </div>
-            )}
+            </div>
+          )}
 
           {/* Responsive Medieval Pixel Mobile HUD + Live WYSIWYG Control Editor */}
           {engineRef.current && snapshot && (

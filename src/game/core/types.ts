@@ -244,6 +244,7 @@ export interface PlacedStructure {
   pendingCustomerOffer?: MarketPurchaseOffer | null;
   stallSalesCount?: number;
   stallTotalGoldEarned?: number;
+  stallUnclaimedGold?: number;
   // Thermal Station Processing (CAMPFIRE & FURNACE — Minecraft-inspired Fuel + Timed Prep)
   fuelItemId?: string | null;
   fuelCount?: number;
@@ -265,10 +266,17 @@ export interface ChunkData {
   explored: number[]; // 256 flags (0 = unexplored, 1 = explored by player)
   nodes: NatureNode[];
   structures: PlacedStructure[];
-  ecologicalZones?: EcologicalZone[]; // 16 x 16 = 256 (v2 worldGen)
+  ecologicalZones?: EcologicalZone[]; // 16 x 16 = 256 (v2+ worldGen)
   landmarkName?: string;
   villageId?: string;
   mobsPopulated?: boolean;
+  // Saved-World Chunk Preservation & Versioning (Explored chunks are frozen; only new unexplored chunks use newer worldGen)
+  genVersion?: number; // World generator version used when this chunk was originally generated
+  generatedGameVersion?: string; // Beta version string (e.g., '0.4.3-beta', '0.4.4-beta') when this chunk was generated
+  preserved?: boolean; // True once explored or modified by the player — prevents future updates from altering this chunk
+  compactTiles?: string; // 256-char compact encoding of tiles ('O' | 'P' | 'D') so exact terrain is preserved in localStorage
+  compactZones?: string; // 256-char compact encoding of ecologicalZones ('0'..'B')
+  compactVariants?: string; // 256-char compact encoding of tileVariants ('0'..'3')
 }
 
 export enum CreatureKind {
@@ -337,6 +345,8 @@ export interface CreatureEntity {
   riderPlayerId?: string | null; // Primary driver/rider ID ('LOCAL' or peerId)
   passengerPlayerId?: string | null; // 2nd seat player ID on a Boat ('LOCAL' or peerId)
   passengerPetId?: string | null; // 2nd seat following pet ID on a Boat
+  ownerId?: string | null; // Persistent owner player ID for tamed pets/mounts (Horse, Camel, Sheep, Boar)
+  ownerName?: string | null; // Display name of the unique player who tamed/owns this pet/mount
   // Animation states
   animFrame: number;
   animTimer: number;
@@ -344,7 +354,7 @@ export interface CreatureEntity {
   attackCooldown: number;
   hitFlashTimer: number;
   // AI & Taming
-  aiState: 'idle' | 'wander' | 'chase' | 'follow' | 'stay' | 'flee';
+  aiState: 'idle' | 'wander' | 'chase' | 'follow' | 'stay' | 'graze' | 'flee';
   aiTimer: number;
   targetX: number;
   targetY: number;
@@ -364,6 +374,7 @@ export interface CreatureEntity {
   navRecalcTimer?: number;
   orbitSign?: number;
   retaliateTargetId?: string;
+  combatTargetId?: string | null;
   specialCooldown?: number;
   // Village NPC Affinity, Role & Trading
   npcRole?: NpcRole;
@@ -390,6 +401,7 @@ export interface DroppedItem {
   y: number;
   bobTimer: number;
   pickupDelay: number;
+  claimedBy?: string | null;
 }
 
 export interface FloatingText {
@@ -447,6 +459,7 @@ export type MaterialKind =
 
 export interface DeathBag {
   id: string;
+  ownerId?: string | null;
   ownerName: string;
   x: number;
   y: number;
@@ -455,6 +468,7 @@ export interface DeathBag {
   createdAt: number;
   expiresTimer: number; // Countdown in seconds (600s = 10 minutes)
   maxTimer: number; // 600
+  claimedBy?: string | null;
 }
 
 export interface MapWaypoint {
@@ -498,6 +512,7 @@ export interface FishingState {
 }
 
 export interface PlayerState {
+  persistentPlayerId?: string;
   x: number;
   y: number;
   vx: number;
@@ -543,6 +558,7 @@ export interface PlayerState {
 
 export interface RemotePlayerState {
   peerId: string;
+  persistentPlayerId?: string;
   name: string;
   isHost: boolean;
   x: number;
@@ -587,7 +603,9 @@ export interface OnlineActivationStep {
   detail?: string;
 }
 
-export const GAME_VERSION = '0.4.3-beta';
+// REGRA PERMANENTE: A cada nova atualização do jogo, incremente a versão para o número seguinte da beta (ex: 0.4.4-beta -> 0.4.5-beta).
+export const GAME_VERSION = '0.4.8-beta';
+export const CURRENT_WORLD_GEN_VERSION = 3;
 
 export interface OnlineSessionInfo {
   isOnline: boolean;
@@ -619,8 +637,10 @@ export interface WorldMetadata {
   timeOfDay: number; // 0 to 24 (e.g. 8.0 = 08:00)
   playerLevel: number;
   exploredChunksCount: number;
-  worldGenVersion?: number; // 1 = legacy worlds, 2 = realistic biomes, ecology & structures
-  gameVersion?: string;
+  worldGenVersion?: number; // Active generator version for newly explored chunks
+  createdWorldGenVersion?: number; // Original generator version when the world save was created
+  gameVersion?: string; // Current beta version last saved
+  createdGameVersion?: string; // Original beta version when the world save was created
 }
 
 export interface WorldSaveData {
@@ -645,6 +665,7 @@ export type HudElementKey =
   | 'attackBtn'
   | 'interactBtn'
   | 'placeBtn'
+  | 'mountBtn'
   | 'hotbar'
   | 'statusPlaque'
   | 'topMenu';

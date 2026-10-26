@@ -2,6 +2,7 @@ import Peer, { DataConnection } from 'peerjs';
 import {
   ChunkData,
   CreatureEntity,
+  DeathBag,
   DroppedItem,
   GAME_VERSION,
   OnlineActivationStep,
@@ -20,6 +21,7 @@ export interface MultiplayerCallbacks {
   onSpawnDropReceived?: (drop: DroppedItem) => void;
   onPickupDropReceived?: (dropId: string, peerId: string) => void;
   onDropsSyncReceived?: (drops: DroppedItem[]) => void;
+  onDeathBagsSyncReceived?: (deathBags: DeathBag[]) => void;
   onCreaturesSyncReceived?: (creatures: CreatureEntity[]) => void;
   onCreatureHitReceived?: (
     creatureId: string,
@@ -34,6 +36,8 @@ export interface MultiplayerCallbacks {
   onRequestHostSnapshot?: () => WorldSaveData | null;
   onPeerLeft?: (peerId: string, peerName?: string) => void;
   onGuestMountEventReceived?: (peerId: string, event: any) => void;
+  onWorldInteractRequestReceived?: (peerId: string, request: any) => void;
+  onWorldInteractResolvedReceived?: (result: any) => void;
 }
 
 const INVITE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
@@ -225,6 +229,7 @@ export class MultiplayerManager {
   private serializeLocalPlayerState(player: PlayerState) {
     const heldSlot = player.inventory[player.selectedHotbarIndex];
     return {
+      persistentPlayerId: player.persistentPlayerId || undefined,
       x: Math.round(player.x * 10) / 10,
       y: Math.round(player.y * 10) / 10,
       vx: Math.round(player.vx * 10) / 10,
@@ -266,6 +271,8 @@ export class MultiplayerManager {
       isHostile: c.isHostile,
       tamed: c.tamed,
       tameProgress: c.tameProgress,
+      ownerId: c.ownerId ?? null,
+      ownerName: c.ownerName ?? null,
       aiState: c.aiState,
       animFrame: c.animFrame,
       hitFlashTimer: c.hitFlashTimer,
@@ -1244,6 +1251,25 @@ export class MultiplayerManager {
           ...msg,
           peerId: guestPeerId,
         });
+        break;
+      }
+
+      case 'world_interact_request': {
+        this.handleServerMessage({
+          ...msg,
+          peerId: guestPeerId,
+        });
+        break;
+      }
+
+      case 'death_bags_sync': {
+        this.worldRevision += 1;
+        const bagsPayload = {
+          ...msg,
+          worldRevision: this.worldRevision,
+        };
+        this.handleServerMessage(bagsPayload);
+        this.broadcastToP2PGuests(bagsPayload, guestPeerId, true);
         break;
       }
 
@@ -2932,6 +2958,30 @@ export class MultiplayerManager {
         break;
       }
 
+      case 'death_bags_sync': {
+        if (Array.isArray(msg.deathBags)) {
+          this.callbacks.onDeathBagsSyncReceived?.(msg.deathBags);
+        }
+        break;
+      }
+
+      case 'world_interact_request': {
+        if (this.role === 'HOST' && msg.peerId && msg.request) {
+          this.callbacks.onWorldInteractRequestReceived?.(
+            msg.peerId,
+            msg.request
+          );
+        }
+        break;
+      }
+
+      case 'world_interact_resolved': {
+        if (msg.result) {
+          this.callbacks.onWorldInteractResolvedReceived?.(msg.result);
+        }
+        break;
+      }
+
       case 'creatures_sync': {
         if (Array.isArray(msg.creatures) && this.role === 'GUEST') {
           this.callbacks.onCreaturesSyncReceived?.(msg.creatures);
@@ -2983,6 +3033,8 @@ export class MultiplayerManager {
 
     if (existing) {
       existing.name = st.name || existing.name;
+      existing.persistentPlayerId =
+        st.persistentPlayerId || existing.persistentPlayerId;
       existing.isHost = Boolean(st.isHost);
       existing.targetX = typeof st.x === 'number' ? st.x : existing.targetX;
       existing.targetY = typeof st.y === 'number' ? st.y : existing.targetY;
@@ -3030,6 +3082,7 @@ export class MultiplayerManager {
       const ry = typeof st.y === 'number' ? st.y : 0;
       this.remotePlayers.set(st.peerId, {
         peerId: st.peerId,
+        persistentPlayerId: st.persistentPlayerId || undefined,
         name: st.name || 'Viajante',
         isHost: Boolean(st.isHost),
         x: rx,
@@ -3264,6 +3317,38 @@ export class MultiplayerManager {
       type: 'guest_mount_event',
       peerId: this.peerId,
       event,
+    });
+  }
+
+  public sendDeathBagsSync(deathBags: DeathBag[]): void {
+    if (!this.isOnline) return;
+    this.worldRevision += 1;
+    this.queueOrSendEvent(
+      {
+        type: 'death_bags_sync',
+        deathBags,
+        worldRevision: this.worldRevision,
+      },
+      'death_bags_sync'
+    );
+  }
+
+  public sendWorldInteractRequest(request: any): void {
+    if (!this.isOnline || this.role !== 'GUEST') return;
+    this.queueOrSendEvent({
+      type: 'world_interact_request',
+      peerId: this.peerId,
+      request,
+    });
+  }
+
+  public sendWorldInteractResolved(result: any): void {
+    if (!this.isOnline || this.role !== 'HOST') return;
+    this.worldRevision += 1;
+    this.queueOrSendEvent({
+      type: 'world_interact_resolved',
+      result,
+      worldRevision: this.worldRevision,
     });
   }
 

@@ -2433,20 +2433,25 @@ export function evaluateStallPriceDeal(
   const ratio = safePrice / basePrice;
 
   // 1. Fator de acessibilidade pelo patamar de valor do item:
-  // Itens básicos/baratos vendem com facilidade; relíquias e equipamentos lendários têm compradores mais raros.
+  // Itens básicos/baratos vendem com facilidade; relíquias caras vendem um pouco mais devagar a menos que estejam em pechincha.
   let affordabilityFactor = 1.0;
-  if (safePrice <= 5) {
-    affordabilityFactor = 1.25;
-  } else if (safePrice <= 20) {
+  if (safePrice <= 15) {
+    affordabilityFactor = 1.18;
+  } else if (safePrice <= 45) {
     affordabilityFactor = 1.05;
-  } else if (safePrice <= 65) {
-    affordabilityFactor = 0.8;
-  } else if (safePrice <= 250) {
-    affordabilityFactor = 0.5;
-  } else if (safePrice <= 800) {
-    affordabilityFactor = 0.28;
+  } else if (safePrice <= 120) {
+    affordabilityFactor = 0.92;
+  } else if (safePrice <= 350) {
+    affordabilityFactor = 0.78;
+  } else if (safePrice <= 900) {
+    affordabilityFactor = 0.64;
   } else {
-    affordabilityFactor = 0.14;
+    affordabilityFactor = 0.5;
+  }
+
+  // Se o jogador colocou preço de Pechincha ou Barato (<= 85% do valor sugerido), o comprador aproveita a oportunidade!
+  if (ratio <= 0.85) {
+    affordabilityFactor = Math.max(0.9, affordabilityFactor);
   }
 
   // 2. Fator de avaliação de negócio (comparado ao Valor Sugerido)
@@ -2455,23 +2460,23 @@ export function evaluateStallPriceDeal(
   let dealBadgeColor = '#38bdf8';
 
   if (ratio <= 0.6) {
-    dealMultiplier = 0.92;
+    dealMultiplier = 0.96;
     dealLabel = 'Pechincha Imperdível!';
     dealBadgeColor = '#4ade80';
   } else if (ratio <= 0.85) {
-    dealMultiplier = 0.74;
+    dealMultiplier = 0.85;
     dealLabel = 'Barato (Ótimo Negócio)';
     dealBadgeColor = '#86efac';
   } else if (ratio <= 1.05) {
-    dealMultiplier = 0.5;
+    dealMultiplier = 0.68;
     dealLabel = 'Valor Sugerido (Justo)';
     dealBadgeColor = '#38bdf8';
   } else if (ratio <= 1.3) {
-    dealMultiplier = 0.22;
+    dealMultiplier = 0.32;
     dealLabel = 'Caro (Pouco Interesse)';
     dealBadgeColor = '#fbbf24';
   } else if (ratio <= 1.65) {
-    dealMultiplier = 0.07;
+    dealMultiplier = 0.12;
     dealLabel = 'Muito Caro (Raro)';
     dealBadgeColor = '#fb923c';
   } else {
@@ -2483,17 +2488,17 @@ export function evaluateStallPriceDeal(
   const buyChance =
     dealMultiplier <= 0
       ? 0
-      : Math.min(0.95, Math.max(0.03, dealMultiplier * affordabilityFactor));
+      : Math.min(0.97, Math.max(0.05, dealMultiplier * affordabilityFactor));
 
   // Quantidade máxima que o aldeão pode querer levar numa única compra (itens baratos saem em lotes maiores)
   let maxBuyQty = 1;
-  if (safePrice <= 3 && ratio <= 1.05) {
+  if (safePrice <= 5 && ratio <= 1.05) {
     maxBuyQty = 10;
-  } else if (safePrice <= 10 && ratio <= 1.1) {
+  } else if (safePrice <= 15 && ratio <= 1.1) {
     maxBuyQty = 6;
-  } else if (safePrice <= 30 && ratio <= 1.1) {
+  } else if (safePrice <= 40 && ratio <= 1.1) {
     maxBuyQty = 4;
-  } else if (safePrice <= 80 && ratio <= 1.05) {
+  } else if (safePrice <= 100 && ratio <= 1.05) {
     maxBuyQty = 2;
   }
 

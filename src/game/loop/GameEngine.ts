@@ -54,6 +54,7 @@ import { MultiplayerManager } from '../network/MultiplayerManager';
 import {
   createInitialPlayerState,
   CURRENT_SAVE_VERSION,
+  getOrCreatePersistentPlayerUid,
   migrateSaveData,
   SaveManager,
 } from '../persistence/SaveManager';
@@ -133,6 +134,14 @@ export class GameEngine {
   public activeStationStructureId: string | null = null;
   private fallbackThermalStations: Record<string, PlacedStructure> = {};
   private customTargetTile: { tx: number; ty: number } | null = null;
+  // Multiplayer anti-duplication state locks
+  private claimedDropIds = new Set<string>();
+  private pendingDropClaimTimers = new Map<string, number>();
+  private claimedDeathBagIds = new Set<string>();
+  private pendingDeathBagClaims = new Set<string>();
+  private claimedWorldActionKeys = new Map<string, number>();
+  private pendingContainerWithdraws = new Set<string>();
+  private stallCustomerSpawnTimer = 3.5;
   private onUiChange: ((snapshot: HudSnapshot) => void) | null = null;
   private onStationInteract: ((station: PlaceableType) => void) | null = null;
   private onNpcInteract: ((npc: CreatureEntity) => void) | null = null;
@@ -193,6 +202,10 @@ export class GameEngine {
       this.player = JSON.parse(JSON.stringify(saveData.player));
     }
 
+    if (!this.player.persistentPlayerId) {
+      this.player.persistentPlayerId = getOrCreatePersistentPlayerUid();
+    }
+
     this.player.goldCoins =
       typeof this.player.goldCoins === 'number' &&
       Number.isFinite(this.player.goldCoins)
@@ -213,7 +226,7 @@ export class GameEngine {
     this.world = new WorldManager(
       this.metadata.seed,
       saveData.chunks,
-      this.metadata.worldGenVersion ?? 1
+      this.metadata.createdWorldGenVersion ?? this.metadata.worldGenVersion ?? 2
     );
     if (!this.player.swimSpeed || this.player.swimSpeed <= 0) {
       this.player.swimSpeed = 58;
@@ -352,11 +365,19 @@ export class GameEngine {
     if (!this.isPaused && !this.isGameOver) {
       this.update(dt);
     } else if (this.isPaused && !this.isGameOver) {
-      // Keep Campfire & Furnace thermal stations smelting/cooking in real time while the player watches the station HUD!
+      // Keep Campfire & Furnace thermal stations smelting/cooking AND Market Stall NPC visitors shopping in real time while the player watches the station/stall HUD!
+      this.globalTime += dt;
       if (this.campfireRestCooldown > 0) {
         this.campfireRestCooldown = Math.max(0, this.campfireRestCooldown - dt);
       }
       this.updateThermalStations(dt);
+      this.updatePausedMarketStallVisitors(dt);
+      for (let i = this.floatingTexts.length - 1; i >= 0; i--) {
+        this.floatingTexts[i].timer -= dt;
+        if (this.floatingTexts[i].timer <= 0) {
+          this.floatingTexts.splice(i, 1);
+        }
+      }
       this.uiUpdateTimer += dt;
       if (this.uiUpdateTimer >= 0.12) {
         this.uiUpdateTimer = 0;
@@ -522,6 +543,7 @@ export class GameEngine {
       (c) =>
         c.tamed &&
         c.kind === CreatureKind.CAMEL &&
+        this.isCreatureOwnedByLocalPlayer(c) &&
         Math.hypot(c.x - this.player.x, c.y - this.player.y) < 180
     );
 
@@ -826,6 +848,7 @@ export class GameEngine {
       (c) =>
         c.tamed &&
         c.kind === CreatureKind.SHEEP &&
+        this.isCreatureOwnedByLocalPlayer(c) &&
         Math.hypot(c.x - this.player.x, c.y - this.player.y) < 150
     );
 
@@ -894,11 +917,11 @@ export class GameEngine {
   }
 
   /**
-   * Checks whether a placed structure counts as a valid House/Dwelling that can house up to 2 Villagers.
+   * Checks whether a placed structure counts as a valid House/Dwelling or Rest Point.
    * Supports:
    * - Village Houses (both generated in villages and crafted/placed by the player)
    * - Explorer Tents (placed by the player or in camps)
-   * - Player-built walled houses (a Wood Door or Iron Gate connected to adjacent walls/windows)
+   * - Walled houses (a Wood Door or Iron Gate connected to adjacent walls/windows)
    */
   public isStructureValidHouse(st: PlacedStructure): boolean {
     if (
@@ -922,6 +945,115 @@ export class GameEngine {
   }
 
   /**
+   * Returns true if the house/rest point is owned by a player.
+   * NPCs (Villagers and Wanderers) are strictly forbidden from invading, claiming, or sleeping in player-owned houses!
+   */
+  public isHouseOwnedByPlayer(st: PlacedStructure): boolean {
+    return st.ownerType === 'PLAYER';
+  }
+
+  /**
+   * Returns true if an NPC (Villager or Wanderer) is allowed to occupy or sleep in this house.
+   * NPCs can ONLY occupy village houses that are not owned by a player.
+   */
+  public canNpcOccupyHouse(st: PlacedStructure): boolean {
+    if (!this.isStructureValidHouse(st)) return false;
+    if (st.ownerType === 'PLAYER') return false;
+    // Only village houses with a villageId or VILLAGER ownerType can be used by NPCs
+    return Boolean(st.villageId || st.ownerType === 'VILLAGER');
+  }
+
+  /**
+   * Returns true if a rest point / house has no owner (and no living villager residents)
+   * so the player can click "Tomar Posse" to claim it as their own.
+   */
+  public canPlayerClaimRestPoint(st: PlacedStructure): boolean {
+    if (!this.isStructureValidHouse(st)) return false;
+    if (st.ownerType === 'PLAYER') return false;
+    return this.getHouseResidents(st.id).length === 0;
+  }
+
+  /**
+   * "Tomar Posse": Claims ownership of an unowned rest point / house for the player.
+   */
+  public claimRestPointOwnership(structureId?: string): boolean {
+    let targetSt: PlacedStructure | null = null;
+    if (structureId) {
+      for (const chunk of Object.values(this.world.chunks)) {
+        if (!chunk) continue;
+        const found = chunk.structures.find((s) => s.id === structureId);
+        if (found) {
+          targetSt = found;
+          break;
+        }
+      }
+    }
+    if (!targetSt) {
+      const aimed = this.getAimedTarget();
+      if (aimed?.structureId) {
+        for (const chunk of Object.values(this.world.chunks)) {
+          if (!chunk) continue;
+          const found = chunk.structures.find(
+            (s) => s.id === aimed.structureId
+          );
+          if (found) {
+            targetSt = found;
+            break;
+          }
+        }
+      }
+    }
+    if (!targetSt || !this.canPlayerClaimRestPoint(targetSt)) {
+      return false;
+    }
+
+    const ownerName =
+      this.multiplayer.localPlayerName ||
+      this.settings.playerName ||
+      'Aventureiro';
+    targetSt.ownerType = 'PLAYER';
+    targetSt.ownerId = this.getLocalOwnerId();
+    targetSt.ownerName = ownerName;
+    targetSt.villageId = undefined;
+
+    // Evict any stray NPC bindings to this structure
+    for (const cr of this.entities.creatures) {
+      if (cr.homeHouseId === targetSt.id) {
+        if (cr.isInsideHouse) {
+          this.exitVillagerFromHouse(cr, false);
+        }
+        cr.homeHouseId = undefined;
+        cr.homeX = undefined;
+        cr.homeY = undefined;
+      }
+    }
+
+    const sx = targetSt.tileX * TILE_SIZE + TILE_SIZE / 2;
+    const sy = targetSt.tileY * TILE_SIZE + TILE_SIZE / 2;
+    const restLabel =
+      targetSt.type === PlaceableType.VILLAGE_HOUSE
+        ? 'Cabana Medieval'
+        : targetSt.type === PlaceableType.EXPLORER_TENT
+        ? 'Tenda de Explorador'
+        : 'Casa do Jogador';
+    this.setPlayerRespawnPoint(sx, sy, restLabel);
+
+    soundManager.playLevelUp();
+    this.renderer.spawnBurst(sx, sy - 6, 'GOLD', 16);
+    this.renderer.spawnRipple(sx, sy, '#4ade80', 30, 0.55);
+    this.addFloatingText(
+      `🏠 Posse tomada! Agora ${restLabel} pertence a ${ownerName}!`,
+      sx,
+      sy - 24,
+      '#4ade80'
+    );
+    this.syncChunkAtTile(targetSt.tileX, targetSt.tileY);
+    void this.saveGame(true);
+    this.emitUiSnapshot();
+    return true;
+  }
+
+  /**
    * Returns all living Villagers currently registered as residents of a specific House structure (`max 2`).
    */
   public getHouseResidents(houseId: string): CreatureEntity[] {
@@ -935,32 +1067,54 @@ export class GameEngine {
 
   /**
    * Ensures legacy Village Houses without explicit `homeHouseId` bindings link up to 2 nearby unbound villagers,
-   * and releases house slots automatically if a resident villager dies or its house is dismantled.
+   * protects all player-owned houses from NPC invasion, and releases house ownership if all village residents die.
    */
   private syncVillageHouseAssignments(): void {
-    const validHouseIds = new Set<string>();
-    const allHouses: PlacedStructure[] = [];
+    const validNpcHouseIds = new Set<string>();
+    const npcHouses: PlacedStructure[] = [];
+    const ownerName =
+      this.multiplayer.localPlayerName ||
+      this.settings.playerName ||
+      'Aventureiro';
 
     for (const chunk of Object.values(this.world.chunks)) {
       if (!chunk) continue;
       for (const st of chunk.structures) {
-        if (this.isStructureValidHouse(st)) {
-          validHouseIds.add(st.id);
-          allHouses.push(st);
+        if (!this.isStructureValidHouse(st)) continue;
+
+        // Any house/tent/door placed by a player (not generated as a world landmark structure) belongs to the player!
+        if (
+          !st.id.startsWith('world_struct_') &&
+          !st.villageId &&
+          !st.ownerType
+        ) {
+          st.ownerType = 'PLAYER';
+          st.ownerId = this.getLocalOwnerId();
+          st.ownerName = ownerName;
+        }
+
+        if (this.canNpcOccupyHouse(st)) {
+          validNpcHouseIds.add(st.id);
+          npcHouses.push(st);
         }
       }
     }
 
-    // Clear homeHouseId if a player dismantled that house
+    // Clear homeHouseId if a house was dismantled OR if it belongs to a Player (NPCs cannot invade player houses!)
     for (const cr of this.entities.creatures) {
-      if (cr.homeHouseId && !validHouseIds.has(cr.homeHouseId)) {
+      if (cr.homeHouseId && !validNpcHouseIds.has(cr.homeHouseId)) {
+        if (cr.isInsideHouse) {
+          this.exitVillagerFromHouse(cr, false);
+        }
         cr.homeHouseId = undefined;
+        cr.homeX = undefined;
+        cr.homeY = undefined;
         cr.isInsideHouse = false;
         cr.outsideNightTimer = 0;
       }
     }
 
-    // Bind unbound village NPCs to their nearest village house (up to 2 per house)
+    // Bind unbound village NPCs ONLY to valid non-player village houses (up to 2 per house)
     for (const cr of this.entities.creatures) {
       if (
         cr.kind === CreatureKind.VILLAGER &&
@@ -969,7 +1123,8 @@ export class GameEngine {
       ) {
         let bestHouse: PlacedStructure | null = null;
         let bestDist = 190;
-        for (const h of allHouses) {
+        for (const h of npcHouses) {
+          if (!this.canNpcOccupyHouse(h)) continue;
           if (this.getHouseResidents(h.id).length >= MAX_VILLAGERS_PER_HOUSE) {
             continue;
           }
@@ -986,6 +1141,20 @@ export class GameEngine {
           cr.homeX = bestHouse.tileX * TILE_SIZE + TILE_SIZE / 2;
           cr.homeY = bestHouse.tileY * TILE_SIZE + TILE_SIZE / 2;
         }
+      }
+    }
+
+    // Update dynamic VILLAGER ownership labels on village houses (or mark unowned if all residents died)
+    for (const h of npcHouses) {
+      if (h.ownerType === 'PLAYER') continue;
+      const residents = this.getHouseResidents(h.id);
+      if (residents.length > 0) {
+        h.ownerType = 'VILLAGER';
+        h.ownerName = residents.map((r) => r.name).join(' & ');
+      } else {
+        h.ownerType = undefined;
+        h.ownerId = undefined;
+        h.ownerName = undefined;
       }
     }
 
@@ -1118,7 +1287,7 @@ export class GameEngine {
         if (!chunk) continue;
 
         for (const st of chunk.structures) {
-          if (!this.isStructureValidHouse(st)) continue;
+          if (!this.canNpcOccupyHouse(st)) continue;
           const residents = this.getHouseResidents(st.id).length;
           if (residents >= MAX_VILLAGERS_PER_HOUSE) continue;
 
@@ -1135,13 +1304,14 @@ export class GameEngine {
   }
 
   /**
-   * Settles a Wanderer NPC into a specific House (max 2 villagers per house), converting them into a Villager.
+   * Settles a Wanderer NPC into a specific non-player Village House (max 2 villagers per house), converting them into a Villager.
    */
   public settleWandererIntoHouse(
     wanderer: CreatureEntity,
     house: PlacedStructure
   ): boolean {
     if (wanderer.kind !== CreatureKind.WANDERER) return false;
+    if (!this.canNpcOccupyHouse(house)) return false;
     const currentResidents = this.getHouseResidents(house.id).length;
     if (currentResidents >= MAX_VILLAGERS_PER_HOUSE) return false;
 
@@ -1260,6 +1430,7 @@ export class GameEngine {
 
   private updateCreatures(dt: number): void {
     this.syncVillageHouseAssignments();
+    this.updatePlayerStallCustomerTraffic(dt);
     const isSunsetOrNight =
       this.metadata.timeOfDay >= 17.5 || this.metadata.timeOfDay < 5.5;
 
@@ -1350,7 +1521,7 @@ export class GameEngine {
       const distToPlayer = Math.hypot(this.player.x - cr.x, this.player.y - cr.y);
 
       // =====================================================================
-      // 1. FACTION: PLAYER_ALLY (Tamed Pets)
+      // 1. FACTION: PLAYER_ALLY (Tamed Pets — 3 States: 'stay', 'follow', 'graze')
       // =====================================================================
       if (cr.tamed) {
         if (cr.kind === CreatureKind.SHEEP) {
@@ -1362,91 +1533,146 @@ export class GameEngine {
           }
         }
 
-        let enemyTarget: CreatureEntity | null = null;
+        // Normalize any legacy aiState on a tamed pet into one of the 3 official states ('stay', 'follow', 'graze')
         if (
-          (cr.kind === CreatureKind.BOAR || cr.kind === CreatureKind.CAMEL) &&
-          cr.aiState !== 'stay'
+          cr.aiState !== 'stay' &&
+          cr.aiState !== 'follow' &&
+          cr.aiState !== 'graze'
         ) {
-          let bestDist = 185;
-          for (const other of this.entities.creatures) {
-            if (
-              other.id !== cr.id &&
-              other.hp > 0 &&
-              !other.isInsideHouse &&
-              (EntityManager.isMonsterKind(other.kind) || other.isHostile)
-            ) {
-              const d = Math.hypot(other.x - cr.x, other.y - cr.y);
-              if (d < bestDist) {
-                bestDist = d;
-                enemyTarget = other;
+          cr.aiState = 'follow';
+        }
+
+        // STATE 1: BASE ('stay') — Pet stays still at the spot
+        if (cr.aiState === 'stay') {
+          cr.combatTargetId = null;
+          cr.retaliateTargetId = undefined;
+          cr.vx = 0;
+          cr.vy = 0;
+        }
+        // STATE 2: PASTAR ('graze') — Pet roams freely around its area while remaining tamed
+        else if (cr.aiState === 'graze') {
+          cr.combatTargetId = null;
+          cr.retaliateTargetId = undefined;
+          this.updatePetGrazeAi(cr, dt);
+        }
+        // STATE 3: SEGUINDO ('follow') — Pet follows owner as an ally & obeys single-target combat rules
+        else if (cr.aiState === 'follow') {
+          const ownerTarget = this.getPetOwnerTarget(cr);
+
+          // Resolve single focused combat target (`combatTargetId`)
+          let enemyTarget: CreatureEntity | null = null;
+          if (cr.combatTargetId) {
+            const foundTarget = this.entities.creatures.find(
+              (o) =>
+                o.id === cr.combatTargetId &&
+                o.hp > 0 &&
+                !o.isInsideHouse &&
+                !o.tamed
+            );
+            if (foundTarget) {
+              enemyTarget = foundTarget;
+            } else {
+              cr.combatTargetId = null;
+            }
+          }
+
+          // If the ally itself was directly attacked while following and has no locked target yet, lock onto that attacker
+          if (!enemyTarget && retaliateTarget && !retaliateTarget.tamed) {
+            cr.combatTargetId = retaliateTarget.id;
+            enemyTarget = retaliateTarget;
+          }
+
+          // Rule: If the player moves away from the battle area, the ally stops battling and follows the player!
+          if (enemyTarget && ownerTarget) {
+            const distOwnerToEnemy = Math.hypot(
+              ownerTarget.x - enemyTarget.x,
+              ownerTarget.y - enemyTarget.y
+            );
+            const distOwnerToPet = Math.hypot(
+              ownerTarget.x - cr.x,
+              ownerTarget.y - cr.y
+            );
+            if (distOwnerToEnemy > 235 || distOwnerToPet > 225) {
+              cr.combatTargetId = null;
+              cr.retaliateTargetId = undefined;
+              enemyTarget = null;
+            }
+          }
+
+          if (enemyTarget) {
+            const dx = enemyTarget.x - cr.x;
+            const dy = enemyTarget.y - cr.y;
+            const dist = Math.max(1, Math.hypot(dx, dy));
+            if (dist > 26) {
+              this.steerCreatureToward(
+                cr,
+                enemyTarget.x,
+                enemyTarget.y,
+                cr.moveSpeed * 1.25,
+                dt,
+                false
+              );
+            } else {
+              cr.vx = 0;
+              cr.vy = 0;
+              if (cr.attackCooldown <= 0) {
+                cr.attackCooldown = 1.05;
+                cr.attackTimer = 0.25;
+                const allyDamage = Math.max(8, cr.attackDamage || 10);
+                this.damageCreature(
+                  enemyTarget,
+                  allyDamage,
+                  cr.x,
+                  cr.y,
+                  1.0,
+                  cr
+                );
+              }
+            }
+          } else if (!ownerTarget) {
+            // Owner is offline right now; pet waits patiently in place
+            cr.vx = 0;
+            cr.vy = 0;
+          } else {
+            const distToOwner = Math.hypot(
+              ownerTarget.x - cr.x,
+              ownerTarget.y - cr.y
+            );
+            // If pet got stranded very far away (e.g. across water/cliffs), bring it to a clear spot near its owner
+            if (distToOwner > 440) {
+              const telePos = this.findClearSpotNear(
+                ownerTarget.x,
+                ownerTarget.y,
+                36
+              );
+              cr.x = telePos.x;
+              cr.y = telePos.y;
+              cr.vx = 0;
+              cr.vy = 0;
+            } else if (distToOwner > 54) {
+              // Smooth arrival speed as the pet gets close to its owner
+              const arrivalFactor = Math.min(
+                1.3,
+                Math.max(0.55, (distToOwner - 44) / 55)
+              );
+              this.steerCreatureToward(
+                cr,
+                ownerTarget.x,
+                ownerTarget.y,
+                cr.moveSpeed * arrivalFactor,
+                dt,
+                false
+              );
+            } else {
+              // Smoothly decelerate to rest beside its owner
+              cr.vx *= Math.max(0, 1 - dt * 10);
+              cr.vy *= Math.max(0, 1 - dt * 10);
+              if (Math.hypot(cr.vx, cr.vy) < 2) {
+                cr.vx = 0;
+                cr.vy = 0;
               }
             }
           }
-        }
-        if (!enemyTarget && retaliateTarget && cr.attackDamage > 0) {
-          enemyTarget = retaliateTarget;
-        }
-
-        if (enemyTarget) {
-          const dx = enemyTarget.x - cr.x;
-          const dy = enemyTarget.y - cr.y;
-          const dist = Math.max(1, Math.hypot(dx, dy));
-          if (dist > 25) {
-            this.steerCreatureToward(
-              cr,
-              enemyTarget.x,
-              enemyTarget.y,
-              cr.moveSpeed * 1.25,
-              dt,
-              false
-            );
-          } else {
-            cr.vx = 0;
-            cr.vy = 0;
-            if (cr.attackCooldown <= 0) {
-              cr.attackCooldown = 1.1;
-              cr.attackTimer = 0.25;
-              this.damageCreature(
-                enemyTarget,
-                cr.attackDamage,
-                cr.x,
-                cr.y,
-                1.0,
-                cr
-              );
-            }
-          }
-        } else if (cr.aiState === 'follow') {
-          // If pet got stranded very far away (e.g. across water/cliffs), bring it to a clear spot near player
-          if (distToPlayer > 440) {
-            const telePos = this.findClearSpotNear(this.player.x, this.player.y, 36);
-            cr.x = telePos.x;
-            cr.y = telePos.y;
-            cr.vx = 0;
-            cr.vy = 0;
-          } else if (distToPlayer > 54) {
-            // Smooth arrival speed as the pet gets close to the player
-            const arrivalFactor = Math.min(1.3, Math.max(0.55, (distToPlayer - 44) / 55));
-            this.steerCreatureToward(
-              cr,
-              this.player.x,
-              this.player.y,
-              cr.moveSpeed * arrivalFactor,
-              dt,
-              false
-            );
-          } else {
-            // Smoothly decelerate to rest beside player
-            cr.vx *= Math.max(0, 1 - dt * 10);
-            cr.vy *= Math.max(0, 1 - dt * 10);
-            if (Math.hypot(cr.vx, cr.vy) < 2) {
-              cr.vx = 0;
-              cr.vy = 0;
-            }
-          }
-        } else {
-          cr.vx = 0;
-          cr.vy = 0;
         }
       }
       // =====================================================================
@@ -1545,29 +1771,30 @@ export class GameEngine {
               if (cr.attackCooldown <= 0) {
                 cr.attackCooldown = 1.15;
                 cr.attackTimer = 0.28;
-                this.damagePlayer(cr.attackDamage, cr.x, cr.y);
+                this.damagePlayer(cr.attackDamage, cr.x, cr.y, cr);
               }
             }
           }
         } else if (cr.kind === CreatureKind.WANDERER) {
-          // PRIORITY 3 (Wanderer): Look for an available House (village or player-built, < 2 villagers)
-          const availableHouse = this.findAvailableHouseNear(cr.x, cr.y, 235);
-          if (availableHouse) {
-            if (availableHouse.dist <= 52) {
-              this.settleWandererIntoHouse(cr, availableHouse.house);
-            } else {
-              this.steerCreatureToward(
-                cr,
-                availableHouse.wx,
-                availableHouse.wy,
-                cr.moveSpeed * 0.95,
-                dt,
-                true
-              );
-            }
+          // PRIORITY 3 (Wanderer): If attracted to or passing near an open Player Market Stall during the day, visit & inspect the stall first!
+          if (!isSunsetOrNight && this.updateNpcMarketStallShopping(cr, dt)) {
+            // Wanderer is currently inspecting or walking to a Player Market Stall
           } else {
-            if (!isSunsetOrNight && this.updateNpcMarketStallShopping(cr, dt)) {
-              // Wanderer is currently inspecting or waiting at a Player Market Stall
+            // Look for an available non-player Village House (< 2 villagers)
+            const availableHouse = this.findAvailableHouseNear(cr.x, cr.y, 235);
+            if (availableHouse) {
+              if (availableHouse.dist <= 52) {
+                this.settleWandererIntoHouse(cr, availableHouse.house);
+              } else {
+                this.steerCreatureToward(
+                  cr,
+                  availableHouse.wx,
+                  availableHouse.wy,
+                  cr.moveSpeed * 0.95,
+                  dt,
+                  true
+                );
+              }
             } else {
               this.updateDirectionalWandererAi(cr, dt);
             }
@@ -1740,7 +1967,7 @@ export class GameEngine {
               }
 
               if (closestEnemyType === 'player') {
-                this.damagePlayer(dmg, cr.x, cr.y);
+                this.damagePlayer(dmg, cr.x, cr.y, cr);
               } else if (closestEnemyCreature) {
                 this.damageCreature(
                   closestEnemyCreature,
@@ -1758,11 +1985,15 @@ export class GameEngine {
         }
       }
       // =====================================================================
-      // 4. FACTION: WILDLIFE (Peaceful Animals: Sheep, Boar, Camel)
+      // 4. FACTION: WILDLIFE (Peaceful Animals: Sheep, Boar, Camel, Horse)
       //    - Retaliates if attacked (Boar/Camel) or flees from Monsters (Sheep)
       // =====================================================================
       else {
-        if (retaliateTarget && cr.attackDamage > 0) {
+        if (
+          retaliateTarget &&
+          (cr.kind === CreatureKind.BOAR || cr.kind === CreatureKind.CAMEL) &&
+          cr.attackDamage > 0
+        ) {
           const dx = retaliateTarget.x - cr.x;
           const dy = retaliateTarget.y - cr.y;
           const dist = Math.max(1, Math.hypot(dx, dy));
@@ -1920,9 +2151,11 @@ export class GameEngine {
       return true;
     }
     if (cr.tamed && cr.aiState === 'follow') {
+      const ownerTarget = this.getPetOwnerTarget(cr);
       if (
-        this.world.isWorldPosInWater(this.player.x, this.player.y) ||
-        Math.hypot(this.player.x - cr.x, this.player.y - cr.y) > 90
+        ownerTarget &&
+        (this.world.isWorldPosInWater(ownerTarget.x, ownerTarget.y) ||
+          Math.hypot(ownerTarget.x - cr.x, ownerTarget.y - cr.y) > 90)
       ) {
         return true;
       }
@@ -2539,7 +2772,24 @@ export class GameEngine {
       }
     }
 
-    if (cr.homeX === undefined || cr.homeY === undefined) {
+    if (cr.homeHouseId) {
+      let validAssignedHouse = false;
+      for (const chunk of Object.values(this.world.chunks)) {
+        if (!chunk) continue;
+        const found = chunk.structures.find((s) => s.id === cr.homeHouseId);
+        if (found && this.canNpcOccupyHouse(found)) {
+          validAssignedHouse = true;
+          break;
+        }
+      }
+      if (!validAssignedHouse) {
+        cr.homeHouseId = undefined;
+        cr.homeX = undefined;
+        cr.homeY = undefined;
+      }
+    }
+
+    if (!cr.homeHouseId || cr.homeX === undefined || cr.homeY === undefined) {
       const nearbyHouse = this.findAvailableHouseNear(cr.x, cr.y, 280);
       if (nearbyHouse) {
         cr.homeHouseId = nearbyHouse.house.id;
@@ -2903,9 +3153,89 @@ export class GameEngine {
     );
   }
 
+  /**
+   * Free-roaming Graze AI ('graze' / "Pastar") for Tamed Pets:
+   * Pet walks freely around its surroundings while preserving `cr.aiState = 'graze'` and `cr.tamed = true`.
+   */
+  private updatePetGrazeAi(cr: CreatureEntity, dt: number): void {
+    cr.aiState = 'graze';
+    const crInWater = this.world.isWorldPosInWater(cr.x, cr.y);
+
+    cr.aiTimer -= dt;
+    if (
+      cr.aiTimer <= 0 ||
+      (crInWater &&
+        this.world.isWorldPosInWater(cr.targetX || cr.x, cr.targetY || cr.y))
+    ) {
+      if (!crInWater && Math.random() < 0.42) {
+        // Pause in place to graze on the grass
+        cr.aiTimer = 1.8 + Math.random() * 2.5;
+        cr.targetX = cr.x;
+        cr.targetY = cr.y;
+      } else {
+        const dest = this.pickWalkableWanderTarget(cr);
+        if (dest) {
+          cr.targetX = dest.x;
+          cr.targetY = dest.y;
+          cr.aiTimer = 3.0 + Math.random() * 3.5;
+        } else {
+          cr.targetX = cr.x;
+          cr.targetY = cr.y;
+          cr.aiTimer = 1.6 + Math.random() * 1.5;
+        }
+      }
+    }
+
+    const distToTarget = Math.hypot(
+      (cr.targetX ?? cr.x) - cr.x,
+      (cr.targetY ?? cr.y) - cr.y
+    );
+    if (distToTarget <= 15 && !crInWater) {
+      cr.vx *= Math.max(0, 1 - dt * 8);
+      cr.vy *= Math.max(0, 1 - dt * 8);
+      if (Math.hypot(cr.vx, cr.vy) < 1.5) {
+        cr.vx = 0;
+        cr.vy = 0;
+      }
+      return;
+    }
+
+    this.steerCreatureToward(
+      cr,
+      cr.targetX ?? cr.x,
+      cr.targetY ?? cr.y,
+      cr.moveSpeed * 0.62,
+      dt,
+      false
+    );
+  }
+
   private updateDroppedItems(dt: number): void {
+    // Expire pending drop claim timers on Guest if Host hasn't responded after 1.5s
+    for (const [dropId, timer] of this.pendingDropClaimTimers.entries()) {
+      const next = timer - dt;
+      if (next <= 0) {
+        this.pendingDropClaimTimers.delete(dropId);
+      } else {
+        this.pendingDropClaimTimers.set(dropId, next);
+      }
+    }
+
+    // Expire world action anti-duplication keys after 3 seconds
+    const nowMs = Date.now();
+    for (const [actionKey, expiresAt] of this.claimedWorldActionKeys.entries()) {
+      if (nowMs >= expiresAt) {
+        this.claimedWorldActionKeys.delete(actionKey);
+      }
+    }
+
     for (let i = this.droppedItems.length - 1; i >= 0; i--) {
       const drop = this.droppedItems[i];
+      if (!drop) continue;
+      if (this.claimedDropIds.has(drop.id)) {
+        this.droppedItems.splice(i, 1);
+        continue;
+      }
       drop.bobTimer += dt;
       if (drop.pickupDelay > 0) {
         drop.pickupDelay -= dt;
@@ -2919,8 +3249,33 @@ export class GameEngine {
       }
 
       if (dist < 18) {
+        // Check if inventory has room BEFORE claiming
+        if (!this.canFitItemInInventory(drop.itemId, drop.count)) {
+          continue;
+        }
+
+        // In online Guest mode, request authoritative atomic claim from Host to prevent 2 players picking up the same item
+        if (this.multiplayer.isOnline && this.multiplayer.role === 'GUEST') {
+          if (!this.pendingDropClaimTimers.has(drop.id)) {
+            this.pendingDropClaimTimers.set(drop.id, 1.2);
+            this.multiplayer.sendWorldInteractRequest({
+              action: 'pickup_drop_claim',
+              dropId: drop.id,
+              itemId: drop.itemId,
+              count: drop.count,
+            });
+          }
+          continue;
+        }
+
+        // Host or Offline: atomically claim and award
+        if (this.claimedDropIds.has(drop.id)) {
+          this.droppedItems.splice(i, 1);
+          continue;
+        }
         const added = this.addItemToInventory(drop.itemId, drop.count);
         if (added) {
+          this.claimedDropIds.add(drop.id);
           soundManager.playPickup();
           this.renderer.spawnBurst(drop.x, drop.y, 'GOLD', 5);
           const itemDef = ITEMS[drop.itemId];
@@ -2950,6 +3305,9 @@ export class GameEngine {
           this.player.y - 26,
           '#f43f5e'
         );
+        if (this.multiplayer.isOnline && this.multiplayer.role === 'HOST') {
+          this.multiplayer.sendDeathBagsSync(this.deathBags);
+        }
         this.emitUiSnapshot();
       }
     }
@@ -3504,6 +3862,12 @@ export class GameEngine {
               );
             }
             if (st.hp <= 0) {
+              const structBreakKey = `break_struct:${st.id}:${st.tileX},${st.tileY}`;
+              if (!this.tryClaimWorldAction(structBreakKey)) {
+                chunk.structures.splice(si, 1);
+                this.emitUiSnapshot();
+                return;
+              }
               if (st.type === PlaceableType.CHEST) {
                 this.dropChestContents(st, sx, sy);
                 this.addFloatingText(
@@ -3616,6 +3980,10 @@ export class GameEngine {
 
       if (soilSt) {
         if (soilSt.cropType && soilSt.growthStage === 3) {
+          const cropHarvestKey = `harvest_crop:${tile.tx},${tile.ty}`;
+          if (!this.tryClaimWorldAction(cropHarvestKey)) {
+            return;
+          }
           const crop = soilSt.cropType;
           let harvestItem = crop;
           let seedItem = 'wheat_seeds';
@@ -3861,13 +4229,37 @@ export class GameEngine {
         const { tx, ty } = this.world.worldToTile(target.worldX, target.worldY);
         const houseSt = this.world.getStructureAtTile(tx, ty);
         if (houseSt) {
-          const insideResidents = this.getHouseResidents(houseSt.id).filter(
-            (r) => r.isInsideHouse
-          );
+          const allResidents = this.getHouseResidents(houseSt.id);
+          const insideResidents = allResidents.filter((r) => r.isInsideHouse);
           // If residents are currently inside this house, knocking on the door calls them outside to interact!
           if (insideResidents.length > 0) {
             this.knockOnHouseDoor(houseSt, insideResidents);
             return;
+          }
+
+          // If this house belongs to living Villagers, the player cannot sleep in their beds
+          if (houseSt.ownerType !== 'PLAYER' && allResidents.length > 0) {
+            soundManager.playHitWood();
+            this.renderer.spawnRipple(
+              target.worldX,
+              target.worldY,
+              '#fde047',
+              22,
+              0.4
+            );
+            this.addFloatingText(
+              `🏠 Moradia de ${houseSt.ownerName || 'Aldeões da Vila'} (${allResidents.length}/${MAX_VILLAGERS_PER_HOUSE})`,
+              target.worldX,
+              target.worldY - 22,
+              '#fde047'
+            );
+            this.emitUiSnapshot();
+            return;
+          }
+
+          // If the rest point has NO owner, automatically claim ownership ("Tomar Posse") for the player!
+          if (this.canPlayerClaimRestPoint(houseSt)) {
+            this.claimRestPointOwnership(houseSt.id);
           }
         }
 
@@ -4056,13 +4448,18 @@ export class GameEngine {
 
       if (wild.tameProgress >= 100) {
         wild.tamed = true;
+        wild.ownerId = this.getLocalOwnerId();
+        wild.ownerName =
+          this.multiplayer.localPlayerName ||
+          this.settings.playerName ||
+          'Aventureiro';
         wild.aiState = 'follow';
         wild.hp = wild.maxHp;
         soundManager.playTameSuccess();
         this.renderer.spawnBurst(wild.x, wild.y - 6, 'TAME', 16);
         this.renderer.spawnRipple(wild.x, wild.y, '#f43f5e', 28, 0.55);
         this.addFloatingText(
-          `♥ ${wild.name} Domesticado!`,
+          `♥ ${wild.name} Domesticado! (Dono: ${wild.ownerName})`,
           wild.x,
           wild.y - 22,
           '#f43f5e'
@@ -4087,7 +4484,11 @@ export class GameEngine {
           tameProgress: wild.tameProgress,
           aiState: wild.aiState,
           hp: wild.hp,
+          ownerId: wild.ownerId,
+          ownerName: wild.ownerName,
         });
+      } else if (this.multiplayer.isOnline && this.multiplayer.role === 'HOST') {
+        this.multiplayer.sendCreaturesSync(this.entities.creatures);
       }
       this.emitUiSnapshot();
       return;
@@ -4098,13 +4499,26 @@ export class GameEngine {
       const tamed = this.entities.creatures.find((c) => c.id === target.creatureId);
       if (!tamed) return;
 
-      // 3A. Boat: Mount or Dismount
+      // 3A. Boat: Mount or Dismount (shared 2-seat watercraft)
       if (tamed.kind === CreatureKind.BOAT) {
         if (this.player.mountedEntityId === tamed.id) {
           this.dismountCreature();
         } else {
           this.mountCreature(tamed.id);
         }
+        return;
+      }
+
+      // Exclusive pet/mount ownership check: Only the owner of a Horse, Camel, Sheep, or Boar can interact with it!
+      if (!this.isCreatureOwnedByLocalPlayer(tamed)) {
+        soundManager.playHitWood();
+        this.renderer.spawnRipple(tamed.x, tamed.y, '#ef4444', 22, 0.35);
+        this.addFloatingText(
+          `🔒 ${tamed.name} pertence exclusivamente a ${tamed.ownerName || 'outro jogador'}!`,
+          tamed.x,
+          tamed.y - 22,
+          '#f43f5e'
+        );
         return;
       }
 
@@ -4133,16 +4547,16 @@ export class GameEngine {
         return;
       }
 
-      // 3D. Unsaddled Horse/Camel or Sheep/Boar: Standard Tamed Animal Follow/Stay interaction
-      tamed.aiState = tamed.aiState === 'stay' ? 'follow' : 'stay';
+      // 3D. Unsaddled Horse/Camel or Sheep/Boar: Cycle through 3 Pet States ('follow' -> 'stay' -> 'graze')
+      this.toggleTamedAnimalState(tamed.id);
       soundManager.playPickup();
-      this.addFloatingText(
-        tamed.aiState === 'stay' ? 'Guardando Base' : 'Seguindo Você',
-        tamed.x,
-        tamed.y - 20,
-        '#fde047'
-      );
-      this.emitUiSnapshot();
+      const stateLabel =
+        tamed.aiState === 'stay'
+          ? 'Estado: Base (Parado)'
+          : tamed.aiState === 'graze'
+          ? 'Estado: Pastar (Livre)'
+          : 'Estado: Seguindo (Aliado)';
+      this.addFloatingText(stateLabel, tamed.x, tamed.y - 20, '#fde047');
       return;
     }
 
@@ -4334,6 +4748,23 @@ export class GameEngine {
         this.buildOrientation
       );
       if (result.placed) {
+        const placedSt = this.world.getStructureAtTile(target.tx, target.ty);
+        if (
+          placedSt &&
+          (placedSt.type === PlaceableType.EXPLORER_TENT ||
+            placedSt.type === PlaceableType.VILLAGE_HOUSE ||
+            placedSt.type === PlaceableType.WOOD_DOOR ||
+            placedSt.type === PlaceableType.IRON_GATE ||
+            placedSt.type === PlaceableType.MARKET_STALL)
+        ) {
+          placedSt.ownerType = 'PLAYER';
+          placedSt.ownerId = this.getLocalOwnerId();
+          placedSt.ownerName =
+            this.multiplayer.localPlayerName ||
+            this.settings.playerName ||
+            'Aventureiro';
+          placedSt.villageId = undefined;
+        }
         this.consumeInventoryAt(this.player.selectedHotbarIndex, 1);
         if (result.replacedItemId) {
           const refunded = this.addItemToInventory(result.replacedItemId, 1);
@@ -4738,40 +5169,60 @@ export class GameEngine {
   }
 
   /**
-   * Computes what object or entity the player is currently aiming at / closest to for the Interact button.
+   * Computes what object or entity the player is currently pointing/aiming at for the Interact button.
+   * Evaluates all interactive candidates within reach using directional alignment with the player's facing pointer
+   * so that the visual selector and `performInteractAction()` always match what the player is pointing at.
    */
   public getAimedTarget(): AimedTargetInfo | null {
     const dirVec = this.getDirectionOffset(this.player.direction);
     const aimPointX = this.player.x + dirVec.x * 28;
     const aimPointY = this.player.y + dirVec.y * 28;
 
-    // 0A. Check nearby Interactive Death Bag ("Bolsinha de Espólios") — Top Priority so the player can recover their items immediately
-    let bestBag: { bag: DeathBag; dist: number } | null = null;
+    const computeDirectionalScore = (
+      wx: number,
+      wy: number,
+      categoryBias = 0
+    ): number => {
+      const dx = wx - this.player.x;
+      const dy = wy - this.player.y;
+      const distPlayer = Math.hypot(dx, dy);
+      const distAim = Math.hypot(wx - aimPointX, wy - aimPointY);
+      const dot =
+        distPlayer > 0.001
+          ? (dx * dirVec.x + dy * dirVec.y) / distPlayer
+          : 1.0;
+      // Targets inside the player's forward cone (dot >= 0.2) get a strong directional lock bonus;
+      // targets behind the player (dot < -0.15) are penalized so they only win if nothing is in front.
+      const coneBonus = dot >= 0.25 ? -26 * dot : dot < -0.15 ? 38 : -10 * dot;
+      return distAim + distPlayer * 0.25 + coneBonus + categoryBias;
+    };
+
+    const candidates: Array<{ score: number; info: AimedTargetInfo }> = [];
+
+    // 0A. Check nearby Interactive Death Bag ("Bolsinha de Espólios")
     for (const bag of this.deathBags) {
       const d = Math.hypot(bag.x - this.player.x, bag.y - this.player.y);
-      if (d <= 72 && (!bestBag || d < bestBag.dist)) {
-        bestBag = { bag, dist: d };
+      if (d <= 76) {
+        const remSec = Math.max(0, Math.ceil(bag.expiresTimer));
+        const mm = String(Math.floor(remSec / 60)).padStart(2, '0');
+        const ss = String(remSec % 60).padStart(2, '0');
+        const totalStacks = bag.items.length + (bag.goldCoins > 0 ? 1 : 0);
+        candidates.push({
+          score: computeDirectionalScore(bag.x, bag.y, -18),
+          info: {
+            kind: 'death_bag',
+            label: `Bolsinha de Espólios (${totalStacks} itens · ${mm}:${ss})`,
+            actionHint: 'Recuperar Todos os Itens 🎒',
+            worldX: bag.x,
+            worldY: bag.y,
+            deathBagId: bag.id,
+            iconItemId: bag.items[0]?.itemId || 'leather_tunic',
+          },
+        });
       }
     }
-    if (bestBag) {
-      const bag = bestBag.bag;
-      const remSec = Math.max(0, Math.ceil(bag.expiresTimer));
-      const mm = String(Math.floor(remSec / 60)).padStart(2, '0');
-      const ss = String(remSec % 60).padStart(2, '0');
-      const totalStacks = bag.items.length + (bag.goldCoins > 0 ? 1 : 0);
-      return {
-        kind: 'death_bag',
-        label: `Bolsinha de Espólios (${totalStacks} itens · ${mm}:${ss})`,
-        actionHint: 'Recuperar Todos os Itens 🎒 (E / Interagir)',
-        worldX: bag.x,
-        worldY: bag.y,
-        deathBagId: bag.id,
-        iconItemId: bag.items[0]?.itemId || 'leather_tunic',
-      };
-    }
 
-    // 0. Check nearby Village NPC or Wanderer (Priority so player can easily talk/trade, settle a wanderer, or pay peace tribute)
-    let bestNpc: { npc: CreatureEntity; dist: number } | null = null;
+    // 0B. Check nearby Village NPC or Wanderer
     for (const cr of this.entities.creatures) {
       if (
         (cr.kind === CreatureKind.VILLAGER ||
@@ -4780,40 +5231,39 @@ export class GameEngine {
         !cr.isInsideHouse
       ) {
         const d = Math.hypot(cr.x - this.player.x, cr.y - this.player.y);
-        if (d <= 84 && (!bestNpc || d < bestNpc.dist)) {
-          bestNpc = { npc: cr, dist: d };
+        if (d <= 84) {
+          const aff = Math.round(cr.affinity ?? 55);
+          const isWanderer = cr.kind === CreatureKind.WANDERER;
+          const holdingPeace = this.isPlayerHoldingPeaceItem();
+          const debtCoins = cr.isHostile ? this.getNpcPeaceDebtCoins(cr) : 0;
+          candidates.push({
+            score: computeDirectionalScore(cr.x, cr.y, -4),
+            info: {
+              kind: 'villager',
+              label: isWanderer
+                ? `${cr.name} · Andarilho`
+                : `${cr.name} · ${cr.npcProfessionLabel || 'Aldeão'}`,
+              actionHint: cr.isHostile
+                ? holdingPeace
+                  ? `🕊️ Pagar Dívida (${debtCoins} Moedas)`
+                  : '⚔ Hostil! Segure o Tratado da Paz'
+                : isWanderer
+                ? 'Conversar / Trocar'
+                : `Negociar (♥${aff})`,
+              worldX: cr.x,
+              worldY: cr.y,
+              creatureId: cr.id,
+              iconItemId:
+                cr.isHostile && holdingPeace ? 'peace_treaty' : 'gold_coin',
+            },
+          });
         }
       }
     }
-    if (bestNpc) {
-      const npc = bestNpc.npc;
-      const aff = Math.round(npc.affinity ?? 55);
-      const isWanderer = npc.kind === CreatureKind.WANDERER;
-      const holdingPeace = this.isPlayerHoldingPeaceItem();
-      const debtCoins = npc.isHostile ? this.getNpcPeaceDebtCoins(npc) : 0;
-      return {
-        kind: 'villager',
-        label: isWanderer
-          ? `${npc.name} · Andarilho (Sem Casa)`
-          : `${npc.name} · ${npc.npcProfessionLabel || 'Aldeão'}`,
-        actionHint: npc.isHostile
-          ? holdingPeace
-            ? `🕊️ Falar & Ver Cobrança (${debtCoins} Moedas de Ouro)`
-            : '⚔ Hostil! Segure o Tratado da Paz na mão para falar'
-          : isWanderer
-          ? `Conversar / Trocar · Precisa de Casa 🏠`
-          : `Negociar & Afinidade (♥${aff})`,
-        worldX: npc.x,
-        worldY: npc.y,
-        creatureId: npc.id,
-        iconItemId: npc.isHostile && holdingPeace ? 'peace_treaty' : 'gold_coin',
-      };
-    }
 
-    // 1. Check nearby Interactive Structures (Workbench, Furnace, Solar Altar, Campfire, Village Well, Market Stall)
+    // 1. Check nearby Interactive Structures (Workbench, Furnace, Solar Altar, Campfire, Village Well, Market Stall, Chest, House, Door)
     const pTile = this.world.worldToTile(this.player.x, this.player.y);
     const pChunk = this.world.tileToChunk(pTile.tx, pTile.ty);
-    let bestStation: { st: any; score: number } | null = null;
 
     for (let dy = -1; dy <= 1; dy++) {
       for (let dx = -1; dx <= 1; dx++) {
@@ -4822,6 +5272,79 @@ export class GameEngine {
         if (!chunk) continue;
 
         for (const st of chunk.structures) {
+          const sx = st.tileX * TILE_SIZE + TILE_SIZE / 2;
+          const sy = st.tileY * TILE_SIZE + TILE_SIZE / 2;
+          const distPlayer = Math.hypot(sx - this.player.x, sy - this.player.y);
+
+          // 1A. Tilled Soil / Crops within reach
+          if (st.type === PlaceableType.TILLED_SOIL) {
+            if (distPlayer <= TILE_SIZE * 2.2) {
+              const crop = st.cropType;
+              if (crop) {
+                const itemDef = ITEMS[crop];
+                const cropName = itemDef?.name || crop;
+                if (st.growthStage === 3) {
+                  candidates.push({
+                    score: computeDirectionalScore(sx, sy, -3),
+                    info: {
+                      kind: 'crop',
+                      label: `${cropName} (Maduro!)`,
+                      actionHint: 'Colher Planta 🌾',
+                      worldX: sx,
+                      worldY: sy,
+                      iconItemId: crop,
+                      structureId: st.id,
+                      cropType: crop,
+                      cropStage: 3,
+                      isWatered: st.isWatered,
+                    },
+                  });
+                } else {
+                  const stageNum = (st.growthStage || 0) + 1;
+                  const pct = Math.round((st.growthProgress || 0) * 100);
+                  const hint = st.isWatered
+                    ? st.fertilized
+                      ? 'Adubado ✦'
+                      : 'Solo Irrigado ♥'
+                    : 'Use Regador 💧';
+                  candidates.push({
+                    score: computeDirectionalScore(sx, sy, 8),
+                    info: {
+                      kind: 'crop',
+                      label: `${cropName} (${stageNum}/4 · ${pct}%)`,
+                      actionHint: hint,
+                      worldX: sx,
+                      worldY: sy,
+                      iconItemId: crop,
+                      structureId: st.id,
+                      cropType: crop,
+                      cropStage: st.growthStage,
+                      isWatered: st.isWatered,
+                    },
+                  });
+                }
+              } else {
+                candidates.push({
+                  score: computeDirectionalScore(sx, sy, 12),
+                  info: {
+                    kind: 'crop',
+                    label: st.isWatered
+                      ? 'Terra Arada (Irrigada)'
+                      : 'Terra Arada (Seca)',
+                    actionHint: 'Plantar Semente 🌱',
+                    worldX: sx,
+                    worldY: sy,
+                    iconItemId: 'wheat_seeds',
+                    structureId: st.id,
+                    cropStage: 0,
+                    isWatered: st.isWatered,
+                  },
+                });
+              }
+            }
+            continue;
+          }
+
           if (
             st.type !== PlaceableType.WORKBENCH &&
             st.type !== PlaceableType.FURNACE &&
@@ -4838,184 +5361,257 @@ export class GameEngine {
           ) {
             continue;
           }
-          const sx = st.tileX * TILE_SIZE + TILE_SIZE / 2;
-          const sy = st.tileY * TILE_SIZE + TILE_SIZE / 2;
-          const distPlayer = Math.hypot(sx - this.player.x, sy - this.player.y);
+
           if (distPlayer <= TILE_SIZE * 2.8) {
-            const distAim = Math.hypot(sx - aimPointX, sy - aimPointY);
-            const score = distAim + distPlayer * 0.4;
-            if (!bestStation || score < bestStation.score) {
-              bestStation = { st, score };
-            }
+            const itemDef = ITEMS[st.itemId];
+            const hasLoot = Boolean(st.lootItems && st.lootItems.length > 0);
+            const occupiedChestSlots =
+              st.type === PlaceableType.CHEST && Array.isArray(st.storageSlots)
+                ? st.storageSlots.filter((s) => s !== null && s.count > 0).length
+                : hasLoot
+                ? st.lootItems!.length
+                : 0;
+            const isHouseStruct = this.isStructureValidHouse(st);
+            const allHouseResidents = isHouseStruct
+              ? this.getHouseResidents(st.id)
+              : [];
+            const houseResidents = allHouseResidents.length;
+            const insideResidents = allHouseResidents.filter(
+              (r) => r.isInsideHouse
+            );
+            const insideNames = insideResidents.map((r) => r.name).join(' & ');
+            const canClaimRestPoint =
+              isHouseStruct && this.canPlayerClaimRestPoint(st);
+            const houseOwnerBadge = isHouseStruct
+              ? st.ownerType === 'PLAYER'
+                ? ` [🏠 Dono: ${st.ownerName || 'Você'}]`
+                : houseResidents > 0
+                ? ` [🏠 Dono: ${st.ownerName || 'Aldeões'} (${houseResidents}/${MAX_VILLAGERS_PER_HOUSE})]`
+                : ' [🏠 Sem Dono]'
+              : '';
+
+            const actionHint =
+              insideResidents.length > 0 &&
+              (st.type === PlaceableType.VILLAGE_HOUSE ||
+                st.type === PlaceableType.EXPLORER_TENT ||
+                st.type === PlaceableType.WOOD_DOOR ||
+                st.type === PlaceableType.IRON_GATE)
+                ? `🚪 Bater na Porta (${insideNames}) 🏠`
+                : st.type === PlaceableType.WOOD_DOOR ||
+                  st.type === PlaceableType.IRON_GATE
+                ? `${
+                    st.isOpen ? 'Fechar Passagem 🔒' : 'Abrir Passagem 🔓'
+                  }${houseOwnerBadge}`
+                : st.type === PlaceableType.CHEST
+                ? st.villageId
+                  ? this.hasVillageChestPermission(st.villageId)
+                    ? '🔓 Abrir Cofre da Vila'
+                    : '🔒 Cofre Trancado (♥75+)'
+                  : hasLoot
+                  ? `Abrir Baú de Tesouro (${occupiedChestSlots}) ✦`
+                  : occupiedChestSlots > 0
+                  ? `Abrir Baú (${occupiedChestSlots}/${CHEST_STORAGE_SIZE}) 📦`
+                  : 'Abrir Baú 📦'
+                : st.type === PlaceableType.VILLAGE_WELL
+                ? 'Beber Água (+HP/Energia)'
+                : st.type === PlaceableType.MARKET_STALL
+                ? st.ownerType === 'PLAYER'
+                  ? `Gerenciar Tenda${
+                      (st.stallUnclaimedGold || 0) > 0
+                        ? ` (+${st.stallUnclaimedGold}g na Caixinha!)`
+                        : ''
+                    } 🏪`
+                  : this.isVillagerStallOwnerAlive(st)
+                  ? `Tenda de ${st.ownerName || 'Mercador'} 🏪`
+                  : 'Tenda sem Dono · Tomar Posse 🏪'
+                : st.type === PlaceableType.VILLAGE_HOUSE ||
+                  st.type === PlaceableType.EXPLORER_TENT
+                ? st.ownerType === 'PLAYER'
+                  ? `Descansar (Dono: ${st.ownerName || 'Você'}) 🏠`
+                  : houseResidents > 0
+                  ? `Moradia de ${st.ownerName || 'Aldeões'} 🏠`
+                  : 'Sem Dono · Tomar Posse & Descansar 🏠'
+                : st.type === PlaceableType.CAMPFIRE
+                ? st.outputCount && st.outputCount > 0
+                  ? `Pronto: ${st.outputCount}x ${
+                      ITEMS[st.outputItemId || '']?.name || 'Item'
+                    } 🔥`
+                  : st.cookingInputCount && st.cookingInputCount > 0
+                  ? 'Cozinhando na Fogueira... 🔥'
+                  : 'Abrir Fogueira 🔥'
+                : st.type === PlaceableType.HEALING_FOUNTAIN
+                ? 'Bênção de Cura'
+                : st.type === PlaceableType.WORKBENCH
+                ? 'Abrir Bancada 🔨'
+                : st.type === PlaceableType.FURNACE
+                ? st.outputCount && st.outputCount > 0
+                  ? `Pronto: ${st.outputCount}x ${
+                      ITEMS[st.outputItemId || '']?.name || 'Item'
+                    } 🔥`
+                  : st.cookingInputCount && st.cookingInputCount > 0
+                  ? 'Fundindo na Fornalha... 🔥'
+                  : 'Abrir Fornalha 🔥'
+                : 'Abrir Altar Solar ✦';
+
+            candidates.push({
+              score: computeDirectionalScore(sx, sy, -5),
+              info: {
+                kind: 'station',
+                label: `${
+                  st.customName ||
+                  st.landmarkName ||
+                  itemDef?.name ||
+                  'Estação'
+                }${
+                  st.type === PlaceableType.VILLAGE_HOUSE ||
+                  st.type === PlaceableType.EXPLORER_TENT
+                    ? houseOwnerBadge
+                    : ''
+                }`,
+                actionHint,
+                worldX: sx,
+                worldY: sy,
+                stationType: st.type,
+                iconItemId: st.itemId,
+                structureId: st.id,
+                canClaimOwnership: canClaimRestPoint,
+              },
+            });
           }
         }
       }
     }
 
-    if (bestStation) {
-      const st = bestStation.st as PlacedStructure;
-      const sx = st.tileX * TILE_SIZE + TILE_SIZE / 2;
-      const sy = st.tileY * TILE_SIZE + TILE_SIZE / 2;
-      const itemDef = ITEMS[st.itemId];
-      const hasLoot = Boolean(st.lootItems && st.lootItems.length > 0);
-      const occupiedChestSlots =
-        st.type === PlaceableType.CHEST && Array.isArray(st.storageSlots)
-          ? st.storageSlots.filter((s) => s !== null && s.count > 0).length
-          : hasLoot
-          ? st.lootItems!.length
-          : 0;
-      const isHouseStruct = this.isStructureValidHouse(st);
-      const allHouseResidents = isHouseStruct
-        ? this.getHouseResidents(st.id)
-        : [];
-      const houseResidents = allHouseResidents.length;
-      const insideResidents = allHouseResidents.filter((r) => r.isInsideHouse);
-      const insideNames = insideResidents.map((r) => r.name).join(' & ');
-      const houseBadge = isHouseStruct
-        ? ` [🏠 ${houseResidents}/${MAX_VILLAGERS_PER_HOUSE} Aldeões]`
-        : '';
+    // 2. Check nearby Wild Domesticable Animals & Tamed Pets / Mounts / Boats
+    const heldSlot = this.player.inventory[this.player.selectedHotbarIndex];
+    const isHoldingSaddle = Boolean(heldSlot && heldSlot.itemId === 'saddle');
 
-      const actionHint =
-        insideResidents.length > 0 &&
-        (st.type === PlaceableType.VILLAGE_HOUSE ||
-          st.type === PlaceableType.EXPLORER_TENT ||
-          st.type === PlaceableType.WOOD_DOOR ||
-          st.type === PlaceableType.IRON_GATE)
-          ? `🚪 Bater na Porta (Chamar ${insideNames}) 🏠`
-          : st.type === PlaceableType.WOOD_DOOR || st.type === PlaceableType.IRON_GATE
-          ? `${
-              st.isOpen ? 'Fechar Passagem 🔒' : 'Abrir Passagem 🔓'
-            }${houseBadge}`
-          : st.type === PlaceableType.CHEST
-          ? st.villageId
-            ? this.hasVillageChestPermission(st.villageId)
-              ? '🔓 Abrir Cofre da Vila (Permissão Concedida ♥)'
-              : '🔒 Cofre da Vila Trancado (Requer ♥75+ ou Quebrar Baú)'
-            : hasLoot
-            ? `Abrir Baú de Tesouro (${occupiedChestSlots} itens) ✦`
-            : occupiedChestSlots > 0
-            ? `Abrir Baú (${occupiedChestSlots}/${CHEST_STORAGE_SIZE} Slots) 📦`
-            : 'Abrir Baú & Guardar Itens 📦'
-          : st.type === PlaceableType.VILLAGE_WELL
-          ? 'Beber Água Fresca (+HP/Energia)'
-          : st.type === PlaceableType.MARKET_STALL
-          ? st.ownerType === 'PLAYER'
-            ? 'Gerenciar Sua Tenda de Vendas 🏪'
-            : this.isVillagerStallOwnerAlive(st)
-            ? `Tenda de ${st.ownerName || 'Mercador'} · Ver Tenda & Preços 🏪`
-            : 'Tenda sem Dono (Aldeão Morreu) · Tomar Posse 🏪'
-          : st.type === PlaceableType.VILLAGE_HOUSE
-          ? `Descansar na Casa · Moradores: ${houseResidents}/${MAX_VILLAGERS_PER_HOUSE} 🏠`
-          : st.type === PlaceableType.CAMPFIRE
-          ? st.outputCount && st.outputCount > 0
-            ? `Pronto na Fogueira: ${st.outputCount}x ${ITEMS[st.outputItemId || '']?.name || 'Item'}! 🔥`
-            : st.cookingInputCount && st.cookingInputCount > 0
-            ? 'Cozinhando na Fogueira... 🔥'
-            : 'Abrir Fogueira (Comidas, Ingredientes & Descanso) 🔥'
-          : st.type === PlaceableType.EXPLORER_TENT
-          ? `Dormir / Descansar · Moradores: ${houseResidents}/${MAX_VILLAGERS_PER_HOUSE} 🏠`
-          : st.type === PlaceableType.HEALING_FOUNTAIN
-          ? 'Bênção de Cura'
-          : st.type === PlaceableType.WORKBENCH
-          ? 'Abrir Bancada de Trabalho 🔨'
-          : st.type === PlaceableType.FURNACE
-          ? st.outputCount && st.outputCount > 0
-            ? `Pronto na Fornalha: ${st.outputCount}x ${ITEMS[st.outputItemId || '']?.name || 'Item'}! 🔥`
-            : st.cookingInputCount && st.cookingInputCount > 0
-            ? 'Fundindo na Fornalha... 🔥'
-            : 'Abrir Fornalha de Fundição 🔥'
-          : 'Abrir Altar Solar ✦';
-      return {
-        kind: 'station',
-        label: st.customName || st.landmarkName || itemDef?.name || 'Estação',
-        actionHint,
-        worldX: sx,
-        worldY: sy,
-        stationType: st.type,
-        iconItemId: st.itemId,
-      };
+    for (const cr of this.entities.creatures) {
+      if (cr.hp <= 0 || cr.isInsideHouse) continue;
+      // Skip the mount the player is currently riding so the selector can target objects around the player while mounted
+      if (this.player.mountedEntityId === cr.id) continue;
+
+      const distPlayer = Math.hypot(cr.x - this.player.x, cr.y - this.player.y);
+      if (distPlayer > 84) continue;
+
+      if (
+        !cr.isHostile &&
+        !cr.tamed &&
+        cr.kind !== CreatureKind.VILLAGER &&
+        cr.kind !== CreatureKind.WANDERER &&
+        cr.kind !== CreatureKind.BOAT
+      ) {
+        const favId = cr.favoriteFoodIds[0] || 'berry';
+        candidates.push({
+          score: computeDirectionalScore(cr.x, cr.y, -2),
+          info: {
+            kind: 'wild_animal',
+            label: cr.name,
+            actionHint: `Domesticar ♥ (${ITEMS[favId]?.name || 'Comida'})`,
+            worldX: cr.x,
+            worldY: cr.y,
+            creatureId: cr.id,
+            iconItemId: favId,
+          },
+        });
+      } else if (cr.tamed || cr.kind === CreatureKind.BOAT) {
+        const isMountSpecies =
+          cr.kind === CreatureKind.HORSE || cr.kind === CreatureKind.CAMEL;
+
+        if (cr.kind === CreatureKind.BOAT) {
+          candidates.push({
+            score: computeDirectionalScore(cr.x, cr.y, -3),
+            info: {
+              kind: 'tamed_animal',
+              label: `${cr.name} (2 Assentos)`,
+              actionHint: 'Embarcar no Bote ⛵',
+              worldX: cr.x,
+              worldY: cr.y,
+              creatureId: cr.id,
+              iconItemId: 'wood_boat',
+            },
+          });
+          continue;
+        }
+
+        const isOwnedByLocal = this.isCreatureOwnedByLocalPlayer(cr);
+        const isOccupiedByOther = this.isMountOccupiedByOtherPlayer(cr);
+        const ownerBadge = cr.ownerName ? ` · Dono: ${cr.ownerName}` : '';
+
+        if (!isOwnedByLocal) {
+          candidates.push({
+            score: computeDirectionalScore(cr.x, cr.y, 4),
+            info: {
+              kind: 'tamed_animal',
+              label: `${cr.name} (Dono: ${cr.ownerName || 'Outro'})`,
+              actionHint: isOccupiedByOther
+                ? '🔒 Assento ocupado'
+                : `🔒 Pet de ${cr.ownerName || 'outro jogador'}`,
+              worldX: cr.x,
+              worldY: cr.y,
+              creatureId: cr.id,
+              iconItemId: isMountSpecies ? 'saddle' : 'taming_treat',
+            },
+          });
+          continue;
+        }
+
+        if (isMountSpecies && !cr.hasSaddle && isHoldingSaddle) {
+          candidates.push({
+            score: computeDirectionalScore(cr.x, cr.y, -5),
+            info: {
+              kind: 'tamed_animal',
+              label: `${cr.name} (Sem Sela)`,
+              actionHint: 'Equipar Sela de Montaria 鞍',
+              worldX: cr.x,
+              worldY: cr.y,
+              creatureId: cr.id,
+              iconItemId: 'saddle',
+            },
+          });
+          continue;
+        }
+
+        if (isMountSpecies && cr.hasSaddle) {
+          candidates.push({
+            score: computeDirectionalScore(cr.x, cr.y, -4),
+            info: {
+              kind: 'tamed_animal',
+              label: `${cr.name} [Selado${ownerBadge}]`,
+              actionHint: isOccupiedByOther
+                ? '🔒 Assento ocupado!'
+                : 'Cavalgar (1 Assento) 🐎',
+              worldX: cr.x,
+              worldY: cr.y,
+              creatureId: cr.id,
+              iconItemId: 'saddle',
+            },
+          });
+          continue;
+        }
+
+        const stateBadge =
+          cr.aiState === 'stay'
+            ? 'Base'
+            : cr.aiState === 'graze'
+            ? 'Pastar'
+            : 'Seguindo';
+        candidates.push({
+          score: computeDirectionalScore(cr.x, cr.y, -2),
+          info: {
+            kind: 'tamed_animal',
+            label: `${cr.name} [${stateBadge}]`,
+            actionHint: 'Alternar (Seguindo / Base / Pastar)',
+            worldX: cr.x,
+            worldY: cr.y,
+            creatureId: cr.id,
+            iconItemId: 'taming_treat',
+          },
+        });
+      }
     }
 
-    // 2. Check nearby Wild Domesticable Animal
-    const wild = this.getNearbyWildAnimal();
-    if (wild) {
-      const favId = wild.favoriteFoodIds[0] || 'berry';
-      return {
-        kind: 'wild_animal',
-        label: wild.name,
-        actionHint: `Domesticar ♥ (${ITEMS[favId]?.name || 'Comida'})`,
-        worldX: wild.x,
-        worldY: wild.y,
-        creatureId: wild.id,
-        iconItemId: favId,
-      };
-    }
-
-    // 3. Check nearby Tamed Animal or Boat
-    const tamed = this.getNearbyTamedAnimal();
-    if (tamed) {
-      const heldSlot = this.player.inventory[this.player.selectedHotbarIndex];
-      const isHoldingSaddle = Boolean(heldSlot && heldSlot.itemId === 'saddle');
-      const isMountSpecies =
-        tamed.kind === CreatureKind.HORSE || tamed.kind === CreatureKind.CAMEL;
-
-      if (tamed.kind === CreatureKind.BOAT) {
-        const isMountedHere = this.player.mountedEntityId === tamed.id;
-        return {
-          kind: 'tamed_animal',
-          label: `${tamed.name} (2 Assentos · Sem Correnteza)`,
-          actionHint: isMountedHere
-            ? 'Desmontar do Bote ⛵'
-            : 'Embarcar no Bote (Rápido na Água) ⛵',
-          worldX: tamed.x,
-          worldY: tamed.y,
-          creatureId: tamed.id,
-          iconItemId: 'wood_boat',
-        };
-      }
-
-      if (isMountSpecies && !tamed.hasSaddle && isHoldingSaddle) {
-        return {
-          kind: 'tamed_animal',
-          label: `${tamed.name} (Sem Sela)`,
-          actionHint: 'Equipar Sela de Montaria (Libera 8 Slots + Montar) 鞍',
-          worldX: tamed.x,
-          worldY: tamed.y,
-          creatureId: tamed.id,
-          iconItemId: 'saddle',
-        };
-      }
-
-      if (isMountSpecies && tamed.hasSaddle) {
-        const isMountedHere = this.player.mountedEntityId === tamed.id;
-        return {
-          kind: 'tamed_animal',
-          label: `${tamed.name} [Selado · Vel ${tamed.mountSpeed || 145}]`,
-          actionHint: isMountedHere
-            ? 'Desmontar / Abrir Alforje (8 Slots)'
-            : 'Montar / Cavalgar (8 Slots de Alforje)',
-          worldX: tamed.x,
-          worldY: tamed.y,
-          creatureId: tamed.id,
-          iconItemId: 'saddle',
-        };
-      }
-
-      return {
-        kind: 'tamed_animal',
-        label: tamed.name,
-        actionHint:
-          tamed.aiState === 'stay'
-            ? 'Chamar para Seguir'
-            : 'Mandar Guardar Base',
-        worldX: tamed.x,
-        worldY: tamed.y,
-        creatureId: tamed.id,
-        iconItemId: 'taming_treat',
-      };
-    }
-
-    // 4. Check Nature Node directly in front of player
+    // 3. Check Nature Node in front of player
     const lookTile = this.world.worldToTile(aimPointX, aimPointY);
     const lookChunk = this.world.getOrCreateChunk(
       Math.floor(lookTile.tx / 16),
@@ -5027,7 +5623,6 @@ export class GameEngine {
     if (node) {
       const bp = NATURE_BLUEPRINTS[node.type];
       const req = getNatureBreakRequirement(node.type);
-      const heldSlot = this.player.inventory[this.player.selectedHotbarIndex];
       const heldItem = heldSlot ? ITEMS[heldSlot.itemId] : null;
       const strengthBuff =
         this.player.strengthBuffTimer && this.player.strengthBuffTimer > 0
@@ -5045,107 +5640,29 @@ export class GameEngine {
         bp.requiredTier
       );
       const forceHint = evalBreak.canBreak
-        ? `Força: ${evalBreak.force} (${evalBreak.actorLabel}) · ${req.requirementLabel}`
+        ? `Força: ${evalBreak.force} (${evalBreak.actorLabel})`
         : `🔒 ${evalBreak.blockReason}`;
-      return {
-        kind: 'node',
-        label: `${bp.name} (${Math.ceil(node.hp)}/${bp.maxHp} HP · ${req.materialLabel})`,
-        actionHint: forceHint,
-        worldX: node.tileX * TILE_SIZE + TILE_SIZE / 2,
-        worldY: node.tileY * TILE_SIZE + TILE_SIZE / 2,
-        iconItemId: bp.drops[0]?.itemId || 'wood',
-      };
+      const nx = node.tileX * TILE_SIZE + TILE_SIZE / 2;
+      const ny = node.tileY * TILE_SIZE + TILE_SIZE / 2;
+      candidates.push({
+        score: computeDirectionalScore(nx, ny, 6),
+        info: {
+          kind: 'node',
+          label: `${bp.name} (${Math.ceil(node.hp)}/${bp.maxHp} HP)`,
+          actionHint: forceHint,
+          worldX: nx,
+          worldY: ny,
+          iconItemId: bp.drops[0]?.itemId || 'wood',
+        },
+      });
     }
 
-    // 5. Check Tilled Soil & Growing/Mature Crops within reach
-    const tilledTile = this.world.worldToTile(aimPointX, aimPointY);
-    const tChunk = this.world.chunks[
-      WorldManager.chunkKey(
-        Math.floor(tilledTile.tx / 16),
-        Math.floor(tilledTile.ty / 16)
-      )
-    ];
-    let tilledSt = tChunk?.structures.find(
-      (s) =>
-        s.tileX === tilledTile.tx &&
-        s.tileY === tilledTile.ty &&
-        s.type === PlaceableType.TILLED_SOIL
-    );
-
-    if (!tilledSt) {
-      const pTile = this.world.worldToTile(this.player.x, this.player.y);
-      const pChunkObj = this.world.chunks[
-        WorldManager.chunkKey(
-          Math.floor(pTile.tx / 16),
-          Math.floor(pTile.ty / 16)
-        )
-      ];
-      tilledSt = pChunkObj?.structures.find(
-        (s) =>
-          s.tileX === pTile.tx &&
-          s.tileY === pTile.ty &&
-          s.type === PlaceableType.TILLED_SOIL
-      );
+    if (candidates.length === 0) {
+      return null;
     }
 
-    if (tilledSt) {
-      const sx = tilledSt.tileX * TILE_SIZE + TILE_SIZE / 2;
-      const sy = tilledSt.tileY * TILE_SIZE + TILE_SIZE / 2;
-      const crop = tilledSt.cropType;
-
-      if (crop) {
-        const itemDef = ITEMS[crop];
-        const cropName = itemDef?.name || crop;
-        if (tilledSt.growthStage === 3) {
-          return {
-            kind: 'crop',
-            label: `${cropName} (Maduro!)`,
-            actionHint: 'Colher Planta 🌾 (E / Interagir)',
-            worldX: sx,
-            worldY: sy,
-            iconItemId: crop,
-            structureId: tilledSt.id,
-            cropType: crop,
-            cropStage: 3,
-            isWatered: tilledSt.isWatered,
-          };
-        } else {
-          const stageNum = (tilledSt.growthStage || 0) + 1;
-          const pct = Math.round((tilledSt.growthProgress || 0) * 100);
-          const hint = tilledSt.isWatered
-            ? tilledSt.fertilized
-              ? 'Crescimento Acelerado (Adubado) ✦'
-              : 'Solo Irrigado ♥'
-            : 'Necessita de Água (Use Regador) 💧';
-          return {
-            kind: 'crop',
-            label: `${cropName} (Estágio ${stageNum}/4 - ${pct}%)`,
-            actionHint: hint,
-            worldX: sx,
-            worldY: sy,
-            iconItemId: crop,
-            structureId: tilledSt.id,
-            cropType: crop,
-            cropStage: tilledSt.growthStage,
-            isWatered: tilledSt.isWatered,
-          };
-        }
-      } else {
-        return {
-          kind: 'crop',
-          label: tilledSt.isWatered ? 'Terra Arada (Irrigada)' : 'Terra Arada (Seca)',
-          actionHint: 'Plantar Semente na Mão 🌱',
-          worldX: sx,
-          worldY: sy,
-          iconItemId: 'wheat_seeds',
-          structureId: tilledSt.id,
-          cropStage: 0,
-          isWatered: tilledSt.isWatered,
-        };
-      }
-    }
-
-    return null;
+    candidates.sort((a, b) => a.score - b.score);
+    return candidates[0].info;
   }
 
   private harvestNatureNode(
@@ -5200,6 +5717,11 @@ export class GameEngine {
     this.addFloatingText(`-${Math.round(power)}`, nx, ny - 12, '#fde047');
 
     if (node.hp <= 0) {
+      const nodeBreakKey = `break_node:${node.id}:${node.tileX},${node.tileY}`;
+      if (!this.tryClaimWorldAction(nodeBreakKey)) {
+        chunk.nodes.splice(nodeIndex, 1);
+        return;
+      }
       const survivalBonusChance = (this.player.attributes.survival - 1) * 0.1;
       for (const drop of bp.drops) {
         if (Math.random() <= drop.chance) {
@@ -5308,6 +5830,35 @@ export class GameEngine {
     ) {
       cr.isHostile = true;
       cr.provokedTimer = 25;
+    }
+
+    // Rule: When the player attacks a target, any tamed ally in 'follow' state is enabled to attack too
+    // (staying focused on its single target until defeating it or dying).
+    if (!attackerCreature && !cr.tamed) {
+      for (const pet of this.entities.creatures) {
+        if (
+          pet.tamed &&
+          pet.hp > 0 &&
+          pet.kind !== CreatureKind.BOAT &&
+          this.isCreatureOwnedByLocalPlayer(pet) &&
+          pet.aiState === 'follow' &&
+          this.player.mountedEntityId !== pet.id &&
+          Math.hypot(pet.x - this.player.x, pet.y - this.player.y) <= 230
+        ) {
+          const currentTarget = pet.combatTargetId
+            ? this.entities.creatures.find(
+                (o) =>
+                  o.id === pet.combatTargetId &&
+                  o.hp > 0 &&
+                  !o.isInsideHouse &&
+                  !o.tamed
+              )
+            : null;
+          if (!currentTarget) {
+            pet.combatTargetId = cr.id;
+          }
+        }
+      }
     }
 
     cr.hp -= amount;
@@ -5761,13 +6312,47 @@ export class GameEngine {
     };
   }
 
-  private damagePlayer(rawAmount: number, sourceX: number, sourceY: number): void {
+  private damagePlayer(
+    rawAmount: number,
+    sourceX: number,
+    sourceY: number,
+    attackerCreature?: CreatureEntity
+  ): void {
     const reduction = this.getTotalDefenseBonus();
     const finalDmg = Math.max(1, Math.round(rawAmount * (1 - reduction)));
 
     this.player.hp = Math.max(0, this.player.hp - finalDmg);
     this.player.hitFlashTimer = 0.25;
     soundManager.playPlayerHurt();
+
+    // Rule: If the player is attacked, any tamed ally in 'follow' state attacks whoever attacked the player to defend them
+    // (focusing on a single enemy until defeating it or dying).
+    if (attackerCreature && attackerCreature.hp > 0 && !attackerCreature.tamed) {
+      for (const pet of this.entities.creatures) {
+        if (
+          pet.tamed &&
+          pet.hp > 0 &&
+          pet.kind !== CreatureKind.BOAT &&
+          this.isCreatureOwnedByLocalPlayer(pet) &&
+          pet.aiState === 'follow' &&
+          this.player.mountedEntityId !== pet.id &&
+          Math.hypot(pet.x - this.player.x, pet.y - this.player.y) <= 230
+        ) {
+          const currentTarget = pet.combatTargetId
+            ? this.entities.creatures.find(
+                (o) =>
+                  o.id === pet.combatTargetId &&
+                  o.hp > 0 &&
+                  !o.isInsideHouse &&
+                  !o.tamed
+              )
+            : null;
+          if (!currentTarget) {
+            pet.combatTargetId = attackerCreature.id;
+          }
+        }
+      }
+    }
 
     const dx = this.player.x - sourceX;
     const dy = this.player.y - sourceY;
@@ -5803,9 +6388,33 @@ export class GameEngine {
   }
 
   public lootDeathBag(bagId: string): boolean {
+    if (this.claimedDeathBagIds.has(bagId)) return false;
+    const idx = this.deathBags.findIndex((b) => b.id === bagId);
+    if (idx === -1) return false;
+
+    // In Guest multiplayer mode, send an authoritative claim request to Host so two players can never duplicate items from a DeathBag
+    if (this.multiplayer.isOnline && this.multiplayer.role === 'GUEST') {
+      if (this.pendingDeathBagClaims.has(bagId)) return false;
+      this.pendingDeathBagClaims.add(bagId);
+      this.multiplayer.sendWorldInteractRequest({
+        action: 'loot_death_bag_claim',
+        bagId,
+      });
+      return true;
+    }
+
+    return this.executeLocalLootDeathBag(bagId);
+  }
+
+  private executeLocalLootDeathBag(bagId: string): boolean {
+    if (this.claimedDeathBagIds.has(bagId)) return false;
     const idx = this.deathBags.findIndex((b) => b.id === bagId);
     if (idx === -1) return false;
     const bag = this.deathBags[idx];
+    if (bag.claimedBy && bag.claimedBy !== this.getLocalOwnerId()) {
+      return false;
+    }
+    bag.claimedBy = this.getLocalOwnerId();
 
     let recoveredStacks = 0;
 
@@ -5859,7 +6468,9 @@ export class GameEngine {
     }
 
     bag.items = remainingItems;
+    bag.claimedBy = null;
     if (bag.items.length === 0 && bag.goldCoins <= 0) {
+      this.claimedDeathBagIds.add(bagId);
       this.deathBags.splice(idx, 1);
       soundManager.playLevelUp();
       this.renderer.spawnBurst(bag.x, bag.y, 'GOLD', 18);
@@ -5883,6 +6494,9 @@ export class GameEngine {
       );
     }
 
+    if (this.multiplayer.isOnline && this.multiplayer.role === 'HOST') {
+      this.multiplayer.sendDeathBagsSync(this.deathBags);
+    }
     void this.saveGame(true);
     this.emitUiSnapshot();
     return true;
@@ -5935,7 +6549,11 @@ export class GameEngine {
       droppedBag = true;
       const newBag: DeathBag = {
         id: `deathbag_${Date.now()}_${Math.floor(Math.random() * 9999)}`,
-        ownerName: this.settings.playerName || 'Aventureiro',
+        ownerId: this.getLocalOwnerId(),
+        ownerName:
+          this.multiplayer.localPlayerName ||
+          this.settings.playerName ||
+          'Aventureiro',
         x: deathX,
         y: deathY,
         items: bagItems,
@@ -5945,6 +6563,16 @@ export class GameEngine {
         maxTimer: 600,
       };
       this.deathBags.push(newBag);
+      if (this.multiplayer.isOnline) {
+        if (this.multiplayer.role === 'HOST') {
+          this.multiplayer.sendDeathBagsSync(this.deathBags);
+        } else {
+          this.multiplayer.sendWorldInteractRequest({
+            action: 'spawn_death_bag',
+            bag: newBag,
+          });
+        }
+      }
       this.world.revealAround(deathX, deathY, 6);
       this.renderer.spawnBurst(deathX, deathY, 'GOLD', 14);
       this.renderer.spawnRipple(deathX, deathY, '#f43f5e', 30, 0.6);
@@ -5998,18 +6626,88 @@ export class GameEngine {
     this.emitUiSnapshot();
   }
 
-  public toggleTamedAnimalState(creatureId: string): void {
-    const cr = this.entities.creatures.find((c) => c.id === creatureId && c.tamed);
+  public setTamedAnimalState(
+    creatureId: string,
+    state: 'stay' | 'follow' | 'graze'
+  ): void {
+    const cr = this.entities.creatures.find(
+      (c) =>
+        c.id === creatureId &&
+        c.tamed &&
+        this.isCreatureOwnedByLocalPlayer(c)
+    );
     if (!cr) return;
-    cr.aiState = cr.aiState === 'stay' ? 'follow' : 'stay';
+    cr.aiState = state;
+    if (state !== 'follow') {
+      cr.combatTargetId = null;
+      cr.retaliateTargetId = undefined;
+    }
+    if (state === 'stay') {
+      cr.vx = 0;
+      cr.vy = 0;
+    }
+    if (this.multiplayer.isOnline && this.multiplayer.role === 'GUEST') {
+      this.multiplayer.sendGuestMountEvent({
+        action: 'tame',
+        creatureId: cr.id,
+        tamed: true,
+        tameProgress: 100,
+        aiState: cr.aiState,
+        hp: cr.hp,
+        ownerId: cr.ownerId,
+        ownerName: cr.ownerName,
+      });
+    } else if (this.multiplayer.isOnline && this.multiplayer.role === 'HOST') {
+      this.multiplayer.sendCreaturesSync(this.entities.creatures);
+    }
     this.emitUiSnapshot();
   }
 
-  public setAllTamedAnimalsState(state: 'follow' | 'stay'): void {
+  public toggleTamedAnimalState(creatureId: string): void {
+    const cr = this.entities.creatures.find(
+      (c) =>
+        c.id === creatureId &&
+        c.tamed &&
+        this.isCreatureOwnedByLocalPlayer(c)
+    );
+    if (!cr) return;
+    const nextState: 'stay' | 'follow' | 'graze' =
+      cr.aiState === 'follow'
+        ? 'stay'
+        : cr.aiState === 'stay'
+        ? 'graze'
+        : 'follow';
+    this.setTamedAnimalState(creatureId, nextState);
+  }
+
+  public setAllTamedAnimalsState(state: 'follow' | 'stay' | 'graze'): void {
     for (const cr of this.entities.creatures) {
-      if (cr.tamed) {
+      if (cr.tamed && this.isCreatureOwnedByLocalPlayer(cr)) {
         cr.aiState = state;
+        if (state !== 'follow') {
+          cr.combatTargetId = null;
+          cr.retaliateTargetId = undefined;
+        }
+        if (state === 'stay') {
+          cr.vx = 0;
+          cr.vy = 0;
+        }
+        if (this.multiplayer.isOnline && this.multiplayer.role === 'GUEST') {
+          this.multiplayer.sendGuestMountEvent({
+            action: 'tame',
+            creatureId: cr.id,
+            tamed: true,
+            tameProgress: 100,
+            aiState: cr.aiState,
+            hp: cr.hp,
+            ownerId: cr.ownerId,
+            ownerName: cr.ownerName,
+          });
+        }
       }
+    }
+    if (this.multiplayer.isOnline && this.multiplayer.role === 'HOST') {
+      this.multiplayer.sendCreaturesSync(this.entities.creatures);
     }
     soundManager.playPickup();
     this.emitUiSnapshot();
@@ -6680,6 +7378,11 @@ export class GameEngine {
       return false;
     }
 
+    const dismantleKey = `dismantle_struct:${st.id}:${tx},${ty}`;
+    if (!this.tryClaimWorldAction(dismantleKey)) {
+      return false;
+    }
+
     if (st.villageId) {
       this.provokeVillage(
         st.villageId,
@@ -6952,6 +7655,32 @@ export class GameEngine {
       1,
       Math.min(cSlot.count, typeof count === 'number' ? count : cSlot.count)
     );
+
+    if (!this.canFitItemInInventory(cSlot.itemId, 1)) {
+      this.addFloatingText(
+        'Mochila cheia!',
+        this.player.x,
+        this.player.y - 20,
+        '#f43f5e'
+      );
+      return false;
+    }
+
+    // In Guest multiplayer mode, route chest withdrawal through Host atomic lock to prevent 2 players taking the same item
+    if (this.multiplayer.isOnline && this.multiplayer.role === 'GUEST') {
+      const withdrawKey = `chest:${chestId}:${chestSlotIdx}`;
+      if (this.pendingContainerWithdraws.has(withdrawKey)) return false;
+      this.pendingContainerWithdraws.add(withdrawKey);
+      this.multiplayer.sendWorldInteractRequest({
+        action: 'container_withdraw',
+        containerKind: 'chest',
+        structureId: chestId,
+        slotIndex: chestSlotIdx,
+        count: amountToMove,
+        targetPlayerSlotIdx,
+      });
+      return true;
+    }
 
     if (cSlot.itemId === 'gold_coin') {
       this.addItemToInventory('gold_coin', amountToMove);
@@ -7272,6 +8001,9 @@ export class GameEngine {
     if (stall.stallTotalGoldEarned === undefined) {
       stall.stallTotalGoldEarned = 0;
     }
+    if (stall.stallUnclaimedGold === undefined) {
+      stall.stallUnclaimedGold = 0;
+    }
     if (
       !Array.isArray(stall.stallSlots) ||
       stall.stallSlots.length < MARKET_STALL_SIZE
@@ -7325,6 +8057,13 @@ export class GameEngine {
         wy + (Math.random() - 0.5) * 20
       );
       slots[i] = null;
+    }
+    const unclaimedGold = Math.max(0, Math.floor(stall.stallUnclaimedGold || 0));
+    if (unclaimedGold > 0) {
+      if (!tryAddToPlayerFirst || !this.addItemToInventory('gold_coin', unclaimedGold)) {
+        this.spawnDrop('gold_coin', unclaimedGold, wx, wy);
+      }
+      stall.stallUnclaimedGold = 0;
     }
     stall.pendingCustomerOffer = null;
   }
@@ -7596,6 +8335,30 @@ export class GameEngine {
       Math.min(sSlot.count, typeof count === 'number' ? count : sSlot.count)
     );
 
+    if (!this.canFitItemInInventory(sSlot.itemId, amountToMove)) {
+      this.addFloatingText(
+        'Mochila cheia!',
+        this.player.x,
+        this.player.y - 20,
+        '#f43f5e'
+      );
+      return false;
+    }
+
+    if (this.multiplayer.isOnline && this.multiplayer.role === 'GUEST') {
+      const withdrawKey = `stall:${stallId}:${stallSlotIdx}`;
+      if (this.pendingContainerWithdraws.has(withdrawKey)) return false;
+      this.pendingContainerWithdraws.add(withdrawKey);
+      this.multiplayer.sendWorldInteractRequest({
+        action: 'container_withdraw',
+        containerKind: 'stall',
+        structureId: stallId,
+        slotIndex: stallSlotIdx,
+        count: amountToMove,
+      });
+      return true;
+    }
+
     const added = this.addItemToInventory(sSlot.itemId, amountToMove);
     if (!added) {
       this.addFloatingText(
@@ -7726,16 +8489,13 @@ export class GameEngine {
       slots[offer.slotIndex] = null;
     }
 
-    // 2. Grant Gold Coins to Player (or drop at player's feet if inventory is full)
+    // 2. Deposit Gold Coins into the Player's Stall Coin Box (stallUnclaimedGold)
     const goldEarned = Math.max(1, offer.totalPrice);
-    const addedGold = this.addItemToInventory('gold_coin', goldEarned);
-    if (!addedGold) {
-      this.spawnDrop('gold_coin', goldEarned, this.player.x, this.player.y);
-    }
-
     stall.stallSalesCount = (stall.stallSalesCount || 0) + 1;
     stall.stallTotalGoldEarned =
       (stall.stallTotalGoldEarned || 0) + goldEarned;
+    stall.stallUnclaimedGold =
+      (stall.stallUnclaimedGold || 0) + goldEarned;
     stall.pendingCustomerOffer = null;
 
     // 3. Mark Buyer NPC as having completed their 1 purchase for today (disabled until they sleep in their house!)
@@ -7755,7 +8515,7 @@ export class GameEngine {
 
     const itemName = ITEMS[offer.itemId]?.name || offer.itemId;
     this.addFloatingText(
-      `💰 Vendido! +${goldEarned} Moedas de Ouro (${offer.quantity}x ${itemName})`,
+      `💰 Vendido! +${goldEarned} Moedas na Caixinha (${offer.quantity}x ${itemName})`,
       sx,
       sy - 24,
       '#fde047'
@@ -7764,7 +8524,46 @@ export class GameEngine {
     this.emitUiSnapshot();
     return {
       ok: true,
-      message: `Venda realizada para ${offer.buyerName}! Você recebeu +${goldEarned}x Moedas de Ouro Antigas (+30 XP). ${offer.buyerName} só fará novas compras após dormir em casa.`,
+      message: `Venda concluída! +${goldEarned} Moedas guardadas na caixinha da tenda.`,
+    };
+  }
+
+  public claimMarketStallGold(stallId: string): {
+    ok: boolean;
+    amount: number;
+    message: string;
+  } {
+    const stall = this.getMarketStallById(stallId);
+    if (!stall || stall.ownerType !== 'PLAYER') {
+      return { ok: false, amount: 0, message: 'Apenas o dono pode resgatar.' };
+    }
+    const unclaimed = Math.max(0, Math.floor(stall.stallUnclaimedGold || 0));
+    if (unclaimed <= 0) {
+      return { ok: false, amount: 0, message: 'Nenhuma moeda para resgatar.' };
+    }
+
+    stall.stallUnclaimedGold = 0;
+    const added = this.addItemToInventory('gold_coin', unclaimed);
+    if (!added) {
+      this.spawnDrop('gold_coin', unclaimed, this.player.x, this.player.y);
+    }
+
+    const sx = stall.tileX * TILE_SIZE + TILE_SIZE / 2;
+    const sy = stall.tileY * TILE_SIZE + TILE_SIZE / 2;
+    soundManager.playCraft();
+    this.renderer.spawnBurst(sx, sy - 6, 'GOLD', 16);
+    this.addFloatingText(
+      `💰 +${unclaimed} Moedas Resgatadas!`,
+      this.player.x,
+      this.player.y - 24,
+      '#fde047'
+    );
+    this.syncChunkAtTile(stall.tileX, stall.tileY);
+    this.emitUiSnapshot();
+    return {
+      ok: true,
+      amount: unclaimed,
+      message: `+${unclaimed} Moedas resgatadas!`,
     };
   }
 
@@ -7823,6 +8622,198 @@ export class GameEngine {
    * - Each NPC inspects a given Market Stall at most 3 times per day (`stallInspectionsToday[stall.id] <= 3`).
    * - When an NPC decides to buy an item, the purchase completes automatically without requiring player confirmation!
    */
+  /**
+   * Ensures open Player-owned Market Stalls with active merchandise receive steady customer visits
+   * (either by attracting nearby Villagers/Wanderers within 650px or spawning a traveling customer if no eligible NPC is nearby).
+   */
+  private updatePlayerStallCustomerTraffic(dt: number): void {
+    if (this.multiplayer.isOnline && this.multiplayer.role === 'GUEST') return;
+    const isSunsetOrNight =
+      this.metadata.timeOfDay >= 17.5 || this.metadata.timeOfDay < 5.5;
+    if (isSunsetOrNight) return;
+
+    this.stallCustomerSpawnTimer -= dt;
+    if (this.stallCustomerSpawnTimer > 0) return;
+    this.stallCustomerSpawnTimer = 4.0;
+
+    const pTile = this.world.worldToTile(this.player.x, this.player.y);
+    const pChunk = this.world.tileToChunk(pTile.tx, pTile.ty);
+
+    for (let dy = -2; dy <= 2; dy++) {
+      for (let dx = -2; dx <= 2; dx++) {
+        const chunk =
+          this.world.chunks[
+            WorldManager.chunkKey(pChunk.cx + dx, pChunk.cy + dy)
+          ];
+        if (!chunk) continue;
+
+        for (const st of chunk.structures) {
+          if (st.type !== PlaceableType.MARKET_STALL) continue;
+          this.ensureMarketStallInitialized(st);
+          if (st.ownerType !== 'PLAYER' || st.stallOpen === false) continue;
+
+          const enabledSlots = st.stallSlots!.filter(
+            (s) => s !== null && s.enabled && s.count > 0 && ITEMS[s.itemId]
+          );
+          if (enabledSlots.length === 0) continue;
+
+          const stallCenterX = st.tileX * TILE_SIZE + TILE_SIZE / 2;
+          const stallCenterY = st.tileY * TILE_SIZE + TILE_SIZE / 2;
+
+          // Check if there is already an NPC attracted to this stall
+          const alreadyAttracted = this.entities.creatures.some(
+            (c) =>
+              (c.kind === CreatureKind.VILLAGER ||
+                c.kind === CreatureKind.WANDERER) &&
+              c.hp > 0 &&
+              !c.isHostile &&
+              !c.isInsideHouse &&
+              !c.hasBoughtToday &&
+              c.attractedStallId === st.id
+          );
+          if (alreadyAttracted) continue;
+
+          // Find the closest eligible NPC within 650px who can visit this stall
+          let bestCandidate: CreatureEntity | null = null;
+          let bestDist = 650;
+          for (const cr of this.entities.creatures) {
+            if (
+              (cr.kind === CreatureKind.VILLAGER ||
+                cr.kind === CreatureKind.WANDERER) &&
+              cr.hp > 0 &&
+              !cr.isHostile &&
+              !cr.isInsideHouse &&
+              !cr.hasBoughtToday &&
+              !cr.attractedStallId &&
+              (cr.stallInspectCooldown ?? 0) <= 0
+            ) {
+              const inspections = cr.stallInspectionsToday?.[st.id] || 0;
+              if (inspections >= 3) continue;
+              const d = Math.hypot(cr.x - stallCenterX, cr.y - stallCenterY);
+              if (d < bestDist) {
+                bestDist = d;
+                bestCandidate = cr;
+              }
+            }
+          }
+
+          if (bestCandidate) {
+            bestCandidate.attractedStallId = st.id;
+            bestCandidate.aiTimer = 1.1 + Math.random() * 0.7;
+            const inspections =
+              bestCandidate.stallInspectionsToday?.[st.id] || 0;
+            this.addFloatingText(
+              `👀 ${bestCandidate.name} foi olhar a Tenda (${inspections + 1}/3 hoje)`,
+              bestCandidate.x,
+              bestCandidate.y - 20,
+              '#38bdf8'
+            );
+            continue;
+          }
+
+          // If the player built their stall away from any village (or all nearby NPCs already bought today),
+          // spawn a traveling customer (WANDERER) near the stall so the player's shop always gets visitors!
+          const activeWanderersNearStall = this.entities.creatures.filter(
+            (c) =>
+              c.kind === CreatureKind.WANDERER &&
+              c.hp > 0 &&
+              Math.hypot(c.x - stallCenterX, c.y - stallCenterY) < 480
+          ).length;
+
+          if (activeWanderersNearStall < 2) {
+            const angle = Math.random() * Math.PI * 2;
+            const spawnDist = 140 + Math.random() * 45;
+            const rawX = stallCenterX + Math.cos(angle) * spawnDist;
+            const rawY = stallCenterY + Math.sin(angle) * spawnDist;
+            const clearPos = this.findClearSpotNear(rawX, rawY, 48);
+            const spawnedCustomer = this.entities.trySpawnCreatureAt(
+              this.world,
+              CreatureKind.WANDERER,
+              clearPos.x,
+              clearPos.y
+            );
+            if (spawnedCustomer) {
+              spawnedCustomer.attractedStallId = st.id;
+              spawnedCustomer.aiTimer = 1.2 + Math.random() * 0.6;
+              spawnedCustomer.stallInspectCooldown = 0;
+              this.addFloatingText(
+                `🧳 ${spawnedCustomer.name} avistou sua Tenda de Vendas!`,
+                spawnedCustomer.x,
+                spawnedCustomer.y - 20,
+                '#38bdf8'
+              );
+              if (
+                this.multiplayer.isOnline &&
+                this.multiplayer.role === 'HOST'
+              ) {
+                this.multiplayer.sendCreaturesSync(this.entities.creatures);
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+
+  /**
+   * Keeps NPC customers walking to and buying from Player Market Stalls in real time
+   * even while the game is paused because the player has the Market Stall modal open.
+   */
+  private updatePausedMarketStallVisitors(dt: number): void {
+    if (this.multiplayer.isOnline && this.multiplayer.role === 'GUEST') return;
+    this.updatePlayerStallCustomerTraffic(dt);
+
+    for (const cr of this.entities.creatures) {
+      if (
+        (cr.kind !== CreatureKind.VILLAGER &&
+          cr.kind !== CreatureKind.WANDERER) ||
+        cr.hp <= 0 ||
+        cr.isHostile ||
+        cr.isInsideHouse
+      ) {
+        continue;
+      }
+
+      if (cr.stallInspectCooldown && cr.stallInspectCooldown > 0) {
+        cr.stallInspectCooldown = Math.max(0, cr.stallInspectCooldown - dt);
+      }
+
+      const shopping = this.updateNpcMarketStallShopping(cr, dt);
+      if (shopping) {
+        const speed = Math.hypot(cr.vx, cr.vy);
+        if (speed > 1.2) {
+          cr.direction = EntityManager.vectorToDirection(
+            cr.vx,
+            cr.vy,
+            cr.direction
+          );
+          cr.animTimer += dt;
+          if (cr.animTimer >= 0.18) {
+            cr.animTimer = 0;
+            cr.animFrame = (cr.animFrame + 1) % 4;
+          }
+          const nx = cr.x + cr.vx * dt;
+          const ny = cr.y + cr.vy * dt;
+          if (this.canEntityOccupy(nx, ny)) {
+            cr.x = nx;
+            cr.y = ny;
+          } else {
+            if (this.canEntityOccupy(nx, cr.y)) cr.x = nx;
+            if (this.canEntityOccupy(cr.x, ny)) cr.y = ny;
+          }
+        } else {
+          cr.animFrame = 0;
+        }
+      }
+    }
+  }
+
+  /**
+   * Handles NPC (Villager / Wanderer) attraction and automatic purchase evaluation for Player-owned Market Stalls:
+   * - An NPC who has already made a purchase today (`hasBoughtToday === true`) cannot buy again until they sleep in their house.
+   * - Each NPC inspects a given Market Stall at most 3 times per day (`stallInspectionsToday[stall.id] <= 3`).
+   * - When an NPC decides to buy an item, the purchase completes automatically without requiring player confirmation!
+   */
   private updateNpcMarketStallShopping(
     cr: CreatureEntity,
     dt: number
@@ -7863,17 +8854,30 @@ export class GameEngine {
         activeSlots.length === 0
       ) {
         cr.attractedStallId = undefined;
-        cr.stallInspectCooldown = 14;
+        cr.stallInspectCooldown = 6;
         return false;
       }
 
-      const sx = stall.tileX * TILE_SIZE + TILE_SIZE / 2;
-      const sy = stall.tileY * TILE_SIZE + TILE_SIZE / 2 + 20;
-      const dist = Math.hypot(sx - cr.x, sy - cr.y);
+      const stallCenterX = stall.tileX * TILE_SIZE + TILE_SIZE / 2;
+      const stallCenterY = stall.tileY * TILE_SIZE + TILE_SIZE / 2;
+      const browseSpot = this.findClearSpotNear(
+        stallCenterX,
+        stallCenterY + 20,
+        34
+      );
+      const distToCenter = Math.hypot(stallCenterX - cr.x, stallCenterY - cr.y);
+      const distToSpot = Math.hypot(browseSpot.x - cr.x, browseSpot.y - cr.y);
 
-      if (dist > 26) {
+      if (distToCenter > 46 && distToSpot > 26) {
         cr.aiState = 'wander';
-        this.steerCreatureToward(cr, sx, sy, cr.moveSpeed * 0.9, dt, true);
+        this.steerCreatureToward(
+          cr,
+          browseSpot.x,
+          browseSpot.y,
+          cr.moveSpeed * 1.05,
+          dt,
+          true
+        );
         return true;
       }
 
@@ -7881,7 +8885,11 @@ export class GameEngine {
       cr.vx = 0;
       cr.vy = 0;
       cr.aiState = 'idle';
-      cr.direction = 'up';
+      cr.direction = EntityManager.vectorToDirection(
+        stallCenterX - cr.x,
+        stallCenterY - cr.y,
+        'up'
+      );
       cr.aiTimer -= dt;
       if (cr.aiTimer > 0) {
         return true;
@@ -7897,8 +8905,8 @@ export class GameEngine {
       // Evaluate all enabled merchandise slots on the stall
       const scoredCandidates = activeSlots.map(({ sl, idx }) => {
         const evalRes = evaluateStallPriceDeal(sl!.itemId, sl!.unitPrice);
-        // Weight selection toward better deals & cheaper items
-        const selectionWeight = Math.max(0.05, evalRes.buyChance + 0.08);
+        // Weight selection strongly toward better deals & bargains
+        const selectionWeight = Math.max(0.05, evalRes.buyChance * 1.5 + 0.08);
         return { sl: sl!, idx, evalRes, selectionWeight };
       });
 
@@ -7917,11 +8925,11 @@ export class GameEngine {
       }
 
       const { sl, idx, evalRes } = chosen;
-      const affinityBonus = ((cr.affinity ?? 55) - 50) * 0.0025;
+      const affinityBonus = ((cr.affinity ?? 55) - 50) * 0.003;
       const finalBuyChance =
         evalRes.buyChance <= 0
           ? 0
-          : Math.min(0.96, Math.max(0.02, evalRes.buyChance + affinityBonus));
+          : Math.min(0.98, Math.max(0.05, evalRes.buyChance + affinityBonus));
 
       if (Math.random() < finalBuyChance) {
         // NPC decides to buy! Execute the purchase automatically without player confirmation
@@ -7939,54 +8947,64 @@ export class GameEngine {
           slots[idx] = null;
         }
 
-        this.addItemToInventory('gold_coin', totalGold);
         stall.stallSalesCount = (stall.stallSalesCount || 0) + 1;
         stall.stallTotalGoldEarned =
           (stall.stallTotalGoldEarned || 0) + totalGold;
+        stall.stallUnclaimedGold =
+          (stall.stallUnclaimedGold || 0) + totalGold;
         stall.pendingCustomerOffer = null;
 
         cr.hasBoughtToday = true;
         cr.attractedStallId = undefined;
-        cr.stallInspectCooldown = 60;
+        cr.stallInspectCooldown = 45;
         cr.affinity = Math.min(100, (cr.affinity ?? 55) + 6);
 
         soundManager.playCraft();
         this.gainXp(30);
         this.renderer.spawnBurst(cr.x, cr.y - 6, 'GOLD', 14);
-        this.renderer.spawnBurst(sx, sy - 6, 'GOLD', 18);
-        this.renderer.spawnRipple(sx, sy, '#fde047', 30, 0.55);
+        this.renderer.spawnBurst(stallCenterX, stallCenterY - 6, 'GOLD', 18);
+        this.renderer.spawnRipple(
+          stallCenterX,
+          stallCenterY,
+          '#fde047',
+          30,
+          0.55
+        );
 
         this.addFloatingText(
-          `💰 ${cr.name} comprou ${qty}x ${itemName} (+${totalGold} Moedas)!`,
-          sx,
-          sy - 28,
+          `💰 ${cr.name} comprou ${qty}x ${itemName} (+${totalGold} na Caixinha)!`,
+          stallCenterX,
+          stallCenterY - 28,
           '#fde047'
         );
         this.syncChunkAtTile(stall.tileX, stall.tileY);
+        if (this.multiplayer.isOnline && this.multiplayer.role === 'HOST') {
+          this.multiplayer.sendCreaturesSync(this.entities.creatures);
+        }
         this.emitUiSnapshot();
         return false;
       } else {
         // NPC decided not to buy on this inspection
         cr.attractedStallId = undefined;
-        cr.stallInspectCooldown = 22 + Math.random() * 14;
+        cr.stallInspectCooldown = 10 + Math.random() * 6;
         const itemName = ITEMS[sl.itemId]?.name || sl.itemId;
         const msg =
           evalRes.priceRatio > 1.25
             ? `💸 ${cr.name}: "${itemName} (${sl.unitPrice}g) está caro..." (${newInspectionCount}/3 hoje)`
-            : `🤔 ${cr.name} inspecionou a tenda (${newInspectionCount}/3 hoje)`;
+            : `🤔 ${cr.name} olhou ${itemName} (${newInspectionCount}/3 hoje)`;
         this.addFloatingText(msg, cr.x, cr.y - 22, '#cbd5e1');
         this.emitUiSnapshot();
         return false;
       }
     }
 
-    // 2. Otherwise, when passing near an open Player Market Stall, small chance to be attracted (up to 3 inspections/day/stall)!
+    // 2. Otherwise, when passing near an open Player Market Stall, attract the NPC (up to 3 inspections/day/stall)!
     if ((cr.stallInspectCooldown ?? 0) > 0) {
       return false;
     }
 
-    for (let dy = -1; dy <= 1; dy++) {
-      for (let dx = -1; dx <= 1; dx++) {
+    for (let dy = -2; dy <= 2; dy++) {
+      for (let dx = -2; dx <= 2; dx++) {
         const chunk =
           this.world.chunks[
             WorldManager.chunkKey(cChunk.cx + dx, cChunk.cy + dy)
@@ -8005,7 +9023,7 @@ export class GameEngine {
           }
 
           const enabledSlots = st.stallSlots!.filter(
-            (s) => s !== null && s.enabled && s.count > 0
+            (s) => s !== null && s.enabled && s.count > 0 && ITEMS[s.itemId]
           );
           if (enabledSlots.length === 0) continue;
 
@@ -8013,19 +9031,19 @@ export class GameEngine {
           const sy = st.tileY * TILE_SIZE + TILE_SIZE / 2;
           const dist = Math.hypot(sx - cr.x, sy - cr.y);
 
-          if (dist <= 175) {
-            // Check best deal on the stall to slightly boost attraction when cheap bargains are displayed
-            let bestDealChance = 0.25;
+          if (dist <= 420) {
+            let bestDealChance = 0.35;
             for (const sl of enabledSlots) {
               const ev = evaluateStallPriceDeal(sl!.itemId, sl!.unitPrice);
               if (ev.buyChance > bestDealChance) {
                 bestDealChance = ev.buyChance;
               }
             }
-            const attractRatePerSec = 0.14 + bestDealChance * 0.22;
-            if (Math.random() < dt * attractRatePerSec) {
+            // Direct per-check probability (since this block is gated by stallInspectCooldown)
+            const attractChance = Math.min(0.96, 0.55 + bestDealChance * 0.42);
+            if (Math.random() < attractChance) {
               cr.attractedStallId = st.id;
-              cr.aiTimer = 1.6 + Math.random() * 1.2;
+              cr.aiTimer = 1.2 + Math.random() * 0.8;
               this.addFloatingText(
                 `👀 ${cr.name} foi olhar a Tenda (${inspectionsToday + 1}/3 hoje)`,
                 cr.x,
@@ -8034,8 +9052,7 @@ export class GameEngine {
               );
               return true;
             } else {
-              // Brief cooldown before rolling again so we don't roll every frame unnecessarily
-              cr.stallInspectCooldown = 3.5 + Math.random() * 3.0;
+              cr.stallInspectCooldown = 2.5 + Math.random() * 2.0;
               return false;
             }
           }
@@ -8254,6 +9271,19 @@ export class GameEngine {
     const st = this.getActiveThermalStation(stationType);
     if (!st.fuelItemId || !st.fuelCount || st.fuelCount <= 0) return false;
 
+    if (this.multiplayer.isOnline && this.multiplayer.role === 'GUEST') {
+      const withdrawKey = `thermal_fuel:${st.id}`;
+      if (this.pendingContainerWithdraws.has(withdrawKey)) return false;
+      this.pendingContainerWithdraws.add(withdrawKey);
+      this.multiplayer.sendWorldInteractRequest({
+        action: 'container_withdraw',
+        containerKind: 'thermal_fuel',
+        structureId: st.id,
+        stationType,
+      });
+      return true;
+    }
+
     const itemId = st.fuelItemId;
     const count = st.fuelCount;
     st.fuelItemId = null;
@@ -8342,6 +9372,19 @@ export class GameEngine {
       return false;
     }
 
+    if (this.multiplayer.isOnline && this.multiplayer.role === 'GUEST') {
+      const withdrawKey = `thermal_queue:${st.id}`;
+      if (this.pendingContainerWithdraws.has(withdrawKey)) return false;
+      this.pendingContainerWithdraws.add(withdrawKey);
+      this.multiplayer.sendWorldInteractRequest({
+        action: 'container_withdraw',
+        containerKind: 'thermal_queue',
+        structureId: st.id,
+        stationType,
+      });
+      return true;
+    }
+
     const recipe = RECIPES.find((r) => r.id === st.cookingRecipeId);
     const batches = st.cookingInputCount;
     st.cookingRecipeId = null;
@@ -8369,6 +9412,19 @@ export class GameEngine {
     const st = this.getActiveThermalStation(stationType);
     if (!st.outputItemId || !st.outputCount || st.outputCount <= 0) {
       return false;
+    }
+
+    if (this.multiplayer.isOnline && this.multiplayer.role === 'GUEST') {
+      const withdrawKey = `thermal_output:${st.id}`;
+      if (this.pendingContainerWithdraws.has(withdrawKey)) return false;
+      this.pendingContainerWithdraws.add(withdrawKey);
+      this.multiplayer.sendWorldInteractRequest({
+        action: 'container_withdraw',
+        containerKind: 'thermal_output',
+        structureId: st.id,
+        stationType,
+      });
+      return true;
     }
 
     const itemId = st.outputItemId;
@@ -8828,8 +9884,9 @@ export class GameEngine {
   }
 
   public getNearbyWildAnimal(): CreatureEntity | null {
+    const dirVec = this.getDirectionOffset(this.player.direction);
     let best: CreatureEntity | null = null;
-    let bestDist = 72;
+    let bestScore = Infinity;
     for (const cr of this.entities.creatures) {
       if (
         !cr.isHostile &&
@@ -8838,10 +9895,16 @@ export class GameEngine {
         cr.kind !== CreatureKind.WANDERER &&
         cr.kind !== CreatureKind.BOAT
       ) {
-        const d = Math.hypot(cr.x - this.player.x, cr.y - this.player.y);
-        if (d < bestDist) {
-          bestDist = d;
-          best = cr;
+        const dx = cr.x - this.player.x;
+        const dy = cr.y - this.player.y;
+        const d = Math.hypot(dx, dy);
+        if (d <= 80) {
+          const dot = d > 0.001 ? (dx * dirVec.x + dy * dirVec.y) / d : 1;
+          const score = d - dot * 22;
+          if (score < bestScore) {
+            bestScore = score;
+            best = cr;
+          }
         }
       }
     }
@@ -8849,14 +9912,25 @@ export class GameEngine {
   }
 
   public getNearbyTamedAnimal(): CreatureEntity | null {
+    const dirVec = this.getDirectionOffset(this.player.direction);
     let best: CreatureEntity | null = null;
-    let bestDist = 68;
+    let bestScore = Infinity;
     for (const cr of this.entities.creatures) {
       if (cr.tamed || cr.kind === CreatureKind.BOAT) {
-        const d = Math.hypot(cr.x - this.player.x, cr.y - this.player.y);
-        if (d < bestDist) {
-          bestDist = d;
-          best = cr;
+        const dx = cr.x - this.player.x;
+        const dy = cr.y - this.player.y;
+        const d = Math.hypot(dx, dy);
+        if (d <= 86) {
+          const dot = d > 0.001 ? (dx * dirVec.x + dy * dirVec.y) / d : 1;
+          const isMount =
+            cr.kind === CreatureKind.HORSE ||
+            cr.kind === CreatureKind.CAMEL ||
+            cr.kind === CreatureKind.BOAT;
+          const score = d - dot * 22 - (isMount ? 8 : 0);
+          if (score < bestScore) {
+            bestScore = score;
+            best = cr;
+          }
         }
       }
     }
@@ -8864,11 +9938,138 @@ export class GameEngine {
   }
 
   // =========================================================================
-  // MOUNTS, SADDLES (8-SLOT INVENTORY), GALLOP & 2-SEAT BOAT SYSTEM
+  // MOUNTS, SADDLES (8-SLOT INVENTORY), GALLOP, PET OWNERSHIP & 2-SEAT BOAT
   // =========================================================================
 
   private getLocalRiderId(): string {
     return this.multiplayer.isOnline ? this.multiplayer.peerId : 'LOCAL';
+  }
+
+  public getLocalOwnerId(): string {
+    if (!this.player.persistentPlayerId) {
+      this.player.persistentPlayerId = getOrCreatePersistentPlayerUid();
+    }
+    return this.player.persistentPlayerId;
+  }
+
+  /**
+   * Returns true if the tamed creature belongs to the local player.
+   * Boats have no owner restriction. For legacy creatures without `ownerId`,
+   * the Host/Single-player owns them by default.
+   */
+  public isCreatureOwnedByLocalPlayer(cr: CreatureEntity): boolean {
+    if (cr.kind === CreatureKind.BOAT) return true;
+    const localOwnerId = this.getLocalOwnerId();
+    const localPeerId = this.getLocalRiderId();
+    if (!cr.ownerId) {
+      // Legacy pet from before ownership was stamped -> belongs to the Host / Single-player world owner
+      if (!this.multiplayer.isOnline || this.multiplayer.role === 'HOST') {
+        cr.ownerId = localOwnerId;
+        cr.ownerName =
+          this.multiplayer.localPlayerName ||
+          this.settings.playerName ||
+          'Aventureiro';
+        return true;
+      }
+      return false;
+    }
+    return cr.ownerId === localOwnerId || cr.ownerId === localPeerId;
+  }
+
+  /**
+   * Horses and Camels have strictly 1 seat (`riderPlayerId`).
+   * Returns true if another active player is already mounted on this Horse or Camel.
+   */
+  public isMountOccupiedByOtherPlayer(cr: CreatureEntity): boolean {
+    if (cr.kind !== CreatureKind.HORSE && cr.kind !== CreatureKind.CAMEL) {
+      return false;
+    }
+    if (this.player.mountedEntityId === cr.id) {
+      return false;
+    }
+    const localRiderId = this.getLocalRiderId();
+    const localOwnerId = this.getLocalOwnerId();
+    if (
+      cr.riderPlayerId &&
+      cr.riderPlayerId !== 'LOCAL' &&
+      cr.riderPlayerId !== localRiderId &&
+      cr.riderPlayerId !== localOwnerId
+    ) {
+      // Verify the rider is still in the session (or if we are Guest and Host itself is riding)
+      const remoteRiding = this.remotePlayersList.some(
+        (rp) =>
+          rp.mountedEntityId === cr.id ||
+          rp.peerId === cr.riderPlayerId ||
+          rp.persistentPlayerId === cr.riderPlayerId
+      );
+      if (remoteRiding) return true;
+    }
+    return this.remotePlayersList.some((rp) => rp.mountedEntityId === cr.id);
+  }
+
+  /**
+   * Resolves the world coordinates of a tamed pet's actual owner so that
+   * a Guest's pet follows the Guest instead of always following the Host.
+   */
+  private getPetOwnerTarget(
+    cr: CreatureEntity
+  ): { x: number; y: number } | null {
+    if (this.isCreatureOwnedByLocalPlayer(cr)) {
+      return { x: this.player.x, y: this.player.y };
+    }
+    if (cr.ownerId) {
+      for (const rp of this.multiplayer.remotePlayers.values()) {
+        if (rp.persistentPlayerId === cr.ownerId || rp.peerId === cr.ownerId) {
+          return { x: rp.x, y: rp.y };
+        }
+      }
+    }
+    return null;
+  }
+
+  /**
+   * Checks if at least `count` of `itemId` can fit in the player's inventory without mutating it.
+   */
+  public canFitItemInInventory(itemId: string, count = 1): boolean {
+    if (itemId === 'gold_coin') return true;
+    const def = ITEMS[itemId];
+    if (!def) return false;
+    let remaining = count;
+    for (let i = 0; i < this.player.inventory.length && remaining > 0; i++) {
+      const slot = this.player.inventory[i];
+      if (!slot) {
+        remaining -= def.maxStack;
+      } else if (slot.itemId === itemId && slot.count < def.maxStack) {
+        remaining -= def.maxStack - slot.count;
+      }
+    }
+    return remaining <= 0;
+  }
+
+  /**
+   * Prevents duplicate world action drops when two players break/harvest the exact same object at the same time.
+   */
+  private tryClaimWorldAction(actionKey: string): boolean {
+    const now = Date.now();
+    const existing = this.claimedWorldActionKeys.get(actionKey);
+    if (existing && now < existing) {
+      return false;
+    }
+    this.claimedWorldActionKeys.set(actionKey, now + 3500);
+    if (this.multiplayer.isOnline) {
+      if (this.multiplayer.role === 'HOST') {
+        this.multiplayer.sendWorldInteractResolved({
+          action: 'world_action_lock',
+          actionKey,
+        });
+      } else {
+        this.multiplayer.sendWorldInteractRequest({
+          action: 'world_action_lock',
+          actionKey,
+        });
+      }
+    }
+    return true;
   }
 
   public getActiveMount(): CreatureEntity | null {
@@ -8892,10 +10093,28 @@ export class GameEngine {
     }
 
     const riderId = this.getLocalRiderId();
+    const ownerId = this.getLocalOwnerId();
+    const ownerName =
+      this.multiplayer.localPlayerName ||
+      this.settings.playerName ||
+      'Aventureiro';
     let mount =
       this.entities.creatures.find(
         (c) => c.id === this.player.mountedEntityId && c.hp > 0
       ) || null;
+
+    // If mount is a Horse or Camel and is owned by another player or already ridden by another player, dismount local player
+    if (
+      mount &&
+      (mount.kind === CreatureKind.HORSE || mount.kind === CreatureKind.CAMEL) &&
+      (!this.isCreatureOwnedByLocalPlayer(mount) ||
+        this.isMountOccupiedByOtherPlayer(mount))
+    ) {
+      this.player.mountedEntityId = null;
+      this.player.mountedCreatureData = null;
+      this.player.isGalloping = false;
+      return null;
+    }
 
     if (!mount && this.player.mountedCreatureData) {
       const savedMount: CreatureEntity = JSON.parse(
@@ -8910,6 +10129,10 @@ export class GameEngine {
       savedMount.hp = Math.max(1, savedMount.hp || savedMount.maxHp || 100);
       savedMount.tamed = true;
       savedMount.riderPlayerId = riderId;
+      if (savedMount.kind !== CreatureKind.BOAT) {
+        savedMount.ownerId = savedMount.ownerId || ownerId;
+        savedMount.ownerName = savedMount.ownerName || ownerName;
+      }
       if (
         savedMount.kind === CreatureKind.HORSE ||
         savedMount.kind === CreatureKind.CAMEL
@@ -8923,6 +10146,10 @@ export class GameEngine {
       mount.x = this.player.x;
       mount.y = this.player.y;
       mount.direction = this.player.direction;
+      if (mount.kind !== CreatureKind.BOAT && !mount.ownerId) {
+        mount.ownerId = ownerId;
+        mount.ownerName = ownerName;
+      }
       if (
         !mount.riderPlayerId ||
         mount.riderPlayerId === 'LOCAL' ||
@@ -8979,6 +10206,17 @@ export class GameEngine {
       x: this.player.x,
       y: this.player.y,
       direction: this.player.direction,
+      ownerId:
+        mount.kind === CreatureKind.BOAT
+          ? null
+          : mount.ownerId || this.getLocalOwnerId(),
+      ownerName:
+        mount.kind === CreatureKind.BOAT
+          ? null
+          : mount.ownerName ||
+            this.multiplayer.localPlayerName ||
+            this.settings.playerName ||
+            'Aventureiro',
       riderPlayerId:
         mount.riderPlayerId === 'LOCAL'
           ? this.getLocalRiderId()
@@ -9013,6 +10251,16 @@ export class GameEngine {
               rp.mountedCreatureData.hp || rp.mountedCreatureData.maxHp || 100
             ),
             tamed: true,
+            ownerId:
+              rp.mountedCreatureData.kind === CreatureKind.BOAT
+                ? null
+                : rp.mountedCreatureData.ownerId ||
+                  rp.persistentPlayerId ||
+                  rp.peerId,
+            ownerName:
+              rp.mountedCreatureData.kind === CreatureKind.BOAT
+                ? null
+                : rp.mountedCreatureData.ownerName || rp.name,
             riderPlayerId: rp.peerId,
           };
           if (
@@ -9024,6 +10272,15 @@ export class GameEngine {
           }
           this.entities.creatures.push(spawned);
         } else {
+          // Enforce single-seat on Horse/Camel: if local player is already riding their own mount, don't let remote override it
+          if (
+            (mount.kind === CreatureKind.HORSE ||
+              mount.kind === CreatureKind.CAMEL) &&
+            this.player.mountedEntityId === mount.id &&
+            this.isCreatureOwnedByLocalPlayer(mount)
+          ) {
+            continue;
+          }
           mount.x = rp.x;
           mount.y = rp.y;
           mount.vx = rp.vx;
@@ -9031,6 +10288,13 @@ export class GameEngine {
           mount.direction = rp.direction;
           mount.animFrame = rp.animFrame;
           mount.tamed = true;
+          if (mount.kind !== CreatureKind.BOAT && !mount.ownerId) {
+            mount.ownerId =
+              rp.mountedCreatureData.ownerId ||
+              rp.persistentPlayerId ||
+              rp.peerId;
+            mount.ownerName = rp.mountedCreatureData.ownerName || rp.name;
+          }
           if (!mount.riderPlayerId || mount.riderPlayerId === rp.peerId) {
             mount.riderPlayerId = rp.peerId;
           }
@@ -9103,21 +10367,40 @@ export class GameEngine {
 
   /**
    * Processes mount/taming/boat actions sent from a Guest to the Host so the Host's
-   * authoritative creature list stays 100% synchronized.
+   * authoritative creature list stays 100% synchronized and validates ownership & single-seat rules.
    */
   private handleGuestMountEvent(peerId: string, event: any): void {
     if (!event || typeof event.action !== 'string') return;
+    const guestPlayer = this.multiplayer.remotePlayers.get(peerId);
+    const guestOwnerId =
+      event.ownerId || guestPlayer?.persistentPlayerId || peerId;
+    const guestOwnerName =
+      event.ownerName || guestPlayer?.name || 'Convidado';
+
     switch (event.action) {
       case 'tame': {
         const cr = this.entities.creatures.find(
           (c) => c.id === event.creatureId
         );
         if (cr) {
+          // If already tamed by a different player, ignore conflicting tame/command
+          if (
+            cr.tamed &&
+            cr.ownerId &&
+            cr.ownerId !== guestOwnerId &&
+            cr.ownerId !== peerId
+          ) {
+            break;
+          }
           cr.tamed = Boolean(event.tamed);
           cr.tameProgress =
             typeof event.tameProgress === 'number'
               ? event.tameProgress
               : cr.tameProgress;
+          if (cr.tamed && !cr.ownerId) {
+            cr.ownerId = guestOwnerId;
+            cr.ownerName = guestOwnerName;
+          }
           if (event.aiState) cr.aiState = event.aiState;
           if (typeof event.hp === 'number') cr.hp = event.hp;
         }
@@ -9128,7 +10411,16 @@ export class GameEngine {
           (c) => c.id === event.creatureId
         );
         if (cr) {
+          if (
+            cr.ownerId &&
+            cr.ownerId !== guestOwnerId &&
+            cr.ownerId !== peerId
+          ) {
+            break;
+          }
           cr.tamed = true;
+          cr.ownerId = cr.ownerId || guestOwnerId;
+          cr.ownerName = cr.ownerName || guestOwnerName;
           cr.hasSaddle = true;
           this.ensureMountInventoryInitialized(cr);
         }
@@ -9145,6 +10437,8 @@ export class GameEngine {
         break;
       }
       case 'pickup_boat': {
+        const boatPickupKey = `pickup_boat:${event.creatureId}`;
+        if (!this.tryClaimWorldAction(boatPickupKey)) break;
         const idx = this.entities.creatures.findIndex(
           (c) => c.id === event.creatureId && c.kind === CreatureKind.BOAT
         );
@@ -9161,18 +10455,56 @@ export class GameEngine {
           cr = {
             ...event.creature,
             id: event.creatureId,
+            ownerId:
+              event.creature.kind === CreatureKind.BOAT
+                ? null
+                : event.creature.ownerId || guestOwnerId,
+            ownerName:
+              event.creature.kind === CreatureKind.BOAT
+                ? null
+                : event.creature.ownerName || guestOwnerName,
             riderPlayerId: peerId,
           };
           this.entities.creatures.push(cr!);
         }
         if (cr) {
-          if (event.isPassenger) {
-            cr.passengerPlayerId = peerId;
-          } else {
+          // Enforce single-owner and single-seat for Horse and Camel on Host
+          if (
+            cr.kind === CreatureKind.HORSE ||
+            cr.kind === CreatureKind.CAMEL
+          ) {
+            const belongsToGuest =
+              !cr.ownerId ||
+              cr.ownerId === guestOwnerId ||
+              cr.ownerId === peerId;
+            const alreadyRiddenBySomeoneElse =
+              this.player.mountedEntityId === cr.id ||
+              Boolean(
+                cr.riderPlayerId &&
+                  cr.riderPlayerId !== peerId &&
+                  cr.riderPlayerId !== guestOwnerId
+              );
+            if (!belongsToGuest || alreadyRiddenBySomeoneElse) {
+              this.multiplayer.sendWorldInteractResolved({
+                action: 'force_dismount',
+                targetPeerId: peerId,
+                creatureId: cr.id,
+                reason: !belongsToGuest
+                  ? `🔒 ${cr.name} pertence exclusivamente a ${cr.ownerName || 'outro jogador'}!`
+                  : `🔒 ${cr.name} já possui um jogador montado (1 Assento)!`,
+              });
+              break;
+            }
             cr.riderPlayerId = peerId;
-          }
-          if (event.passengerPetId !== undefined) {
-            cr.passengerPetId = event.passengerPetId;
+          } else {
+            if (event.isPassenger) {
+              cr.passengerPlayerId = peerId;
+            } else {
+              cr.riderPlayerId = peerId;
+            }
+            if (event.passengerPetId !== undefined) {
+              cr.passengerPetId = event.passengerPetId;
+            }
           }
         }
         break;
@@ -9195,7 +10527,13 @@ export class GameEngine {
         const cr = this.entities.creatures.find(
           (c) => c.id === event.creatureId
         );
-        if (cr && Array.isArray(event.mountInventory)) {
+        if (
+          cr &&
+          Array.isArray(event.mountInventory) &&
+          (!cr.ownerId ||
+            cr.ownerId === guestOwnerId ||
+            cr.ownerId === peerId)
+        ) {
           cr.mountInventory = event.mountInventory;
         }
         break;
@@ -9233,6 +10571,17 @@ export class GameEngine {
     );
     if (!cr || cr.hasSaddle) return false;
 
+    if (!this.isCreatureOwnedByLocalPlayer(cr)) {
+      soundManager.playHitWood();
+      this.addFloatingText(
+        `🔒 Somente ${cr.ownerName || 'o dono'} pode equipar sela em ${cr.name}!`,
+        cr.x,
+        cr.y - 20,
+        '#f43f5e'
+      );
+      return false;
+    }
+
     const saddleSlotIdx =
       this.player.inventory[this.player.selectedHotbarIndex]?.itemId === 'saddle'
         ? this.player.selectedHotbarIndex
@@ -9256,6 +10605,11 @@ export class GameEngine {
       this.multiplayer.sendGuestMountEvent({
         action: 'saddle',
         creatureId: cr.id,
+        ownerId: this.getLocalOwnerId(),
+        ownerName:
+          this.multiplayer.localPlayerName ||
+          this.settings.playerName ||
+          'Aventureiro',
       });
     } else if (this.multiplayer.isOnline && this.multiplayer.role === 'HOST') {
       this.multiplayer.sendCreaturesSync(this.entities.creatures);
@@ -9278,13 +10632,12 @@ export class GameEngine {
     const cr = this.entities.creatures.find((c) => c.id === creatureId && c.hp > 0);
     if (!cr) return false;
 
-    if (this.player.mountedEntityId) {
-      this.dismountCreature();
-    }
-
     const localRiderId = this.getLocalRiderId();
 
     if (cr.kind === CreatureKind.BOAT) {
+      if (this.player.mountedEntityId) {
+        this.dismountCreature();
+      }
       // Check Boat 2-seat capacity
       const hasPrimaryRider =
         Boolean(
@@ -9320,13 +10673,14 @@ export class GameEngine {
         cr.passengerPlayerId = localRiderId;
       }
 
-      // If the 2nd seat is free and the player has a tamed pet currently following ('follow'), seat it in Seat 2!
+      // If the 2nd seat is free and the player has a tamed pet currently following ('follow') that belongs to them, seat it in Seat 2!
       if (!cr.passengerPlayerId && !cr.passengerPetId) {
         const followingPet = this.entities.creatures.find(
           (p) =>
             p.id !== cr.id &&
             p.tamed &&
             p.kind !== CreatureKind.BOAT &&
+            this.isCreatureOwnedByLocalPlayer(p) &&
             p.aiState === 'follow' &&
             Math.hypot(p.x - this.player.x, p.y - this.player.y) <= 170
         );
@@ -9376,6 +10730,33 @@ export class GameEngine {
 
     if (cr.kind === CreatureKind.HORSE || cr.kind === CreatureKind.CAMEL) {
       if (!cr.tamed) return false;
+
+      // 1. Exclusive Owner Check: Only the owner of a Horse or Camel can mount it
+      if (!this.isCreatureOwnedByLocalPlayer(cr)) {
+        soundManager.playHitWood();
+        this.renderer.spawnRipple(cr.x, cr.y, '#ef4444', 22, 0.35);
+        this.addFloatingText(
+          `🔒 ${cr.name} pertence exclusivamente a ${cr.ownerName || 'outro jogador'}!`,
+          cr.x,
+          cr.y - 22,
+          '#f43f5e'
+        );
+        return false;
+      }
+
+      // 2. Strict Single-Seat Check: Horse and Camel only have 1 seat!
+      if (this.isMountOccupiedByOtherPlayer(cr)) {
+        soundManager.playHitWood();
+        this.renderer.spawnRipple(cr.x, cr.y, '#ef4444', 22, 0.35);
+        this.addFloatingText(
+          `🔒 ${cr.name} já possui alguém montado (Apenas 1 Assento)!`,
+          cr.x,
+          cr.y - 22,
+          '#f43f5e'
+        );
+        return false;
+      }
+
       if (!cr.hasSaddle) {
         this.addFloatingText(
           `Equipe uma Sela em ${cr.name} para poder montar!`,
@@ -9385,8 +10766,15 @@ export class GameEngine {
         );
         return false;
       }
+
+      if (this.player.mountedEntityId) {
+        this.dismountCreature();
+      }
+
       this.ensureMountInventoryInitialized(cr);
       cr.riderPlayerId = localRiderId;
+      cr.passengerPlayerId = null;
+      cr.passengerPetId = null;
       this.player.mountedEntityId = cr.id;
       this.player.isGalloping = false;
       this.player.x = cr.x;
@@ -9398,6 +10786,11 @@ export class GameEngine {
           action: 'mount',
           creatureId: cr.id,
           isPassenger: false,
+          ownerId: this.getLocalOwnerId(),
+          ownerName:
+            this.multiplayer.localPlayerName ||
+            this.settings.playerName ||
+            'Aventureiro',
           creature: this.player.mountedCreatureData,
         });
         this.multiplayer.sendPlayerState(this.player);
@@ -9410,7 +10803,7 @@ export class GameEngine {
       soundManager.playPickup();
       this.renderer.spawnRipple(cr.x, cr.y, '#fde047', 22, 0.4);
       this.addFloatingText(
-        `Montou em ${cr.name} (Velocidade ${cr.mountSpeed})`,
+        `Montou em ${cr.name} (1 Assento · Velocidade ${cr.mountSpeed})`,
         cr.x,
         cr.y - 22,
         '#fde047'
@@ -9520,6 +10913,27 @@ export class GameEngine {
     );
     if (idx === -1) return false;
     const boat = this.entities.creatures[idx];
+
+    // Prevent picking up a boat while another player is still riding in it
+    const otherPlayerOnBoat = this.remotePlayersList.some(
+      (rp) => rp.mountedEntityId === boat.id
+    );
+    if (otherPlayerOnBoat) {
+      soundManager.playHitWood();
+      this.addFloatingText(
+        '⛵ Há outro jogador no Bote! Aguarde ele desembarcar.',
+        boat.x,
+        boat.y - 20,
+        '#f43f5e'
+      );
+      return false;
+    }
+
+    const boatPickupKey = `pickup_boat:${boat.id}`;
+    if (!this.tryClaimWorldAction(boatPickupKey)) {
+      return false;
+    }
+
     if (this.player.mountedEntityId === boat.id) {
       this.dismountCreature();
     }
@@ -9572,7 +10986,7 @@ export class GameEngine {
     const cr = this.entities.creatures.find(
       (c) => c.id === creatureId && c.tamed && c.hasSaddle
     );
-    if (!cr) return;
+    if (!cr || !this.isCreatureOwnedByLocalPlayer(cr)) return;
     this.ensureMountInventoryInitialized(cr);
     const slot = cr.mountInventory![mountSlotIndex];
     if (!slot || slot.count <= 0) return;
@@ -9597,6 +11011,7 @@ export class GameEngine {
         this.multiplayer.sendGuestMountEvent({
           action: 'mount_inventory',
           creatureId: cr.id,
+          ownerId: this.getLocalOwnerId(),
           mountInventory: cr.mountInventory,
         });
       }
@@ -9616,7 +11031,7 @@ export class GameEngine {
     const cr = this.entities.creatures.find(
       (c) => c.id === creatureId && c.tamed && c.hasSaddle
     );
-    if (!cr) return;
+    if (!cr || !this.isCreatureOwnedByLocalPlayer(cr)) return;
     this.ensureMountInventoryInitialized(cr);
     const pSlot = this.player.inventory[playerSlotIndex];
     if (!pSlot || pSlot.count <= 0) return;
@@ -9657,6 +11072,7 @@ export class GameEngine {
         this.multiplayer.sendGuestMountEvent({
           action: 'mount_inventory',
           creatureId: cr.id,
+          ownerId: this.getLocalOwnerId(),
           mountInventory: cr.mountInventory,
         });
       }
@@ -9669,8 +11085,494 @@ export class GameEngine {
   }
 
   // =========================================================================
-  // ONLINE MULTIPLAYER & INVITE CODE SESSION MANAGEMENT
+  // ONLINE MULTIPLAYER & ATOMIC WORLD INTERACTION RESOLUTION
   // =========================================================================
+
+  /**
+   * Executed on the HOST when a Guest requests an atomic world interaction
+   * (picking up a ground drop, looting a DeathBag, locking a harvested object, or withdrawing from a shared container).
+   */
+  private handleWorldInteractRequestOnHost(peerId: string, request: any): void {
+    if (!request || typeof request.action !== 'string') return;
+
+    switch (request.action) {
+      case 'pickup_drop_claim': {
+        const dropId = String(request.dropId || '');
+        if (!dropId) return;
+        const idx = this.droppedItems.findIndex((d) => d.id === dropId);
+        if (idx === -1 || this.claimedDropIds.has(dropId)) {
+          this.multiplayer.sendWorldInteractResolved({
+            action: 'pickup_drop_resolved',
+            dropId,
+            winnerPeerId: null,
+            targetPeerId: peerId,
+          });
+          return;
+        }
+        const drop = this.droppedItems[idx];
+        this.claimedDropIds.add(dropId);
+        this.droppedItems.splice(idx, 1);
+        this.renderer.spawnBurst(drop.x, drop.y, 'GOLD', 4);
+        this.multiplayer.sendPickupDrop(dropId);
+        this.multiplayer.sendWorldInteractResolved({
+          action: 'pickup_drop_resolved',
+          dropId,
+          winnerPeerId: peerId,
+          itemId: drop.itemId,
+          count: drop.count,
+          x: drop.x,
+          y: drop.y,
+        });
+        this.emitUiSnapshot();
+        break;
+      }
+
+      case 'spawn_death_bag': {
+        if (request.bag && request.bag.id) {
+          if (!this.deathBags.some((b) => b.id === request.bag.id)) {
+            this.deathBags.push(request.bag);
+            this.multiplayer.sendDeathBagsSync(this.deathBags);
+            this.emitUiSnapshot();
+          }
+        }
+        break;
+      }
+
+      case 'loot_death_bag_claim': {
+        const bagId = String(request.bagId || '');
+        if (!bagId || this.claimedDeathBagIds.has(bagId)) {
+          this.multiplayer.sendWorldInteractResolved({
+            action: 'loot_death_bag_resolved',
+            bagId,
+            winnerPeerId: null,
+            targetPeerId: peerId,
+          });
+          return;
+        }
+        const idx = this.deathBags.findIndex((b) => b.id === bagId);
+        if (idx === -1) {
+          this.multiplayer.sendWorldInteractResolved({
+            action: 'loot_death_bag_resolved',
+            bagId,
+            winnerPeerId: null,
+            targetPeerId: peerId,
+          });
+          return;
+        }
+        const bag = this.deathBags[idx];
+        if (bag.claimedBy && bag.claimedBy !== peerId) {
+          this.multiplayer.sendWorldInteractResolved({
+            action: 'loot_death_bag_resolved',
+            bagId,
+            winnerPeerId: null,
+            targetPeerId: peerId,
+          });
+          return;
+        }
+        this.claimedDeathBagIds.add(bagId);
+        this.deathBags.splice(idx, 1);
+        this.multiplayer.sendDeathBagsSync(this.deathBags);
+        this.multiplayer.sendWorldInteractResolved({
+          action: 'loot_death_bag_resolved',
+          bagId,
+          winnerPeerId: peerId,
+          bag,
+        });
+        this.emitUiSnapshot();
+        break;
+      }
+
+      case 'loot_death_bag_partial_return': {
+        if (request.bag && request.bag.id) {
+          this.claimedDeathBagIds.delete(request.bag.id);
+          const existingIdx = this.deathBags.findIndex(
+            (b) => b.id === request.bag.id
+          );
+          if (existingIdx !== -1) {
+            this.deathBags[existingIdx] = request.bag;
+          } else {
+            this.deathBags.push(request.bag);
+          }
+          this.multiplayer.sendDeathBagsSync(this.deathBags);
+          this.emitUiSnapshot();
+        }
+        break;
+      }
+
+      case 'world_action_lock': {
+        const actionKey = String(request.actionKey || '');
+        if (!actionKey) return;
+        this.claimedWorldActionKeys.set(actionKey, Date.now() + 3500);
+        this.multiplayer.sendWorldInteractResolved({
+          action: 'world_action_lock',
+          actionKey,
+        });
+        break;
+      }
+
+      case 'container_withdraw': {
+        const containerKind = String(request.containerKind || '');
+        const structureId = String(request.structureId || '');
+        const slotIndex = Number(request.slotIndex ?? -1);
+        const requestedCount = Number(request.count ?? 1);
+
+        if (containerKind === 'chest') {
+          const chest = this.getChestById(structureId);
+          const slots = chest ? this.ensureChestStorageInitialized(chest) : null;
+          const slot = slots && slotIndex >= 0 ? slots[slotIndex] : null;
+          if (!chest || !slots || !slot || slot.count <= 0) {
+            this.multiplayer.sendWorldInteractResolved({
+              action: 'container_withdraw_resolved',
+              containerKind,
+              structureId,
+              slotIndex,
+              winnerPeerId: null,
+              targetPeerId: peerId,
+            });
+            return;
+          }
+          const takeCount = Math.max(1, Math.min(slot.count, requestedCount));
+          const itemId = slot.itemId;
+          slot.count -= takeCount;
+          if (slot.count <= 0) {
+            slots[slotIndex] = null;
+          }
+          this.syncChunkAtTile(chest.tileX, chest.tileY);
+          this.multiplayer.sendWorldInteractResolved({
+            action: 'container_withdraw_resolved',
+            containerKind,
+            structureId,
+            slotIndex,
+            winnerPeerId: peerId,
+            itemId,
+            count: takeCount,
+            targetPlayerSlotIdx: request.targetPlayerSlotIdx,
+          });
+          this.emitUiSnapshot();
+        } else if (containerKind === 'stall') {
+          const stall = this.getMarketStallById(structureId);
+          const slots = stall
+            ? this.ensureMarketStallInitialized(stall)
+            : null;
+          const slot = slots && slotIndex >= 0 ? slots[slotIndex] : null;
+          if (!stall || !slots || !slot || slot.count <= 0) {
+            this.multiplayer.sendWorldInteractResolved({
+              action: 'container_withdraw_resolved',
+              containerKind,
+              structureId,
+              slotIndex,
+              winnerPeerId: null,
+              targetPeerId: peerId,
+            });
+            return;
+          }
+          const takeCount = Math.max(1, Math.min(slot.count, requestedCount));
+          const itemId = slot.itemId;
+          slot.count -= takeCount;
+          if (slot.count <= 0) {
+            slots[slotIndex] = null;
+            if (
+              stall.pendingCustomerOffer &&
+              stall.pendingCustomerOffer.slotIndex === slotIndex
+            ) {
+              stall.pendingCustomerOffer = null;
+            }
+          } else if (
+            stall.pendingCustomerOffer &&
+            stall.pendingCustomerOffer.slotIndex === slotIndex &&
+            stall.pendingCustomerOffer.quantity > slot.count
+          ) {
+            stall.pendingCustomerOffer.quantity = slot.count;
+            stall.pendingCustomerOffer.totalPrice =
+              slot.count * stall.pendingCustomerOffer.unitPrice;
+          }
+          this.syncChunkAtTile(stall.tileX, stall.tileY);
+          this.multiplayer.sendWorldInteractResolved({
+            action: 'container_withdraw_resolved',
+            containerKind,
+            structureId,
+            slotIndex,
+            winnerPeerId: peerId,
+            itemId,
+            count: takeCount,
+          });
+          this.emitUiSnapshot();
+        } else if (
+          containerKind === 'thermal_fuel' ||
+          containerKind === 'thermal_queue' ||
+          containerKind === 'thermal_output'
+        ) {
+          let foundSt: PlacedStructure | null = null;
+          for (const ch of Object.values(this.world.chunks)) {
+            const s = ch.structures.find((item) => item.id === structureId);
+            if (s) {
+              foundSt = s;
+              break;
+            }
+          }
+          if (!foundSt) {
+            this.multiplayer.sendWorldInteractResolved({
+              action: 'container_withdraw_resolved',
+              containerKind,
+              structureId,
+              winnerPeerId: null,
+              targetPeerId: peerId,
+            });
+            return;
+          }
+
+          if (containerKind === 'thermal_fuel') {
+            if (!foundSt.fuelItemId || (foundSt.fuelCount || 0) <= 0) {
+              this.multiplayer.sendWorldInteractResolved({
+                action: 'container_withdraw_resolved',
+                containerKind,
+                structureId,
+                winnerPeerId: null,
+                targetPeerId: peerId,
+              });
+              return;
+            }
+            const itemId = foundSt.fuelItemId;
+            const count = foundSt.fuelCount || 0;
+            foundSt.fuelItemId = null;
+            foundSt.fuelCount = 0;
+            this.syncChunkAtTile(foundSt.tileX, foundSt.tileY);
+            this.multiplayer.sendWorldInteractResolved({
+              action: 'container_withdraw_resolved',
+              containerKind,
+              structureId,
+              winnerPeerId: peerId,
+              items: [{ itemId, count }],
+            });
+            this.emitUiSnapshot();
+          } else if (containerKind === 'thermal_output') {
+            if (!foundSt.outputItemId || (foundSt.outputCount || 0) <= 0) {
+              this.multiplayer.sendWorldInteractResolved({
+                action: 'container_withdraw_resolved',
+                containerKind,
+                structureId,
+                winnerPeerId: null,
+                targetPeerId: peerId,
+              });
+              return;
+            }
+            const itemId = foundSt.outputItemId;
+            const count = foundSt.outputCount || 0;
+            foundSt.outputItemId = null;
+            foundSt.outputCount = 0;
+            this.syncChunkAtTile(foundSt.tileX, foundSt.tileY);
+            this.multiplayer.sendWorldInteractResolved({
+              action: 'container_withdraw_resolved',
+              containerKind,
+              structureId,
+              winnerPeerId: peerId,
+              items: [{ itemId, count }],
+            });
+            this.emitUiSnapshot();
+          } else if (containerKind === 'thermal_queue') {
+            if (
+              !foundSt.cookingRecipeId ||
+              (foundSt.cookingInputCount || 0) <= 0
+            ) {
+              this.multiplayer.sendWorldInteractResolved({
+                action: 'container_withdraw_resolved',
+                containerKind,
+                structureId,
+                winnerPeerId: null,
+                targetPeerId: peerId,
+              });
+              return;
+            }
+            const recipe = RECIPES.find(
+              (r) => r.id === foundSt!.cookingRecipeId
+            );
+            const batches = foundSt.cookingInputCount || 0;
+            foundSt.cookingRecipeId = null;
+            foundSt.cookingInputCount = 0;
+            foundSt.cookingProgress = 0;
+            const refundedItems: { itemId: string; count: number }[] = [];
+            if (recipe) {
+              for (const ing of recipe.ingredients) {
+                refundedItems.push({
+                  itemId: ing.itemId,
+                  count: ing.count * batches,
+                });
+              }
+            }
+            this.syncChunkAtTile(foundSt.tileX, foundSt.tileY);
+            this.multiplayer.sendWorldInteractResolved({
+              action: 'container_withdraw_resolved',
+              containerKind,
+              structureId,
+              winnerPeerId: peerId,
+              items: refundedItems,
+            });
+            this.emitUiSnapshot();
+          }
+        }
+        break;
+      }
+    }
+  }
+
+  /**
+   * Executed on Guests (and Host) when an atomic world interaction is resolved by the Host.
+   */
+  private handleWorldInteractResolved(result: any): void {
+    if (!result || typeof result.action !== 'string') return;
+    const myPeerId = this.multiplayer.peerId;
+
+    switch (result.action) {
+      case 'pickup_drop_resolved': {
+        const dropId = String(result.dropId || '');
+        this.pendingDropClaimTimers.delete(dropId);
+        if (result.winnerPeerId) {
+          this.claimedDropIds.add(dropId);
+          const idx = this.droppedItems.findIndex((d) => d.id === dropId);
+          if (idx !== -1) {
+            this.droppedItems.splice(idx, 1);
+          }
+        }
+        if (result.winnerPeerId === myPeerId && result.itemId && result.count) {
+          const added = this.addItemToInventory(result.itemId, result.count);
+          if (added) {
+            soundManager.playPickup();
+            this.renderer.spawnBurst(
+              result.x ?? this.player.x,
+              result.y ?? this.player.y,
+              'GOLD',
+              5
+            );
+            const itemDef = ITEMS[result.itemId];
+            this.addFloatingText(
+              `+${result.count} ${itemDef ? itemDef.name : result.itemId}`,
+              this.player.x,
+              this.player.y - 18,
+              '#4ade80'
+            );
+            this.emitUiSnapshot();
+          } else {
+            this.spawnDrop(
+              result.itemId,
+              result.count,
+              this.player.x,
+              this.player.y
+            );
+          }
+        }
+        break;
+      }
+
+      case 'loot_death_bag_resolved': {
+        const bagId = String(result.bagId || '');
+        this.pendingDeathBagClaims.delete(bagId);
+        if (result.winnerPeerId === myPeerId && result.bag) {
+          // Ensure bag is present locally and execute recovery
+          const existingIdx = this.deathBags.findIndex((b) => b.id === bagId);
+          if (existingIdx === -1) {
+            this.deathBags.push(result.bag);
+          } else {
+            this.deathBags[existingIdx] = result.bag;
+          }
+          this.claimedDeathBagIds.delete(bagId);
+          this.executeLocalLootDeathBag(bagId);
+          // If some items didn't fit in the Guest's inventory, sync the leftover bag back to Host
+          const leftover = this.deathBags.find((b) => b.id === bagId);
+          if (leftover && (leftover.items.length > 0 || leftover.goldCoins > 0)) {
+            this.multiplayer.sendWorldInteractRequest({
+              action: 'loot_death_bag_partial_return',
+              bag: leftover,
+            });
+          }
+        } else if (result.winnerPeerId && result.winnerPeerId !== myPeerId) {
+          this.claimedDeathBagIds.add(bagId);
+          const idx = this.deathBags.findIndex((b) => b.id === bagId);
+          if (idx !== -1) {
+            this.deathBags.splice(idx, 1);
+            this.emitUiSnapshot();
+          }
+        }
+        break;
+      }
+
+      case 'world_action_lock': {
+        if (result.actionKey) {
+          this.claimedWorldActionKeys.set(
+            String(result.actionKey),
+            Date.now() + 3500
+          );
+        }
+        break;
+      }
+
+      case 'force_dismount': {
+        if (
+          result.targetPeerId === myPeerId &&
+          this.player.mountedEntityId === result.creatureId
+        ) {
+          this.player.mountedEntityId = null;
+          this.player.mountedCreatureData = null;
+          this.player.isGalloping = false;
+          if (result.reason) {
+            this.addFloatingText(
+              String(result.reason),
+              this.player.x,
+              this.player.y - 24,
+              '#f43f5e'
+            );
+          }
+          this.multiplayer.sendPlayerState(this.player);
+          this.emitUiSnapshot();
+        }
+        break;
+      }
+
+      case 'container_withdraw_resolved': {
+        const containerKind = String(result.containerKind || '');
+        const structureId = String(result.structureId || '');
+        const slotIndex = Number(result.slotIndex ?? -1);
+        if (containerKind === 'chest' || containerKind === 'stall') {
+          this.pendingContainerWithdraws.delete(
+            `${containerKind}:${structureId}:${slotIndex}`
+          );
+        } else {
+          this.pendingContainerWithdraws.delete(
+            `${containerKind}:${structureId}`
+          );
+        }
+
+        if (result.winnerPeerId === myPeerId) {
+          if (Array.isArray(result.items)) {
+            for (const entry of result.items) {
+              if (!entry || !entry.itemId || entry.count <= 0) continue;
+              if (!this.addItemToInventory(entry.itemId, entry.count)) {
+                this.spawnDrop(
+                  entry.itemId,
+                  entry.count,
+                  this.player.x,
+                  this.player.y
+                );
+              }
+            }
+            soundManager.playPickup();
+            this.emitUiSnapshot();
+          } else if (result.itemId && result.count > 0) {
+            if (!this.addItemToInventory(result.itemId, result.count)) {
+              this.spawnDrop(
+                result.itemId,
+                result.count,
+                this.player.x,
+                this.player.y
+              );
+            }
+            soundManager.playPickup();
+            this.emitUiSnapshot();
+          }
+        }
+        break;
+      }
+    }
+  }
 
   private bindMultiplayerCallbacks(): void {
     this.multiplayer.setCallbacks({
@@ -9696,6 +11598,18 @@ export class GameEngine {
       onGuestMountEventReceived: (peerId, event) => {
         this.handleGuestMountEvent(peerId, event);
       },
+      onWorldInteractRequestReceived: (peerId, request) => {
+        this.handleWorldInteractRequestOnHost(peerId, request);
+      },
+      onWorldInteractResolvedReceived: (result) => {
+        this.handleWorldInteractResolved(result);
+      },
+      onDeathBagsSyncReceived: (bags) => {
+        if (Array.isArray(bags)) {
+          this.deathBags = bags;
+          this.emitUiSnapshot();
+        }
+      },
       onRequestHostSnapshot: () => {
         return this.buildSaveData();
       },
@@ -9707,7 +11621,9 @@ export class GameEngine {
         }
         if (snapshot.chunks) {
           for (const [key, ch] of Object.entries(snapshot.chunks)) {
-            this.world.chunks[key] = ch;
+            if (ch) {
+              this.world.chunks[key] = this.world.hydrateChunk(ch);
+            }
           }
         }
         if (Array.isArray(snapshot.creatures)) {
@@ -9715,6 +11631,9 @@ export class GameEngine {
         }
         if (Array.isArray(snapshot.droppedItems)) {
           this.droppedItems = snapshot.droppedItems;
+        }
+        if (Array.isArray(snapshot.deathBags)) {
+          this.deathBags = snapshot.deathBags;
         }
         // Keep the player's integrated mount restored after a snapshot sync
         this.restoreIntegratedPlayerMount();
@@ -9724,19 +11643,21 @@ export class GameEngine {
       },
       onChunkSyncReceived: (chunkKey, chunkData) => {
         if (!chunkKey || !chunkData) return;
-        this.world.chunks[chunkKey] = chunkData;
+        this.world.chunks[chunkKey] = this.world.hydrateChunk(chunkData);
         if (!this.canEntityOccupy(this.player.x, this.player.y)) {
           this.pushPlayerOutOfHitbox(0.05, false);
         }
         this.emitUiSnapshot();
       },
       onSpawnDropReceived: (drop) => {
-        if (!drop || !drop.id) return;
+        if (!drop || !drop.id || this.claimedDropIds.has(drop.id)) return;
         if (!this.droppedItems.some((d) => d.id === drop.id)) {
           this.droppedItems.push(drop);
         }
       },
       onPickupDropReceived: (dropId) => {
+        this.claimedDropIds.add(dropId);
+        this.pendingDropClaimTimers.delete(dropId);
         const idx = this.droppedItems.findIndex((d) => d.id === dropId);
         if (idx !== -1) {
           const drop = this.droppedItems[idx];
@@ -9745,7 +11666,7 @@ export class GameEngine {
         }
       },
       onDropsSyncReceived: (drops) => {
-        this.droppedItems = drops;
+        this.droppedItems = drops.filter((d) => !this.claimedDropIds.has(d.id));
       },
       onCreaturesSyncReceived: (incomingCreatures) => {
         if (!Array.isArray(incomingCreatures)) return;
@@ -9792,6 +11713,8 @@ export class GameEngine {
               x: this.player.x,
               y: this.player.y,
               direction: this.player.direction,
+              ownerId: inc.ownerId || prev?.ownerId || null,
+              ownerName: inc.ownerName || prev?.ownerName || null,
               mountStamina:
                 prev?.mountStamina !== undefined
                   ? prev.mountStamina
@@ -9817,6 +11740,8 @@ export class GameEngine {
               ...inc,
               x: smoothX,
               y: smoothY,
+              ownerId: inc.ownerId || prev.ownerId || null,
+              ownerName: inc.ownerName || prev.ownerName || null,
               trades: restoredTrades,
               favoriteFoodIds: restoredFavFoods,
               animFrame: prev.animFrame,
@@ -10111,7 +12036,7 @@ export class GameEngine {
       ) {
         cr.attackCooldown = 1.15;
         cr.attackTimer = 0.28;
-        this.damagePlayer(cr.attackDamage, cr.x, cr.y);
+        this.damagePlayer(cr.attackDamage, cr.x, cr.y, cr);
       }
     }
   }
@@ -10218,7 +12143,10 @@ export class GameEngine {
       nearbyTamedAnimal: this.getNearbyTamedAnimal(),
       activeMount: this.getActiveMount(),
       tamedAnimals: this.entities.creatures.filter(
-        (c) => c.tamed && c.kind !== CreatureKind.BOAT
+        (c) =>
+          c.tamed &&
+          c.kind !== CreatureKind.BOAT &&
+          this.isCreatureOwnedByLocalPlayer(c)
       ),
       waypoints: [...deathBagWaypoints, ...this.waypoints],
       deathBags: this.deathBags,

@@ -47,6 +47,7 @@ export interface AimedTargetInfo {
   deathBagId?: string;
   iconItemId?: string;
   structureId?: string;
+  canClaimOwnership?: boolean;
   cropType?: string;
   cropStage?: number;
   isWatered?: boolean;
@@ -659,16 +660,27 @@ export class GameRenderer {
       ctx.restore();
     }
 
-    // 2B. Aimed Target Reticle with Animated Corner Brackets & Ground Halo
-    if (aimedTarget) {
-      const pulse = Math.sin(globalTime * 8) * 1.5;
-      const rx = aimedTarget.worldX - 16 - pulse;
-      const ry = aimedTarget.worldY - 16 - pulse;
-      const rw = 32 + pulse * 2;
-      const rh = 32 + pulse * 2;
+    // 2B. Player Directional Pointer ("Apontador de Interação") & Aimed Target Ground Reticle
+    {
+      const dirDx =
+        player.direction === 'left'
+          ? -1
+          : player.direction === 'right'
+          ? 1
+          : 0;
+      const dirDy =
+        player.direction === 'up'
+          ? -1
+          : player.direction === 'down'
+          ? 1
+          : 0;
+      const pointerDist = 24;
+      const px = player.x + dirDx * pointerDist;
+      const py = player.y + 4 + dirDy * pointerDist;
+      const angle = Math.atan2(dirDy, dirDx);
 
-      const reticleColor =
-        aimedTarget.kind === 'crop'
+      const reticleColor = aimedTarget
+        ? aimedTarget.kind === 'crop'
           ? aimedTarget.cropStage === 3
             ? '#fde047'
             : '#22c55e'
@@ -678,43 +690,103 @@ export class GameRenderer {
           ? '#10b981'
           : aimedTarget.kind === 'wild_animal'
           ? '#f43f5e'
-          : '#38bdf8';
+          : aimedTarget.kind === 'death_bag'
+          ? '#facc15'
+          : '#38bdf8'
+        : '#fbbf24';
 
+      // Draw directional pointer chevron in front of the player so they always see where they are aiming
       ctx.save();
-      // Subtle ground lock-on ellipse
-      ctx.strokeStyle = reticleColor;
-      ctx.globalAlpha = 0.38;
-      ctx.lineWidth = 1;
+      ctx.translate(px, py);
+      ctx.rotate(angle);
+      ctx.globalAlpha = aimedTarget ? 0.92 : 0.62;
+      ctx.fillStyle = reticleColor;
+      ctx.strokeStyle = '#120b07';
+      ctx.lineWidth = 1.25;
       ctx.beginPath();
-      ctx.ellipse(
-        aimedTarget.worldX,
-        aimedTarget.worldY + 10,
-        14 + pulse,
-        6 + pulse * 0.4,
-        0,
-        0,
-        Math.PI * 2
-      );
-      ctx.stroke();
-
-      ctx.globalAlpha = 0.95;
-      ctx.lineWidth = 1.5;
-      const cLen = 6;
-      ctx.beginPath();
-      ctx.moveTo(rx, ry + cLen);
-      ctx.lineTo(rx, ry);
-      ctx.lineTo(rx + cLen, ry);
-      ctx.moveTo(rx + rw - cLen, ry);
-      ctx.lineTo(rx + rw, ry);
-      ctx.lineTo(rx + rw, ry + cLen);
-      ctx.moveTo(rx, ry + rh - cLen);
-      ctx.lineTo(rx, ry + rh);
-      ctx.lineTo(rx + cLen, ry + rh);
-      ctx.moveTo(rx + rw - cLen, ry + rh);
-      ctx.lineTo(rx + rw, ry + rh);
-      ctx.lineTo(rx + rw, ry + rh - cLen);
+      ctx.moveTo(5, 0);
+      ctx.lineTo(-4, -4.5);
+      ctx.lineTo(-2, 0);
+      ctx.lineTo(-4, 4.5);
+      ctx.closePath();
+      ctx.fill();
       ctx.stroke();
       ctx.restore();
+
+      if (aimedTarget) {
+        const pulse = Math.sin(globalTime * 8) * 1.6;
+        const rx = aimedTarget.worldX - 16 - pulse;
+        const ry = aimedTarget.worldY - 16 - pulse;
+        const rw = 32 + pulse * 2;
+        const rh = 32 + pulse * 2;
+
+        ctx.save();
+        // Dashed directional link from player pointer to aimedTarget
+        ctx.strokeStyle = reticleColor;
+        ctx.globalAlpha = 0.55;
+        ctx.lineWidth = 1.25;
+        ctx.setLineDash([3, 3]);
+        ctx.beginPath();
+        ctx.moveTo(px, py);
+        ctx.lineTo(aimedTarget.worldX, aimedTarget.worldY + 4);
+        ctx.stroke();
+        ctx.setLineDash([]);
+
+        // Ground lock-on halo
+        ctx.fillStyle = reticleColor;
+        ctx.globalAlpha = 0.14;
+        ctx.beginPath();
+        ctx.ellipse(
+          aimedTarget.worldX,
+          aimedTarget.worldY + 9,
+          15 + pulse,
+          7 + pulse * 0.4,
+          0,
+          0,
+          Math.PI * 2
+        );
+        ctx.fill();
+
+        ctx.strokeStyle = reticleColor;
+        ctx.globalAlpha = 0.72;
+        ctx.lineWidth = 1.4;
+        ctx.beginPath();
+        ctx.ellipse(
+          aimedTarget.worldX,
+          aimedTarget.worldY + 9,
+          15 + pulse,
+          7 + pulse * 0.4,
+          0,
+          0,
+          Math.PI * 2
+        );
+        ctx.stroke();
+
+        // High-contrast corner brackets with dark outline
+        ctx.globalAlpha = 0.98;
+        const cLen = 7;
+        const drawBrackets = (stroke: string, width: number) => {
+          ctx.strokeStyle = stroke;
+          ctx.lineWidth = width;
+          ctx.beginPath();
+          ctx.moveTo(rx, ry + cLen);
+          ctx.lineTo(rx, ry);
+          ctx.lineTo(rx + cLen, ry);
+          ctx.moveTo(rx + rw - cLen, ry);
+          ctx.lineTo(rx + rw, ry);
+          ctx.lineTo(rx + rw, ry + cLen);
+          ctx.moveTo(rx, ry + rh - cLen);
+          ctx.lineTo(rx, ry + rh);
+          ctx.lineTo(rx + cLen, ry + rh);
+          ctx.moveTo(rx + rw - cLen, ry + rh);
+          ctx.lineTo(rx + rw, ry + rh);
+          ctx.lineTo(rx + rw, ry + rh - cLen);
+          ctx.stroke();
+        };
+        drawBrackets('#120b07', 3.2);
+        drawBrackets(reticleColor, 1.8);
+        ctx.restore();
+      }
     }
 
     // 3. Dropped Items with Rarity Ground Aura & Floating Glint
@@ -1009,6 +1081,75 @@ export class GameRenderer {
 
     // 6. AAA Ambient Biome & Atmospheric Particles (Fireflies, Butterflies, Golden Pollen, Sand Motes)
     this.drawAmbientWorldParticles(ctx, camera, world, timeOfDay, globalTime, halfW, halfH);
+
+    // 6B. Top-Layer Aimed Target Selector Pointer Arrow & Action Tag (Shows exactly what Interação will act on)
+    if (aimedTarget) {
+      const bounce = Math.sin(globalTime * 7) * 2.2;
+      const tx = Math.round(aimedTarget.worldX);
+      const ty = Math.round(aimedTarget.worldY - 22 + bounce);
+      const selectorColor =
+        aimedTarget.kind === 'crop'
+          ? aimedTarget.cropStage === 3
+            ? '#fde047'
+            : '#22c55e'
+          : aimedTarget.kind === 'station'
+          ? '#f59e0b'
+          : aimedTarget.kind === 'villager'
+          ? '#10b981'
+          : aimedTarget.kind === 'wild_animal'
+          ? '#f43f5e'
+          : aimedTarget.kind === 'death_bag'
+          ? '#facc15'
+          : '#38bdf8';
+
+      ctx.save();
+      // Bouncing downward pointer triangle ▼ above target
+      ctx.fillStyle = selectorColor;
+      ctx.strokeStyle = '#120b07';
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.moveTo(tx, ty + 4);
+      ctx.lineTo(tx - 5, ty - 3);
+      ctx.lineTo(tx + 5, ty - 3);
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
+
+      // Compact floating label + action hint pill above the pointer arrow
+      const shortLabel =
+        aimedTarget.label.length > 28
+          ? aimedTarget.label.slice(0, 27) + '…'
+          : aimedTarget.label;
+      const shortAction =
+        aimedTarget.actionHint.length > 32
+          ? aimedTarget.actionHint.slice(0, 31) + '…'
+          : aimedTarget.actionHint;
+
+      ctx.font = 'bold 7.5px "Plus Jakarta Sans", sans-serif';
+      const w1 = ctx.measureText(shortLabel).width;
+      ctx.font = 'bold 7px "Plus Jakarta Sans", sans-serif';
+      const w2 = ctx.measureText(shortAction).width;
+      const boxW = Math.ceil(Math.max(w1, w2) + 12);
+      const boxH = 21;
+      const bx = Math.round(tx - boxW / 2);
+      const by = Math.round(ty - 4 - boxH);
+
+      ctx.fillStyle = 'rgba(18, 11, 7, 0.9)';
+      ctx.fillRect(bx, by, boxW, boxH);
+      ctx.strokeStyle = selectorColor;
+      ctx.lineWidth = 1.1;
+      ctx.strokeRect(bx, by, boxW, boxH);
+
+      ctx.textAlign = 'center';
+      ctx.font = 'bold 7.5px "Plus Jakarta Sans", sans-serif';
+      ctx.fillStyle = '#fef08a';
+      ctx.fillText(shortLabel, tx, by + 9);
+
+      ctx.font = 'bold 7px "Plus Jakarta Sans", sans-serif';
+      ctx.fillStyle = selectorColor;
+      ctx.fillText(shortAction, tx, by + 18);
+      ctx.restore();
+    }
 
     // 7. Floating Damage / Loot Numbers with Pop-In Scale & Fade
     for (const ft of floatingTexts) {
@@ -3679,8 +3820,9 @@ export class GameRenderer {
       ctx.fillText('♥', cr.x - 14, headTopY - 3 + heartPulse);
       ctx.fillStyle = '#fde047';
       const saddleBadge = cr.hasSaddle ? ' 鞍' : '';
+      const ownerTag = cr.ownerName ? ` · ${cr.ownerName}` : '';
       ctx.fillText(
-        `${cr.aiState === 'stay' ? '[Base]' : '[Aliado]'}${saddleBadge}`,
+        `${cr.aiState === 'stay' ? '[Base]' : '[Aliado]'}${saddleBadge}${ownerTag}`,
         cr.x + 4,
         headTopY - 3
       );

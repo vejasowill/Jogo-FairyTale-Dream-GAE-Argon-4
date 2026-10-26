@@ -2,6 +2,8 @@ import {
   BiomeType,
   CHEST_STORAGE_SIZE,
   ChunkData,
+  CURRENT_WORLD_GEN_VERSION,
+  GAME_VERSION,
   GameSettings,
   HOTBAR_SIZE,
   NatureNode,
@@ -16,8 +18,27 @@ import { WorldManager } from '../world/WorldManager';
 const INDEX_KEY = 'wildborn_worlds_index_v1';
 const SETTINGS_KEY = 'wildborn_settings_v1';
 const WORLD_PREFIX = 'wildborn_world_v1_';
+const PLAYER_UID_KEY = 'wildborn_player_uid_v1';
 
-export const CURRENT_SAVE_VERSION = 2;
+export const CURRENT_SAVE_VERSION = 3;
+
+export function getOrCreatePersistentPlayerUid(): string {
+  try {
+    const existing = localStorage.getItem(PLAYER_UID_KEY);
+    if (existing && existing.trim().length >= 6) {
+      return existing.trim();
+    }
+    const generated =
+      'player_' +
+      Math.random().toString(36).slice(2, 10) +
+      '_' +
+      Date.now().toString(36).slice(-5);
+    localStorage.setItem(PLAYER_UID_KEY, generated);
+    return generated;
+  } catch {
+    return 'player_local_default';
+  }
+}
 
 export interface SaveEnvelope {
   checksum: string;
@@ -56,6 +77,7 @@ export function createInitialPlayerState(): PlayerState {
   const inventory = new Array(TOTAL_INVENTORY_SIZE).fill(null);
 
   return {
+    persistentPlayerId: getOrCreatePersistentPlayerUid(),
     x: 16,
     y: 16,
     vx: 0,
@@ -112,19 +134,48 @@ export function createInitialPlayerState(): PlayerState {
  * or any older save format to v2 (8 hotbar + 24 backpack = 32 slots + waypoints + interactive chests + 4-slot equipment) without losing data.
  */
 export function migrateSaveData(rawSave: WorldSaveData): WorldSaveData {
+  const originalWorldGenVersion =
+    rawSave.metadata?.createdWorldGenVersion ??
+    rawSave.metadata?.worldGenVersion ??
+    2;
+  const originalGameVersion =
+    rawSave.metadata?.createdGameVersion ??
+    rawSave.metadata?.gameVersion ??
+    '0.4.3-beta';
+
   const migrated: WorldSaveData = {
     ...rawSave,
     version: CURRENT_SAVE_VERSION,
     metadata: {
       ...rawSave.metadata,
-      // Preserve worldGenVersion = 1 for all existing saves so their terrain/chunks never change
-      worldGenVersion: rawSave.metadata?.worldGenVersion ?? 1,
+      // Keep original creation version metadata so existing explored chunks stay 100% preserved,
+      // while upgrading active worldGenVersion to CURRENT_WORLD_GEN_VERSION for newly explored chunks!
+      createdWorldGenVersion: originalWorldGenVersion,
+      worldGenVersion: CURRENT_WORLD_GEN_VERSION,
+      createdGameVersion: originalGameVersion,
+      gameVersion: GAME_VERSION,
     },
     waypoints: Array.isArray(rawSave.waypoints) ? rawSave.waypoints : [],
     droppedItems: Array.isArray(rawSave.droppedItems) ? rawSave.droppedItems : [],
     creatures: Array.isArray(rawSave.creatures) ? rawSave.creatures : [],
     deathBags: Array.isArray(rawSave.deathBags) ? rawSave.deathBags : [],
   };
+
+  if (!migrated.player.persistentPlayerId) {
+    migrated.player.persistentPlayerId = getOrCreatePersistentPlayerUid();
+  }
+
+  // Ensure any pre-existing tamed animals in a saved world have their ownerId assigned
+  if (Array.isArray(migrated.creatures)) {
+    for (const cr of migrated.creatures) {
+      if (cr && cr.tamed && cr.kind !== 'BOAT' && !cr.ownerId) {
+        cr.ownerId = migrated.player.persistentPlayerId;
+        if (!cr.ownerName) {
+          cr.ownerName = 'Anfitrião';
+        }
+      }
+    }
+  }
 
   if (
     typeof migrated.player.respawnX !== 'number' ||
@@ -212,41 +263,77 @@ export function migrateSaveData(rawSave: WorldSaveData): WorldSaveData {
     migrated.player.selectedHotbarIndex = 0;
   }
 
-  // Reconstruct deterministic chunk terrain arrays & ensure all placed/generated Chests have a 24-slot storageSlots array
+  // Reconstruct & freeze explored chunk terrain arrays, prune untouched unexplored chunks so new updates generate them fresh,
+  // and ensure all placed/generated Chests have a 24-slot storageSlots array.
   if (migrated.chunks && typeof migrated.chunks === 'object') {
     const hydrationMgr = new WorldManager(
       migrated.metadata?.seed || 123456,
       undefined,
-      migrated.metadata?.worldGenVersion ?? 1
+      originalWorldGenVersion
     );
-    for (const chunk of Object.values(migrated.chunks)) {
+    const preservedChunks: Record<string, ChunkData> = {};
+
+    for (const [key, chunk] of Object.entries(migrated.chunks)) {
       if (!chunk) continue;
+      if (!WorldManager.isChunkExploredOrModified(chunk)) {
+        // Untouched unexplored chunk: do not lock it, so future exploration generates it with CURRENT_WORLD_GEN_VERSION
+        continue;
+      }
+
+      if (typeof chunk.genVersion !== 'number') {
+        chunk.genVersion = originalWorldGenVersion;
+      }
+      if (!chunk.generatedGameVersion) {
+        chunk.generatedGameVersion = originalGameVersion;
+      }
+      chunk.preserved = true;
+
       hydrationMgr.hydrateChunk(chunk);
-      if (!Array.isArray(chunk.structures)) continue;
-      for (const st of chunk.structures) {
-        if (st.type === PlaceableType.CHEST) {
-          if (!Array.isArray(st.storageSlots) || st.storageSlots.length < CHEST_STORAGE_SIZE) {
-            const slots = new Array(CHEST_STORAGE_SIZE).fill(null);
-            if (Array.isArray(st.storageSlots)) {
-              for (let i = 0; i < Math.min(st.storageSlots.length, CHEST_STORAGE_SIZE); i++) {
-                slots[i] = st.storageSlots[i] || null;
+
+      if (Array.isArray(chunk.structures)) {
+        for (const st of chunk.structures) {
+          if (st.type === PlaceableType.CHEST) {
+            if (
+              !Array.isArray(st.storageSlots) ||
+              st.storageSlots.length < CHEST_STORAGE_SIZE
+            ) {
+              const slots = new Array(CHEST_STORAGE_SIZE).fill(null);
+              if (Array.isArray(st.storageSlots)) {
+                for (
+                  let i = 0;
+                  i < Math.min(st.storageSlots.length, CHEST_STORAGE_SIZE);
+                  i++
+                ) {
+                  slots[i] = st.storageSlots[i] || null;
+                }
+              } else if (
+                Array.isArray(st.lootItems) &&
+                st.lootItems.length > 0
+              ) {
+                for (
+                  let i = 0;
+                  i < Math.min(st.lootItems.length, CHEST_STORAGE_SIZE);
+                  i++
+                ) {
+                  slots[i] = {
+                    itemId: st.lootItems[i].itemId,
+                    count: st.lootItems[i].count,
+                  };
+                }
               }
-            } else if (Array.isArray(st.lootItems) && st.lootItems.length > 0) {
-              for (let i = 0; i < Math.min(st.lootItems.length, CHEST_STORAGE_SIZE); i++) {
-                slots[i] = {
-                  itemId: st.lootItems[i].itemId,
-                  count: st.lootItems[i].count,
-                };
-              }
+              st.storageSlots = slots;
             }
-            st.storageSlots = slots;
-          }
-          if (!st.customName && st.landmarkName) {
-            st.customName = st.landmarkName;
+            if (!st.customName && st.landmarkName) {
+              st.customName = st.landmarkName;
+            }
           }
         }
       }
+
+      preservedChunks[key] = chunk;
     }
+
+    migrated.chunks = preservedChunks;
   }
 
   return migrated;
@@ -259,6 +346,7 @@ export class SaveManager {
       attackBtn: { offsetX: 0, offsetY: 0, scale: 1.0 },
       interactBtn: { offsetX: 0, offsetY: 0, scale: 1.0 },
       placeBtn: { offsetX: 0, offsetY: 0, scale: 1.0 },
+      mountBtn: { offsetX: 0, offsetY: 0, scale: 1.0 },
       hotbar: { offsetX: 0, offsetY: 0, scale: 1.0 },
       statusPlaque: { offsetX: 0, offsetY: 0, scale: 1.0 },
       topMenu: { offsetX: 0, offsetY: 0, scale: 1.0 },
@@ -348,7 +436,11 @@ export class SaveManager {
     const now = Date.now();
     const id = `world_${now}_${Math.floor(Math.random() * 9999)}`;
     const player = createInitialPlayerState();
-    const worldMgr = new WorldManager(seed, undefined, 2);
+    const worldMgr = new WorldManager(
+      seed,
+      undefined,
+      CURRENT_WORLD_GEN_VERSION
+    );
     worldMgr.revealAround(player.x, player.y, 11);
 
     const metadata: WorldMetadata = {
@@ -363,7 +455,10 @@ export class SaveManager {
       timeOfDay: 8.0,
       playerLevel: 1,
       exploredChunksCount: worldMgr.getExploredChunksCount(),
-      worldGenVersion: 2,
+      worldGenVersion: CURRENT_WORLD_GEN_VERSION,
+      createdWorldGenVersion: CURRENT_WORLD_GEN_VERSION,
+      gameVersion: GAME_VERSION,
+      createdGameVersion: GAME_VERSION,
     };
 
     const saveData: WorldSaveData = {
@@ -392,9 +487,9 @@ export class SaveManager {
   /**
    * Produces a compact copy of `WorldSaveData` for `localStorage` persistence without mutating
    * the live in-memory world state:
-   * - Strips deterministic 256-tile terrain arrays (`tiles`, `tileVariants`, `ecologicalZones`) which are
-   *   reconstructed automatically from `(seed, worldGenVersion, cx, cy)` on load.
-   * - Compresses fully-explored chunks (`[1]`) and skips untouched, unexplored chunks.
+   * - Preserves exact chunk terrain via ultra-compact 256-char strings (`compactTiles`, `compactZones`, `compactVariants`)
+   *   and `genVersion` / `generatedGameVersion` / `preserved = true` so explored chunks are NEVER altered by future world updates.
+   * - Skips untouched, unexplored chunks so newly explored areas always generate with the latest world generation version.
    * - Strips static blueprint properties from `NatureNode` entries.
    */
   private static compactSaveDataForStorage(
@@ -453,10 +548,39 @@ export class SaveManager {
             )
           : [];
 
+        const compactTiles =
+          chunk.compactTiles && chunk.compactTiles.length === 256
+            ? chunk.compactTiles
+            : WorldManager.encodeCompactTiles(chunk.tiles);
+        const compactZones =
+          chunk.compactZones && chunk.compactZones.length === 256
+            ? chunk.compactZones
+            : WorldManager.encodeCompactZones(chunk.ecologicalZones);
+        const compactVariants =
+          chunk.compactVariants && chunk.compactVariants.length === 256
+            ? chunk.compactVariants
+            : WorldManager.encodeCompactVariants(chunk.tileVariants);
+
         compactChunks[key] = {
           cx: chunk.cx,
           cy: chunk.cy,
           ...(chunk.landmarkName ? { landmarkName: chunk.landmarkName } : {}),
+          ...(chunk.villageId ? { villageId: chunk.villageId } : {}),
+          ...(chunk.mobsPopulated ? { mobsPopulated: true } : {}),
+          genVersion:
+            typeof chunk.genVersion === 'number'
+              ? chunk.genVersion
+              : saveData.metadata?.createdWorldGenVersion ??
+                saveData.metadata?.worldGenVersion ??
+                CURRENT_WORLD_GEN_VERSION,
+          generatedGameVersion:
+            chunk.generatedGameVersion ||
+            saveData.metadata?.gameVersion ||
+            GAME_VERSION,
+          preserved: true,
+          ...(compactTiles ? { compactTiles } : {}),
+          ...(compactZones ? { compactZones } : {}),
+          ...(compactVariants ? { compactVariants } : {}),
           tiles: [] as unknown as BiomeType[],
           tileVariants: [],
           explored: allExplored ? [1] : hasExplored ? chunk.explored : [],

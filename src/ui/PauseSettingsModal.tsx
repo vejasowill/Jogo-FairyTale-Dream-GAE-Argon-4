@@ -15,7 +15,7 @@ import {
   Wifi,
   X,
 } from 'lucide-react';
-import { GameSettings } from '../game/core/types';
+import { GAME_VERSION, GameSettings } from '../game/core/types';
 import { GameEngine } from '../game/loop/GameEngine';
 import { SaveManager } from '../game/persistence/SaveManager';
 
@@ -72,8 +72,11 @@ export const PauseSettingsModal: React.FC<PauseSettingsModalProps> = ({
         <div className="flex items-center justify-between px-4 py-2 bg-[#1a110b] border-b-2 border-[#4a301e]">
           <div className="flex items-center gap-2">
             <Settings className="w-4 h-4 text-amber-400" />
-            <h2 className="font-pixel text-xs sm:text-sm font-bold text-amber-400">
-              PAUSA, CONTROLES & CONFIGURAÇÕES DA HUD
+            <h2 className="font-pixel text-xs sm:text-sm font-bold text-amber-400 flex items-center gap-2">
+              <span>PAUSA, CONTROLES & CONFIGURAÇÕES DA HUD</span>
+              <span className="px-1.5 py-0.5 rounded bg-amber-950/90 border border-amber-500/40 text-[9px] font-mono text-amber-300">
+                v{GAME_VERSION}
+              </span>
             </h2>
           </div>
           <button
@@ -302,6 +305,19 @@ export const PauseSettingsModal: React.FC<PauseSettingsModalProps> = ({
                 {saveFeedback}
               </div>
             )}
+
+            {/* World Seed & Explored Chunk Preservation Status */}
+            <div className="medieval-inset p-2.5 space-y-1 border border-sky-500/35 bg-[#0f1722]/75">
+              <div className="flex items-center justify-between text-[11px] font-bold text-sky-300">
+                <span>Preservação de Mundo Ativa</span>
+                <span className="font-mono text-[10px] text-amber-300">
+                  Seed #{engine.metadata.seed}
+                </span>
+              </div>
+              <p className="text-[10px] text-[#c4ab7d] leading-snug">
+                <strong>{engine.world.getExploredChunksCount()} chunks explorados</strong> congelados e preservados. Novas atualizações (<strong>v{GAME_VERSION}</strong>) geram terreno apenas em áreas ainda inexploradas desta seed.
+              </p>
+            </div>
 
             {onOpenOnlineInvite && (() => {
               const onlineInfo = engine.multiplayer.getSessionInfo();

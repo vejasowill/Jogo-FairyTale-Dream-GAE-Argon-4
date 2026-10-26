@@ -6,7 +6,9 @@ import {
   BiomeType,
   CHEST_STORAGE_SIZE,
   ChunkData,
+  CURRENT_WORLD_GEN_VERSION,
   EcologicalZone,
+  GAME_VERSION,
   InventorySlot,
   MARKET_STALL_SIZE,
   NatureNode,
@@ -18,6 +20,21 @@ import {
 export const TILE_SIZE = 32;
 export const CHUNK_SIZE = 16;
 export const CHUNK_WORLD_SIZE = TILE_SIZE * CHUNK_SIZE;
+
+const COMPACT_ZONE_LIST: EcologicalZone[] = [
+  EcologicalZone.MEADOW_CLEARING,
+  EcologicalZone.OVERGROWN_SHRUBLAND,
+  EcologicalZone.DENSE_WOODLAND,
+  EcologicalZone.ANCIENT_GROVE,
+  EcologicalZone.ROCKY_HIGHLANDS,
+  EcologicalZone.OPEN_SAND_DUNES,
+  EcologicalZone.CACTUS_SCRUBLAND,
+  EcologicalZone.CRYSTAL_BADLANDS,
+  EcologicalZone.DESERT_OASIS,
+  EcologicalZone.COASTAL_TROPICS,
+  EcologicalZone.SHALLOW_REEF,
+  EcologicalZone.DEEP_OCEAN,
+];
 
 function hash2D(x: number, y: number, seed: number): number {
   let n = Math.imul(x, 374761393) + Math.imul(y, 668265263) + Math.imul(seed, 1442695041);
@@ -71,33 +88,225 @@ export const ECOLOGICAL_ZONE_LABELS: Record<EcologicalZone, string> = {
 
 export class WorldManager {
   public seed: number;
+  /**
+   * Active world generator version used ONLY for newly explored chunks (`getOrCreateChunk` when chunk was not yet explored).
+   * Always set to `CURRENT_WORLD_GEN_VERSION` so new updates take effect on unexplored areas of the seed.
+   */
   public worldGenVersion: number;
+  /**
+   * Original world generator version of a loaded save, used only as a fallback when hydrating legacy chunks
+   * that predate compact terrain snapshots (`compactTiles`).
+   */
+  public legacyChunkGenVersion: number;
   public chunks: Record<string, ChunkData> = {};
 
   constructor(
     seed: number,
     existingChunks?: Record<string, ChunkData>,
-    worldGenVersion = 1
+    legacyWorldGenVersion = CURRENT_WORLD_GEN_VERSION
   ) {
     this.seed = seed;
-    this.worldGenVersion = worldGenVersion;
+    this.legacyChunkGenVersion = legacyWorldGenVersion;
+    this.worldGenVersion = CURRENT_WORLD_GEN_VERSION;
+
     if (existingChunks) {
-      this.chunks = existingChunks;
-      for (const chunk of Object.values(this.chunks)) {
-        if (chunk) {
-          this.hydrateChunk(chunk);
+      for (const [key, chunk] of Object.entries(existingChunks)) {
+        if (!chunk) continue;
+        // Only preserve chunks that have been explored or modified by the player!
+        // Any untouched, unexplored chunk is left out so that when explored in the future,
+        // it will be generated fresh using the latest world generation version for this seed.
+        if (!WorldManager.isChunkExploredOrModified(chunk)) {
+          continue;
         }
+        chunk.preserved = true;
+        if (typeof chunk.genVersion !== 'number') {
+          chunk.genVersion = this.legacyChunkGenVersion;
+        }
+        this.chunks[key] = this.hydrateChunk(chunk);
       }
     }
   }
 
   /**
-   * Reconstructs deterministic terrain arrays (`tiles`, `tileVariants`, `ecologicalZones`),
+   * Returns true if a chunk has been explored by the player (at least 1 revealed tile)
+   * or contains player-built / modified structures.
+   */
+  public static isChunkExploredOrModified(chunk: ChunkData): boolean {
+    if (!chunk) return false;
+    if (chunk.preserved) return true;
+    const hasExplored =
+      Array.isArray(chunk.explored) && chunk.explored.some((v) => v > 0);
+    if (hasExplored) return true;
+    const hasPlayerOrCustomStruct =
+      Array.isArray(chunk.structures) &&
+      chunk.structures.some(
+        (s) =>
+          s.ownerType === 'PLAYER' ||
+          Boolean(s.cropType) ||
+          s.type === PlaceableType.TILLED_SOIL ||
+          (Array.isArray(s.storageSlots) && s.storageSlots.some(Boolean)) ||
+          (Array.isArray(s.stallSlots) && s.stallSlots.some(Boolean))
+      );
+    return hasPlayerOrCustomStruct;
+  }
+
+  public static encodeCompactTiles(tiles: BiomeType[]): string {
+    const total = CHUNK_SIZE * CHUNK_SIZE;
+    if (!Array.isArray(tiles) || tiles.length !== total) return '';
+    let out = '';
+    for (let i = 0; i < total; i++) {
+      const t = tiles[i];
+      out += t === BiomeType.OCEAN ? 'O' : t === BiomeType.DESERT ? 'D' : 'P';
+    }
+    return out;
+  }
+
+  public static decodeCompactTiles(compact?: string): BiomeType[] | null {
+    const total = CHUNK_SIZE * CHUNK_SIZE;
+    if (typeof compact !== 'string' || compact.length !== total) return null;
+    const tiles = new Array<BiomeType>(total);
+    for (let i = 0; i < total; i++) {
+      const ch = compact[i];
+      tiles[i] =
+        ch === 'O'
+          ? BiomeType.OCEAN
+          : ch === 'D'
+          ? BiomeType.DESERT
+          : BiomeType.PLAINS;
+    }
+    return tiles;
+  }
+
+  public static encodeCompactZones(
+    zones?: EcologicalZone[]
+  ): string | undefined {
+    const total = CHUNK_SIZE * CHUNK_SIZE;
+    if (!Array.isArray(zones) || zones.length !== total) return undefined;
+    let out = '';
+    for (let i = 0; i < total; i++) {
+      const idx = COMPACT_ZONE_LIST.indexOf(zones[i]);
+      out += idx >= 0 ? idx.toString(16).toUpperCase() : '0';
+    }
+    return out;
+  }
+
+  public static decodeCompactZones(compact?: string): EcologicalZone[] | null {
+    const total = CHUNK_SIZE * CHUNK_SIZE;
+    if (typeof compact !== 'string' || compact.length !== total) return null;
+    const zones = new Array<EcologicalZone>(total);
+    for (let i = 0; i < total; i++) {
+      const idx = parseInt(compact[i], 16);
+      zones[i] =
+        !Number.isNaN(idx) && idx >= 0 && idx < COMPACT_ZONE_LIST.length
+          ? COMPACT_ZONE_LIST[idx]
+          : EcologicalZone.MEADOW_CLEARING;
+    }
+    return zones;
+  }
+
+  public static encodeCompactVariants(variants: number[]): string {
+    const total = CHUNK_SIZE * CHUNK_SIZE;
+    if (!Array.isArray(variants) || variants.length !== total) return '';
+    let out = '';
+    for (let i = 0; i < total; i++) {
+      out += String((variants[i] || 0) & 3);
+    }
+    return out;
+  }
+
+  public static decodeCompactVariants(compact?: string): number[] | null {
+    const total = CHUNK_SIZE * CHUNK_SIZE;
+    if (typeof compact !== 'string' || compact.length !== total) return null;
+    const variants = new Array<number>(total);
+    for (let i = 0; i < total; i++) {
+      const v = compact.charCodeAt(i) - 48;
+      variants[i] = v >= 0 && v <= 3 ? v : 0;
+    }
+    return variants;
+  }
+
+  /**
+   * Freezes and locks a chunk's terrain arrays into compact strings so future world generation
+   * updates NEVER alter already-explored chunks.
+   */
+  public static lockChunkTerrainSnapshot(
+    chunk: ChunkData,
+    fallbackGenVersion = CURRENT_WORLD_GEN_VERSION,
+    fallbackGameVersion = GAME_VERSION
+  ): void {
+    if (!chunk) return;
+    chunk.preserved = true;
+    if (typeof chunk.genVersion !== 'number') {
+      chunk.genVersion = fallbackGenVersion;
+    }
+    if (!chunk.generatedGameVersion) {
+      chunk.generatedGameVersion = fallbackGameVersion;
+    }
+    if (
+      Array.isArray(chunk.tiles) &&
+      chunk.tiles.length === CHUNK_SIZE * CHUNK_SIZE
+    ) {
+      chunk.compactTiles = WorldManager.encodeCompactTiles(chunk.tiles);
+    }
+    if (
+      Array.isArray(chunk.ecologicalZones) &&
+      chunk.ecologicalZones.length === CHUNK_SIZE * CHUNK_SIZE
+    ) {
+      chunk.compactZones = WorldManager.encodeCompactZones(
+        chunk.ecologicalZones
+      );
+    }
+    if (
+      Array.isArray(chunk.tileVariants) &&
+      chunk.tileVariants.length === CHUNK_SIZE * CHUNK_SIZE
+    ) {
+      chunk.compactVariants = WorldManager.encodeCompactVariants(
+        chunk.tileVariants
+      );
+    }
+  }
+
+  /**
+   * Reconstructs terrain arrays (`tiles`, `tileVariants`, `ecologicalZones`),
    * full 256-tile `explored` array, and static `NatureNode` blueprint properties when loading
    * compact chunk saves from storage or network sync.
+   * CRITICAL RULE: Never mutates or deletes `chunk.nodes`, `chunk.structures`, or preserved terrain of an explored chunk!
    */
   public hydrateChunk(chunk: ChunkData): ChunkData {
     const totalTiles = CHUNK_SIZE * CHUNK_SIZE;
+    const chunkGenVer =
+      typeof chunk.genVersion === 'number'
+        ? chunk.genVersion
+        : this.legacyChunkGenVersion;
+
+    // 1. Restore preserved tiles from compactTiles first, before any fallback computation
+    if (!Array.isArray(chunk.tiles) || chunk.tiles.length !== totalTiles) {
+      const decodedTiles = WorldManager.decodeCompactTiles(chunk.compactTiles);
+      if (decodedTiles) {
+        chunk.tiles = decodedTiles;
+      }
+    }
+    if (
+      !Array.isArray(chunk.tileVariants) ||
+      chunk.tileVariants.length !== totalTiles
+    ) {
+      const decodedVariants = WorldManager.decodeCompactVariants(
+        chunk.compactVariants
+      );
+      if (decodedVariants) {
+        chunk.tileVariants = decodedVariants;
+      }
+    }
+    if (
+      !Array.isArray(chunk.ecologicalZones) ||
+      chunk.ecologicalZones.length !== totalTiles
+    ) {
+      const decodedZones = WorldManager.decodeCompactZones(chunk.compactZones);
+      if (decodedZones) {
+        chunk.ecologicalZones = decodedZones;
+      }
+    }
+
     const needsTiles =
       !Array.isArray(chunk.tiles) || chunk.tiles.length !== totalTiles;
     const needsVariants =
@@ -118,7 +327,7 @@ export class WorldManager {
           const ty = chunk.cy * CHUNK_SIZE + ly;
           const idx = ly * CHUNK_SIZE + lx;
           const biome = needsTiles
-            ? this.computeBiomeAtTile(tx, ty)
+            ? this.computeBiomeAtTileForVersion(tx, ty, chunkGenVer)
             : chunk.tiles[idx];
           if (needsTiles) {
             chunk.tiles[idx] = biome;
@@ -152,32 +361,10 @@ export class WorldManager {
       chunk.explored = full;
     }
 
+    // Restore static blueprint properties on NatureNodes WITHOUT deleting or altering existing nodes!
     if (Array.isArray(chunk.nodes)) {
-      for (let i = chunk.nodes.length - 1; i >= 0; i--) {
+      for (let i = 0; i < chunk.nodes.length; i++) {
         const n = chunk.nodes[i];
-        const lx = ((n.tileX % CHUNK_SIZE) + CHUNK_SIZE) % CHUNK_SIZE;
-        const ly = ((n.tileY % CHUNK_SIZE) + CHUNK_SIZE) % CHUNK_SIZE;
-        const idx = ly * CHUNK_SIZE + lx;
-        const tileBiome = chunk.tiles?.[idx];
-        const tileZone = chunk.ecologicalZones?.[idx];
-
-        if (
-          tileBiome === BiomeType.OCEAN &&
-          n.type !== NatureNodeType.PEARL_CLAM
-        ) {
-          chunk.nodes.splice(i, 1);
-          continue;
-        }
-        if (
-          tileZone === EcologicalZone.COASTAL_TROPICS &&
-          (n.type === NatureNodeType.OAK_TREE ||
-            n.type === NatureNodeType.HARDWOOD_TREE ||
-            n.type === NatureNodeType.CACTUS ||
-            n.type === NatureNodeType.BERRY_BUSH)
-        ) {
-          n.type = NatureNodeType.PALM_TREE;
-        }
-
         const bp = NATURE_BLUEPRINTS[n.type];
         if (bp) {
           if (typeof n.maxHp !== 'number') n.maxHp = bp.maxHp;
@@ -199,6 +386,15 @@ export class WorldManager {
 
     if (!Array.isArray(chunk.structures)) {
       chunk.structures = [];
+    }
+
+    // Lock the hydrated chunk's terrain snapshot if it is explored or modified
+    if (WorldManager.isChunkExploredOrModified(chunk)) {
+      WorldManager.lockChunkTerrainSnapshot(
+        chunk,
+        chunkGenVer,
+        chunk.generatedGameVersion || GAME_VERSION
+      );
     }
 
     return chunk;
@@ -226,7 +422,18 @@ export class WorldManager {
   public getOrCreateChunk(cx: number, cy: number): ChunkData {
     const key = WorldManager.chunkKey(cx, cy);
     if (!this.chunks[key]) {
-      this.chunks[key] = this.generateChunkV2(cx, cy);
+      // Unexplored chunk: generate fresh using the current latest worldGenVersion for this seed!
+      const generated = this.generateChunkV2(cx, cy);
+      generated.genVersion = this.worldGenVersion;
+      generated.generatedGameVersion = GAME_VERSION;
+      generated.compactTiles = WorldManager.encodeCompactTiles(generated.tiles);
+      generated.compactZones = WorldManager.encodeCompactZones(
+        generated.ecologicalZones
+      );
+      generated.compactVariants = WorldManager.encodeCompactVariants(
+        generated.tileVariants
+      );
+      this.chunks[key] = generated;
     } else if (
       !Array.isArray(this.chunks[key].tiles) ||
       this.chunks[key].tiles.length !== CHUNK_SIZE * CHUNK_SIZE
@@ -494,16 +701,51 @@ export class WorldManager {
 
   /**
    * Computes the macro BiomeType at a tile.
+   * If the chunk at `(tx, ty)` already exists in `this.chunks` (e.g., an explored/preserved chunk),
+   * returns the preserved tile biome directly from `chunk.tiles` so updates never alter existing chunks.
    */
   public computeBiomeAtTile(tx: number, ty: number): BiomeType {
-    if (this.worldGenVersion <= 1) {
+    const cx = Math.floor(tx / CHUNK_SIZE);
+    const cy = Math.floor(ty / CHUNK_SIZE);
+    const existingChunk = this.chunks[`${cx},${cy}`];
+    if (
+      existingChunk &&
+      Array.isArray(existingChunk.tiles) &&
+      existingChunk.tiles.length === CHUNK_SIZE * CHUNK_SIZE
+    ) {
+      const lx = ((tx % CHUNK_SIZE) + CHUNK_SIZE) % CHUNK_SIZE;
+      const ly = ((ty % CHUNK_SIZE) + CHUNK_SIZE) % CHUNK_SIZE;
+      const preservedBiome = existingChunk.tiles[ly * CHUNK_SIZE + lx];
+      if (preservedBiome) return preservedBiome;
+    }
+    return this.computeBiomeAtTileForVersion(tx, ty, this.worldGenVersion);
+  }
+
+  public computeBiomeAtTileForVersion(
+    tx: number,
+    ty: number,
+    version: number
+  ): BiomeType {
+    if (version <= 1) {
       return this.computeBiomeAtTileV1(tx, ty);
     }
     return this.computeBiomeAtTileV2(tx, ty);
   }
 
   private computeBiomeAtTileV1(tx: number, ty: number): BiomeType {
-    return this.computeBiomeAtTileV2(tx, ty);
+    const distFromOrigin = Math.hypot(tx, ty);
+    if (distFromOrigin < 8) {
+      return BiomeType.PLAINS;
+    }
+    const elev = fbm(tx * 0.032, ty * 0.032, this.seed, 3);
+    const temp = fbm(tx * 0.024 + 100, ty * 0.024 - 100, this.seed + 777, 3);
+    if (elev < 0.34) {
+      return BiomeType.OCEAN;
+    }
+    if (temp > 0.56 || elev < 0.37) {
+      return BiomeType.DESERT;
+    }
+    return BiomeType.PLAINS;
   }
 
   private computeBiomeAtTileV2(tx: number, ty: number): BiomeType {
@@ -1296,10 +1538,15 @@ export class WorldManager {
         landmarkName,
         villageId,
         ownerType:
-          type === PlaceableType.MARKET_STALL ? 'VILLAGER' : undefined,
+          type === PlaceableType.MARKET_STALL ||
+          (type === PlaceableType.VILLAGE_HOUSE && Boolean(villageId))
+            ? 'VILLAGER'
+            : undefined,
         ownerName:
           type === PlaceableType.MARKET_STALL
             ? 'Mercador da Vila'
+            : type === PlaceableType.VILLAGE_HOUSE && Boolean(villageId)
+            ? 'Moradores da Vila'
             : undefined,
         stallOpen:
           type === PlaceableType.MARKET_STALL ? true : undefined,
@@ -1927,6 +2174,7 @@ export class WorldManager {
   public revealAround(wx: number, wy: number, radiusTiles = 9): void {
     const center = this.worldToTile(wx, wy);
     const r2 = radiusTiles * radiusTiles;
+    const touchedChunks = new Set<ChunkData>();
     for (let dy = -radiusTiles; dy <= radiusTiles; dy++) {
       for (let dx = -radiusTiles; dx <= radiusTiles; dx++) {
         if (dx * dx + dy * dy <= r2) {
@@ -1935,7 +2183,18 @@ export class WorldManager {
           const { cx, cy, lx, ly } = this.tileToChunk(tx, ty);
           const chunk = this.getOrCreateChunk(cx, cy);
           chunk.explored[ly * CHUNK_SIZE + lx] = 1;
+          touchedChunks.add(chunk);
         }
+      }
+    }
+    // Once a chunk has explored tiles, mark it preserved and lock its terrain snapshot!
+    for (const chunk of touchedChunks) {
+      if (!chunk.preserved) {
+        WorldManager.lockChunkTerrainSnapshot(
+          chunk,
+          chunk.genVersion ?? this.worldGenVersion,
+          chunk.generatedGameVersion ?? GAME_VERSION
+        );
       }
     }
   }
@@ -2689,12 +2948,29 @@ export class WorldManager {
           ? new Array(CHEST_STORAGE_SIZE).fill(null)
           : undefined,
       ownerType:
-        placeableType === PlaceableType.MARKET_STALL ? 'PLAYER' : undefined,
+        placeableType === PlaceableType.MARKET_STALL ||
+        placeableType === PlaceableType.EXPLORER_TENT ||
+        placeableType === PlaceableType.VILLAGE_HOUSE ||
+        placeableType === PlaceableType.WOOD_DOOR ||
+        placeableType === PlaceableType.IRON_GATE
+          ? 'PLAYER'
+          : undefined,
       ownerId:
-        placeableType === PlaceableType.MARKET_STALL ? 'player' : undefined,
+        placeableType === PlaceableType.MARKET_STALL ||
+        placeableType === PlaceableType.EXPLORER_TENT ||
+        placeableType === PlaceableType.VILLAGE_HOUSE ||
+        placeableType === PlaceableType.WOOD_DOOR ||
+        placeableType === PlaceableType.IRON_GATE
+          ? 'player'
+          : undefined,
       ownerName:
         placeableType === PlaceableType.MARKET_STALL
           ? 'Você (Mercador)'
+          : placeableType === PlaceableType.EXPLORER_TENT ||
+            placeableType === PlaceableType.VILLAGE_HOUSE ||
+            placeableType === PlaceableType.WOOD_DOOR ||
+            placeableType === PlaceableType.IRON_GATE
+          ? 'Você'
           : undefined,
       stallOpen:
         placeableType === PlaceableType.MARKET_STALL ? true : undefined,
@@ -2707,6 +2983,14 @@ export class WorldManager {
       stallTotalGoldEarned:
         placeableType === PlaceableType.MARKET_STALL ? 0 : undefined,
     });
+
+    if (!chunk.preserved) {
+      WorldManager.lockChunkTerrainSnapshot(
+        chunk,
+        chunk.genVersion ?? this.worldGenVersion,
+        chunk.generatedGameVersion ?? GAME_VERSION
+      );
+    }
 
     return { placed: true, replacedItemId };
   }
@@ -2725,7 +3009,7 @@ export class WorldManager {
     const baseTy = cy * CHUNK_SIZE;
     for (let ly = 4; ly <= 12; ly++) {
       for (let lx = 4; lx <= 12; lx++) {
-        if (this.computeBiomeAtTileV2(baseTx + lx, baseTy + ly) === BiomeType.OCEAN) {
+        if (this.getTileBiomeFast(baseTx + lx, baseTy + ly) === BiomeType.OCEAN) {
           return false;
         }
       }
@@ -2753,7 +3037,7 @@ export class WorldManager {
         if (Math.hypot(dx, dy) > radius) continue;
         const nx = tx + dx;
         const ny = ty + dy;
-        if (this.computeBiomeAtTile(nx, ny) === BiomeType.OCEAN) {
+        if (this.getTileBiomeFast(nx, ny) === BiomeType.OCEAN) {
           return true;
         }
         const st = this.getStructureAtTile(nx, ny);
@@ -2774,7 +3058,7 @@ export class WorldManager {
    */
   public canTillTileAt(tx: number, ty: number): boolean {
     // Water tiles cannot be tilled
-    if (this.computeBiomeAtTile(tx, ty) === BiomeType.OCEAN) {
+    if (this.getTileBiomeFast(tx, ty) === BiomeType.OCEAN) {
       return false;
     }
 

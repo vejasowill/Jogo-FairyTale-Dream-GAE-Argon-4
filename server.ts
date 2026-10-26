@@ -147,6 +147,7 @@ function pushEventToPeer(
     } else if (
       enriched.type === 'creatures_sync' ||
       enriched.type === 'drops_sync' ||
+      enriched.type === 'death_bags_sync' ||
       enriched.type === 'time_sync' ||
       enriched.type === 'world_snapshot_sync'
     ) {
@@ -329,6 +330,49 @@ function applyRoomEvent(
         peerId
       );
     }
+    return;
+  }
+
+  if (msg.type === 'death_bags_sync') {
+    if (Array.isArray(msg.deathBags)) {
+      room.worldSnapshot.deathBags = msg.deathBags;
+      room.worldRevision = (room.worldRevision || 1) + 1;
+      broadcastToRoom(
+        room,
+        {
+          type: 'death_bags_sync',
+          deathBags: msg.deathBags,
+          worldRevision: room.worldRevision,
+        },
+        peerId
+      );
+    }
+    return;
+  }
+
+  if (msg.type === 'world_interact_request') {
+    const hostPeer = room.peers.get(room.hostPeerId);
+    if (hostPeer && hostPeer.peerId !== peerId) {
+      pushEventToPeer(room, hostPeer, {
+        type: 'world_interact_request',
+        peerId,
+        request: msg.request,
+      });
+    }
+    return;
+  }
+
+  if (msg.type === 'world_interact_resolved' && senderPeer.isHost) {
+    room.worldRevision = (room.worldRevision || 1) + 1;
+    broadcastToRoom(
+      room,
+      {
+        type: 'world_interact_resolved',
+        result: msg.result,
+        worldRevision: room.worldRevision,
+      },
+      peerId
+    );
     return;
   }
 

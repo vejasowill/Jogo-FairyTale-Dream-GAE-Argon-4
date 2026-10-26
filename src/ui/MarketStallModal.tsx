@@ -1,25 +1,17 @@
-import React, { useMemo, useState } from 'react';
+import React, { useState } from 'react';
 import {
-  AlertCircle,
-  BookOpen,
-  Check,
+  ArrowDown,
+  ArrowUp,
   Coins,
-  Crown,
   Edit3,
   Eye,
   EyeOff,
-  Hammer,
-  Home,
-  Minus,
   Package,
-  Plus,
   RotateCw,
-  Search,
-  Settings,
   ShoppingBag,
   Sparkles,
   Store,
-  Trash2,
+  Tag,
   TrendingUp,
   UserCheck,
   Users,
@@ -30,1508 +22,821 @@ import {
   getItemBasePrice,
   ITEMS,
 } from '../game/core/ItemRegistry';
-import {
-  CreatureKind,
-  HOTBAR_SIZE,
-  ItemCategory,
-  MARKET_STALL_SIZE,
-  PlaceableType,
-  PlayerState,
-  RarityTier,
-} from '../game/core/types';
+import { PlacedStructure, PlayerState } from '../game/core/types';
 import { GameEngine } from '../game/loop/GameEngine';
 import { spriteAtlas } from '../game/rendering/SpriteAtlas';
-import { TILE_SIZE } from '../game/world/WorldManager';
+import {
+  HoldIconButton,
+  WindowHelpButton,
+  WindowHelpModal,
+} from './UiTooltipAndHelp';
 
 interface MarketStallModalProps {
   engine: GameEngine;
   stallId: string;
   player: PlayerState;
-  onSelectStallId: (id: string) => void;
-  onOpenNpcTrade: (npcId: string) => void;
-  onOpenWorkbench: () => void;
+  onSelectStallId?: (newId: string) => void;
+  onOpenNpcTrade?: (npcId: string) => void;
+  onOpenWorkbench?: () => void;
   onClose: () => void;
 }
-
-type StallTab = 'counter' | 'price_table' | 'settings';
-
-const CATEGORY_LABELS: Record<string, string> = {
-  ALL: 'Todos',
-  [ItemCategory.RESOURCE]: 'Recursos',
-  [ItemCategory.CONSUMABLE]: 'Consumíveis',
-  [ItemCategory.TOOL]: 'Ferramentas',
-  [ItemCategory.WEAPON]: 'Armas',
-  [ItemCategory.ARMOR]: 'Armaduras',
-  [ItemCategory.PLACEABLE]: 'Construções',
-};
 
 export const MarketStallModal: React.FC<MarketStallModalProps> = ({
   engine,
   stallId,
   player,
-  onSelectStallId,
-  onOpenNpcTrade,
-  onOpenWorkbench,
   onClose,
 }) => {
-  const stall = engine.getMarketStallById(stallId);
-  const nearbyStalls = engine.getNearbyMarketStalls();
-
-  const [activeTab, setActiveTab] = useState<StallTab>('counter');
-  const [selectedStallSlot, setSelectedStallSlot] = useState<number>(0);
-  const [selectedPlayerSlot, setSelectedPlayerSlot] = useState<number | null>(
-    null
+  const stall: PlacedStructure | null = engine.getMarketStallById(stallId);
+  const [activeTab, setActiveTab] = useState<'counter' | 'catalog' | 'settings'>(
+    'counter'
   );
-  const [transferMode, setTransferMode] = useState<'ALL' | 'HALF' | 'ONE'>(
-    'ALL'
-  );
-  const [isRenaming, setIsRenaming] = useState<boolean>(false);
+  const [selectedBagSlot, setSelectedBagSlot] = useState<number | null>(null);
+  const [transferQty, setTransferQty] = useState<number>(1);
+  const [customPriceInput, setCustomPriceInput] = useState<number>(8);
   const [nameDraft, setNameDraft] = useState<string>(stall?.customName || '');
-  const [feedbackBanner, setFeedbackBanner] = useState<{
-    ok: boolean;
-    text: string;
-  } | null>(null);
+  const [feedback, setFeedback] = useState<string | null>(null);
+  const [catalogSearch, setCatalogSearch] = useState<string>('');
+  const [showHelp, setShowHelp] = useState(false);
 
-  // Price Table filters
-  const [priceSearch, setPriceSearch] = useState<string>('');
-  const [priceCategory, setPriceCategory] = useState<string>('ALL');
+  if (!stall) return null;
 
-  const itemIcons = useMemo(() => {
-    const map: Record<string, string> = {};
-    for (const id of Object.keys(ITEMS)) {
-      map[id] = spriteAtlas.getItemIconUrl(id);
-    }
-    return map;
-  }, []);
-
-  const allItemsSorted = useMemo(() => {
-    return Object.values(ITEMS).sort((a, b) => {
-      const pa = getItemBasePrice(a.id);
-      const pb = getItemBasePrice(b.id);
-      if (pa !== pb) return pa - pb;
-      return a.name.localeCompare(b.name, 'pt-BR');
-    });
-  }, []);
-
-  const filteredPriceTable = useMemo(() => {
-    const q = priceSearch.trim().toLowerCase();
-    return allItemsSorted.filter((item) => {
-      if (priceCategory !== 'ALL' && item.category !== priceCategory) {
-        return false;
-      }
-      if (!q) return true;
-      return (
-        item.name.toLowerCase().includes(q) ||
-        item.description.toLowerCase().includes(q)
-      );
-    });
-  }, [allItemsSorted, priceSearch, priceCategory]);
-
-  if (!stall) {
-    return null;
-  }
-
-  const slots = engine.ensureMarketStallInitialized(stall);
+  const stallSlots = engine.ensureMarketStallInitialized(stall);
   const isPlayerOwner = stall.ownerType === 'PLAYER';
   const isOpen = stall.stallOpen !== false;
   const offer = stall.pendingCustomerOffer || null;
+  const goldCoinsInBag = engine.getItemCount('gold_coin');
+  const unclaimedGold = Math.max(0, Math.floor(stall.stallUnclaimedGold || 0));
 
-  const stallWorldX = stall.tileX * TILE_SIZE + TILE_SIZE / 2;
-  const stallWorldY = stall.tileY * TILE_SIZE + TILE_SIZE / 2;
-
-  // Nearby Villagers & Wanderers within ~340px for customer status & owner assignment
-  const nearbyNpcs = engine.entities.creatures
-    .filter(
-      (c) =>
-        (c.kind === CreatureKind.VILLAGER ||
-          c.kind === CreatureKind.WANDERER) &&
-        c.hp > 0 &&
-        Math.hypot(c.x - stallWorldX, c.y - stallWorldY) <= 360
-    )
-    .sort(
-      (a, b) =>
-        Math.hypot(a.x - stallWorldX, a.y - stallWorldY) -
-        Math.hypot(b.x - stallWorldX, b.y - stallWorldY)
-    );
-
-  const ownerVillager =
-    stall.ownerType === 'VILLAGER' && stall.ownerId
-      ? engine.entities.creatures.find(
-          (c) => c.id === stall.ownerId && c.hp > 0
-        ) || null
-      : null;
-  const isVillagerOwnerAlive = engine.isVillagerStallOwnerAlive(stall);
-
-  const playerGold = engine.getItemCount('gold_coin');
-  const activeSlotCount = slots.filter(
-    (s) => s !== null && s.count > 0 && s.enabled
+  const occupiedSlotsCount = stallSlots.filter(
+    (s) => s !== null && s.count > 0
   ).length;
 
-  const showFeedback = (ok: boolean, text: string) => {
-    setFeedbackBanner({ ok, text });
-    window.setTimeout(() => {
-      setFeedbackBanner((prev) => (prev?.text === text ? null : prev));
-    }, 4200);
+  const nearbyVillagers = engine.entities.creatures.filter(
+    (c) =>
+      (c.kind === 'VILLAGER' || c.kind === 'WANDERER') &&
+      c.hp > 0 &&
+      !c.isHostile
+  );
+
+  const selectedBagItem =
+    selectedBagSlot !== null ? player.inventory[selectedBagSlot] : null;
+  const selectedBagDef = selectedBagItem ? ITEMS[selectedBagItem.itemId] : null;
+
+  const handleSelectBagSlot = (idx: number) => {
+    const sl = player.inventory[idx];
+    if (!sl || sl.itemId === 'gold_coin') return;
+    setSelectedBagSlot(idx);
+    setTransferQty(sl.count);
+    setCustomPriceInput(getItemBasePrice(sl.itemId));
   };
 
-  const resolveTransferCount = (maxAvailable: number): number => {
-    if (transferMode === 'ONE') return 1;
-    if (transferMode === 'HALF') return Math.max(1, Math.ceil(maxAvailable / 2));
-    return maxAvailable;
-  };
-
-  const handleSaveName = () => {
-    engine.renameMarketStall(stall.id, nameDraft);
-    setIsRenaming(false);
-  };
-
-  const handlePlayerSlotClick = (playerIdx: number) => {
-    if (!isPlayerOwner) {
-      setSelectedPlayerSlot(playerIdx);
+  const handlePutSelectedOnStall = (targetStallIdx?: number) => {
+    if (selectedBagSlot === null) return;
+    const sl = player.inventory[selectedBagSlot];
+    if (!sl) {
+      setSelectedBagSlot(null);
       return;
     }
-    const pSlot = player.inventory[playerIdx];
-    if (!pSlot) {
-      setSelectedPlayerSlot(null);
-      return;
-    }
-    if (pSlot.itemId === 'gold_coin') {
-      showFeedback(
-        false,
-        'Moedas de Ouro Antigas são a moeda recebida nas vendas!'
-      );
-      return;
-    }
-    const amount = resolveTransferCount(pSlot.count);
-    const basePrice = getItemBasePrice(pSlot.itemId);
     const ok = engine.transferPlayerToStall(
       stall.id,
-      playerIdx,
-      amount,
-      basePrice,
-      slots[selectedStallSlot] === null ? selectedStallSlot : undefined
+      selectedBagSlot,
+      transferQty,
+      customPriceInput,
+      targetStallIdx
     );
     if (ok) {
-      const def = ITEMS[pSlot.itemId];
-      showFeedback(
-        true,
-        `Colocado à venda: ${amount}x ${def?.name || pSlot.itemId} (${basePrice} Ouro/un.)`
-      );
+      setFeedback('Item exposto!');
+      const remaining = engine.player.inventory[selectedBagSlot];
+      if (!remaining) setSelectedBagSlot(null);
     }
   };
 
-  const currentStallSlot = slots[selectedStallSlot] || null;
-  const currentStallItem = currentStallSlot
-    ? ITEMS[currentStallSlot.itemId]
-    : null;
-  const currentDealEval = currentStallSlot
-    ? evaluateStallPriceDeal(
-        currentStallSlot.itemId,
-        currentStallSlot.unitPrice
-      )
-    : null;
+  const handleClaimGold = () => {
+    const res = engine.claimMarketStallGold(stall.id);
+    setFeedback(res.message);
+  };
+
+  const allCatalogItems = Object.values(ITEMS)
+    .filter((it) => it.id !== 'gold_coin')
+    .filter((it) =>
+      catalogSearch.trim() === ''
+        ? true
+        : it.name.toLowerCase().includes(catalogSearch.trim().toLowerCase())
+    );
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-1.5 sm:p-3 select-none">
-      <div className="w-full max-w-5xl max-h-[95dvh] medieval-panel flex flex-col overflow-hidden shadow-2xl border-2 border-[#6b4423]">
-        {/* Top Header */}
-        <div className="px-3 py-2 bg-[#1c110a] border-b-2 border-[#4a301e] flex flex-wrap items-center justify-between gap-2">
+    <div
+      className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-1.5 sm:p-3"
+      onClick={onClose}
+    >
+      <div
+        className="w-full max-w-4xl max-h-[95dvh] medieval-panel flex flex-col overflow-hidden"
+        onClick={(e) => e.stopPropagation()}
+      >
+        {/* COMPACT HEADER */}
+        <div className="px-3 py-2 bg-[#1c110a] border-b-2 border-[#4a301e] flex items-center justify-between gap-2 shrink-0">
           <div className="flex items-center gap-2 min-w-0">
             <div className="w-9 h-9 mc-slot-active flex items-center justify-center shrink-0">
               <img
-                src={itemIcons['market_stall']}
+                src={spriteAtlas.getItemIconUrl('market_stall')}
                 alt="Tenda"
                 className="w-6 h-6 pixelated"
               />
             </div>
             <div className="min-w-0">
-              {isRenaming ? (
-                <div className="flex items-center gap-1">
-                  <input
-                    type="text"
-                    value={nameDraft}
-                    maxLength={28}
-                    onChange={(e) => setNameDraft(e.target.value)}
-                    placeholder="Nome da Tenda..."
-                    className="bg-[#120b07] border border-amber-500/60 px-2 py-0.5 text-xs text-amber-200 font-pixel w-40 sm:w-52 focus:outline-none"
-                    autoFocus
-                  />
-                  <button
-                    type="button"
-                    onClick={handleSaveName}
-                    className="px-2 py-1 medieval-btn-gold text-[10px] font-bold flex items-center gap-1"
-                  >
-                    <Check className="w-3 h-3" />
-                    <span>Salvar</span>
-                  </button>
-                </div>
-              ) : (
-                <div className="flex items-center gap-1.5">
-                  <h2 className="font-pixel text-xs sm:text-sm font-bold text-amber-400 truncate">
-                    {stall.customName ||
-                      stall.landmarkName ||
-                      (isPlayerOwner
-                        ? 'Sua Tenda de Vendas'
-                        : 'Tenda de Trocas da Vila')}
-                  </h2>
-                  {isPlayerOwner && (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setNameDraft(
-                          stall.customName || 'Tenda do Explorador'
-                        );
-                        setIsRenaming(true);
-                      }}
-                      title="Renomear Tenda"
-                      className="p-1 text-[#c4ab7d] hover:text-amber-300"
-                    >
-                      <Edit3 className="w-3.5 h-3.5" />
-                    </button>
-                  )}
-                </div>
-              )}
-
-              <div className="flex flex-wrap items-center gap-2 text-[10px] text-[#c4ab7d]">
-                <span className="inline-flex items-center gap-1 font-semibold text-amber-200">
-                  {isPlayerOwner ? (
-                    <>
-                      <Crown className="w-3 h-3 text-amber-400" />
-                      <span>Dono: Você (Mercador)</span>
-                    </>
-                  ) : (
-                    <>
-                      <Store className="w-3 h-3 text-sky-400" />
-                      <span>
-                        Dono: {stall.ownerName || 'Mercador da Vila'}
-                      </span>
-                    </>
-                  )}
-                </span>
-                <span>•</span>
+              <div className="flex items-center gap-1.5 flex-wrap">
+                <h2 className="font-pixel text-xs sm:text-sm font-bold text-amber-300 truncate">
+                  {stall.customName || 'Tenda de Vendas'}
+                </h2>
                 <span
-                  className={
-                    isOpen
-                      ? 'text-emerald-400 font-semibold'
-                      : 'text-rose-400 font-semibold'
-                  }
+                  className={`text-[9px] font-bold px-1.5 py-0.5 border ${
+                    isPlayerOwner
+                      ? 'bg-emerald-950/70 border-emerald-500/60 text-emerald-300'
+                      : 'bg-sky-950/70 border-sky-500/60 text-sky-300'
+                  }`}
                 >
-                  {isOpen ? '🟢 Tenda Aberta' : '🔴 Tenda Fechada'}
+                  {isPlayerOwner ? 'Sua Tenda' : stall.ownerName || 'Aldeão'}
                 </span>
-                {isPlayerOwner && (
-                  <>
-                    <span>•</span>
-                    <span className="text-amber-300">
-                      Vendas: <strong>{stall.stallSalesCount || 0}</strong> (
-                      {stall.stallTotalGoldEarned || 0} Ouro)
-                    </span>
-                  </>
-                )}
+              </div>
+              <div className="text-[10px] text-[#c4ab7d] flex items-center gap-2 font-mono-tabular">
+                <span>Balcão: {occupiedSlotsCount}/8</span>
+                <span>·</span>
+                <span className="text-amber-300 font-bold">
+                  Bolso: {goldCoinsInBag} Ouro
+                </span>
               </div>
             </div>
           </div>
 
-          {/* Right Header Controls: Gold Balance, Nearby Stall Switcher, Workbench & Close */}
-          <div className="flex items-center gap-1.5">
-            <div className="medieval-inset px-2.5 py-1 flex items-center gap-1.5 border border-amber-500/30">
-              <img
-                src={itemIcons['gold_coin']}
-                alt="Ouro"
-                className="w-4 h-4 pixelated"
-              />
-              <span className="font-mono text-xs font-bold text-amber-300">
-                {playerGold}
-              </span>
-              <span className="text-[10px] text-[#c4ab7d] hidden sm:inline">
-                Ouro
-              </span>
-            </div>
-
-            <button
-              type="button"
-              onClick={onOpenWorkbench}
-              className="px-2.5 min-h-[34px] medieval-btn-wood text-[10px] font-bold flex items-center gap-1 text-amber-200"
-              title="Abrir Receitas da Bancada de Artesão"
-            >
-              <Hammer className="w-3.5 h-3.5 text-amber-400" />
-              <span className="hidden sm:inline">Bancada</span>
-            </button>
-
+          <div className="flex items-center gap-1.5 shrink-0">
+            {isPlayerOwner && (
+              <HoldIconButton
+                onClick={() => engine.toggleMarketStallOpen(stall.id)}
+                tooltipTitle={isOpen ? 'Tenda Aberta' : 'Tenda Fechada'}
+                tooltipDesc="Toque para abrir ou fechar as vendas para NPCs."
+                tooltipAlign="right"
+                className={`min-h-[34px] px-2.5 font-pixel text-[10px] font-bold flex items-center gap-1 ${
+                  isOpen ? 'medieval-btn-emerald' : 'medieval-btn-wood'
+                }`}
+              >
+                <Store className="w-3.5 h-3.5" />
+                <span>{isOpen ? 'ON' : 'OFF'}</span>
+              </HoldIconButton>
+            )}
+            <WindowHelpButton onClick={() => setShowHelp(true)} />
             <button
               type="button"
               onClick={onClose}
               className="min-h-[34px] min-w-[34px] medieval-btn-crimson flex items-center justify-center"
-              aria-label="Fechar"
             >
               <X className="w-4 h-4" />
             </button>
           </div>
         </div>
 
-        {/* Nearby Stalls Switcher Bar (if multiple stalls are nearby) */}
-        {nearbyStalls.length > 1 && (
-          <div className="px-3 py-1 bg-[#160d08] border-b border-[#3a2416] flex items-center gap-1.5 overflow-x-auto">
-            <span className="text-[10px] text-[#c4ab7d] shrink-0">
-              Tendas Próximas:
-            </span>
-            {nearbyStalls.map((st, idx) => {
-              const active = st.id === stall.id;
-              const hasOffer = Boolean(st.pendingCustomerOffer);
-              return (
-                <button
-                  key={st.id}
-                  type="button"
-                  onClick={() => onSelectStallId(st.id)}
-                  className={`px-2 py-0.5 text-[10px] font-bold flex items-center gap-1 shrink-0 border ${
-                    active
-                      ? 'bg-amber-500/20 border-amber-400 text-amber-200'
-                      : 'bg-[#22150d] border-[#4a301e] text-[#c4ab7d]'
-                  }`}
-                >
-                  <span>
-                    {st.customName ||
-                      (st.ownerType === 'PLAYER'
-                        ? `Sua Tenda #${idx + 1}`
-                        : `Tenda da Vila`)}
-                  </span>
-                  {hasOffer && (
-                    <span className="px-1 bg-rose-600 text-yellow-200 font-pixel text-[9px]">
-                      !
-                    </span>
-                  )}
-                </button>
-              );
-            })}
-          </div>
-        )}
-
-        {/* Active Customer Purchase Offer Alert Banner (`!`) */}
-        {offer && (
-          <div className="mx-3 mt-2.5 p-2.5 sm:p-3 bg-gradient-to-r from-amber-950/95 via-red-950/90 to-amber-950/95 border-2 border-amber-400 shadow-lg flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2.5">
-            <div className="flex items-center gap-2.5">
-              <div className="w-10 h-10 bg-rose-600 border-2 border-yellow-300 flex items-center justify-center shrink-0 animate-bounce">
-                <span className="font-pixel text-lg font-bold text-yellow-200">
-                  !
-                </span>
+        {/* CAIXINHA DE MOEDAS DO JOGADOR (EXCLUSIVA PARA TENDAS DO JOGADOR) */}
+        {isPlayerOwner && (
+          <div className="px-3 py-2 bg-[#160e08] border-b border-[#3b2516] flex items-center justify-between gap-2 shrink-0">
+            <div className="flex items-center gap-2.5 min-w-0">
+              <div
+                className={`w-9 h-9 flex items-center justify-center shrink-0 border-2 ${
+                  unclaimedGold > 0
+                    ? 'bg-amber-950/70 border-amber-400 shadow-[0_0_10px_rgba(251,191,36,0.4)]'
+                    : 'mc-slot border-[#4a301e]'
+                }`}
+              >
+                <img
+                  src={spriteAtlas.getItemIconUrl('gold_coin')}
+                  alt="Caixinha"
+                  className="w-6 h-6 pixelated"
+                />
               </div>
-              <img
-                src={itemIcons[offer.itemId]}
-                alt={offer.itemId}
-                className="w-9 h-9 pixelated bg-[#140c08] p-1 border border-amber-400/50 shrink-0"
-              />
-              <div>
-                <div className="flex flex-wrap items-center gap-1.5">
-                  <span className="font-pixel text-xs font-bold text-yellow-300">
-                    PROPOSTA DE COMPRA NA TENDA!
+              <div className="min-w-0">
+                <div className="flex items-center gap-2">
+                  <span className="font-pixel text-[10px] font-bold text-amber-300">
+                    CAIXINHA DA TENDA:
                   </span>
-                  <span className="text-[10px] px-1.5 py-0.5 bg-black/50 text-amber-200 border border-amber-500/30">
-                    Expira em {Math.max(1, Math.ceil(offer.expiresTimer))}s
+                  <span className="font-mono-tabular text-xs sm:text-sm font-extrabold text-amber-200">
+                    {unclaimedGold} Moedas
                   </span>
                 </div>
-                <p className="text-xs text-[#f5e7c6] mt-0.5">
-                  <strong className="text-amber-300">{offer.buyerName}</strong>{' '}
-                  ({offer.buyerProfession || 'Aldeão'}) quer comprar{' '}
-                  <strong className="text-emerald-300">
-                    {offer.quantity}x{' '}
-                    {ITEMS[offer.itemId]?.name || offer.itemId}
-                  </strong>{' '}
-                  por{' '}
-                  <strong className="text-yellow-300">
-                    {offer.totalPrice} Moeda(s) de Ouro
-                  </strong>{' '}
-                  <span className="text-[11px] text-[#c4ab7d]">
-                    ({offer.unitPrice} Ouro/un. · Tabela:{' '}
-                    {offer.baseUnitPrice} Ouro/un.)
-                  </span>
-                </p>
+                <div className="text-[10px] text-[#c4ab7d] font-mono-tabular">
+                  Vendas: {stall.stallSalesCount || 0} · Total Acumulado:{' '}
+                  {stall.stallTotalGoldEarned || 0} Ouro
+                </div>
               </div>
             </div>
 
-            <div className="flex items-center gap-2 w-full sm:w-auto justify-end shrink-0">
+            <button
+              type="button"
+              disabled={unclaimedGold <= 0}
+              onClick={handleClaimGold}
+              className={`min-h-[34px] px-3 font-pixel text-[10px] font-bold flex items-center gap-1.5 shrink-0 ${
+                unclaimedGold > 0
+                  ? 'medieval-btn-gold animate-pulse'
+                  : 'medieval-btn-wood opacity-45 cursor-not-allowed'
+              }`}
+            >
+              <Coins className="w-3.5 h-3.5" />
+              <span>Resgatar</span>
+            </button>
+          </div>
+        )}
+
+        {/* COMPACT NAVIGATION TABS */}
+        <div className="px-3 pt-1.5 bg-[#160e08] border-b border-[#3b2516] flex items-center justify-between gap-1.5 shrink-0">
+          <div className="flex items-center gap-1">
+            <button
+              type="button"
+              onClick={() => setActiveTab('counter')}
+              className={`px-3 py-1 font-pixel text-[10px] font-bold flex items-center gap-1.5 border-t-2 border-x-2 ${
+                activeTab === 'counter'
+                  ? 'bg-[#2a1b10] border-amber-500 text-amber-300'
+                  : 'bg-[#120b07] border-[#3b2516] text-[#a38b65]'
+              }`}
+            >
+              <ShoppingBag className="w-3.5 h-3.5" />
+              <span>Balcão</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setActiveTab('catalog')}
+              className={`px-3 py-1 font-pixel text-[10px] font-bold flex items-center gap-1.5 border-t-2 border-x-2 ${
+                activeTab === 'catalog'
+                  ? 'bg-[#2a1b10] border-amber-500 text-amber-300'
+                  : 'bg-[#120b07] border-[#3b2516] text-[#a38b65]'
+              }`}
+            >
+              <TrendingUp className="w-3.5 h-3.5" />
+              <span>Preços</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setActiveTab('settings')}
+              className={`px-3 py-1 font-pixel text-[10px] font-bold flex items-center gap-1.5 border-t-2 border-x-2 ${
+                activeTab === 'settings'
+                  ? 'bg-[#2a1b10] border-amber-500 text-amber-300'
+                  : 'bg-[#120b07] border-[#3b2516] text-[#a38b65]'
+              }`}
+            >
+              <Users className="w-3.5 h-3.5" />
+              <span>Ajustes</span>
+            </button>
+          </div>
+
+          {feedback && (
+            <span className="text-[10px] font-bold text-amber-300 truncate pr-1">
+              {feedback}
+            </span>
+          )}
+        </div>
+
+        {/* ACTIVE CUSTOMER BANNER (IF ANY) */}
+        {offer && (
+          <div className="px-3 py-2 bg-amber-950/60 border-b border-amber-500/70 flex items-center justify-between gap-2 shrink-0">
+            <div className="flex items-center gap-2 min-w-0">
+              <Sparkles className="w-4 h-4 text-amber-300 shrink-0" />
+              <div className="text-xs text-amber-100 truncate">
+                <strong>{offer.buyerName}:</strong> {offer.quantity}x{' '}
+                {ITEMS[offer.itemId]?.name || offer.itemId} por{' '}
+                <strong className="text-amber-300">
+                  {offer.totalPrice} Moedas
+                </strong>
+              </div>
+            </div>
+            <div className="flex items-center gap-1.5 shrink-0">
               <button
                 type="button"
                 onClick={() => {
                   const res = engine.acceptStallCustomerOffer(stall.id);
-                  showFeedback(res.ok, res.message);
+                  setFeedback(res.message);
                 }}
-                className="flex-1 sm:flex-initial px-3.5 min-h-[38px] medieval-btn-gold font-pixel text-[11px] font-bold flex items-center justify-center gap-1.5"
+                className="px-2.5 min-h-[30px] medieval-btn-gold font-pixel text-[10px] font-bold"
               >
-                <Coins className="w-4 h-4" />
-                <span>VENDER (+{offer.totalPrice} OURO)</span>
+                Vender
               </button>
               <button
                 type="button"
                 onClick={() => {
                   const res = engine.declineStallCustomerOffer(stall.id);
-                  showFeedback(false, res.message);
+                  setFeedback(res.message);
                 }}
-                className="px-3 min-h-[38px] medieval-btn-crimson text-[11px] font-bold flex items-center justify-center gap-1"
+                className="px-2.5 min-h-[30px] medieval-btn-crimson font-pixel text-[10px] font-bold"
               >
-                <X className="w-3.5 h-3.5" />
-                <span>Recusar</span>
+                Recusar
               </button>
             </div>
           </div>
         )}
 
-        {/* Feedback Toast Banner */}
-        {feedbackBanner && (
-          <div
-            className={`mx-3 mt-2 px-3 py-1.5 text-xs font-semibold border flex items-center justify-between ${
-              feedbackBanner.ok
-                ? 'bg-emerald-950/80 border-emerald-500/60 text-emerald-200'
-                : 'bg-rose-950/80 border-rose-500/60 text-rose-200'
-            }`}
-          >
-            <span>{feedbackBanner.text}</span>
-            <button
-              type="button"
-              onClick={() => setFeedbackBanner(null)}
-              className="text-xs opacity-75 hover:opacity-100"
-            >
-              ✕
-            </button>
-          </div>
-        )}
+        {/* MAIN CONTENT */}
+        <div className="p-2.5 sm:p-3 overflow-y-auto flex-1">
+          {activeTab === 'counter' ? (
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-3 items-start">
+              {/* LEFT 7 COLS: 8 STALL SLOTS */}
+              <div className="lg:col-span-7 medieval-inset p-2.5 space-y-2">
+                <div className="flex items-center justify-between gap-2 border-b border-[#3d281a] pb-1.5">
+                  <span className="font-pixel text-[10px] font-bold text-amber-400">
+                    VITRINE ({occupiedSlotsCount}/8)
+                  </span>
 
-        {/* Navigation Tabs */}
-        <div className="px-3 pt-2 bg-[#180f09] border-b-2 border-[#4a301e] flex items-center gap-1.5 overflow-x-auto">
-          <button
-            type="button"
-            onClick={() => setActiveTab('counter')}
-            className={`px-3 py-1.5 font-pixel text-[10px] sm:text-xs font-bold flex items-center gap-1.5 border-t-2 border-x-2 ${
-              activeTab === 'counter'
-                ? 'bg-[#2b1b10] border-amber-500 text-amber-300'
-                : 'bg-[#140c07] border-[#3b2415] text-[#a38960] hover:text-[#e5d5b5]'
-            }`}
-          >
-            <ShoppingBag className="w-3.5 h-3.5" />
-            <span>
-              {isPlayerOwner
-                ? `Balcão de Vendas (${activeSlotCount}/${MARKET_STALL_SIZE})`
-                : 'Balcão do Mercador'}
-            </span>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => setActiveTab('price_table')}
-            className={`px-3 py-1.5 font-pixel text-[10px] sm:text-xs font-bold flex items-center gap-1.5 border-t-2 border-x-2 ${
-              activeTab === 'price_table'
-                ? 'bg-[#2b1b10] border-amber-500 text-amber-300'
-                : 'bg-[#140c07] border-[#3b2415] text-[#a38960] hover:text-[#e5d5b5]'
-            }`}
-          >
-            <BookOpen className="w-3.5 h-3.5" />
-            <span>Tabela de Preços ({allItemsSorted.length} Itens)</span>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => setActiveTab('settings')}
-            className={`px-3 py-1.5 font-pixel text-[10px] sm:text-xs font-bold flex items-center gap-1.5 border-t-2 border-x-2 ${
-              activeTab === 'settings'
-                ? 'bg-[#2b1b10] border-amber-500 text-amber-300'
-                : 'bg-[#140c07] border-[#3b2415] text-[#a38960] hover:text-[#e5d5b5]'
-            }`}
-          >
-            <Settings className="w-3.5 h-3.5" />
-            <span>Configurações & Clientes ({nearbyNpcs.length})</span>
-          </button>
-        </div>
-
-        {/* Main Tab Content */}
-        <div className="flex-1 overflow-y-auto p-3 space-y-3">
-          {/* TAB 1: COUNTER & SALES MANAGEMENT */}
-          {activeTab === 'counter' && (
-            <>
-              {!isPlayerOwner ? (
-                /* VILLAGER-OWNED STALL VIEW */
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                  <div className="medieval-inset p-3.5 space-y-3 border border-[#4a301e]">
-                    <div className="flex items-center justify-between border-b border-[#3a2416] pb-2">
-                      <div className="flex items-center gap-2">
-                        <Store className="w-5 h-5 text-amber-400" />
-                        <div>
-                          <h3 className="font-pixel text-xs font-bold text-amber-300">
-                            TENDA DE ALDEÃO (MERCADO DA VILA)
-                          </h3>
-                          <p className="text-[11px] text-[#c4ab7d]">
-                            Proprietário:{' '}
-                            <strong className="text-white">
-                              {stall.ownerName || 'Mercador da Vila'}
-                            </strong>
-                          </p>
-                        </div>
-                      </div>
-                      <span className="px-2 py-0.5 text-[10px] bg-amber-500/20 border border-amber-400/50 text-amber-300 font-bold">
-                        Dono: Aldeão
-                      </span>
-                    </div>
-
-                    <p className="text-xs text-[#e5d5b5] leading-relaxed">
-                      Esta tenda pertence a um habitante do vilarejo. Para
-                      negociar com as ofertas exclusivas dele, fale diretamente
-                      com o dono ou construa sua própria{' '}
-                      <strong className="text-amber-300">
-                        Tenda de Mercador
-                      </strong>{' '}
-                      para você se tornar o mercador e vender seus itens para os
-                      aldeões e andarilhos!
-                    </p>
-
-                    {ownerVillager ? (
-                      <div className="p-2.5 bg-[#160d08] border border-amber-500/30 space-y-2">
-                        <div className="flex items-center justify-between text-xs">
-                          <span className="font-bold text-amber-200">
-                            {ownerVillager.name} (
-                            {ownerVillager.npcProfessionLabel || 'Mercador'})
-                          </span>
-                          <span className="text-[11px] text-emerald-300">
-                            Afinidade: ♥{Math.round(ownerVillager.affinity ?? 55)}
-                          </span>
-                        </div>
-                        <div className="text-[11px] text-[#c4ab7d]">
-                          Status:{' '}
-                          {ownerVillager.isInsideHouse
-                            ? '🏠 Dormindo em Casa (Bata na porta para chamá-lo)'
-                            : '🟢 Presente na Vila'}
-                        </div>
-                        {!ownerVillager.isInsideHouse && (
-                          <button
-                            type="button"
-                            onClick={() => onOpenNpcTrade(ownerVillager.id)}
-                            className="w-full min-h-[38px] medieval-btn-gold font-pixel text-xs font-bold flex items-center justify-center gap-1.5"
-                          >
-                            <Coins className="w-4 h-4" />
-                            <span>
-                              NEGOCIAR COM {ownerVillager.name.toUpperCase()}
-                            </span>
-                          </button>
-                        )}
-                      </div>
-                    ) : isVillagerOwnerAlive ? (
-                      <div className="p-2.5 bg-[#160d08] border border-[#3a2416] text-xs text-[#c4ab7d]">
-                        O aldeão dono desta tenda ainda está vivo na vila. Você
-                        só é dono das tendas que colocar — para tomar esta
-                        tenda, você deve destruí-la ou o aldeão dono precisa ter
-                        morrido.
-                      </div>
-                    ) : (
-                      <div className="p-2.5 bg-amber-950/40 border border-amber-500/40 text-xs text-amber-200">
-                        💀 O aldeão dono desta tenda morreu! Agora você pode
-                        tomar posse desta Tenda de Vendas abaixo.
-                      </div>
-                    )}
-
-                    <div className="flex flex-wrap gap-2 pt-1">
-                      <button
-                        type="button"
-                        onClick={onOpenWorkbench}
-                        className="flex-1 min-h-[38px] medieval-btn-wood text-xs font-bold flex items-center justify-center gap-1.5"
+                  {isPlayerOwner && occupiedSlotsCount > 0 && (
+                    <div className="flex items-center gap-1">
+                      <HoldIconButton
+                        onClick={() =>
+                          engine.setAllStallPricesToPreset(stall.id, 0.75)
+                        }
+                        tooltipTitle="Preço Barato (-25%)"
+                        tooltipDesc="Aplica desconto em todos os itens para vender rápido."
+                        className="px-2 py-0.5 medieval-btn-emerald text-[9px] font-bold"
                       >
-                        <Hammer className="w-4 h-4 text-amber-400" />
-                        <span>Usar Bancada de Artesão</span>
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setActiveTab('price_table')}
-                        className="flex-1 min-h-[38px] medieval-btn-wood text-xs font-bold flex items-center justify-center gap-1.5"
+                        Barato
+                      </HoldIconButton>
+                      <HoldIconButton
+                        onClick={() =>
+                          engine.setAllStallPricesToPreset(stall.id, 1.0)
+                        }
+                        tooltipTitle="Preço Base (100%)"
+                        tooltipDesc="Restaura o valor sugerido em todos os itens."
+                        className="px-2 py-0.5 medieval-btn-wood text-[9px] font-bold"
                       >
-                        <BookOpen className="w-4 h-4 text-sky-400" />
-                        <span>Ver Tabela de Preços</span>
-                      </button>
+                        Base
+                      </HoldIconButton>
+                      <HoldIconButton
+                        onClick={() =>
+                          engine.setAllStallPricesToPreset(stall.id, 1.25)
+                        }
+                        tooltipTitle="Preço Caro (+25%)"
+                        tooltipDesc="Aumenta o lucro por venda, mas reduz a chance de compra."
+                        className="px-2 py-0.5 medieval-btn-gold text-[9px] font-bold"
+                      >
+                        Caro
+                      </HoldIconButton>
                     </div>
-                  </div>
-
-                  {/* How Player Stalls Work Info Box */}
-                  <div className="medieval-inset p-3.5 space-y-2.5 border border-[#4a301e]">
-                    <h3 className="font-pixel text-xs font-bold text-amber-300 flex items-center gap-1.5">
-                      <Sparkles className="w-4 h-4 text-amber-400" />
-                      <span>REGRAS DE POSSE & VENDAS DA TENDA</span>
-                    </h3>
-                    <ul className="text-xs text-[#e5d5b5] space-y-2 list-disc list-inside leading-relaxed">
-                      <li>
-                        Você só é dono da{' '}
-                        <strong className="text-amber-300">
-                          Tenda de Mercador
-                        </strong>{' '}
-                        que você mesmo colocar. Para tomar a tenda de um aldeão,
-                        você deve <strong>destruir a tenda</strong> ou o{' '}
-                        <strong>aldeão dono deve ter morrido</strong>.
-                      </li>
-                      <li>
-                        Cada aldeão inspeciona até{' '}
-                        <strong className="text-sky-300">
-                          3 vezes ao dia por tenda
-                        </strong>
-                        .
-                      </li>
-                      <li>
-                        <strong className="text-emerald-300">
-                          Compras Automáticas:
-                        </strong>{' '}
-                        quando um aldeão decide comprar um item exposto, a
-                        compra ocorre automaticamente (sem precisar confirmar) e
-                        as Moedas de Ouro vão direto para o seu status!
-                      </li>
-                      <li>
-                        Cada NPC realiza até{' '}
-                        <strong className="text-amber-300">
-                          1 compra por dia
-                        </strong>{' '}
-                        e reseta ao dormir em sua casa à noite.
-                      </li>
-                    </ul>
-                    <div className="pt-1">
-                      {isVillagerOwnerAlive ? (
-                        <div className="w-full min-h-[38px] px-3 py-2 bg-rose-950/60 border border-rose-500/40 text-rose-200 text-[11px] font-semibold flex items-center justify-center gap-1.5 text-center">
-                          <AlertCircle className="w-4 h-4 shrink-0 text-rose-400" />
-                          <span>
-                            Dono Vivo ({stall.ownerName || 'Aldeão'}) — Destrua
-                            a tenda ou aguarde a morte do dono para tomá-la
-                          </span>
-                        </div>
-                      ) : (
-                        <button
-                          type="button"
-                          onClick={() => {
-                            const res = engine.setMarketStallOwner(
-                              stall.id,
-                              'PLAYER'
-                            );
-                            showFeedback(res.ok, res.message);
-                          }}
-                          className="w-full min-h-[38px] medieval-btn-gold font-pixel text-[11px] font-bold flex items-center justify-center gap-1.5"
-                        >
-                          <Crown className="w-4 h-4" />
-                          <span>
-                            TOMAR POSSE DESTA TENDA (ALDEÃO DONO MORREU)
-                          </span>
-                        </button>
-                      )}
-                    </div>
-                  </div>
-                </div>
-              ) : (
-                /* PLAYER-OWNED STALL: FULL MERCHANDISE & PRICING EDITOR */
-                <div className="grid grid-cols-1 lg:grid-cols-12 gap-3">
-                  {/* Left Column (7 cols): 8 Stall Display Slots + Selected Slot Price Configurator */}
-                  <div className="lg:col-span-7 space-y-3">
-                    <div className="medieval-inset p-3 space-y-2.5 border border-[#4a301e]">
-                      <div className="flex flex-wrap items-center justify-between gap-2">
-                        <div className="flex items-center gap-1.5">
-                          <Store className="w-4 h-4 text-amber-400" />
-                          <span className="font-pixel text-xs font-bold text-amber-300">
-                            BALCÃO DE EXPOSIÇÃO (8 SLOTS)
-                          </span>
-                        </div>
-                        <div className="flex items-center gap-1">
-                          <button
-                            type="button"
-                            onClick={() => {
-                              engine.setAllStallPricesToPreset(stall.id, 0.75);
-                              showFeedback(
-                                true,
-                                'Todos os itens ajustados para Preço de Pechincha (-25%)!'
-                              );
-                            }}
-                            className="px-2 py-0.5 text-[10px] bg-emerald-950/90 border border-emerald-500/50 text-emerald-300 font-bold hover:bg-emerald-900"
-                          >
-                            Pechincha (-25%)
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => {
-                              engine.setAllStallPricesToPreset(stall.id, 1.0);
-                              showFeedback(
-                                true,
-                                'Todos os itens ajustados para o Preço Oficial de Tabela!'
-                              );
-                            }}
-                            className="px-2 py-0.5 text-[10px] bg-sky-950/90 border border-sky-500/50 text-sky-300 font-bold hover:bg-sky-900"
-                          >
-                            Preço Tabela
-                          </button>
-                        </div>
-                      </div>
-
-                      {/* 8 Stall Slots Grid */}
-                      <div className="grid grid-cols-4 sm:grid-cols-8 gap-1.5">
-                        {slots.map((sl, idx) => {
-                          const isSelected = selectedStallSlot === idx;
-                          const hasOfferHere =
-                            offer && offer.slotIndex === idx;
-                          const evalInfo = sl
-                            ? evaluateStallPriceDeal(sl.itemId, sl.unitPrice)
-                            : null;
-
-                          return (
-                            <button
-                              key={idx}
-                              type="button"
-                              onClick={() => setSelectedStallSlot(idx)}
-                              className={`relative aspect-square p-1 flex flex-col items-center justify-center transition-transform ${
-                                isSelected
-                                  ? 'mc-slot-active ring-2 ring-amber-400 scale-[1.03]'
-                                  : 'mc-slot hover:border-amber-500/50'
-                              } ${sl && !sl.enabled ? 'opacity-50' : ''}`}
-                            >
-                              <span className="absolute top-0.5 left-1 text-[8px] font-mono text-[#8c7355]">
-                                #{idx + 1}
-                              </span>
-
-                              {hasOfferHere && (
-                                <span className="absolute -top-1 -right-1 z-10 w-4 h-4 bg-rose-600 border border-yellow-300 font-pixel text-[9px] text-yellow-200 flex items-center justify-center animate-bounce">
-                                  !
-                                </span>
-                              )}
-
-                              {sl ? (
-                                <>
-                                  <img
-                                    src={itemIcons[sl.itemId]}
-                                    alt={sl.itemId}
-                                    className="w-7 h-7 pixelated"
-                                  />
-                                  <span className="absolute bottom-3.5 right-1 font-mono text-[10px] font-bold text-white drop-shadow">
-                                    {sl.count}
-                                  </span>
-                                  <div
-                                    className="w-full mt-0.5 px-0.5 bg-black/75 text-[9px] font-mono font-bold flex items-center justify-center gap-0.5 truncate"
-                                    style={{
-                                      color:
-                                        evalInfo?.dealBadgeColor || '#fde047',
-                                    }}
-                                  >
-                                    <span>{sl.unitPrice}</span>
-                                    <span className="text-[8px] text-amber-300">
-                                      ●
-                                    </span>
-                                  </div>
-                                </>
-                              ) : (
-                                <span className="text-[9px] text-[#6e563a]">
-                                  Vazio
-                                </span>
-                              )}
-                            </button>
-                          );
-                        })}
-                      </div>
-
-                      {/* Selected Stall Slot Editor Panel */}
-                      {currentStallSlot && currentStallItem && currentDealEval ? (
-                        <div className="p-3 bg-[#140c08] border border-[#4a301e] space-y-2.5">
-                          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[#342014] pb-2">
-                            <div className="flex items-center gap-2">
-                              <img
-                                src={itemIcons[currentStallSlot.itemId]}
-                                alt={currentStallItem.name}
-                                className="w-8 h-8 pixelated bg-[#22150d] p-1 border border-[#4a301e]"
-                              />
-                              <div>
-                                <div className="flex items-center gap-1.5">
-                                  <h4 className="font-pixel text-xs font-bold text-amber-300">
-                                    {currentStallItem.name}
-                                  </h4>
-                                  <span className="text-[10px] px-1.5 py-0.2 bg-amber-500/20 text-amber-200 font-mono font-bold">
-                                    Estoque: {currentStallSlot.count}x
-                                  </span>
-                                </div>
-                                <div className="text-[10px] text-[#c4ab7d]">
-                                  Preço Oficial de Tabela:{' '}
-                                  <strong className="text-amber-300">
-                                    {currentDealEval.basePrice} Ouro/un.
-                                  </strong>{' '}
-                                  · Valor Total do Lote:{' '}
-                                  <strong className="text-yellow-300">
-                                    {currentStallSlot.count *
-                                      currentStallSlot.unitPrice}{' '}
-                                    Ouro
-                                  </strong>
-                                </div>
-                              </div>
-                            </div>
-
-                            <div className="flex items-center gap-1.5">
-                              <button
-                                type="button"
-                                onClick={() =>
-                                  engine.toggleStallSlotEnabled(
-                                    stall.id,
-                                    selectedStallSlot
-                                  )
-                                }
-                                className={`px-2.5 min-h-[30px] text-[10px] font-bold flex items-center gap-1 border ${
-                                  currentStallSlot.enabled
-                                    ? 'bg-emerald-950/80 border-emerald-500/50 text-emerald-300'
-                                    : 'bg-slate-900 border-slate-600 text-slate-400'
-                                }`}
-                              >
-                                {currentStallSlot.enabled ? (
-                                  <>
-                                    <Eye className="w-3 h-3" />
-                                    <span>À Venda</span>
-                                  </>
-                                ) : (
-                                  <>
-                                    <EyeOff className="w-3 h-3" />
-                                    <span>Pausado</span>
-                                  </>
-                                )}
-                              </button>
-
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  const amount = resolveTransferCount(
-                                    currentStallSlot.count
-                                  );
-                                  engine.transferStallToPlayer(
-                                    stall.id,
-                                    selectedStallSlot,
-                                    amount
-                                  );
-                                }}
-                                className="px-2.5 min-h-[30px] medieval-btn-wood text-[10px] font-bold flex items-center gap-1"
-                              >
-                                <Package className="w-3 h-3" />
-                                <span>Retirar ({transferMode})</span>
-                              </button>
-                            </div>
-                          </div>
-
-                          {/* Price Editor Row */}
-                          <div className="flex flex-wrap items-center justify-between gap-2">
-                            <div className="space-y-0.5">
-                              <div className="text-[10px] font-bold text-[#e5d5b5]">
-                                Preço Unitário Cobrado (Valor Sugerido:{' '}
-                                <span className="text-amber-300 font-mono">
-                                  {currentDealEval.basePrice}g
-                                </span>
-                                ):
-                              </div>
-                              <div className="flex items-center gap-1">
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    const step = Math.max(
-                                      5,
-                                      Math.round(currentDealEval.basePrice * 0.1)
-                                    );
-                                    engine.updateStallSlotPrice(
-                                      stall.id,
-                                      selectedStallSlot,
-                                      currentStallSlot.unitPrice - step
-                                    );
-                                  }}
-                                  className="px-2 min-h-[30px] medieval-btn-wood text-[10px] font-mono font-bold"
-                                >
-                                  -
-                                  {Math.max(
-                                    5,
-                                    Math.round(currentDealEval.basePrice * 0.1)
-                                  )}
-                                </button>
-                                <button
-                                  type="button"
-                                  onClick={() =>
-                                    engine.updateStallSlotPrice(
-                                      stall.id,
-                                      selectedStallSlot,
-                                      currentStallSlot.unitPrice - 1
-                                    )
-                                  }
-                                  className="min-h-[30px] min-w-[30px] medieval-btn-wood flex items-center justify-center"
-                                >
-                                  <Minus className="w-3.5 h-3.5" />
-                                </button>
-
-                                <input
-                                  type="number"
-                                  min={1}
-                                  value={currentStallSlot.unitPrice}
-                                  onChange={(e) => {
-                                    const val = parseInt(e.target.value, 10);
-                                    if (!isNaN(val)) {
-                                      engine.updateStallSlotPrice(
-                                        stall.id,
-                                        selectedStallSlot,
-                                        val
-                                      );
-                                    }
-                                  }}
-                                  className="w-20 min-h-[30px] bg-[#0d0805] border border-amber-500/60 text-center font-mono text-xs font-bold text-amber-300 focus:outline-none"
-                                />
-
-                                <button
-                                  type="button"
-                                  onClick={() =>
-                                    engine.updateStallSlotPrice(
-                                      stall.id,
-                                      selectedStallSlot,
-                                      currentStallSlot.unitPrice + 1
-                                    )
-                                  }
-                                  className="min-h-[30px] min-w-[30px] medieval-btn-wood flex items-center justify-center"
-                                >
-                                  <Plus className="w-3.5 h-3.5" />
-                                </button>
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    const step = Math.max(
-                                      5,
-                                      Math.round(currentDealEval.basePrice * 0.1)
-                                    );
-                                    engine.updateStallSlotPrice(
-                                      stall.id,
-                                      selectedStallSlot,
-                                      currentStallSlot.unitPrice + step
-                                    );
-                                  }}
-                                  className="px-2 min-h-[30px] medieval-btn-wood text-[10px] font-mono font-bold"
-                                >
-                                  +
-                                  {Math.max(
-                                    5,
-                                    Math.round(currentDealEval.basePrice * 0.1)
-                                  )}
-                                </button>
-                              </div>
-                            </div>
-
-                            {/* Quick Preset Buttons for this slot */}
-                            <div className="flex flex-wrap items-center gap-1">
-                              <button
-                                type="button"
-                                onClick={() =>
-                                  engine.updateStallSlotPrice(
-                                    stall.id,
-                                    selectedStallSlot,
-                                    Math.max(
-                                      1,
-                                      Math.floor(currentDealEval.basePrice * 0.7)
-                                    )
-                                  )
-                                }
-                                className="px-2 py-1 text-[10px] bg-emerald-950 border border-emerald-500/50 text-emerald-300 font-bold"
-                              >
-                                Barato (
-                                {Math.max(
-                                  1,
-                                  Math.floor(currentDealEval.basePrice * 0.7)
-                                )}
-                                )
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() =>
-                                  engine.updateStallSlotPrice(
-                                    stall.id,
-                                    selectedStallSlot,
-                                    currentDealEval.basePrice
-                                  )
-                                }
-                                className="px-2 py-1 text-[10px] bg-sky-950 border border-sky-500/50 text-sky-300 font-bold"
-                              >
-                                Sugerido ({currentDealEval.basePrice})
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() =>
-                                  engine.updateStallSlotPrice(
-                                    stall.id,
-                                    selectedStallSlot,
-                                    Math.max(
-                                      currentDealEval.basePrice + 1,
-                                      Math.round(currentDealEval.basePrice * 1.25)
-                                    )
-                                  )
-                                }
-                                className="px-2 py-1 text-[10px] bg-amber-950 border border-amber-500/50 text-amber-300 font-bold"
-                              >
-                                Caro (
-                                {Math.max(
-                                  currentDealEval.basePrice + 1,
-                                  Math.round(currentDealEval.basePrice * 1.25)
-                                )}
-                                )
-                              </button>
-                            </div>
-                          </div>
-
-                          {/* Live Deal Evaluation & Buy Probability Meter */}
-                          <div className="p-2 bg-[#1c120b] border border-[#3a2416] flex flex-wrap items-center justify-between gap-2 text-[11px]">
-                            <div className="flex items-center gap-1.5">
-                              <TrendingUp
-                                className="w-3.5 h-3.5 shrink-0"
-                                style={{
-                                  color: currentDealEval.dealBadgeColor,
-                                }}
-                              />
-                              <span className="text-[#c4ab7d]">Avaliação:</span>
-                              <strong
-                                style={{
-                                  color: currentDealEval.dealBadgeColor,
-                                }}
-                              >
-                                {currentDealEval.dealLabel}
-                              </strong>
-                            </div>
-                            <div className="flex items-center gap-3">
-                              <span className="text-[#c4ab7d]">
-                                Chance de Compra ao Inspecionar:{' '}
-                                <strong className="text-white font-mono">
-                                  {Math.round(currentDealEval.buyChance * 100)}%
-                                </strong>
-                              </span>
-                              <span className="text-[#c4ab7d]">
-                                Qtd. por Compra:{' '}
-                                <strong className="text-amber-300 font-mono">
-                                  1 a {currentDealEval.maxBuyQty}x
-                                </strong>
-                              </span>
-                            </div>
-                          </div>
-                        </div>
-                      ) : (
-                        <div className="p-3 bg-[#140c08] border border-[#3a2416] text-center text-xs text-[#a38960]">
-                          Slot #{selectedStallSlot + 1} está vazio. Toque em
-                          qualquer item da sua <strong>Mochila</strong> ao lado
-                          para colocá-lo à venda neste slot!
-                        </div>
-                      )}
-                    </div>
-                  </div>
-
-                  {/* Right Column (5 cols): Player Inventory (32 slots) to stock the stall */}
-                  <div className="lg:col-span-5 medieval-inset p-3 space-y-2.5 border border-[#4a301e]">
-                    <div className="flex items-center justify-between gap-2">
-                      <span className="font-pixel text-xs font-bold text-amber-300">
-                        SUA MOCHILA (TOQUE PARA EXPOR)
-                      </span>
-                      <div className="flex items-center gap-1">
-                        {(['ONE', 'HALF', 'ALL'] as const).map((m) => (
-                          <button
-                            key={m}
-                            type="button"
-                            onClick={() => setTransferMode(m)}
-                            className={`px-2 py-0.5 text-[10px] font-mono font-bold border ${
-                              transferMode === m
-                                ? 'bg-amber-500/25 border-amber-400 text-amber-200'
-                                : 'bg-[#140c07] border-[#3b2415] text-[#a38960]'
-                            }`}
-                          >
-                            {m === 'ONE'
-                              ? '1x'
-                              : m === 'HALF'
-                              ? 'Metade'
-                              : 'Tudo'}
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-
-                    <div className="text-[10px] text-[#c4ab7d]">
-                      Cinto Rápido (1–8) & Mochila (9–32):
-                    </div>
-
-                    <div className="grid grid-cols-8 gap-1">
-                      {player.inventory.map((slot, idx) => {
-                        const basePrice = slot
-                          ? getItemBasePrice(slot.itemId)
-                          : 0;
-                        const isHotbar = idx < HOTBAR_SIZE;
-                        return (
-                          <button
-                            key={idx}
-                            type="button"
-                            onClick={() => handlePlayerSlotClick(idx)}
-                            title={
-                              slot
-                                ? `${ITEMS[slot.itemId]?.name} · Preço Base: ${basePrice} Ouro`
-                                : `Slot ${idx + 1}`
-                            }
-                            className={`relative aspect-square p-0.5 flex flex-col items-center justify-center ${
-                              selectedPlayerSlot === idx
-                                ? 'mc-slot-active'
-                                : isHotbar
-                                ? 'mc-slot border-amber-700/60'
-                                : 'mc-slot'
-                            }`}
-                          >
-                            {slot ? (
-                              <>
-                                <img
-                                  src={itemIcons[slot.itemId]}
-                                  alt={slot.itemId}
-                                  className="w-6 h-6 pixelated"
-                                />
-                                <span className="absolute bottom-0.5 right-1 font-mono text-[9px] font-bold text-white drop-shadow">
-                                  {slot.count}
-                                </span>
-                                {slot.itemId !== 'gold_coin' && (
-                                  <span className="absolute top-0 left-0.5 font-mono text-[8px] text-amber-300">
-                                    {basePrice}g
-                                  </span>
-                                )}
-                              </>
-                            ) : null}
-                          </button>
-                        );
-                      })}
-                    </div>
-
-                    <div className="p-2 bg-[#140c08] border border-[#3a2416] text-[10px] text-[#c4ab7d] leading-relaxed">
-                      💡 <strong>Dica de Mercador:</strong> O número no topo de
-                      cada ícone (<span className="text-amber-300">ex: 4g</span>
-                      ) é o preço base da <strong>Tabela de Preços</strong>.
-                      Itens baratos (1g a 5g) atraem compradores rapidamente!
-                    </div>
-                  </div>
-                </div>
-              )}
-            </>
-          )}
-
-          {/* TAB 2: OFFICIAL PRICE TABLE FOR ALL ITEMS IN THE GAME */}
-          {activeTab === 'price_table' && (
-            <div className="space-y-3">
-              <div className="medieval-inset p-3 space-y-2.5 border border-[#4a301e]">
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-                  <div>
-                    <h3 className="font-pixel text-xs font-bold text-amber-300">
-                      TABELA DE VALORES SUGERIDOS (POR RARIDADE E DIFICULDADE)
-                    </h3>
-                    <p className="text-[11px] text-[#c4ab7d]">
-                      Valores sugeridos calculados a partir dos recursos mais
-                      básicos (1g) até relíquias lendárias, considerando
-                      exclusivamente a raridade e dificuldade de obtenção ou
-                      criação.
-                    </p>
-                  </div>
-
-                  <div className="relative w-full sm:w-60">
-                    <Search className="w-3.5 h-3.5 text-[#a38960] absolute left-2.5 top-1/2 -translate-y-1/2" />
-                    <input
-                      type="text"
-                      value={priceSearch}
-                      onChange={(e) => setPriceSearch(e.target.value)}
-                      placeholder="Buscar item na tabela..."
-                      className="w-full bg-[#120b07] border border-[#4a301e] pl-8 pr-2.5 py-1 text-xs text-amber-100 focus:outline-none focus:border-amber-400"
-                    />
-                  </div>
+                  )}
                 </div>
 
-                {/* Category Filter Pills */}
-                <div className="flex items-center gap-1 overflow-x-auto pb-1">
-                  {Object.entries(CATEGORY_LABELS).map(([catKey, label]) => (
-                    <button
-                      key={catKey}
-                      type="button"
-                      onClick={() => setPriceCategory(catKey)}
-                      className={`px-2.5 py-1 text-[10px] font-bold shrink-0 border ${
-                        priceCategory === catKey
-                          ? 'bg-amber-500/25 border-amber-400 text-amber-200'
-                          : 'bg-[#140c07] border-[#3b2415] text-[#a38960]'
-                      }`}
-                    >
-                      {label}
-                    </button>
-                  ))}
-                </div>
-
-                {/* Items Price Grid */}
-                <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2 max-h-[52dvh] overflow-y-auto pr-1">
-                  {filteredPriceTable.map((item) => {
-                    const base = getItemBasePrice(item.id);
-                    const evalAtBase = evaluateStallPriceDeal(item.id, base);
-                    const cheapPrice = Math.max(1, Math.floor(base * 0.75));
-                    const demandLabel =
-                      base <= 5
-                        ? 'Alta Saída (Básico)'
-                        : base <= 35
-                        ? 'Saída Moderada (Oficina)'
-                        : base <= 250
-                        ? 'Venda Rara (Avançado)'
-                        : 'Muito Raro (Relíquia)';
-                    const demandColor =
-                      base <= 5
-                        ? 'text-emerald-400'
-                        : base <= 35
-                        ? 'text-sky-400'
-                        : base <= 250
-                        ? 'text-amber-400'
-                        : 'text-purple-400';
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  {stallSlots.map((slot, sIdx) => {
+                    const def = slot ? ITEMS[slot.itemId] : null;
+                    const deal = slot
+                      ? evaluateStallPriceDeal(slot.itemId, slot.unitPrice)
+                      : null;
 
                     return (
                       <div
-                        key={item.id}
-                        className="p-2 bg-[#140c08] border border-[#3a2416] flex items-center justify-between gap-2"
+                        key={sIdx}
+                        onClick={() => {
+                          if (!slot && selectedBagSlot !== null && isPlayerOwner) {
+                            handlePutSelectedOnStall(sIdx);
+                          }
+                        }}
+                        className={`p-2 border-2 flex flex-col justify-between gap-1.5 transition-all ${
+                          slot
+                            ? 'bg-[#22150c] border-[#5c3d28]'
+                            : selectedBagSlot !== null && isPlayerOwner
+                            ? 'bg-[#1c1209] border-dashed border-amber-500/60 cursor-pointer'
+                            : 'bg-[#120b07]/80 border-[#362215]'
+                        }`}
                       >
-                        <div className="flex items-center gap-2 min-w-0">
-                          <img
-                            src={itemIcons[item.id]}
-                            alt={item.name}
-                            className="w-7 h-7 pixelated bg-[#21140c] p-1 border border-[#4a301e] shrink-0"
-                          />
-                          <div className="min-w-0">
-                            <div className="text-xs font-bold text-[#f5e7c6] truncate">
-                              {item.name}
-                            </div>
-                            <div className={`text-[10px] ${demandColor}`}>
-                              {demandLabel} · Chance Base:{' '}
-                              {Math.round(evalAtBase.buyChance * 100)}%
-                            </div>
-                          </div>
-                        </div>
+                        {slot && def && deal ? (
+                          <>
+                            <div className="flex items-center justify-between gap-1.5">
+                              <div className="flex items-center gap-2 min-w-0">
+                                <div className="w-8 h-8 mc-slot flex items-center justify-center relative shrink-0">
+                                  <img
+                                    src={spriteAtlas.getItemIconUrl(slot.itemId)}
+                                    alt={def.name}
+                                    className="w-6 h-6 pixelated"
+                                  />
+                                  <span className="absolute -bottom-0.5 right-0.5 text-[9px] font-mono-tabular font-extrabold text-white">
+                                    {slot.count}
+                                  </span>
+                                </div>
+                                <div className="min-w-0">
+                                  <div className="text-[11px] font-bold text-white truncate">
+                                    {def.name}
+                                  </div>
+                                  <span
+                                    className="text-[9px] font-bold px-1 py-0.2 border inline-block"
+                                    style={{
+                                      color: deal.dealBadgeColor,
+                                      borderColor: `${deal.dealBadgeColor}55`,
+                                    }}
+                                  >
+                                    {Math.round(deal.buyChance * 100)}% Chance
+                                  </span>
+                                </div>
+                              </div>
 
-                        <div className="text-right shrink-0">
-                          <div className="font-mono text-xs font-bold text-amber-300 flex items-center justify-end gap-1">
-                            <span title="Valor Sugerido">{base}</span>
-                            <img
-                              src={itemIcons['gold_coin']}
-                              alt="Ouro"
-                              className="w-3.5 h-3.5 pixelated"
-                            />
+                              {isPlayerOwner && (
+                                <div className="flex items-center gap-1 shrink-0">
+                                  <HoldIconButton
+                                    onClick={() =>
+                                      engine.toggleStallSlotEnabled(
+                                        stall.id,
+                                        sIdx
+                                      )
+                                    }
+                                    tooltipTitle={
+                                      slot.enabled ? 'Em Venda' : 'Pausado'
+                                    }
+                                    tooltipDesc="Ativa ou pausa a venda deste slot."
+                                    className={`min-h-[26px] min-w-[26px] flex items-center justify-center border ${
+                                      slot.enabled
+                                        ? 'bg-emerald-950/70 border-emerald-500/60 text-emerald-300'
+                                        : 'bg-zinc-900 border-zinc-600 text-zinc-400'
+                                    }`}
+                                  >
+                                    {slot.enabled ? (
+                                      <Eye className="w-3.5 h-3.5" />
+                                    ) : (
+                                      <EyeOff className="w-3.5 h-3.5" />
+                                    )}
+                                  </HoldIconButton>
+                                  <HoldIconButton
+                                    onClick={() =>
+                                      engine.transferStallToPlayer(
+                                        stall.id,
+                                        sIdx
+                                      )
+                                    }
+                                    tooltipTitle="Retirar"
+                                    tooltipDesc="Devolve o item para sua mochila."
+                                    className="px-1.5 min-h-[26px] medieval-btn-wood text-[9px] font-bold"
+                                  >
+                                    Retirar
+                                  </HoldIconButton>
+                                </div>
+                              )}
+                            </div>
+
+                            {/* Price Adjuster */}
+                            <div className="pt-1 border-t border-[#3b2516] flex items-center justify-between gap-1">
+                              <div className="flex items-center gap-1">
+                                <img
+                                  src={spriteAtlas.getItemIconUrl('gold_coin')}
+                                  alt="Ouro"
+                                  className="w-3.5 h-3.5 pixelated"
+                                />
+                                <span className="text-[11px] font-mono-tabular font-bold text-amber-300">
+                                  {slot.unitPrice}
+                                </span>
+                                <span className="text-[9px] text-[#a38b65]">
+                                  (Base {deal.basePrice})
+                                </span>
+                              </div>
+
+                              {isPlayerOwner && (
+                                <div className="flex items-center gap-1">
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      engine.updateStallSlotPrice(
+                                        stall.id,
+                                        sIdx,
+                                        Math.max(1, slot.unitPrice - 1)
+                                      )
+                                    }
+                                    className="w-6 h-6 medieval-btn-wood flex items-center justify-center"
+                                  >
+                                    <ArrowDown className="w-3 h-3" />
+                                  </button>
+                                  <input
+                                    type="number"
+                                    min={1}
+                                    max={999}
+                                    value={slot.unitPrice}
+                                    onChange={(e) =>
+                                      engine.updateStallSlotPrice(
+                                        stall.id,
+                                        sIdx,
+                                        Math.max(
+                                          1,
+                                          parseInt(e.target.value || '1', 10)
+                                        )
+                                      )
+                                    }
+                                    className="w-11 h-6 bg-[#120b07] border border-[#5c3d28] text-center font-mono-tabular text-[10px] font-bold text-amber-200"
+                                  />
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      engine.updateStallSlotPrice(
+                                        stall.id,
+                                        sIdx,
+                                        slot.unitPrice + 1
+                                      )
+                                    }
+                                    className="w-6 h-6 medieval-btn-wood flex items-center justify-center"
+                                  >
+                                    <ArrowUp className="w-3 h-3" />
+                                  </button>
+                                </div>
+                              )}
+                            </div>
+                          </>
+                        ) : (
+                          <div className="h-[64px] flex flex-col items-center justify-center text-center">
+                            <Tag className="w-3.5 h-3.5 text-[#6e4930]" />
+                            <span className="text-[9px] font-pixel text-[#8c6d46]">
+                              Vazio #{sIdx + 1}
+                            </span>
                           </div>
-                          <div className="text-[9px] text-emerald-300 font-mono">
-                            Bom negócio: ≤{cheapPrice}g
-                          </div>
-                        </div>
+                        )}
                       </div>
                     );
                   })}
                 </div>
               </div>
-            </div>
-          )}
 
-          {/* TAB 3: STALL CONFIGURATION, OWNERSHIP & NEARBY CUSTOMERS */}
-          {activeTab === 'settings' && (
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-              {/* Stall Settings & Ownership Control */}
-              <div className="medieval-inset p-3.5 space-y-3 border border-[#4a301e]">
-                <h3 className="font-pixel text-xs font-bold text-amber-300 flex items-center gap-1.5">
-                  <Settings className="w-4 h-4 text-amber-400" />
-                  <span>CONFIGURAÇÕES & SUPORTE DE EDIÇÃO DA TENDA</span>
-                </h3>
-
-                {/* Stall Name */}
-                <div className="space-y-1">
-                  <label className="text-[11px] font-bold text-[#e5d5b5]">
-                    Nome Personalizado da Tenda:
-                  </label>
-                  <div className="flex items-center gap-1.5">
-                    <input
-                      type="text"
-                      value={nameDraft}
-                      maxLength={28}
-                      onChange={(e) => setNameDraft(e.target.value)}
-                      placeholder="Ex: Empório da Fronteira"
-                      className="flex-1 bg-[#120b07] border border-[#4a301e] px-2.5 py-1.5 text-xs text-amber-200 focus:outline-none focus:border-amber-400"
-                    />
-                    <button
-                      type="button"
-                      onClick={() => {
-                        engine.renameMarketStall(stall.id, nameDraft);
-                        showFeedback(true, 'Nome da tenda atualizado!');
-                      }}
-                      className="px-3 min-h-[34px] medieval-btn-gold text-xs font-bold"
-                    >
-                      Salvar
-                    </button>
-                  </div>
+              {/* RIGHT 5 COLS: PLAYER BACKPACK */}
+              <div className="lg:col-span-5 medieval-inset p-2.5 space-y-2">
+                <div className="flex items-center justify-between border-b border-[#3d281a] pb-1.5">
+                  <span className="font-pixel text-[10px] font-bold text-amber-400">
+                    MOCHILA
+                  </span>
+                  <span className="text-[9px] text-[#c4ab7d]">
+                    {isPlayerOwner ? 'Toque para expor' : 'Somente leitura'}
+                  </span>
                 </div>
 
-                {/* Quick Toggles: Open/Closed & Orientation */}
-                <div className="grid grid-cols-2 gap-2 pt-1">
+                {selectedBagItem && selectedBagDef && isPlayerOwner && (
+                  <div className="p-2 bg-[#23160d] border border-amber-500/60 space-y-2">
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-2 min-w-0">
+                        <img
+                          src={spriteAtlas.getItemIconUrl(
+                            selectedBagItem.itemId
+                          )}
+                          alt={selectedBagDef.name}
+                          className="w-6 h-6 pixelated shrink-0"
+                        />
+                        <div className="min-w-0">
+                          <div className="text-xs font-bold text-amber-200 truncate">
+                            {selectedBagDef.name} (x{selectedBagItem.count})
+                          </div>
+                          <div className="text-[9px] text-[#c4ab7d]">
+                            Base: {getItemBasePrice(selectedBagItem.itemId)} Ouro
+                          </div>
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setSelectedBagSlot(null)}
+                        className="text-[10px] text-[#a38b65] hover:text-white"
+                      >
+                        ✕
+                      </button>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-1.5 text-[10px]">
+                      <div className="p-1 bg-[#140c07] border border-[#4a301e] flex items-center justify-between">
+                        <span className="text-[#c4ab7d]">Qtd:</span>
+                        <input
+                          type="number"
+                          min={1}
+                          max={selectedBagItem.count}
+                          value={transferQty}
+                          onChange={(e) =>
+                            setTransferQty(
+                              Math.max(
+                                1,
+                                Math.min(
+                                  selectedBagItem.count,
+                                  parseInt(e.target.value || '1', 10)
+                                )
+                              )
+                            )
+                          }
+                          className="w-12 h-5 bg-[#22150c] border border-[#5c3d28] text-center font-mono-tabular text-white font-bold"
+                        />
+                      </div>
+
+                      <div className="p-1 bg-[#140c07] border border-[#4a301e] flex items-center justify-between">
+                        <span className="text-[#c4ab7d]">Preço:</span>
+                        <input
+                          type="number"
+                          min={1}
+                          max={999}
+                          value={customPriceInput}
+                          onChange={(e) =>
+                            setCustomPriceInput(
+                              Math.max(1, parseInt(e.target.value || '1', 10))
+                            )
+                          }
+                          className="w-12 h-5 bg-[#22150c] border border-[#5c3d28] text-center font-mono-tabular text-amber-300 font-bold"
+                        />
+                      </div>
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={() => handlePutSelectedOnStall()}
+                      className="w-full min-h-[30px] medieval-btn-gold font-pixel text-[10px] font-bold"
+                    >
+                      Expor
+                    </button>
+                  </div>
+                )}
+
+                <div className="grid grid-cols-8 sm:grid-cols-8 lg:grid-cols-6 gap-1 max-h-[250px] overflow-y-auto p-0.5">
+                  {player.inventory.map((slot, pIdx) => {
+                    const def = slot ? ITEMS[slot.itemId] : null;
+                    const baseVal = slot ? getItemBasePrice(slot.itemId) : 0;
+                    const isSelected = selectedBagSlot === pIdx;
+
+                    return (
+                      <button
+                        key={pIdx}
+                        type="button"
+                        disabled={!slot || slot.itemId === 'gold_coin'}
+                        onClick={() => handleSelectBagSlot(pIdx)}
+                        onDoubleClick={() => {
+                          if (!slot || !isPlayerOwner) return;
+                          engine.transferPlayerToStall(stall.id, pIdx);
+                        }}
+                        className={`aspect-square relative flex items-center justify-center ${
+                          isSelected ? 'mc-slot-active' : 'mc-slot'
+                        } ${!slot ? 'opacity-40 cursor-default' : ''}`}
+                      >
+                        {slot && def && (
+                          <>
+                            <img
+                              src={spriteAtlas.getItemIconUrl(slot.itemId)}
+                              alt={def.name}
+                              className="w-6 h-6 pixelated"
+                            />
+                            <span className="absolute bottom-0 right-0.5 text-[9px] font-mono-tabular font-extrabold text-white">
+                              {slot.count}
+                            </span>
+                            {slot.itemId !== 'gold_coin' && (
+                              <span className="absolute top-0 left-0.5 text-[8px] font-mono-tabular font-bold text-amber-300">
+                                ${baseVal}
+                              </span>
+                            )}
+                          </>
+                        )}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
+          ) : activeTab === 'catalog' ? (
+            /* TAB 2: PRICE CATALOG */
+            <div className="medieval-inset p-2.5 space-y-2">
+              <div className="flex items-center justify-between gap-2 border-b border-[#3d281a] pb-1.5">
+                <span className="font-pixel text-[10px] font-bold text-amber-400">
+                  TABELA DE PREÇOS ({allCatalogItems.length})
+                </span>
+                <input
+                  type="text"
+                  value={catalogSearch}
+                  onChange={(e) => setCatalogSearch(e.target.value)}
+                  placeholder="Buscar item..."
+                  className="px-2 py-1 bg-[#120b07] border border-[#5c3d28] text-xs text-white w-44"
+                />
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-1.5 max-h-[340px] overflow-y-auto pr-0.5">
+                {allCatalogItems.map((it) => {
+                  const base = getItemBasePrice(it.id);
+                  const cheap = Math.max(1, Math.round(base * 0.75));
+                  const expensive = Math.max(base + 1, Math.round(base * 1.3));
+                  return (
+                    <div
+                      key={it.id}
+                      className="p-2 bg-[#1a110a] border border-[#4a301e] flex items-center justify-between gap-2"
+                    >
+                      <div className="flex items-center gap-2 min-w-0">
+                        <div className="w-7 h-7 mc-slot flex items-center justify-center shrink-0">
+                          <img
+                            src={spriteAtlas.getItemIconUrl(it.id)}
+                            alt={it.name}
+                            className="w-5 h-5 pixelated"
+                          />
+                        </div>
+                        <div className="min-w-0">
+                          <div className="text-[11px] font-bold text-white truncate">
+                            {it.name}
+                          </div>
+                          <div className="text-[9px] text-[#c4ab7d] font-mono-tabular">
+                            Barato {cheap} ·Caro {expensive}
+                          </div>
+                        </div>
+                      </div>
+                      <span className="font-mono-tabular text-xs font-extrabold text-amber-300 shrink-0">
+                        {base}
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          ) : (
+            /* TAB 3: SETTINGS & OWNERSHIP */
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <div className="medieval-inset p-3 space-y-2.5">
+                <h3 className="font-pixel text-[10px] font-bold text-amber-400 flex items-center gap-1.5 border-b border-[#3d281a] pb-1.5">
+                  <Edit3 className="w-3.5 h-3.5" />
+                  <span>CONFIGURAÇÃO</span>
+                </h3>
+
+                <div className="flex items-center gap-1.5">
+                  <input
+                    type="text"
+                    maxLength={28}
+                    value={nameDraft}
+                    onChange={(e) => setNameDraft(e.target.value)}
+                    placeholder="Nome da Tenda..."
+                    className="flex-1 px-2.5 py-1.5 bg-[#120b07] border border-[#5c3d28] text-xs text-white"
+                  />
                   <button
                     type="button"
                     onClick={() => {
-                      engine.toggleMarketStallOpen(stall.id);
-                      showFeedback(
-                        true,
-                        stall.stallOpen
-                          ? 'Tenda aberta para clientes!'
-                          : 'Tenda fechada temporariamente.'
-                      );
+                      engine.renameMarketStall(stall.id, nameDraft);
+                      setFeedback('Salvo!');
                     }}
-                    className={`min-h-[38px] px-2.5 text-xs font-bold flex items-center justify-center gap-1.5 border ${
-                      isOpen
-                        ? 'bg-emerald-950/80 border-emerald-500/60 text-emerald-300'
-                        : 'bg-rose-950/80 border-rose-500/60 text-rose-300'
-                    }`}
+                    className="px-3 min-h-[32px] medieval-btn-gold font-pixel text-[10px] font-bold"
                   >
-                    <Store className="w-4 h-4" />
-                    <span>{isOpen ? 'Aberta p/ Vendas' : 'Tenda Fechada'}</span>
+                    Salvar
                   </button>
+                </div>
 
+                <div className="flex items-center gap-2 pt-1">
                   <button
                     type="button"
                     onClick={() => engine.rotateMarketStall(stall.id)}
-                    className="min-h-[38px] px-2.5 medieval-btn-wood text-xs font-bold flex items-center justify-center gap-1.5"
+                    className="flex-1 min-h-[34px] medieval-btn-wood font-pixel text-[10px] font-bold flex items-center justify-center gap-1.5"
                   >
-                    <RotateCw className="w-4 h-4 text-amber-400" />
-                    <span>
-                      Eixo:{' '}
-                      {stall.orientation === 'vertical'
-                        ? 'Vertical'
-                        : 'Horizontal'}
-                    </span>
+                    <RotateCw className="w-3.5 h-3.5 text-amber-300" />
+                    <span>Girar</span>
                   </button>
-                </div>
 
-                {/* Ownership Status & Takeover Rule */}
-                <div className="space-y-1.5 pt-2 border-t border-[#3a2416]">
-                  <div className="text-[11px] font-bold text-[#e5d5b5]">
-                    Posse da Tenda:
-                  </div>
-                  {isPlayerOwner ? (
-                    <div className="p-2.5 bg-amber-500/15 border border-amber-400/50 text-xs text-amber-200 flex items-center gap-2">
-                      <Crown className="w-4 h-4 text-amber-400 shrink-0" />
-                      <span>
-                        <strong>Você é o Dono desta Tenda.</strong> As compras
-                        dos aldeões são concluídas automaticamente!
-                      </span>
-                    </div>
-                  ) : isVillagerOwnerAlive ? (
-                    <div className="p-2.5 bg-rose-950/50 border border-rose-500/40 text-xs text-rose-200 space-y-1">
-                      <div className="font-bold flex items-center gap-1.5">
-                        <UserCheck className="w-4 h-4 text-rose-400 shrink-0" />
-                        <span>
-                          Pertence a: {stall.ownerName || 'Mercador da Vila'}
-                        </span>
-                      </div>
-                      <p className="text-[11px] text-[#e5d5b5]">
-                        Você só é dono da tenda que colocar. Para tomar esta
-                        tenda, destrua-a atacando ou aguarde caso o aldeão dono
-                        morra.
-                      </p>
-                    </div>
-                  ) : (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        const res = engine.setMarketStallOwner(
-                          stall.id,
-                          'PLAYER'
-                        );
-                        showFeedback(res.ok, res.message);
-                      }}
-                      className="w-full min-h-[38px] medieval-btn-gold font-pixel text-xs font-bold flex items-center justify-center gap-1.5"
-                    >
-                      <Crown className="w-4 h-4" />
-                      <span>TOMAR POSSE DA TENDA (DONO MORREU)</span>
-                    </button>
-                  )}
-                </div>
-
-                {/* Pickup / Dismantle Player Stall */}
-                {(isPlayerOwner || !isVillagerOwnerAlive) && (
-                  <div className="pt-2 border-t border-[#3a2416]">
+                  {isPlayerOwner && (
                     <button
                       type="button"
                       onClick={() => {
                         const ok = engine.pickupMarketStallStructure(stall.id);
-                        if (ok) {
-                          onClose();
-                        }
+                        if (ok) onClose();
                       }}
-                      className="w-full min-h-[38px] medieval-btn-crimson text-xs font-bold flex items-center justify-center gap-1.5"
+                      className="flex-1 min-h-[34px] medieval-btn-crimson font-pixel text-[10px] font-bold flex items-center justify-center gap-1.5"
                     >
-                      <Trash2 className="w-4 h-4" />
-                      <span>
-                        Recolher Tenda p/ Mochila (Devolve Mercadorias)
-                      </span>
+                      <Package className="w-3.5 h-3.5" />
+                      <span>Recolher</span>
                     </button>
-                  </div>
-                )}
+                  )}
+                </div>
               </div>
 
-              {/* Nearby Villagers & Wanderers Daily Purchase & Inspection Status */}
-              <div className="medieval-inset p-3.5 space-y-2.5 border border-[#4a301e]">
-                <div className="flex items-center justify-between">
-                  <h3 className="font-pixel text-xs font-bold text-amber-300 flex items-center gap-1.5">
-                    <Users className="w-4 h-4 text-sky-400" />
-                    <span>CLIENTES PRÓXIMOS & INSPEÇÕES DIÁRIAS</span>
-                  </h3>
-                  <span className="text-[10px] text-[#c4ab7d]">
-                    Máx. 3 inspeções/dia por tenda
+              <div className="medieval-inset p-3 space-y-2.5">
+                <h3 className="font-pixel text-[10px] font-bold text-amber-400 flex items-center gap-1.5 border-b border-[#3d281a] pb-1.5">
+                  <UserCheck className="w-3.5 h-3.5" />
+                  <span>POSSE DA TENDA</span>
+                </h3>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    const res = engine.setMarketStallOwner(stall.id, 'PLAYER');
+                    setFeedback(res.message);
+                  }}
+                  className={`w-full p-2 border text-left flex items-center justify-between ${
+                    isPlayerOwner
+                      ? 'bg-emerald-950/50 border-emerald-500 text-emerald-200'
+                      : 'bg-[#140c07] border-[#4a301e] text-[#e5d5b5]'
+                  }`}
+                >
+                  <span className="text-xs font-bold">Você (Mercador)</span>
+                  <span className="text-[10px] font-pixel font-bold text-amber-300">
+                    {isPlayerOwner ? 'DONO' : 'Assumir'}
                   </span>
-                </div>
+                </button>
 
-                {nearbyNpcs.length === 0 ? (
-                  <div className="p-4 bg-[#140c08] border border-[#3a2416] text-center text-xs text-[#a38960]">
-                    Nenhum Aldeão ou Andarilho próximo a esta tenda no momento.
-                    Construa sua tenda perto de uma vila ou estrada para atrair
-                    clientes!
-                  </div>
-                ) : (
-                  <div className="space-y-1.5 max-h-[44dvh] overflow-y-auto pr-1">
-                    {nearbyNpcs.map((npc) => {
-                      const boughtToday = Boolean(npc.hasBoughtToday);
-                      const isAttracted = npc.attractedStallId === stall.id;
-                      const inspectionsCount =
-                        npc.stallInspectionsToday?.[stall.id] || 0;
-                      const reachedInspectionLimit = inspectionsCount >= 3;
-
-                      return (
-                        <div
-                          key={npc.id}
-                          className="p-2 bg-[#140c08] border border-[#3a2416] flex items-center justify-between gap-2 text-xs"
-                        >
-                          <div>
-                            <div className="font-bold text-[#f5e7c6] flex items-center gap-1.5">
-                              <span>{npc.name}</span>
-                              <span className="text-[10px] text-[#c4ab7d] font-normal">
-                                (
-                                {npc.kind === CreatureKind.WANDERER
-                                  ? 'Andarilho'
-                                  : npc.npcProfessionLabel || 'Aldeão'}
-                                )
-                              </span>
-                            </div>
-                            <div className="text-[10px] text-[#c4ab7d] flex flex-wrap items-center gap-2 mt-0.5">
-                              <span>
-                                Afinidade: ♥{Math.round(npc.affinity ?? 55)}
-                              </span>
-                              <span className="text-sky-300 font-mono">
-                                Inspeções hoje: {inspectionsCount}/3
-                              </span>
-                              {npc.isInsideHouse && (
-                                <span className="text-amber-300 flex items-center gap-0.5">
-                                  <Home className="w-3 h-3" /> Dormindo em Casa
-                                </span>
-                              )}
-                            </div>
-                          </div>
-
-                          <div className="text-right shrink-0">
-                            {boughtToday ? (
-                              <span className="px-2 py-0.5 bg-slate-900 border border-slate-700 text-slate-400 text-[10px] font-semibold">
-                                💤 Já comprou hoje
-                              </span>
-                            ) : reachedInspectionLimit ? (
-                              <span className="px-2 py-0.5 bg-amber-950/70 border border-amber-500/40 text-amber-300 text-[10px] font-semibold">
-                                🛑 3/3 Inspeções Hoje
-                              </span>
-                            ) : isAttracted ? (
-                              <span className="px-2 py-0.5 bg-sky-950 border border-sky-400 text-sky-300 text-[10px] font-bold">
-                                👀 Olhando a Tenda
-                              </span>
-                            ) : (
-                              <span className="px-2 py-0.5 bg-emerald-950/70 border border-emerald-500/40 text-emerald-300 text-[10px] font-semibold">
-                                🟢 Pode Inspecionar ({3 - inspectionsCount}{' '}
-                                rest.)
-                              </span>
-                            )}
-                          </div>
-                        </div>
-                      );
-                    })}
+                {isPlayerOwner && nearbyVillagers.length > 0 && (
+                  <div className="space-y-1 max-h-[140px] overflow-y-auto">
+                    {nearbyVillagers.slice(0, 6).map((npc) => (
+                      <button
+                        key={npc.id}
+                        type="button"
+                        onClick={() => {
+                          const res = engine.setMarketStallOwner(
+                            stall.id,
+                            'VILLAGER',
+                            npc.id
+                          );
+                          setFeedback(res.message);
+                        }}
+                        className="w-full p-1.5 border border-[#4a301e] bg-[#140c07] flex items-center justify-between text-xs text-white"
+                      >
+                        <span className="truncate">{npc.name}</span>
+                        <span className="text-[9px] text-sky-300 font-bold">
+                          Ceder
+                        </span>
+                      </button>
+                    ))}
                   </div>
                 )}
               </div>
@@ -1539,6 +844,32 @@ export const MarketStallModal: React.FC<MarketStallModalProps> = ({
           )}
         </div>
       </div>
+
+      {showHelp && (
+        <WindowHelpModal
+          title="Ajuda — Tenda de Vendas"
+          subtitle="Como vender mercadorias e resgatar suas moedas"
+          onClose={() => setShowHelp(false)}
+          sections={[
+            {
+              title: '1. Expor Mercadorias',
+              body: 'Toque em qualquer item da sua Mochila à direita, escolha a quantidade e o preço em Moedas de Ouro, e clique em Expor para colocá-lo na vitrine.',
+            },
+            {
+              title: '2. Caixinha de Moedas (Resgatar)',
+              body: 'Sempre que um aldeão ou viajante compra um item da sua tenda, o ouro da venda fica guardado na Caixinha da Tenda no topo da janela. Toque em Resgatar para transferir as moedas para a sua carteira.',
+            },
+            {
+              title: '3. Preços e Clientes',
+              body: 'Preços menores que o valor Base atraem compras rápidas. Preços muito altos diminuem a chance de venda. Cada aldeão faz até 1 compra por dia antes de dormir em sua casa.',
+            },
+            {
+              title: '4. Botões Rápidos',
+              body: 'Use Barato, Base ou Caro para reajustar todos os preços de uma só vez, ou toque no ícone de olho para pausar a venda de um slot.',
+            },
+          ]}
+        />
+      )}
     </div>
   );
 };

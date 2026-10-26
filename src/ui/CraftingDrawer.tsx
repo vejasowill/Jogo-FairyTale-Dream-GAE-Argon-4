@@ -39,6 +39,7 @@ import {
 } from '../game/core/types';
 import { GameEngine, HudSnapshot } from '../game/loop/GameEngine';
 import { spriteAtlas } from '../game/rendering/SpriteAtlas';
+import { WindowHelpButton, WindowHelpModal } from './UiTooltipAndHelp';
 
 interface CraftingDrawerProps {
   engine: GameEngine;
@@ -207,6 +208,7 @@ export const CraftingDrawer: React.FC<CraftingDrawerProps> = ({
   const [campfireBannerMsg, setCampfireBannerMsg] = useState<string | null>(
     null
   );
+  const [showHelp, setShowHelp] = useState(false);
 
   useEffect(() => {
     if (isOpen) {
@@ -475,13 +477,10 @@ export const CraftingDrawer: React.FC<CraftingDrawerProps> = ({
                     {theme.badgeText}
                   </span>
                 </div>
-                <p className="text-[10px] text-[#d6c7b2] truncate">
-                  {theme.subtitle}
-                </p>
               </div>
             </div>
 
-            {/* Right Controls: Craft vs Inventory Tab + Close */}
+            {/* Right Controls: Craft vs Inventory Tab + Help (?) + Close */}
             <div className="flex items-center gap-1.5 shrink-0">
               <button
                 onClick={() => setActiveTab('craft')}
@@ -502,7 +501,7 @@ export const CraftingDrawer: React.FC<CraftingDrawerProps> = ({
                 ) : (
                   <Hand className="w-3.5 h-3.5" />
                 )}
-                <span>{stationShortName(activeStation)}</span>
+                <span>Criar</span>
               </button>
 
               <button
@@ -514,8 +513,10 @@ export const CraftingDrawer: React.FC<CraftingDrawerProps> = ({
                 }`}
               >
                 <Backpack className="w-3.5 h-3.5" />
-                <span>Mochila (32)</span>
+                <span>Mochila</span>
               </button>
+
+              <WindowHelpButton onClick={() => setShowHelp(true)} />
 
               <button
                 onClick={onClose}
@@ -527,24 +528,21 @@ export const CraftingDrawer: React.FC<CraftingDrawerProps> = ({
             </div>
           </div>
 
-          {/* Station Switcher Row (Allows switching between Hand Crafting and any nearby placed station!) */}
+          {/* Station Switcher Row */}
           <div className="flex flex-wrap items-center justify-between gap-2 pt-1 border-t border-white/10">
             <div className="flex items-center gap-1 overflow-x-auto pb-0.5">
-              <span className="text-[9px] font-pixel text-[#c4ab7d] mr-1 shrink-0">
-                ESTAÇÃO ATIVA:
-              </span>
               {availableStations.map((st) => {
                 const isCurr = activeStation === st && activeTab === 'craft';
                 const label =
                   st === null
-                    ? '✋ Mão Livre (2x2)'
+                    ? '✋ Mão (2x2)'
                     : st === PlaceableType.WORKBENCH
-                    ? '🔨 Bancada de Trabalho'
+                    ? '🔨 Bancada'
                     : st === PlaceableType.CAMPFIRE
-                    ? '🔥 Fogueira Culinária'
+                    ? '🔥 Fogueira'
                     : st === PlaceableType.FURNACE
-                    ? '🧱 Fornalha Metalúrgica'
-                    : '✦ Altar Solar';
+                    ? '🧱 Fornalha'
+                    : '✦ Altar';
                 return (
                   <button
                     key={st || 'HAND'}
@@ -572,12 +570,10 @@ export const CraftingDrawer: React.FC<CraftingDrawerProps> = ({
                   const res = engine.restAtCampfireStation();
                   setCampfireBannerMsg(res.message);
                 }}
-                className="px-2.5 py-1 bg-orange-950/90 hover:bg-orange-900 border border-orange-400/80 text-orange-200 font-pixel text-[10px] font-bold flex items-center gap-1.5 rounded-sm shadow-sm"
+                className="px-2.5 py-1 bg-orange-950/90 hover:bg-orange-900 border border-orange-400/80 text-orange-200 font-pixel text-[10px] font-bold flex items-center gap-1 rounded-sm shadow-sm"
               >
                 <Heart className="w-3.5 h-3.5 text-rose-400" />
-                <span>
-                  Aquecer & Salvar Renascimento (+18 HP / 100% Energia)
-                </span>
+                <span>Descansar</span>
               </button>
             )}
           </div>
@@ -640,63 +636,10 @@ export const CraftingDrawer: React.FC<CraftingDrawerProps> = ({
                 </div>
 
                 <span className="text-[10px] font-mono-tabular text-[#c4ab7d]">
-                  Exclusivo de:{' '}
                   <strong className={theme.accentTextClass}>
                     {stationShortName(activeStation)}
                   </strong>
                 </span>
-              </div>
-
-              {/* Station Contextual Survival Guide Banner */}
-              <div
-                className={`p-2 border rounded-sm text-[10px] leading-snug bg-black/45 ${theme.accentBorderClass} text-[#e5d5b5]`}
-              >
-                {activeStation === null && (
-                  <span>
-                    <strong className="text-amber-300">
-                      Sobrevivência Estilo Minecraft:
-                    </strong>{' '}
-                    Colete Madeira, Pedra e Fibra com as mãos para criar sua{' '}
-                    <strong className="text-white">Bancada de Artesão</strong> e{' '}
-                    <strong className="text-white">Fogueira</strong>. Ferramentas, armas, baús e construções são criados na Bancada!
-                  </span>
-                )}
-                {activeStation === PlaceableType.WORKBENCH && (
-                  <span>
-                    <strong className="text-amber-300">
-                      Bancada de Trabalho (Criação Instantânea):
-                    </strong>{' '}
-                    Aqui você fabrica imediatamente todas as Ferramentas, Armas, Armaduras, Baús, Botes, Selas, a{' '}
-                    <strong className="text-white">Fornalha</strong> e o{' '}
-                    <strong className="text-white">Altar Solar</strong>!
-                  </span>
-                )}
-                {activeStation === PlaceableType.CAMPFIRE && (
-                  <span>
-                    <strong className="text-orange-300">
-                      Fogueira Culinária (Requer Lenha + Tempo):
-                    </strong>{' '}
-                    Abasteça o <strong className="text-white">Slot de Lenha</strong> ao lado (Madeira ou Carvão Vegetal) e escolha uma comida, ingrediente ou madeira para assar na brasa!
-                  </span>
-                )}
-                {activeStation === PlaceableType.FURNACE && (
-                  <span>
-                    <strong className="text-red-300">
-                      Fornalha de Fundição (Requer Lenha/Carvão + Tempo):
-                    </strong>{' '}
-                    Queime <strong className="text-white">Madeira</strong> para produzir{' '}
-                    <strong className="text-amber-300">Carvão Vegetal (60s de queima — 5x mais eficiente!)</strong>{' '}
-                    e funda <strong className="text-white">Minério de Ferro</strong> em Barras de Ferro!
-                  </span>
-                )}
-                {activeStation === PlaceableType.SOLAR_ALTAR && (
-                  <span>
-                    <strong className="text-cyan-300">
-                      Santuário Solar & Astral (Itens Raros & Lendários):
-                    </strong>{' '}
-                    Canalize Fragmentos Astrais, Pérolas Abissais e Essências Primordiais para consagrar equipamentos supremos!
-                  </span>
-                )}
               </div>
 
               {/* Recipe Slot Grid */}
@@ -1312,7 +1255,7 @@ export const CraftingDrawer: React.FC<CraftingDrawerProps> = ({
                     </div>
                   </div>
 
-                  {/* Action Buttons (Instant Craft vs Queue in Campfire/Furnace) */}
+                  {/* Action Buttons (1-word labels) */}
                   <div className="flex items-center gap-2 pt-1.5">
                     <button
                       disabled={maxCraftCount <= 0}
@@ -1323,7 +1266,7 @@ export const CraftingDrawer: React.FC<CraftingDrawerProps> = ({
                           1
                         )
                       }
-                      className={`flex-1 min-h-[40px] px-3 py-1.5 font-pixel text-[11px] font-bold flex items-center justify-center gap-1.5 ${
+                      className={`flex-1 min-h-[38px] px-3 py-1.5 font-pixel text-[11px] font-bold flex items-center justify-center gap-1.5 ${
                         maxCraftCount > 0
                           ? theme.primaryBtnClass
                           : 'medieval-btn-wood opacity-50 cursor-not-allowed'
@@ -1334,16 +1277,14 @@ export const CraftingDrawer: React.FC<CraftingDrawerProps> = ({
                           <Flame className="w-4 h-4" />
                           <span>
                             {activeStation === PlaceableType.CAMPFIRE
-                              ? `Colocar na Fogueira (${selectedRecipe.craftTimeSec}s)`
-                              : `Fundir na Fornalha (${selectedRecipe.craftTimeSec}s)`}
+                              ? 'Assar'
+                              : 'Fundir'}
                           </span>
                         </>
                       ) : (
                         <>
                           <Hammer className="w-4 h-4" />
-                          <span>
-                            Criar 1x ({selectedRecipe.resultCount} un.)
-                          </span>
+                          <span>Criar</span>
                         </>
                       )}
                     </button>
@@ -1357,24 +1298,13 @@ export const CraftingDrawer: React.FC<CraftingDrawerProps> = ({
                             Math.min(5, maxCraftCount)
                           )
                         }
-                        className="min-h-[40px] px-3 py-1.5 font-pixel text-[11px] font-bold medieval-btn-emerald flex items-center justify-center gap-1"
-                        title={
-                          isThermalStation
-                            ? 'Enfileirar lote para preparo contínuo'
-                            : 'Criar em lote instantaneamente'
-                        }
+                        className="min-h-[38px] px-3 py-1.5 font-pixel text-[11px] font-bold medieval-btn-emerald flex items-center justify-center gap-1"
                       >
                         <Layers className="w-4 h-4" />
                         <span>x{Math.min(5, maxCraftCount)}</span>
                       </button>
                     )}
                   </div>
-
-                  {isThermalStation && !hasAnyFuelInStationOrBurn && (
-                    <div className="text-[9px] text-orange-300 bg-orange-950/60 border border-orange-500/40 p-1.5 rounded-sm text-center">
-                      💡 Ao iniciar o preparo, 1 lenha da sua mochila será colocada automaticamente se houver disponível!
-                    </div>
-                  )}
                 </div>
               ) : null}
             </div>
@@ -1727,13 +1657,7 @@ export const CraftingDrawer: React.FC<CraftingDrawerProps> = ({
                           className="col-span-2 min-h-[34px] px-2 py-1 medieval-btn-emerald text-[10px] font-bold flex items-center justify-center gap-1"
                         >
                           <Utensils className="w-3.5 h-3.5" />
-                          <span>
-                            {selectedSlotItem.specialUse === 'bomb'
-                              ? 'Detonar Bomba Solar (65 Dano Área)'
-                              : selectedSlotItem.specialUse === 'recall'
-                              ? 'Teleportar para a Base (+50 HP)'
-                              : `Consumir / Usar (${selectedSlotItem.name})`}
-                          </span>
+                          <span>Usar</span>
                         </button>
                       )}
 
@@ -1745,9 +1669,7 @@ export const CraftingDrawer: React.FC<CraftingDrawerProps> = ({
                           className="col-span-2 min-h-[34px] px-2 py-1 medieval-btn-gold text-[10px] font-bold flex items-center justify-center gap-1"
                         >
                           <Shield className="w-3.5 h-3.5" />
-                          <span>
-                            Equipar em {equipSlotLabel(selectedSlotItem.equipSlot)}
-                          </span>
+                          <span>Equipar</span>
                         </button>
                       )}
 
@@ -1757,7 +1679,7 @@ export const CraftingDrawer: React.FC<CraftingDrawerProps> = ({
                           className="min-h-[34px] px-2 py-1 medieval-btn-gold text-[10px] font-bold flex items-center justify-center gap-1"
                         >
                           <Hand className="w-3 h-3" />
-                          <span>P/ Mão #{player.selectedHotbarIndex + 1}</span>
+                          <span>Mão</span>
                         </button>
                       )}
 
@@ -1769,7 +1691,7 @@ export const CraftingDrawer: React.FC<CraftingDrawerProps> = ({
                           className="min-h-[34px] px-2 py-1 medieval-btn-wood text-[10px] font-bold flex items-center justify-center gap-1"
                         >
                           <Layers className="w-3 h-3" />
-                          <span>Dividir 50%</span>
+                          <span>Dividir</span>
                         </button>
                       )}
 
@@ -1786,7 +1708,7 @@ export const CraftingDrawer: React.FC<CraftingDrawerProps> = ({
                   </>
                 ) : (
                   <div className="py-5 text-center text-[11px] text-[#8c6d46]">
-                    Toque em um item na mochila ou hotbar para ver sua função, receitas e ações.
+                    Selecione um item.
                   </div>
                 )}
               </div>
@@ -1794,6 +1716,32 @@ export const CraftingDrawer: React.FC<CraftingDrawerProps> = ({
           </div>
         )}
       </div>
+
+      {showHelp && (
+        <WindowHelpModal
+          title="Ajuda — Criação & Mochila"
+          subtitle="Como usar cada estação de criação e organizar seu inventário"
+          onClose={() => setShowHelp(false)}
+          sections={[
+            {
+              title: '1. Criação à Mão Livre (2x2)',
+              body: 'Sem nenhuma estação, você cria itens essenciais de sobrevivência (Bancada, Fogueira, Tochas e Curativos) usando Madeira, Pedra e Fibra.',
+            },
+            {
+              title: '2. Bancada de Trabalho (3x3 Instantâneo)',
+              body: 'Aproxime-se de uma Bancada posicionada para criar instantaneamente Ferramentas, Armas, Armaduras, Baús, Botes, Selas, Fornalha e Altar Solar.',
+            },
+            {
+              title: '3. Fogueira & Fornalha (Lenha + Tempo)',
+              body: 'A Fogueira assa alimentos e elixires; a Fornalha funde minérios e cria Carvão Vegetal. Abasteça o Slot de Lenha com Madeira (12s) ou Carvão Vegetal (60s, 5x mais eficiente) e recolha o resultado pronto.',
+            },
+            {
+              title: '4. Altar Solar (Itens Raros)',
+              body: 'Canaliza cristais solares, fragmentos astrais e pérolas para forjar equipamentos lendários.',
+            },
+          ]}
+        />
+      )}
     </div>
   );
 };
