@@ -2461,8 +2461,11 @@ export class WorldManager {
             }
           } else {
             // SOLID_FULL (Walls, Windows) or closed DYNAMIC_DOOR: AABB vs Circle
-            const boxMinX = tx * TILE_SIZE + 1;
-            const boxMaxX = (tx + 1) * TILE_SIZE - 1;
+            // Side-viewed (vertical / North-South) walls & doors have a thinner X profile
+            const isVerticalSideWall = this.isWallOrDoorSideProfileAt(tx, ty, st);
+            const padX = isVerticalSideWall ? 9 : 1;
+            const boxMinX = tx * TILE_SIZE + padX;
+            const boxMaxX = (tx + 1) * TILE_SIZE - padX;
             const boxMinY = ty * TILE_SIZE + 1;
             const boxMaxY = (ty + 1) * TILE_SIZE - 1;
             const closestX = Math.max(boxMinX, Math.min(wx, boxMaxX));
@@ -2744,17 +2747,41 @@ export class WorldManager {
 
     if (existingUppers.length === 0) return true;
 
-    // Allow SPIKE_TRAP and Doors/Gates (WOOD_DOOR, IRON_GATE) to coexist on the same tile!
+    // Wall-mounted item rule: ONLY PlaceableType.TORCH can be placed onto a Wall!
+    const wallOnTile = existingUppers.find(
+      (s) => CONSTRUCTION_BLUEPRINTS[s.type]?.layer === 'WALL'
+    );
+    if (wallOnTile) {
+      if (placeableType === PlaceableType.TORCH) {
+        const alreadyHasTorch = existingUppers.some(
+          (s) => s.type === PlaceableType.TORCH
+        );
+        return (
+          WorldManager.isWallMountableStructure(wallOnTile.type) &&
+          !alreadyHasTorch
+        );
+      }
+      // Allow SPIKE_TRAP and Doors/Gates (WOOD_DOOR, IRON_GATE) to coexist on the same tile
+      const isDoorType = (t: PlaceableType) =>
+        t === PlaceableType.WOOD_DOOR || t === PlaceableType.IRON_GATE;
+      if (
+        placeableType === PlaceableType.SPIKE_TRAP &&
+        existingUppers.length === 1 &&
+        isDoorType(wallOnTile.type)
+      ) {
+        return true;
+      }
+      // Allow in-place upgrading/converting between WALL-layer pieces (e.g. Wood Wall -> Stone Wall / Window / Door)
+      if (bp.layer === 'WALL') {
+        return !wallOnTile.villageId && wallOnTile.type !== placeableType;
+      }
+      // Block any other item from being placed on a wall!
+      return false;
+    }
+
+    // Allow Doors/Gates to be placed on a tile that currently only has a SPIKE_TRAP
     const isDoorType = (t: PlaceableType) =>
       t === PlaceableType.WOOD_DOOR || t === PlaceableType.IRON_GATE;
-
-    if (
-      placeableType === PlaceableType.SPIKE_TRAP &&
-      existingUppers.length === 1 &&
-      isDoorType(existingUppers[0].type)
-    ) {
-      return true;
-    }
     if (
       isDoorType(placeableType) &&
       existingUppers.length === 1 &&
@@ -2771,11 +2798,7 @@ export class WorldManager {
       return false;
     }
 
-    // Allow in-place upgrading/converting between WALL-layer pieces (e.g. Wood Wall -> Stone Wall / Window / Door)
     const existingUpperBp = CONSTRUCTION_BLUEPRINTS[existingUpper.type];
-    if (bp.layer === 'WALL' && existingUpperBp?.layer === 'WALL') {
-      return true;
-    }
 
     // Allow in-place upgrading between compatible FURNITURE-layer structure families:
     // - Lighting/Banners: Torch <-> Iron Lantern <-> Royal Banner
@@ -2819,6 +2842,66 @@ export class WorldManager {
   }
 
   /**
+   * Returns true if `type` is a solid wall or window structure that supports mounting a Torch.
+   */
+  public static isWallMountableStructure(type: PlaceableType): boolean {
+    return (
+      type === PlaceableType.WOOD_WALL ||
+      type === PlaceableType.STONE_WALL ||
+      type === PlaceableType.BRICK_WALL ||
+      type === PlaceableType.WOOD_WINDOW ||
+      type === PlaceableType.STONE_WINDOW
+    );
+  }
+
+  /**
+   * Returns the wall-mountable structure at (tx, ty), if any.
+   */
+  public hasWallStructureAtTile(
+    tx: number,
+    ty: number
+  ): PlacedStructure | undefined {
+    const { cx, cy } = this.tileToChunk(tx, ty);
+    const chunk = this.chunks[WorldManager.chunkKey(cx, cy)];
+    if (!chunk) return undefined;
+    return chunk.structures.find(
+      (s) =>
+        s.tileX === tx &&
+        s.tileY === ty &&
+        WorldManager.isWallMountableStructure(s.type)
+    );
+  }
+
+  /**
+   * Returns true when a wall, window, or door at `(tx, ty)` is oriented vertically (North-South side profile)
+   * rather than horizontally (East-West front elevation).
+   */
+  public isWallOrDoorSideProfileAt(
+    tx: number,
+    ty: number,
+    st: PlacedStructure
+  ): boolean {
+    if (
+      st.type === PlaceableType.WOOD_DOOR ||
+      st.type === PlaceableType.IRON_GATE
+    ) {
+      return (
+        this.getDoorOrientationAt(tx, ty, st.type, st.orientation) ===
+        'vertical'
+      );
+    }
+    if (!WorldManager.isWallMountableStructure(st.type)) {
+      return false;
+    }
+    if (st.orientation === 'vertical') return true;
+    if (st.orientation === 'horizontal') return false;
+    const mask = this.getStructureConnectionMask(tx, ty, st.type);
+    const hasNS = (mask & 5) !== 0; // North (1) or South (4)
+    const hasEW = (mask & 10) !== 0; // East (2) or West (8)
+    return hasNS && !hasEW;
+  }
+
+  /**
    * Returns the Ground-layer structure (Floor / Carpet / Bridge) at (tx, ty), if any.
    */
   public getGroundStructureAtTile(tx: number, ty: number): PlacedStructure | undefined {
@@ -2849,6 +2932,10 @@ export class WorldManager {
     return (
       matches.find(
         (s) =>
+          CONSTRUCTION_BLUEPRINTS[s.type]?.layer === 'WALL'
+      ) ||
+      matches.find(
+        (s) =>
           CONSTRUCTION_BLUEPRINTS[s.type]?.layer !== 'GROUND' &&
           s.type !== PlaceableType.SPIKE_TRAP
       ) ||
@@ -2861,7 +2948,7 @@ export class WorldManager {
 
   /**
    * Places or upgrades a structure at (tx, ty).
-   * Returns `{ placed: boolean; replacedItemId?: string }` so in-place upgrades refund the old piece.
+   * Returns `{ placed: boolean; replacedItemId?: string; attachedToWall?: boolean }` so in-place upgrades refund the old piece.
    */
   public placeStructureWithUpgrade(
     tx: number,
@@ -2869,7 +2956,7 @@ export class WorldManager {
     placeableType: PlaceableType,
     itemId: string,
     orientation: 'auto' | 'horizontal' | 'vertical' = 'auto'
-  ): { placed: boolean; replacedItemId?: string } {
+  ): { placed: boolean; replacedItemId?: string; attachedToWall?: boolean } {
     if (!this.canPlaceStructureAt(tx, ty, placeableType)) {
       return { placed: false };
     }
@@ -2889,6 +2976,9 @@ export class WorldManager {
     }
 
     let replacedItemId: string | undefined;
+    const wallOnTile = this.hasWallStructureAtTile(tx, ty);
+    const isMountingTorchOnWall =
+      placeableType === PlaceableType.TORCH && Boolean(wallOnTile);
 
     if (bp.layer === 'GROUND' && placeableType !== PlaceableType.WOOD_BRIDGE) {
       const existingFloorIdx = chunk.structures.findIndex((s) => {
@@ -2916,7 +3006,8 @@ export class WorldManager {
       }
     } else if (
       bp.layer === 'FURNITURE' &&
-      placeableType !== PlaceableType.SPIKE_TRAP
+      placeableType !== PlaceableType.SPIKE_TRAP &&
+      !isMountingTorchOnWall
     ) {
       const existingFurnIdx = chunk.structures.findIndex((s) => {
         if (s.tileX !== tx || s.tileY !== ty) return false;
@@ -2943,6 +3034,7 @@ export class WorldManager {
       orientation,
       lightRadius: bp.lightRadius,
       hitFlashTimer: 0,
+      attachedToWall: isMountingTorchOnWall ? true : undefined,
       storageSlots:
         placeableType === PlaceableType.CHEST
           ? new Array(CHEST_STORAGE_SIZE).fill(null)
@@ -2992,7 +3084,7 @@ export class WorldManager {
       );
     }
 
-    return { placed: true, replacedItemId };
+    return { placed: true, replacedItemId, attachedToWall: isMountingTorchOnWall };
   }
 
   public placeStructure(

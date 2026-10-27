@@ -533,8 +533,13 @@ export class GameRenderer {
           if (st.type === PlaceableType.SPIKE_TRAP) {
             this.drawGroundStructure(ctx, world, st, tileAnimFrame);
           } else if (!isFloorOrBridge) {
+            const isWallTorch =
+              st.type === PlaceableType.TORCH &&
+              (st.attachedToWall || world.hasWallStructureAtTile(st.tileX, st.tileY));
             renderQueue.push({
-              ySort: st.tileY * TILE_SIZE + TILE_SIZE * 0.85,
+              ySort: isWallTorch
+                ? st.tileY * TILE_SIZE + TILE_SIZE * 0.89
+                : st.tileY * TILE_SIZE + TILE_SIZE * 0.85,
               draw: (c) =>
                 this.drawStructure(
                   c,
@@ -2377,6 +2382,23 @@ export class GameRenderer {
       return;
     }
 
+    // Wall-mounted torch (sconce attached to a wall on the same tile)
+    if (
+      st.type === PlaceableType.TORCH &&
+      (st.attachedToWall || world.hasWallStructureAtTile(st.tileX, st.tileY))
+    ) {
+      ctx.save();
+      if (st.hitFlashTimer > 0) {
+        ctx.filter = 'brightness(1.7)';
+      }
+      this.drawWallMountedTorch(ctx, world, st, wx, wy, globalTime);
+      ctx.restore();
+      if (st.hp < st.maxHp) {
+        this.drawMiniBar(ctx, wx + TILE_SIZE / 2, wy - 14, st.hp / st.maxHp, '#38bdf8');
+      }
+      return;
+    }
+
     const animFrame = Math.floor(globalTime * 5) % 4;
     const sprite = spriteAtlas.getStructureSprite(st.type, animFrame);
     const hasFloorUnder = Boolean(world.getGroundStructureAtTile(st.tileX, st.tileY));
@@ -2918,9 +2940,108 @@ export class GameRenderer {
   }
 
   /**
+   * Renders a Torch mounted directly onto a wall (either on the thin side profile of a vertical wall or on the front face of a horizontal wall).
+   */
+  private drawWallMountedTorch(
+    ctx: CanvasRenderingContext2D,
+    world: WorldManager,
+    st: PlacedStructure,
+    wx: number,
+    wy: number,
+    globalTime: number
+  ): void {
+    const wallSt = world.getStructureAtTile(st.tileX, st.tileY) || st;
+    const isSideWall = world.isWallOrDoorSideProfileAt(st.tileX, st.tileY, wallSt);
+    const flicker = Math.sin(globalTime * 14 + st.tileX * 5 + st.tileY * 3);
+    const flickerY = Math.round(flicker);
+
+    if (isSideWall) {
+      // Mounted on the slender vertical wall (wx + 12..20)
+      const bx = wx + 15;
+      const by = wy + 1;
+
+      // Wrought-iron wall sconce bracket gripping the thin wall
+      ctx.fillStyle = '#1e293b';
+      ctx.fillRect(bx - 1, by + 6, 7, 3);
+      ctx.fillRect(bx, by + 4, 2, 6);
+      ctx.fillStyle = '#64748b';
+      ctx.fillRect(bx, by + 6, 5, 1);
+      ctx.fillStyle = '#facc15';
+      ctx.fillRect(bx, by + 5, 1, 1);
+
+      // Angled hardwood torch handle
+      ctx.fillStyle = '#5c3416';
+      ctx.fillRect(bx + 3, by + 1, 3, 8);
+      ctx.fillStyle = '#8c5327';
+      ctx.fillRect(bx + 3, by + 2, 2, 6);
+
+      // Pitch/coal collar
+      ctx.fillStyle = '#18181b';
+      ctx.fillRect(bx + 2, by - 1, 5, 2);
+
+      // Warm torchlight aura
+      ctx.fillStyle = 'rgba(255, 165, 35, 0.34)';
+      ctx.beginPath();
+      ctx.arc(bx + 4.5, by - 3, 12 + flicker * 1.8, 0, Math.PI * 2);
+      ctx.fill();
+
+      // Animated flame
+      ctx.fillStyle = '#ea580c';
+      ctx.fillRect(bx + 2, by - 5 + flickerY, 5, 4);
+      ctx.fillRect(bx + 3, by - 7 + flickerY, 3, 2);
+      ctx.fillStyle = '#facc15';
+      ctx.fillRect(bx + 3, by - 4 + flickerY, 3, 3);
+      ctx.fillStyle = '#fef9c3';
+      ctx.fillRect(bx + 4, by - 3 + flickerY, 1, 2);
+    } else {
+      // Mounted on the front face of a horizontal wall
+      const cx = wx + 16;
+      const cy = wy + 4;
+
+      // Drop shadow on wall masonry behind sconce
+      ctx.fillStyle = 'rgba(0, 0, 0, 0.38)';
+      ctx.fillRect(cx - 4, cy + 2, 8, 9);
+
+      // Iron wall plate & ring holder
+      ctx.fillStyle = '#1e293b';
+      ctx.fillRect(cx - 3, cy + 2, 6, 7);
+      ctx.fillStyle = '#64748b';
+      ctx.fillRect(cx - 2, cy + 3, 4, 1);
+      ctx.fillRect(cx - 2, cy + 7, 4, 1);
+      ctx.fillStyle = '#facc15';
+      ctx.fillRect(cx - 2, cy + 3, 1, 1);
+      ctx.fillRect(cx + 1, cy + 3, 1, 1);
+
+      // Torch wooden shaft angled forward from the wall
+      ctx.fillStyle = '#5c3416';
+      ctx.fillRect(cx - 2, cy - 2, 4, 8);
+      ctx.fillStyle = '#9a602d';
+      ctx.fillRect(cx - 1, cy - 1, 2, 6);
+
+      // Pitch head
+      ctx.fillStyle = '#18181b';
+      ctx.fillRect(cx - 3, cy - 4, 6, 2);
+
+      // Warm glow halo
+      ctx.fillStyle = 'rgba(255, 165, 35, 0.36)';
+      ctx.beginPath();
+      ctx.arc(cx, cy - 6, 13 + flicker * 1.8, 0, Math.PI * 2);
+      ctx.fill();
+
+      // Flame
+      ctx.fillStyle = '#ea580c';
+      ctx.fillRect(cx - 3, cy - 8 + flickerY, 6, 4);
+      ctx.fillStyle = '#facc15';
+      ctx.fillRect(cx - 2, cy - 10 + flickerY, 4, 5);
+      ctx.fillStyle = '#fef9c3';
+      ctx.fillRect(cx - 1, cy - 7 + flickerY, 2, 3);
+    }
+  }
+
+  /**
    * Renders 16-state connected Walls, Windows, Fences, and Auto-Aligning Doors/Gates.
-   * Walls and Doors are rendered with true 2.5D architectural elevation (42px tall, reaching well above the 26px player's head),
-   * while Fences remain waist/chest-high (26px tall).
+   * Side-viewed (vertical North-South) walls and doors are rendered much thinner (8px wide) for authentic perspective,
+   * while horizontal (East-West) walls show their full elevated 2.5D front face.
    */
   private drawConnectedWallOrDoor(
     ctx: CanvasRenderingContext2D,
@@ -2960,7 +3081,7 @@ export class GameRenderer {
       if (orient === 'horizontal') {
         ctx.fillRect(wx, wy + 14, TILE_SIZE, 10);
       } else {
-        ctx.fillRect(wx + 11, wy, 10, TILE_SIZE);
+        ctx.fillRect(wx + 12, wy, 8, TILE_SIZE);
       }
 
       if (orient === 'horizontal') {
@@ -3013,29 +3134,31 @@ export class GameRenderer {
           ctx.fillRect(wx + 14, wy + 16, 4, 4);
         }
       } else {
-        // Vertical Door Orientation (North-South walls)
+        // Side-viewed Vertical Door Orientation (North-South walls): slender 8px wide profile
+        const vx = wx + 12;
+        const vw = 8;
         ctx.fillStyle = postColor;
-        ctx.fillRect(wx + 9, wy - 12, 14, 14);
-        ctx.fillRect(wx + 9, wy + TILE_SIZE - 10, 14, 12);
+        ctx.fillRect(vx, wy - 12, vw, 13);
+        ctx.fillRect(vx, wy + TILE_SIZE - 10, vw, 12);
         ctx.fillStyle = postTop;
-        ctx.fillRect(wx + 9, wy - 14, 14, 5);
-        ctx.fillRect(wx + 9, wy + TILE_SIZE - 12, 14, 5);
+        ctx.fillRect(vx + 1, wy - 14, vw - 2, 5);
+        ctx.fillRect(vx + 1, wy + TILE_SIZE - 12, vw - 2, 5);
 
         if (!isOpen) {
           ctx.fillStyle = leafColor;
-          ctx.fillRect(wx + 11, wy - 4, 10, TILE_SIZE - 2);
+          ctx.fillRect(vx + 1, wy - 4, vw - 2, TILE_SIZE - 2);
           ctx.fillStyle = leafHi;
-          ctx.fillRect(wx + 12, wy - 4, 4, TILE_SIZE - 2);
+          ctx.fillRect(vx + 2, wy - 4, 2, TILE_SIZE - 2);
           ctx.fillStyle = '#facc15';
-          ctx.fillRect(wx + 14, wy + 10, 3, 4);
+          ctx.fillRect(vx + 3, wy + 10, 2, 4);
         } else {
           // Swung open to the East
           ctx.fillStyle = leafColor;
-          ctx.fillRect(wx + 18, wy - 4, 13, 8);
+          ctx.fillRect(vx + vw - 1, wy - 4, 12, 6);
           ctx.fillStyle = leafHi;
-          ctx.fillRect(wx + 18, wy - 4, 13, 3);
+          ctx.fillRect(vx + vw - 1, wy - 4, 12, 2);
           ctx.fillStyle = 'rgba(74, 222, 128, 0.55)';
-          ctx.fillRect(wx + 14, wy + 14, 4, 4);
+          ctx.fillRect(vx + 2, wy + 14, 4, 4);
         }
       }
       return;
@@ -3087,7 +3210,6 @@ export class GameRenderer {
     }
 
     // 3. 16-STATE ARCHITECTURAL WALLS & WINDOWS (WOOD_WALL, STONE_WALL, BRICK_WALL, WOOD_WINDOW, STONE_WINDOW)
-    // Elevated 2.5D height: wy - 14 to wy + 28 (42px total height — 1.6x player height!)
     const isStone =
       st.type === PlaceableType.STONE_WALL ||
       st.type === PlaceableType.STONE_WINDOW;
@@ -3096,11 +3218,63 @@ export class GameRenderer {
       st.type === PlaceableType.WOOD_WINDOW ||
       st.type === PlaceableType.STONE_WINDOW;
 
-    const topCap = isBrick ? '#d97706' : isStone ? '#94a3b8' : '#b87a3d';
-    const topInner = isBrick ? '#b45309' : isStone ? '#64748b' : '#8c5327';
+    const topCap = isBrick ? '#d97706' : isStone ? '#cbd5e1' : '#c28442';
+    const topInner = isBrick ? '#b45309' : isStone ? '#94a3b8' : '#9a602d';
     const faceMain = isBrick ? '#9a3412' : isStone ? '#475569' : '#653716';
     const faceDark = isBrick ? '#451a03' : isStone ? '#1e293b' : '#3d1f0a';
 
+    // Check if this wall is viewed purely from the side (vertical North-South alignment)
+    const isSideProfile = world.isWallOrDoorSideProfileAt(st.tileX, st.tileY, st);
+
+    if (isSideProfile) {
+      // SLENDER SIDE-VIEWED WALL (8px wide centered at wx + 12 instead of full tile width)
+      const vx = wx + 12;
+      const vw = 8;
+      const topY = hasN ? wy - 16 : wy - 12;
+      const botY = wy + TILE_SIZE;
+      const totalH = botY - topY;
+
+      // Slender side cast shadow
+      ctx.fillStyle = 'rgba(8, 12, 18, 0.28)';
+      ctx.fillRect(vx + vw, topY + 8, 3, totalH - 8);
+
+      // Dark structural outline
+      ctx.fillStyle = faceDark;
+      ctx.fillRect(vx, topY, vw, totalH);
+
+      // Narrow top cap running North-South (6px inner width)
+      ctx.fillStyle = topInner;
+      ctx.fillRect(vx + 1, topY + 1, vw - 2, totalH - 8);
+      ctx.fillStyle = topCap;
+      ctx.fillRect(vx + 2, topY + 1, 2, totalH - 9);
+
+      // Masonry / timber joint lines along the side-viewed top cap
+      ctx.fillStyle = faceDark;
+      for (let jy = topY + 8; jy < botY - 8; jy += 8) {
+        ctx.fillRect(vx + 1, jy, vw - 2, 1);
+      }
+
+      if (isWindow) {
+        // Side-viewed recessed glass slit
+        ctx.fillStyle = '#0f172a';
+        ctx.fillRect(vx + 1, wy - 2, vw - 2, 16);
+        ctx.fillStyle = '#38bdf8';
+        ctx.fillRect(vx + 2, wy - 1, vw - 4, 14);
+        ctx.fillStyle = '#bae6fd';
+        ctx.fillRect(vx + 3, wy, 1, 12);
+      }
+
+      // South end front face cap if wall terminates here
+      if (!hasS) {
+        ctx.fillStyle = faceMain;
+        ctx.fillRect(vx + 1, botY - 8, vw - 2, 7);
+        ctx.fillStyle = faceDark;
+        ctx.fillRect(vx + 1, botY - 9, vw - 2, 1);
+      }
+      return;
+    }
+
+    // HORIZONTAL OR CORNER/T-JUNCTION WALL
     // Ground shadow
     ctx.fillStyle = 'rgba(8, 12, 18, 0.32)';
     ctx.fillRect(
@@ -3110,14 +3284,16 @@ export class GameRenderer {
       6
     );
 
-    // North Arm
+    // North Arm (slender 8px side profile!)
     if (hasN) {
+      const nvx = wx + 12;
+      const nvw = 8;
       ctx.fillStyle = faceDark;
-      ctx.fillRect(wx + 7, wy - 16, 18, 22);
-      ctx.fillStyle = topCap;
-      ctx.fillRect(wx + 7, wy - 16, 18, 18);
+      ctx.fillRect(nvx, wy - 16, nvw, 18);
       ctx.fillStyle = topInner;
-      ctx.fillRect(wx + 9, wy - 16, 14, 16);
+      ctx.fillRect(nvx + 1, wy - 16, nvw - 2, 16);
+      ctx.fillStyle = topCap;
+      ctx.fillRect(nvx + 2, wy - 16, 2, 16);
     }
 
     // West Arm
@@ -3162,6 +3338,12 @@ export class GameRenderer {
       ctx.fillRect(wx + 4, wy + 5, TILE_SIZE - 8, 1);
       ctx.fillRect(wx + 4, wy + 14, TILE_SIZE - 8, 1);
       ctx.fillRect(wx + 4, wy + 23, TILE_SIZE - 8, 1);
+      // Vertical mortar joints
+      ctx.fillRect(wx + 12, wy - 2, 1, 7);
+      ctx.fillRect(wx + 21, wy - 2, 1, 7);
+      ctx.fillRect(wx + 16, wy + 7, 1, 7);
+      ctx.fillRect(wx + 12, wy + 16, 1, 7);
+      ctx.fillRect(wx + 21, wy + 16, 1, 7);
     } else if (isStone) {
       ctx.fillStyle = '#64748b';
       ctx.fillRect(wx + 5, wy - 2, 10, 8);
@@ -3169,11 +3351,21 @@ export class GameRenderer {
       ctx.fillRect(wx + 8, wy + 8, 16, 8);
       ctx.fillRect(wx + 5, wy + 18, 11, 7);
       ctx.fillRect(wx + 18, wy + 18, 9, 7);
+      // Stone bevel highlights
+      ctx.fillStyle = '#94a3b8';
+      ctx.fillRect(wx + 6, wy - 1, 8, 2);
+      ctx.fillRect(wx + 18, wy - 1, 8, 2);
+      ctx.fillRect(wx + 9, wy + 9, 14, 2);
     } else {
       ctx.fillStyle = '#7c471e';
       ctx.fillRect(wx + 4, wy - 2, TILE_SIZE - 8, 6);
       ctx.fillRect(wx + 4, wy + 7, TILE_SIZE - 8, 6);
       ctx.fillRect(wx + 4, wy + 16, TILE_SIZE - 8, 6);
+      // Warm timber highlights
+      ctx.fillStyle = '#9a602d';
+      ctx.fillRect(wx + 5, wy - 2, TILE_SIZE - 10, 2);
+      ctx.fillRect(wx + 5, wy + 7, TILE_SIZE - 10, 2);
+      ctx.fillRect(wx + 5, wy + 16, TILE_SIZE - 10, 2);
       // Horizontal iron binding straps
       ctx.fillStyle = '#334155';
       ctx.fillRect(coreX, wy + 4, coreW, 2);
@@ -3203,14 +3395,19 @@ export class GameRenderer {
     ctx.fillStyle = topInner;
     ctx.fillRect(coreX + 2, wy - 12, coreW - 4, 6);
 
-    // South Arm (drawn last so it overlaps cleanly down toward the southern tile)
+    // South Arm (slender 8px side profile coming forward toward the southern tile)
     if (hasS) {
+      const svx = wx + 12;
+      const svw = 8;
       ctx.fillStyle = faceDark;
-      ctx.fillRect(wx + 7, wy + 14, 18, 18);
-      ctx.fillStyle = topCap;
-      ctx.fillRect(wx + 7, wy - 6, 18, 34);
+      ctx.fillRect(svx, wy - 6, svw, 38);
       ctx.fillStyle = topInner;
-      ctx.fillRect(wx + 9, wy - 6, 14, 32);
+      ctx.fillRect(svx + 1, wy - 6, svw - 2, 36);
+      ctx.fillStyle = topCap;
+      ctx.fillRect(svx + 2, wy - 6, 2, 35);
+      ctx.fillStyle = faceDark;
+      ctx.fillRect(svx + 1, wy + 6, svw - 2, 1);
+      ctx.fillRect(svx + 1, wy + 16, svw - 2, 1);
     }
   }
 
@@ -3273,6 +3470,17 @@ export class GameRenderer {
         targetBuildTile.ty,
         placeableType
       );
+    const hasWallAtTarget = world.hasWallStructureAtTile(
+      targetBuildTile.tx,
+      targetBuildTile.ty
+    );
+    const isWallMountTorch =
+      placeableType === PlaceableType.TORCH && hasWallAtTarget && canPlace;
+    const isBlockedByWallForNonTorch =
+      hasWallAtTarget &&
+      placeableType !== PlaceableType.TORCH &&
+      !WorldManager.isWallMountableStructure(placeableType) &&
+      !canPlace;
 
     // Draw ghost of the structure with live continuity connections!
     ctx.globalAlpha = 0.68;
@@ -3288,6 +3496,7 @@ export class GameRenderer {
       hitFlashTimer: 0,
       orientation: buildOptions?.orientation || 'auto',
       isOpen: false,
+      attachedToWall: isWallMountTorch,
     };
 
     if (bp?.layer === 'GROUND' || placeableType === PlaceableType.SPIKE_TRAP) {
@@ -3298,7 +3507,11 @@ export class GameRenderer {
 
     // Tile border frame
     ctx.globalAlpha = 0.95;
-    ctx.strokeStyle = canPlace ? '#4ade80' : '#f43f5e';
+    ctx.strokeStyle = isWallMountTorch
+      ? '#fbbf24'
+      : canPlace
+        ? '#4ade80'
+        : '#f43f5e';
     ctx.lineWidth = 2;
     ctx.strokeRect(px + 1, py + 1, TILE_SIZE - 2, TILE_SIZE - 2);
 
@@ -3335,23 +3548,29 @@ export class GameRenderer {
 
     // Floating Hitbox & Layer Tag above preview tile
     if (bp) {
-      const tagText = !canPlace
-        ? 'OBSTRUÍDO'
-        : bp.hitboxBehavior === 'DYNAMIC_DOOR'
-        ? 'PORTA · ABRE/FECHA'
-        : bp.hasHitbox
-        ? `${bp.layer === 'WALL' ? 'PAREDE' : 'ESTAÇÃO'} · HITBOX SÓLIDA`
-        : `${bp.layer === 'GROUND' ? 'CHÃO' : 'DECOR'} · SEM HITBOX`;
+      const tagText = isWallMountTorch
+        ? 'FIXAR TOCHA NA PAREDE 🔥'
+        : isBlockedByWallForNonTorch
+          ? 'APENAS TOCHA NA PAREDE!'
+          : !canPlace
+            ? 'OBSTRUÍDO'
+            : bp.hitboxBehavior === 'DYNAMIC_DOOR'
+              ? 'PORTA · ABRE/FECHA'
+              : bp.hasHitbox
+                ? `${bp.layer === 'WALL' ? 'PAREDE' : 'ESTAÇÃO'} · HITBOX SÓLIDA`
+                : `${bp.layer === 'GROUND' ? 'CHÃO' : 'DECOR'} · SEM HITBOX`;
 
       ctx.font = 'bold 6px "Plus Jakarta Sans", sans-serif';
       ctx.textAlign = 'center';
       ctx.fillStyle = 'rgba(10, 14, 23, 0.88)';
       ctx.fillRect(px - 22, py - 17, TILE_SIZE + 44, 11);
-      ctx.fillStyle = !canPlace
-        ? '#f87171'
-        : bp.hasHitbox
+      ctx.fillStyle = isWallMountTorch
         ? '#fde047'
-        : '#4ade80';
+        : !canPlace
+          ? '#f87171'
+          : bp.hasHitbox
+            ? '#fde047'
+            : '#4ade80';
       ctx.fillText(tagText, px + TILE_SIZE / 2, py - 9);
     }
 
@@ -3865,10 +4084,17 @@ export class GameRenderer {
     mountEntity: CreatureEntity | null = null
   ): void {
     const frame = player.isMoving && !mountEntity ? player.animFrame : 0;
+    const isBoatMount = Boolean(mountEntity && mountEntity.kind === 'BOAT');
+    const mountPose: 'none' | 'horse' | 'boat' = !mountEntity
+      ? 'none'
+      : isBoatMount
+        ? 'boat'
+        : 'horse';
     const sprite = spriteAtlas.getPlayerSprite(
       player.direction,
       frame,
-      player
+      player,
+      mountPose
     );
 
     const eq = player.equippedBySlot || {
@@ -3905,7 +4131,7 @@ export class GameRenderer {
     const drawY = player.y + mountOffsetY;
 
     // Speed Buff / Gallop / Astral Gear Afterimage Trail & Step Dust Puff when moving on dry land
-    if (player.isMoving && !isSwimming) {
+    if (player.isMoving && !isSwimming && !isBoatMount) {
       const puffPhase = (globalTime * 6) % 1;
       const puffX = player.x - Math.sign(player.vx || 0.1) * (6 + puffPhase * 8);
       const puffY = player.y + 8 - puffPhase * 3;
@@ -3973,8 +4199,8 @@ export class GameRenderer {
     }
 
     // Organic Walk Hop / Swim Bob & Idle Breathing Squash-and-Stretch
-    const walkHop = isSwimming
-      ? Math.sin(globalTime * (player.isMoving ? 7 : 3.2)) * 1.1
+    const walkHop = isSwimming || isBoatMount
+      ? Math.sin(globalTime * (player.isMoving ? 7 : 3.2)) * (isBoatMount ? 0.9 : 1.1)
       : player.isMoving
       ? Math.abs(Math.sin(globalTime * (player.isGalloping ? 16 : 12))) * (mountEntity ? 2.2 : 1.8)
       : 0;
@@ -3984,10 +4210,13 @@ export class GameRenderer {
     const breathScaleX = 2 - breathScaleY;
 
     ctx.save();
-    if (isSwimming) {
-      const srcHalfH = Math.max(1, Math.round(sprite.height * 0.5));
-      const drawHalfH = 15; // Top 50% of 30px height
-      ctx.translate(drawX, drawY + 6 - walkHop);
+    if (isSwimming || isBoatMount) {
+      // Half-sprite rendering: in water OR seated inside a boat hull!
+      const ratio = isBoatMount ? 0.54 : 0.5;
+      const srcHalfH = Math.max(1, Math.round(sprite.height * ratio));
+      const drawHalfH = isBoatMount ? 16 : 15;
+      const yAnchorOffset = isBoatMount ? 3 : 6;
+      ctx.translate(drawX, drawY + yAnchorOffset - walkHop);
       ctx.scale(breathScaleX, breathScaleY);
       if (player.hitFlashTimer > 0) {
         ctx.filter = 'brightness(2.0)';
@@ -4053,7 +4282,7 @@ export class GameRenderer {
         offsetY = 0;
       }
 
-      const swimItemOffsetY = isSwimming ? 5 : 0;
+      const swimItemOffsetY = isSwimming ? 5 : isBoatMount ? 2 : 0;
 
       ctx.save();
       ctx.translate(player.x + offsetX, player.y + offsetY + swimItemOffsetY);
@@ -4188,10 +4417,17 @@ export class GameRenderer {
     mountEntity: CreatureEntity | null = null
   ): void {
     const frame = rp.isMoving && !mountEntity ? rp.animFrame : 0;
+    const isBoatMount = Boolean(mountEntity && mountEntity.kind === 'BOAT');
+    const mountPose: 'none' | 'horse' | 'boat' = !mountEntity
+      ? 'none'
+      : isBoatMount
+        ? 'boat'
+        : 'horse';
     const sprite = spriteAtlas.getPlayerSprite(
       rp.direction,
       frame,
-      rp as unknown as PlayerState
+      rp as unknown as PlayerState,
+      mountPose
     );
 
     let mountOffsetX = 0;
@@ -4253,8 +4489,8 @@ export class GameRenderer {
       ctx.fillRect(rp.x - 8 + Math.round(shadowDx * 0.4), rp.y + 7, 16, 4);
     }
 
-    const walkHop = isSwimming
-      ? Math.sin(globalTime * (rp.isMoving ? 7 : 3.2)) * 1.1
+    const walkHop = isSwimming || isBoatMount
+      ? Math.sin(globalTime * (rp.isMoving ? 7 : 3.2)) * (isBoatMount ? 0.9 : 1.1)
       : rp.isMoving
       ? Math.abs(Math.sin(globalTime * 12)) * (mountEntity ? 2.2 : 1.8)
       : 0;
@@ -4264,10 +4500,12 @@ export class GameRenderer {
     const breathScaleX = 2 - breathScaleY;
 
     ctx.save();
-    if (isSwimming) {
-      const srcHalfH = Math.max(1, Math.round(sprite.height * 0.5));
-      const drawHalfH = 15;
-      ctx.translate(drawX, drawY + 6 - walkHop);
+    if (isSwimming || isBoatMount) {
+      const ratio = isBoatMount ? 0.54 : 0.5;
+      const srcHalfH = Math.max(1, Math.round(sprite.height * ratio));
+      const drawHalfH = isBoatMount ? 16 : 15;
+      const yAnchorOffset = isBoatMount ? 3 : 6;
+      ctx.translate(drawX, drawY + yAnchorOffset - walkHop);
       ctx.scale(breathScaleX, breathScaleY);
       if (rp.hitFlashTimer > 0) {
         ctx.filter = 'brightness(2.0)';

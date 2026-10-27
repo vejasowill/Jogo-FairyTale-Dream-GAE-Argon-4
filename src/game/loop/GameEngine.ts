@@ -3968,6 +3968,21 @@ export class GameEngine {
               }
               this.spawnDrop(st.itemId, 1, sx, sy);
               chunk.structures.splice(si, 1);
+
+              // If a supporting wall was destroyed, also drop and remove any Torch attached to that wall!
+              if (WorldManager.isWallMountableStructure(st.type)) {
+                for (let ti = chunk.structures.length - 1; ti >= 0; ti--) {
+                  const other = chunk.structures[ti];
+                  if (
+                    other.tileX === st.tileX &&
+                    other.tileY === st.tileY &&
+                    other.type === PlaceableType.TORCH
+                  ) {
+                    this.spawnDrop(other.itemId || 'torch', 1, sx, sy);
+                    chunk.structures.splice(ti, 1);
+                  }
+                }
+              }
             }
             this.syncChunkAtTile(st.tileX, st.tileY);
             this.emitUiSnapshot();
@@ -4878,20 +4893,40 @@ export class GameEngine {
           0.4
         );
         this.addFloatingText(
-          `${heldItem.name} construído!`,
+          result.attachedToWall
+            ? '🔥 Tocha fixada na parede!'
+            : `${heldItem.name} construído!`,
           target.tx * TILE_SIZE + 16,
           target.ty * TILE_SIZE,
-          '#4ade80'
+          result.attachedToWall ? '#fde047' : '#4ade80'
         );
         this.syncChunkAtTile(target.tx, target.ty);
         this.emitUiSnapshot();
       } else {
-        this.addFloatingText(
-          'Local obstruído ou camada ocupada',
-          this.player.x,
-          this.player.y - 20,
-          '#f43f5e'
+        const wallAtTarget = this.world.hasWallStructureAtTile(
+          target.tx,
+          target.ty
         );
+        if (
+          wallAtTarget &&
+          heldItem.placeableType !== PlaceableType.TORCH &&
+          bp?.layer !== 'WALL'
+        ) {
+          soundManager.playHitWood();
+          this.addFloatingText(
+            'Apenas a Tocha pode ser fixada na parede!',
+            target.tx * TILE_SIZE + 16,
+            target.ty * TILE_SIZE - 12,
+            '#fb923c'
+          );
+        } else {
+          this.addFloatingText(
+            'Local obstruído ou camada ocupada',
+            this.player.x,
+            this.player.y - 20,
+            '#f43f5e'
+          );
+        }
       }
       return;
     }
@@ -7135,6 +7170,7 @@ export class GameEngine {
   public updatePlayerAppearance(partial: Partial<PlayerAppearance>): void {
     this.player.appearance = {
       ...(this.player.appearance || {
+        gender: 'masculino',
         skinColor: '#fdba74',
         hairColor: '#451a03',
         hairStyle: 'adventurer',
@@ -7375,17 +7411,26 @@ export class GameEngine {
       return false;
     }
 
-    // Prioritize dismantling upper layer (WALL / FURNITURE) before SPIKE_TRAP and GROUND floor
+    // Prioritize dismantling wall-attached Torch first, then upper layer (WALL / FURNITURE) before SPIKE_TRAP and GROUND floor
     let targetIdx = -1;
     for (let i = chunk.structures.length - 1; i >= 0; i--) {
       const st = chunk.structures[i];
-      if (st.tileX === tx && st.tileY === ty) {
-        const bp = CONSTRUCTION_BLUEPRINTS[st.type];
-        if (bp?.layer !== 'GROUND' && st.type !== PlaceableType.SPIKE_TRAP) {
-          targetIdx = i;
-          break;
+      if (st.tileX === tx && st.tileY === ty && st.type === PlaceableType.TORCH && st.attachedToWall) {
+        targetIdx = i;
+        break;
+      }
+    }
+    if (targetIdx === -1) {
+      for (let i = chunk.structures.length - 1; i >= 0; i--) {
+        const st = chunk.structures[i];
+        if (st.tileX === tx && st.tileY === ty) {
+          const bp = CONSTRUCTION_BLUEPRINTS[st.type];
+          if (bp?.layer !== 'GROUND' && st.type !== PlaceableType.SPIKE_TRAP) {
+            targetIdx = i;
+            break;
+          }
+          if (targetIdx === -1) targetIdx = i;
         }
-        if (targetIdx === -1) targetIdx = i;
       }
     }
 
@@ -7483,6 +7528,25 @@ export class GameEngine {
     }
 
     chunk.structures.splice(targetIdx, 1);
+
+    // If a wall was dismantled and still had an attached torch on the same tile, refund/drop that torch too
+    if (WorldManager.isWallMountableStructure(st.type)) {
+      for (let ti = chunk.structures.length - 1; ti >= 0; ti--) {
+        const other = chunk.structures[ti];
+        if (
+          other.tileX === tx &&
+          other.tileY === ty &&
+          other.type === PlaceableType.TORCH
+        ) {
+          const torchAdded = this.addItemToInventory(other.itemId || 'torch', 1);
+          if (!torchAdded) {
+            this.spawnDrop(other.itemId || 'torch', 1, tx * TILE_SIZE + 16, ty * TILE_SIZE + 16);
+          }
+          chunk.structures.splice(ti, 1);
+        }
+      }
+    }
+
     const added = this.addItemToInventory(st.itemId, 1);
     if (!added) {
       this.spawnDrop(st.itemId, 1, tx * TILE_SIZE + 16, ty * TILE_SIZE + 16);

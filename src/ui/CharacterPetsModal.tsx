@@ -19,6 +19,7 @@ import {
   HairStyleId,
   ItemCategory,
   PlayerAttributes,
+  PlayerGender,
   PlayerState,
 } from '../game/core/types';
 import { GameEngine } from '../game/loop/GameEngine';
@@ -67,13 +68,24 @@ const SLOT_META: {
   },
 ];
 
+const GENDERS: { id: PlayerGender; label: string; symbol: string }[] = [
+  { id: 'masculino', label: 'Masculino', symbol: '♂' },
+  { id: 'feminino', label: 'Feminino', symbol: '♀' },
+];
+
 const SKIN_TONES = [
+  { label: 'Porcelana', color: '#ffedd5' },
   { label: 'Claro Rosado', color: '#fde68a' },
+  { label: 'Pêssego Suave', color: '#fed7aa' },
   { label: 'Trigo Solar', color: '#fdba74' },
+  { label: 'Amêndoa', color: '#e0ac69' },
   { label: 'Bronze Dourado', color: '#d97706' },
+  { label: 'Canela', color: '#b45309' },
   { label: 'Castanho Médio', color: '#a16207' },
+  { label: 'Cacau', color: '#78350f' },
   { label: 'Ébano Profundo', color: '#5c2d16' },
   { label: 'Cinza Élfico', color: '#94a3b8' },
+  { label: 'Brisa Lunar', color: '#cbd5e1' },
 ];
 
 const HAIR_STYLES: { id: HairStyleId; label: string }[] = [
@@ -81,42 +93,71 @@ const HAIR_STYLES: { id: HairStyleId; label: string }[] = [
   { id: 'warrior_crest', label: 'Crista' },
   { id: 'long_mane', label: 'Longo' },
   { id: 'braided', label: 'Tranças' },
+  { id: 'ponytail', label: 'Rabo Cavalo' },
+  { id: 'twin_tails', label: 'Chiquinha' },
+  { id: 'curly_crown', label: 'Cacheado' },
+  { id: 'samurai_bun', label: 'Coque' },
+  { id: 'noble_waves', label: 'Ondulado' },
+  { id: 'valkyrie_bangs', label: 'Valquíria' },
 ];
 
 const HAIR_COLORS = [
   { label: 'Castanho', color: '#451a03' },
+  { label: 'Chocolate', color: '#78350f' },
   { label: 'Preto Corvo', color: '#0f172a' },
   { label: 'Loiro Solar', color: '#facc15' },
+  { label: 'Loiro Platinado', color: '#fef08a' },
   { label: 'Ruivo Brasa', color: '#c2410c' },
+  { label: 'Ruivo Carmim', color: '#991b1b' },
   { label: 'Prata Ancestral', color: '#e2e8f0' },
+  { label: 'Cinza Lobo', color: '#64748b' },
   { label: 'Azul Astral', color: '#0284c7' },
+  { label: 'Turquesa', color: '#0d9488' },
   { label: 'Verde Bosque', color: '#15803d' },
+  { label: 'Violeta Místico', color: '#7e22ce' },
+  { label: 'Rosa Sakura', color: '#db2777' },
 ];
 
 const EYE_COLORS = [
   { label: 'Ônix', color: '#0f172a' },
+  { label: 'Castanho Mel', color: '#78350f' },
   { label: 'Safira', color: '#0284c7' },
+  { label: 'Gelo Celeste', color: '#38bdf8' },
   { label: 'Esmeralda', color: '#10b981' },
+  { label: 'Jade', color: '#15803d' },
   { label: 'Âmbar', color: '#d97706' },
+  { label: 'Ouro Solar', color: '#facc15' },
+  { label: 'Ametista', color: '#9333ea' },
   { label: 'Rubi', color: '#e11d48' },
 ];
 
 const SHIRT_COLORS = [
   { label: 'Azul Real', color: '#2563eb' },
+  { label: 'Celeste', color: '#0284c7' },
+  { label: 'Turquesa', color: '#0d9488' },
   { label: 'Verde Caçador', color: '#15803d' },
+  { label: 'Verde Musgo', color: '#4d7c0f' },
   { label: 'Carmesim', color: '#b91c1c' },
+  { label: 'Coral Brasa', color: '#ea580c' },
   { label: 'Ocre Couro', color: '#a16207' },
+  { label: 'Dourado Nobre', color: '#ca8a04' },
   { label: 'Roxo Sombrio', color: '#6b21a8' },
+  { label: 'Rosa Real', color: '#be185d' },
   { label: 'Carvão', color: '#334155' },
+  { label: 'Marfim', color: '#e2e8f0' },
 ];
 
 const PANTS_COLORS = [
   { label: 'Ardósia', color: '#334155' },
+  { label: 'Noite Escura', color: '#0f172a' },
   { label: 'Marrom Terra', color: '#5c3416' },
+  { label: 'Couro Curtido', color: '#78350f' },
+  { label: 'Areia Escura', color: '#854d0e' },
   { label: 'Azul Noite', color: '#1e3a8a' },
   { label: 'Verde Musgo', color: '#14532d' },
   { label: 'Vinho Escuro', color: '#7f1d1d' },
-  { label: 'Areia Escura', color: '#854d0e' },
+  { label: 'Roxo Umbral', color: '#4c1d95' },
+  { label: 'Cinza Pedra', color: '#57534e' },
 ];
 
 export const CharacterPetsModal: React.FC<CharacterPetsModalProps> = ({
@@ -326,6 +367,9 @@ export const CharacterPetsModal: React.FC<CharacterPetsModalProps> = ({
 
               <div className="grid grid-cols-12 gap-2 items-center bg-[#120b07] p-2.5 border border-[#4a301e]">
                 <div className="col-span-5 flex flex-col items-center justify-center gap-1.5 border-r border-[#3d281a] pr-2">
+                  <span className="px-1.5 py-0.5 bg-[#2a1b10] border border-[#6e4930] text-[9px] font-bold text-amber-300 rounded">
+                    {(app.gender ?? 'masculino') === 'feminino' ? '♀ Feminino' : '♂ Masculino'}
+                  </span>
                   <div className="w-20 h-20 bg-[#1a110b] border-2 border-[#6e4930] flex items-center justify-center relative shadow-inner">
                     <img
                       src={playerPreviewUrl}
@@ -481,16 +525,43 @@ export const CharacterPetsModal: React.FC<CharacterPetsModalProps> = ({
 
               <div className="space-y-1">
                 <span className="text-[10px] text-[#e5d5b5] font-bold block">
-                  Cabelo:
+                  Gênero:
                 </span>
-                <div className="grid grid-cols-4 gap-1">
+                <div className="grid grid-cols-2 gap-1.5">
+                  {GENDERS.map((g) => {
+                    const isSelected = (app.gender ?? 'masculino') === g.id;
+                    return (
+                      <button
+                        key={g.id}
+                        onClick={() =>
+                          engine.updatePlayerAppearance({ gender: g.id })
+                        }
+                        className={`py-1 px-2 text-[10px] font-bold flex items-center justify-center gap-1.5 ${
+                          isSelected
+                            ? 'medieval-btn-gold'
+                            : 'medieval-btn-wood'
+                        }`}
+                      >
+                        <span>{g.symbol}</span>
+                        <span>{g.label}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              <div className="space-y-1">
+                <span className="text-[10px] text-[#e5d5b5] font-bold block">
+                  Cabelo ({HAIR_STYLES.length} estilos):
+                </span>
+                <div className="grid grid-cols-5 gap-1">
                   {HAIR_STYLES.map((st) => (
                     <button
                       key={st.id}
                       onClick={() =>
                         engine.updatePlayerAppearance({ hairStyle: st.id })
                       }
-                      className={`py-1 px-1.5 text-[9px] font-bold truncate ${
+                      className={`py-1 px-1 text-[9px] font-bold truncate ${
                         app.hairStyle === st.id
                           ? 'medieval-btn-gold'
                           : 'medieval-btn-wood'

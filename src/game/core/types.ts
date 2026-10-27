@@ -258,6 +258,8 @@ export interface PlacedStructure {
   cookingDuration?: number; // Required preparation seconds per batch
   outputItemId?: string | null;
   outputCount?: number;
+  // Wall-mounted attachment (exclusively for PlaceableType.TORCH)
+  attachedToWall?: boolean;
 }
 
 export interface ChunkData {
@@ -492,9 +494,22 @@ export interface PlayerAttributes {
 
 export type PlayerEquipment = Record<EquipmentSlot, string | null>;
 
-export type HairStyleId = 'adventurer' | 'warrior_crest' | 'long_mane' | 'braided';
+export type PlayerGender = 'masculino' | 'feminino';
+
+export type HairStyleId =
+  | 'adventurer'
+  | 'warrior_crest'
+  | 'long_mane'
+  | 'braided'
+  | 'ponytail'
+  | 'twin_tails'
+  | 'curly_crown'
+  | 'samurai_bun'
+  | 'noble_waves'
+  | 'valkyrie_bangs';
 
 export interface PlayerAppearance {
+  gender?: PlayerGender;
   skinColor: string;
   hairColor: string;
   hairStyle: HairStyleId;
@@ -606,7 +621,7 @@ export interface OnlineActivationStep {
 }
 
 // REGRA PERMANENTE: A cada nova atualização do jogo, incremente a versão para o número seguinte da beta (ex: 0.4.4-beta -> 0.4.5-beta).
-export const GAME_VERSION = '0.4.9-beta';
+export const GAME_VERSION = '0.5.0-beta';
 export const CURRENT_WORLD_GEN_VERSION = 3;
 
 export interface OnlineSessionInfo {
