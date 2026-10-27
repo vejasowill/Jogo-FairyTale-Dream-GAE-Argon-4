@@ -377,6 +377,24 @@ export class EntityManager {
     );
   }
 
+  /**
+   * Only Camel and Boar allies can attack enemies or be targeted as combat allies.
+   */
+  public static isCombatAllyKind(kind: CreatureKind): boolean {
+    return kind === CreatureKind.CAMEL || kind === CreatureKind.BOAR;
+  }
+
+  /**
+   * Peaceful animals (Horse, Sheep, Boat) never attack and are never targeted/attacked by hostile monsters.
+   */
+  public static isPeacefulAnimalKind(kind: CreatureKind): boolean {
+    return (
+      kind === CreatureKind.HORSE ||
+      kind === CreatureKind.SHEEP ||
+      kind === CreatureKind.BOAT
+    );
+  }
+
   public static getFaction(cr: CreatureEntity): CreatureFaction {
     if (cr.tamed) return 'PLAYER_ALLY';
     if (

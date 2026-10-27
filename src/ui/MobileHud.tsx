@@ -235,13 +235,7 @@ export const MobileHud: React.FC<MobileHudProps> = ({
       nearbyTamedAnimal.kind === 'CAMEL' ||
       nearbyTamedAnimal.kind === 'BOAT')
       ? nearbyTamedAnimal
-      : engine.entities.creatures.find(
-          (c) =>
-            c.hp > 0 &&
-            (c.kind === 'BOAT' ||
-              (c.tamed && (c.kind === 'HORSE' || c.kind === 'CAMEL'))) &&
-            Math.hypot(c.x - player.x, c.y - player.y) <= 96
-        ) || null);
+      : null);
 
   const hudScale = settings.hudScale ?? 1.0;
   const hudOpacity = settings.hudOpacity ?? 0.95;

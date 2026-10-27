@@ -3274,137 +3274,155 @@ export class GameRenderer {
       return;
     }
 
-    // HORIZONTAL OR CORNER/T-JUNCTION WALL
-    // Ground shadow
+    // HORIZONTAL OR CORNER/T-JUNCTION WALL (adaptive to 8px vertical wall at wx + 12..20)
+    const hasVert = hasN || hasS;
+    const spanX = hasW ? wx : hasVert && hasE ? wx + 12 : wx + 2;
+    const spanRight = hasE
+      ? wx + TILE_SIZE
+      : hasVert && hasW
+      ? wx + 20
+      : wx + TILE_SIZE - 2;
+    const spanW = Math.max(8, spanRight - spanX);
+
+    // Ground shadow matched to adaptive corner span
     ctx.fillStyle = 'rgba(8, 12, 18, 0.32)';
     ctx.fillRect(
-      wx + 2 + Math.round(shadowDx * 0.5),
+      spanX + Math.round(shadowDx * 0.5),
       wy + TILE_SIZE - 4,
-      TILE_SIZE - 4,
+      spanW,
       6
     );
 
-    // North Arm (slender 8px side profile!)
+    // North Arm (slender 8px side profile at wx + 12..20)
     if (hasN) {
       const nvx = wx + 12;
       const nvw = 8;
       ctx.fillStyle = faceDark;
-      ctx.fillRect(nvx, wy - 16, nvw, 18);
+      ctx.fillRect(nvx, wy - 16, nvw, 14);
       ctx.fillStyle = topInner;
-      ctx.fillRect(nvx + 1, wy - 16, nvw - 2, 16);
+      ctx.fillRect(nvx + 1, wy - 16, nvw - 2, 13);
       ctx.fillStyle = topCap;
-      ctx.fillRect(nvx + 2, wy - 16, 2, 16);
+      ctx.fillRect(nvx + 2, wy - 16, 2, 13);
     }
 
-    // West Arm
-    if (hasW) {
-      ctx.fillStyle = faceDark;
-      ctx.fillRect(wx, wy - 14, 10, 42);
-      ctx.fillStyle = faceMain;
-      ctx.fillRect(wx, wy - 4, 10, 30);
-      ctx.fillStyle = topCap;
-      ctx.fillRect(wx, wy - 14, 10, 10);
-      ctx.fillStyle = topInner;
-      ctx.fillRect(wx, wy - 12, 10, 6);
-    }
+    // Adaptive Horizontal / Corner Body (wy - 14 to wy + 28 = 42px tall)
+    const faceLeft = hasW ? spanX : spanX + 1;
+    const faceRight = hasE ? spanRight : spanRight - 1;
+    const faceW = Math.max(2, faceRight - faceLeft);
 
-    // East Arm
-    if (hasE) {
-      ctx.fillStyle = faceDark;
-      ctx.fillRect(wx + 22, wy - 14, 10, 42);
-      ctx.fillStyle = faceMain;
-      ctx.fillRect(wx + 22, wy - 4, 10, 30);
-      ctx.fillStyle = topCap;
-      ctx.fillRect(wx + 22, wy - 14, 10, 10);
-      ctx.fillStyle = topInner;
-      ctx.fillRect(wx + 22, wy - 12, 10, 6);
-    }
-
-    // Central Pillar / Core Segment (wy - 14 to wy + 28 = 42px tall)
-    const coreX = hasW ? wx + 6 : wx + 3;
-    const coreW = (hasW ? 20 : 23) + (hasE ? 0 : 3);
     ctx.fillStyle = faceDark;
-    ctx.fillRect(coreX, wy - 14, coreW, 42);
+    ctx.fillRect(spanX, wy - 14, spanW, 42);
     ctx.fillStyle = faceMain;
-    ctx.fillRect(coreX + 1, wy - 4, coreW - 2, 30);
+    ctx.fillRect(faceLeft, wy - 4, faceW, 30);
 
-    // Brick / Stone / Timber 3-course texture details on elevated front face
+    // Brick / Stone / Timber 3-course texture details clipped to adaptive corner span
+    const texLeft = hasW ? spanX + 1 : spanX + 2;
+    const texRight = hasE ? spanRight - 1 : spanRight - 2;
+    const texW = Math.max(2, texRight - texLeft);
+
     if (isBrick) {
       ctx.fillStyle = '#c2410c';
-      ctx.fillRect(wx + 4, wy - 2, TILE_SIZE - 8, 6);
-      ctx.fillRect(wx + 4, wy + 7, TILE_SIZE - 8, 6);
-      ctx.fillRect(wx + 4, wy + 16, TILE_SIZE - 8, 6);
+      ctx.fillRect(texLeft, wy - 2, texW, 6);
+      ctx.fillRect(texLeft, wy + 7, texW, 6);
+      ctx.fillRect(texLeft, wy + 16, texW, 6);
       ctx.fillStyle = '#fdba74';
-      ctx.fillRect(wx + 4, wy + 5, TILE_SIZE - 8, 1);
-      ctx.fillRect(wx + 4, wy + 14, TILE_SIZE - 8, 1);
-      ctx.fillRect(wx + 4, wy + 23, TILE_SIZE - 8, 1);
-      // Vertical mortar joints
-      ctx.fillRect(wx + 12, wy - 2, 1, 7);
-      ctx.fillRect(wx + 21, wy - 2, 1, 7);
-      ctx.fillRect(wx + 16, wy + 7, 1, 7);
-      ctx.fillRect(wx + 12, wy + 16, 1, 7);
-      ctx.fillRect(wx + 21, wy + 16, 1, 7);
+      ctx.fillRect(texLeft, wy + 5, texW, 1);
+      ctx.fillRect(texLeft, wy + 14, texW, 1);
+      ctx.fillRect(texLeft, wy + 23, texW, 1);
+      // Vertical mortar joints within adaptive span
+      if (wx + 12 >= texLeft + 2 && wx + 12 <= texRight - 2) {
+        ctx.fillRect(wx + 12, wy - 2, 1, 7);
+        ctx.fillRect(wx + 12, wy + 16, 1, 7);
+      }
+      if (wx + 21 >= texLeft + 2 && wx + 21 <= texRight - 2) {
+        ctx.fillRect(wx + 21, wy - 2, 1, 7);
+        ctx.fillRect(wx + 21, wy + 16, 1, 7);
+      }
+      if (wx + 16 >= texLeft + 2 && wx + 16 <= texRight - 2) {
+        ctx.fillRect(wx + 16, wy + 7, 1, 7);
+      }
     } else if (isStone) {
+      const midW = Math.max(4, Math.floor((texW - 2) * 0.5));
       ctx.fillStyle = '#64748b';
-      ctx.fillRect(wx + 5, wy - 2, 10, 8);
-      ctx.fillRect(wx + 17, wy - 2, 10, 8);
-      ctx.fillRect(wx + 8, wy + 8, 16, 8);
-      ctx.fillRect(wx + 5, wy + 18, 11, 7);
-      ctx.fillRect(wx + 18, wy + 18, 9, 7);
+      ctx.fillRect(texLeft, wy - 2, midW, 8);
+      if (texW > midW + 2) {
+        ctx.fillRect(texLeft + midW + 2, wy - 2, texW - midW - 2, 8);
+      }
+      ctx.fillRect(texLeft + 1, wy + 8, Math.max(2, texW - 2), 8);
+      ctx.fillRect(texLeft, wy + 18, midW, 7);
+      if (texW > midW + 2) {
+        ctx.fillRect(texLeft + midW + 2, wy + 18, texW - midW - 2, 7);
+      }
       // Stone bevel highlights
       ctx.fillStyle = '#94a3b8';
-      ctx.fillRect(wx + 6, wy - 1, 8, 2);
-      ctx.fillRect(wx + 18, wy - 1, 8, 2);
-      ctx.fillRect(wx + 9, wy + 9, 14, 2);
+      ctx.fillRect(texLeft + 1, wy - 1, Math.max(2, midW - 2), 2);
+      ctx.fillRect(texLeft + 2, wy + 9, Math.max(2, texW - 4), 2);
     } else {
       ctx.fillStyle = '#7c471e';
-      ctx.fillRect(wx + 4, wy - 2, TILE_SIZE - 8, 6);
-      ctx.fillRect(wx + 4, wy + 7, TILE_SIZE - 8, 6);
-      ctx.fillRect(wx + 4, wy + 16, TILE_SIZE - 8, 6);
+      ctx.fillRect(texLeft, wy - 2, texW, 6);
+      ctx.fillRect(texLeft, wy + 7, texW, 6);
+      ctx.fillRect(texLeft, wy + 16, texW, 6);
       // Warm timber highlights
       ctx.fillStyle = '#9a602d';
-      ctx.fillRect(wx + 5, wy - 2, TILE_SIZE - 10, 2);
-      ctx.fillRect(wx + 5, wy + 7, TILE_SIZE - 10, 2);
-      ctx.fillRect(wx + 5, wy + 16, TILE_SIZE - 10, 2);
-      // Horizontal iron binding straps
+      ctx.fillRect(texLeft + 1, wy - 2, Math.max(2, texW - 2), 2);
+      ctx.fillRect(texLeft + 1, wy + 7, Math.max(2, texW - 2), 2);
+      ctx.fillRect(texLeft + 1, wy + 16, Math.max(2, texW - 2), 2);
+      // Horizontal iron binding straps matched to adaptive span
       ctx.fillStyle = '#334155';
-      ctx.fillRect(coreX, wy + 4, coreW, 2);
-      ctx.fillRect(coreX, wy + 21, coreW, 2);
+      ctx.fillRect(spanX, wy + 4, spanW, 2);
+      ctx.fillRect(spanX, wy + 21, spanW, 2);
     }
 
-    // Window Glass & Mullion Frame if WOOD_WINDOW or STONE_WINDOW (at eye level on the 42px wall)
+    // Window Glass & Mullion Frame if WOOD_WINDOW or STONE_WINDOW
     if (isWindow) {
+      const winLeft = Math.max(spanX + 2, wx + 7);
+      const winRight = Math.min(spanRight - 2, wx + 25);
+      const winW = Math.max(6, winRight - winLeft);
       ctx.fillStyle = '#1e293b';
-      ctx.fillRect(wx + 7, wy - 1, 18, 19);
+      ctx.fillRect(winLeft, wy - 1, winW, 19);
       ctx.fillStyle = '#38bdf8';
-      ctx.fillRect(wx + 9, wy + 1, 6, 15);
-      ctx.fillRect(wx + 17, wy + 1, 6, 15);
+      ctx.fillRect(winLeft + 2, wy + 1, Math.max(2, winW - 4), 15);
       ctx.fillStyle = '#bae6fd';
-      ctx.fillRect(wx + 10, wy + 2, 2, 7);
-      ctx.fillRect(wx + 18, wy + 2, 2, 7);
-      // Horizontal mullion & Window Sill
+      ctx.fillRect(winLeft + 3, wy + 2, 2, 7);
       ctx.fillStyle = '#1e293b';
-      ctx.fillRect(wx + 8, wy + 8, 16, 2);
+      ctx.fillRect(winLeft + 1, wy + 8, Math.max(2, winW - 2), 2);
       ctx.fillStyle = topCap;
-      ctx.fillRect(wx + 6, wy + 17, 20, 3);
+      ctx.fillRect(winLeft - 1, wy + 17, winW + 2, 3);
     }
 
-    // Roof Coping / Top Cap
+    // Roof Coping / Top Cap matched to adaptive span
+    const capInnerLeft = hasW ? spanX : spanX + 1;
+    const capInnerRight = hasE ? spanRight : spanRight - 1;
     ctx.fillStyle = topCap;
-    ctx.fillRect(coreX, wy - 14, coreW, 10);
+    ctx.fillRect(capInnerLeft, wy - 14, Math.max(2, capInnerRight - capInnerLeft), 9);
     ctx.fillStyle = topInner;
-    ctx.fillRect(coreX + 2, wy - 12, coreW - 4, 6);
+    ctx.fillRect(
+      hasW ? spanX : spanX + 2,
+      wy - 12,
+      Math.max(2, (hasE ? spanRight : spanRight - 2) - (hasW ? spanX : spanX + 2)),
+      6
+    );
 
-    // South Arm (slender 8px side profile coming forward toward the southern tile)
+    // Seamless North Miter into the horizontal Top Cap
+    if (hasN) {
+      const nvx = wx + 12;
+      const nvw = 8;
+      ctx.fillStyle = topInner;
+      ctx.fillRect(nvx + 1, wy - 16, nvw - 2, 10);
+      ctx.fillStyle = topCap;
+      ctx.fillRect(nvx + 2, wy - 16, 2, 9);
+    }
+
+    // South Arm (slender 8px side profile seamlessly mitering from the top cap down to southern tile)
     if (hasS) {
       const svx = wx + 12;
       const svw = 8;
       ctx.fillStyle = faceDark;
       ctx.fillRect(svx, wy - 6, svw, 38);
       ctx.fillStyle = topInner;
-      ctx.fillRect(svx + 1, wy - 6, svw - 2, 36);
+      ctx.fillRect(svx + 1, wy - 12, svw - 2, 44);
       ctx.fillStyle = topCap;
-      ctx.fillRect(svx + 2, wy - 6, 2, 35);
+      ctx.fillRect(svx + 2, wy - 12, 2, 43);
       ctx.fillStyle = faceDark;
       ctx.fillRect(svx + 1, wy + 6, svw - 2, 1);
       ctx.fillRect(svx + 1, wy + 16, svw - 2, 1);

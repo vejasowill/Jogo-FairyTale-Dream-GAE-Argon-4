@@ -1556,19 +1556,24 @@ export class GameEngine {
           cr.retaliateTargetId = undefined;
           this.updatePetGrazeAi(cr, dt);
         }
-        // STATE 3: SEGUINDO ('follow') — Pet follows owner as an ally & obeys single-target combat rules
+        // STATE 3: SEGUINDO ('follow') — Pet follows owner as an ally; ONLY Camel and Boar engage in combat
         else if (cr.aiState === 'follow') {
           const ownerTarget = this.getPetOwnerTarget(cr);
+          const canFightAsAlly = EntityManager.isCombatAllyKind(cr.kind);
 
-          // Resolve single focused combat target (`combatTargetId`)
+          // Resolve single focused combat target (`combatTargetId`) ONLY for combat-capable allies (Camel & Boar)
           let enemyTarget: CreatureEntity | null = null;
-          if (cr.combatTargetId) {
+          if (!canFightAsAlly) {
+            cr.combatTargetId = null;
+            cr.retaliateTargetId = undefined;
+          } else if (cr.combatTargetId) {
             const foundTarget = this.entities.creatures.find(
               (o) =>
                 o.id === cr.combatTargetId &&
                 o.hp > 0 &&
                 !o.isInsideHouse &&
-                !o.tamed
+                !o.tamed &&
+                !EntityManager.isPeacefulAnimalKind(o.kind)
             );
             if (foundTarget) {
               enemyTarget = foundTarget;
@@ -1577,8 +1582,14 @@ export class GameEngine {
             }
           }
 
-          // If the ally itself was directly attacked while following and has no locked target yet, lock onto that attacker
-          if (!enemyTarget && retaliateTarget && !retaliateTarget.tamed) {
+          // If a combat-capable ally itself was directly attacked while following and has no locked target yet, lock onto that attacker
+          if (
+            canFightAsAlly &&
+            !enemyTarget &&
+            retaliateTarget &&
+            !retaliateTarget.tamed &&
+            !EntityManager.isPeacefulAnimalKind(retaliateTarget.kind)
+          ) {
             cr.combatTargetId = retaliateTarget.id;
             enemyTarget = retaliateTarget;
           }
@@ -1846,10 +1857,13 @@ export class GameEngine {
 
         for (const other of this.entities.creatures) {
           if (other.id === cr.id || other.hp <= 0 || other.isInsideHouse) continue;
+          // Peaceful animals (Horse, Sheep, Boat) are never targeted or attacked by hostile mobs
+          if (EntityManager.isPeacefulAnimalKind(other.kind)) continue;
+
           const isRivalCreature =
             other.kind === CreatureKind.VILLAGER ||
             other.kind === CreatureKind.WANDERER ||
-            other.tamed ||
+            (other.tamed && EntityManager.isCombatAllyKind(other.kind)) ||
             other.retaliateTargetId === cr.id ||
             cr.retaliateTargetId === other.id;
 
@@ -3839,21 +3853,32 @@ export class GameEngine {
       }
     }
 
-    // B2. Check Nature Nodes & Dismantling Structures in hit arc
+    // B2. Check Nature Nodes & Dismantling Structures strictly at the visually selected target or forward look tile
+    const aimedForBreak = this.getAimedTarget();
+    const forwardLookTile = aimedForBreak
+      ? this.world.worldToTile(aimedForBreak.worldX, aimedForBreak.worldY)
+      : this.world.worldToTile(
+          this.player.x + dirVec.x * 28,
+          this.player.y + dirVec.y * 28
+        );
     const pChunk = this.world.tileToChunk(
-      Math.floor(hitCenterX / TILE_SIZE),
-      Math.floor(hitCenterY / TILE_SIZE)
+      forwardLookTile.tx,
+      forwardLookTile.ty
     );
 
     for (let dy = -1; dy <= 1; dy++) {
       for (let dx = -1; dx <= 1; dx++) {
-        const chunk = this.world.getOrCreateChunk(pChunk.cx + dx, pChunk.cy + dy);
+        const chunk = this.world.getOrCreateChunk(
+          pChunk.cx + dx,
+          pChunk.cy + dy
+        );
 
         for (let ni = chunk.nodes.length - 1; ni >= 0; ni--) {
           const node = chunk.nodes[ni];
-          const nx = node.tileX * TILE_SIZE + TILE_SIZE / 2;
-          const ny = node.tileY * TILE_SIZE + TILE_SIZE / 2;
-          if (Math.hypot(nx - hitCenterX, ny - hitCenterY) <= reach * 0.82) {
+          if (
+            node.tileX === forwardLookTile.tx &&
+            node.tileY === forwardLookTile.ty
+          ) {
             this.harvestNatureNode(
               chunk,
               ni,
@@ -3868,9 +3893,13 @@ export class GameEngine {
 
         for (let si = chunk.structures.length - 1; si >= 0; si--) {
           const st = chunk.structures[si];
-          const sx = st.tileX * TILE_SIZE + TILE_SIZE / 2;
-          const sy = st.tileY * TILE_SIZE + TILE_SIZE / 2;
-          if (Math.hypot(sx - hitCenterX, sy - hitCenterY) <= reach * 0.72) {
+          const matchesAimedStruct = aimedForBreak?.structureId
+            ? st.id === aimedForBreak.structureId
+            : st.tileX === forwardLookTile.tx &&
+              st.tileY === forwardLookTile.ty;
+          if (matchesAimedStruct) {
+            const sx = st.tileX * TILE_SIZE + TILE_SIZE / 2;
+            const sy = st.tileY * TILE_SIZE + TILE_SIZE / 2;
             const isWorldFixedLandmark = Boolean(
               (st.villageId || st.id.startsWith('world_struct_')) &&
                 (st.type === PlaceableType.VILLAGE_HOUSE ||
@@ -4951,20 +4980,24 @@ export class GameEngine {
       return;
     }
 
-    // 4. Saddle: Equip on nearby tamed Horse or Camel
+    // 4. Saddle: Equip strictly on the visually selected tamed Horse or Camel
     if (heldItem.id === 'saddle') {
-      const nearbyMount = this.entities.creatures.find(
-        (c) =>
-          c.tamed &&
-          (c.kind === CreatureKind.HORSE || c.kind === CreatureKind.CAMEL) &&
-          !c.hasSaddle &&
-          Math.hypot(c.x - this.player.x, c.y - this.player.y) <= 78
-      );
-      if (nearbyMount) {
-        this.equipSaddleOnCreature(nearbyMount.id);
+      const aimed = this.getAimedTarget();
+      const selectedMount =
+        aimed?.kind === 'tamed_animal' && aimed.creatureId
+          ? this.entities.creatures.find(
+              (c) =>
+                c.id === aimed.creatureId &&
+                c.tamed &&
+                (c.kind === CreatureKind.HORSE || c.kind === CreatureKind.CAMEL) &&
+                !c.hasSaddle
+            ) || null
+          : null;
+      if (selectedMount) {
+        this.equipSaddleOnCreature(selectedMount.id);
       } else {
         this.addFloatingText(
-          'Aproxime-se de um Cavalo ou Camelo domesticado sem sela!',
+          'Aponte para um Cavalo ou Camelo domesticado sem sela!',
           this.player.x,
           this.player.y - 20,
           '#fde047'
@@ -5305,9 +5338,12 @@ export class GameEngine {
         distPlayer > 0.001
           ? (dx * dirVec.x + dy * dirVec.y) / distPlayer
           : 1.0;
-      // Targets inside the player's forward cone (dot >= 0.2) get a strong directional lock bonus;
-      // targets behind the player (dot < -0.15) are penalized so they only win if nothing is in front.
-      const coneBonus = dot >= 0.25 ? -26 * dot : dot < -0.15 ? 38 : -10 * dot;
+      // Strict forward-cone filter: ONLY allow targets that the player is actually facing
+      // (dot >= 0.25 or standing directly on top of within 14px) and within interaction reach (distPlayer <= 56, distAim <= 34).
+      if ((distPlayer > 14 && dot < 0.25) || distPlayer > 56 || distAim > 34) {
+        return Infinity;
+      }
+      const coneBonus = -26 * dot;
       return distAim + distPlayer * 0.25 + coneBonus + categoryBias;
     };
 
@@ -5771,12 +5807,13 @@ export class GameEngine {
       });
     }
 
-    if (candidates.length === 0) {
+    const validCandidates = candidates.filter((c) => Number.isFinite(c.score));
+    if (validCandidates.length === 0) {
       return null;
     }
 
-    candidates.sort((a, b) => a.score - b.score);
-    return candidates[0].info;
+    validCandidates.sort((a, b) => a.score - b.score);
+    return validCandidates[0].info;
   }
 
   private harvestNatureNode(
@@ -5895,8 +5932,20 @@ export class GameEngine {
       }
     }
 
-    // Record attacker for creature-vs-creature retaliation
-    if (attackerCreature && attackerCreature.id !== cr.id) {
+    // Peaceful animals (Horse, Sheep, Boat) are never attacked or harmed by hostile monsters
+    if (
+      attackerCreature &&
+      EntityManager.isPeacefulAnimalKind(cr.kind)
+    ) {
+      return;
+    }
+
+    // Record attacker for creature-vs-creature retaliation (only for non-peaceful creatures)
+    if (
+      attackerCreature &&
+      attackerCreature.id !== cr.id &&
+      !EntityManager.isPeacefulAnimalKind(cr.kind)
+    ) {
       cr.retaliateTargetId = attackerCreature.id;
     }
 
@@ -5952,14 +6001,14 @@ export class GameEngine {
       cr.provokedTimer = 25;
     }
 
-    // Rule: When the player attacks a target, any tamed ally in 'follow' state is enabled to attack too
+    // Rule: When the player attacks a target, ONLY combat-capable tamed allies (Camel & Boar) in 'follow' state are enabled to attack too
     // (staying focused on its single target until defeating it or dying).
     if (!attackerCreature && !cr.tamed) {
       for (const pet of this.entities.creatures) {
         if (
           pet.tamed &&
           pet.hp > 0 &&
-          pet.kind !== CreatureKind.BOAT &&
+          EntityManager.isCombatAllyKind(pet.kind) &&
           this.isCreatureOwnedByLocalPlayer(pet) &&
           pet.aiState === 'follow' &&
           this.player.mountedEntityId !== pet.id &&
@@ -6445,14 +6494,14 @@ export class GameEngine {
     this.player.hitFlashTimer = 0.25;
     soundManager.playPlayerHurt();
 
-    // Rule: If the player is attacked, any tamed ally in 'follow' state attacks whoever attacked the player to defend them
+    // Rule: If the player is attacked, ONLY combat-capable tamed allies (Camel & Boar) in 'follow' state attack whoever attacked the player to defend them
     // (focusing on a single enemy until defeating it or dying).
     if (attackerCreature && attackerCreature.hp > 0 && !attackerCreature.tamed) {
       for (const pet of this.entities.creatures) {
         if (
           pet.tamed &&
           pet.hp > 0 &&
-          pet.kind !== CreatureKind.BOAT &&
+          EntityManager.isCombatAllyKind(pet.kind) &&
           this.isCreatureOwnedByLocalPlayer(pet) &&
           pet.aiState === 'follow' &&
           this.player.mountedEntityId !== pet.id &&
@@ -7204,6 +7253,25 @@ export class GameEngine {
     const slotA = this.player.inventory[indexA];
     const slotB = this.player.inventory[indexB];
 
+    // If moving an item (slotA) onto an identical item (slotB), stack them up to maxStack first!
+    if (slotA && slotB && slotA.itemId === slotB.itemId) {
+      const maxStack = ITEMS[slotB.itemId]?.maxStack || 99;
+      if (maxStack > 1 && slotB.count < maxStack) {
+        const transfer = Math.min(slotA.count, maxStack - slotB.count);
+        const newDstCount = slotB.count + transfer;
+        const newSrcCount = slotA.count - transfer;
+        this.player.inventory[indexB] = {
+          ...slotB,
+          count: newDstCount,
+        };
+        this.player.inventory[indexA] =
+          newSrcCount > 0 ? { ...slotA, count: newSrcCount } : null;
+        soundManager.playPickup();
+        this.emitUiSnapshot();
+        return;
+      }
+    }
+
     this.player.inventory[indexA] = slotB ? { ...slotB } : null;
     this.player.inventory[indexB] = slotA ? { ...slotA } : null;
     soundManager.playPickup();
@@ -7243,119 +7311,9 @@ export class GameEngine {
     this.emitUiSnapshot();
   }
 
-  public handleCanvasTap(screenX: number, screenY: number): void {
-    if (this.isPaused || this.isGameOver) return;
-    const { wx, wy } = this.camera.screenToWorld(screenX, screenY);
-    const { tx, ty } = this.world.worldToTile(wx, wy);
-
-    const dx = wx - this.player.x;
-    const dy = wy - this.player.y;
-    this.player.direction = EntityManager.vectorToDirection(
-      dx,
-      dy,
-      this.player.direction
-    );
-
-    // Check if the player tapped directly on a Death Bag within reach
-    const tappedBag = this.deathBags.find(
-      (b) =>
-        Math.hypot(b.x - wx, b.y - wy) <= 28 &&
-        Math.hypot(b.x - this.player.x, b.y - this.player.y) <= TILE_SIZE * 2.8
-    );
-    if (tappedBag) {
-      this.lootDeathBag(tappedBag.id);
-      return;
-    }
-
-    // Check if the player tapped directly on a placed Crafting Station or Interactive Structure within reach
-    const chunk = this.world.getOrCreateChunk(
-      Math.floor(tx / 16),
-      Math.floor(ty / 16)
-    );
-    const tappedStation = chunk.structures.find(
-      (s) =>
-        s.tileX === tx &&
-        s.tileY === ty &&
-        (s.type === PlaceableType.WORKBENCH ||
-          s.type === PlaceableType.FURNACE ||
-          s.type === PlaceableType.SOLAR_ALTAR ||
-          s.type === PlaceableType.CAMPFIRE ||
-          s.type === PlaceableType.EXPLORER_TENT ||
-          s.type === PlaceableType.HEALING_FOUNTAIN ||
-          s.type === PlaceableType.VILLAGE_WELL ||
-          s.type === PlaceableType.MARKET_STALL ||
-          s.type === PlaceableType.VILLAGE_HOUSE ||
-          s.type === PlaceableType.CHEST ||
-          s.type === PlaceableType.WOOD_DOOR ||
-          s.type === PlaceableType.IRON_GATE)
-    );
-    if (
-      !this.buildDemolishMode &&
-      tappedStation &&
-      Math.hypot(wx - this.player.x, wy - this.player.y) <= TILE_SIZE * 3.2
-    ) {
-      this.performInteractAction();
-      return;
-    }
-
-    // Check if the player tapped directly on a creature to select who to attack (or interact with if peaceful NPC)
-    let tappedCreature: CreatureEntity | null = null;
-    let bestTapDist = 30;
-    for (const cr of this.entities.creatures) {
-      if (cr.hp <= 0 || cr.tamed || cr.isInsideHouse) continue;
-      const dTap = Math.hypot(cr.x - wx, cr.y - wy);
-      if (dTap <= bestTapDist) {
-        bestTapDist = dTap;
-        tappedCreature = cr;
-      }
-    }
-
-    if (tappedCreature) {
-      const isVillagerOrWanderer =
-        tappedCreature.kind === CreatureKind.VILLAGER ||
-        tappedCreature.kind === CreatureKind.WANDERER;
-      const isPeacefulNpc = isVillagerOrWanderer && !tappedCreature.isHostile;
-      const isNegotiatingHostileNpc =
-        isVillagerOrWanderer &&
-        tappedCreature.isHostile &&
-        this.isPlayerHoldingPeaceItem();
-      const distPlayer = Math.hypot(
-        tappedCreature.x - this.player.x,
-        tappedCreature.y - this.player.y
-      );
-      if (
-        (isPeacefulNpc && !this.innocentFireEnabled) ||
-        isNegotiatingHostileNpc
-      ) {
-        if (distPlayer <= 84) {
-          this.performInteractAction();
-          return;
-        }
-      } else {
-        this.preferredTargetCreatureId = tappedCreature.id;
-        this.player.direction = EntityManager.vectorToDirection(
-          tappedCreature.x - this.player.x,
-          tappedCreature.y - this.player.y,
-          this.player.direction
-        );
-        this.performAttackOrHarvestAction();
-        return;
-      }
-    }
-
-    const heldSlot = this.player.inventory[this.player.selectedHotbarIndex];
-    const heldItem = heldSlot ? ITEMS[heldSlot.itemId] : null;
-
-    if (heldItem && heldItem.category === ItemCategory.PLACEABLE) {
-      const dist = Math.hypot(wx - this.player.x, wy - this.player.y);
-      if (dist <= TILE_SIZE * 3.8) {
-        this.customTargetTile = { tx, ty };
-        this.performUseOrPlaceHeldItemAction();
-        return;
-      }
-    }
-
-    this.performAttackOrHarvestAction();
+  public handleCanvasTap(_screenX: number, _screenY: number): void {
+    // Player actions (Attack/Break, Interact, Mount, Place/Consume) must ONLY be triggered
+    // by clicking their dedicated HUD buttons (or pressing action keys), never by clicking the empty canvas.
   }
 
   // === BUILD & SAFETY MODE CONTROLS ===
@@ -7907,6 +7865,22 @@ export class GameEngine {
     const slotA = slots[indexA];
     const slotB = slots[indexB];
 
+    if (slotA && slotB && slotA.itemId === slotB.itemId) {
+      const maxStack = ITEMS[slotB.itemId]?.maxStack || 99;
+      if (maxStack > 1 && slotB.count < maxStack) {
+        const transfer = Math.min(slotA.count, maxStack - slotB.count);
+        const newDstCount = slotB.count + transfer;
+        const newSrcCount = slotA.count - transfer;
+        slots[indexB] = { ...slotB, count: newDstCount };
+        slots[indexA] =
+          newSrcCount > 0 ? { ...slotA, count: newSrcCount } : null;
+        soundManager.playPickup();
+        this.syncChunkAtTile(chest.tileX, chest.tileY);
+        this.emitUiSnapshot();
+        return;
+      }
+    }
+
     slots[indexA] = slotB ? { ...slotB } : null;
     slots[indexB] = slotA ? { ...slotA } : null;
     soundManager.playPickup();
@@ -7915,11 +7889,12 @@ export class GameEngine {
   }
 
   /**
-   * Minecraft-style 2-click item move/swap across Chest slots and Player Inventory slots:
+   * Minecraft-style 2-click item move/stack/swap across Chest slots and Player Inventory slots:
    * - Click 1 selects the item slot (`source`).
    * - Click 2 clicks the destination slot (`dest`).
    * - If `dest` is empty, moves the item there.
-   * - If `dest` has another item, swaps their positions directly.
+   * - If `dest` has the same item and is not full, stacks them up to `maxStack`.
+   * - Otherwise swaps their positions directly.
    */
   public moveOrSwapChestAndPlayerSlot(
     chestId: string,
@@ -7982,6 +7957,27 @@ export class GameEngine {
       this.syncChunkAtTile(chest.tileX, chest.tileY);
       this.emitUiSnapshot();
       return true;
+    }
+
+    // Stack identical items if destination stack has room
+    if (dstSlot && dstSlot.itemId === srcSlot.itemId) {
+      const maxStack = ITEMS[dstSlot.itemId]?.maxStack || 99;
+      if (maxStack > 1 && dstSlot.count < maxStack) {
+        const transfer = Math.min(srcSlot.count, maxStack - dstSlot.count);
+        const newDstCount = dstSlot.count + transfer;
+        const newSrcCount = srcSlot.count - transfer;
+        setSlot(dest, { ...dstSlot, count: newDstCount });
+        setSlot(
+          source,
+          newSrcCount > 0 ? { ...srcSlot, count: newSrcCount } : null
+        );
+        soundManager.playPickup();
+        if (source.container === 'chest' || dest.container === 'chest') {
+          this.syncChunkAtTile(chest.tileX, chest.tileY);
+        }
+        this.emitUiSnapshot();
+        return true;
+      }
     }
 
     setSlot(source, dstSlot);
@@ -10082,57 +10078,31 @@ export class GameEngine {
   }
 
   public getNearbyWildAnimal(): CreatureEntity | null {
-    const dirVec = this.getDirectionOffset(this.player.direction);
-    let best: CreatureEntity | null = null;
-    let bestScore = Infinity;
-    for (const cr of this.entities.creatures) {
-      if (
-        !cr.isHostile &&
-        !cr.tamed &&
-        cr.kind !== CreatureKind.VILLAGER &&
-        cr.kind !== CreatureKind.WANDERER &&
-        cr.kind !== CreatureKind.BOAT
-      ) {
-        const dx = cr.x - this.player.x;
-        const dy = cr.y - this.player.y;
-        const d = Math.hypot(dx, dy);
-        if (d <= 80) {
-          const dot = d > 0.001 ? (dx * dirVec.x + dy * dirVec.y) / d : 1;
-          const score = d - dot * 22;
-          if (score < bestScore) {
-            bestScore = score;
-            best = cr;
-          }
-        }
-      }
-    }
-    return best;
+    const aimed = this.getAimedTarget();
+    if (aimed?.kind !== 'wild_animal' || !aimed.creatureId) return null;
+    return (
+      this.entities.creatures.find(
+        (cr) =>
+          cr.id === aimed.creatureId &&
+          !cr.isHostile &&
+          !cr.tamed &&
+          cr.kind !== CreatureKind.VILLAGER &&
+          cr.kind !== CreatureKind.WANDERER &&
+          cr.kind !== CreatureKind.BOAT
+      ) || null
+    );
   }
 
   public getNearbyTamedAnimal(): CreatureEntity | null {
-    const dirVec = this.getDirectionOffset(this.player.direction);
-    let best: CreatureEntity | null = null;
-    let bestScore = Infinity;
-    for (const cr of this.entities.creatures) {
-      if (cr.tamed || cr.kind === CreatureKind.BOAT) {
-        const dx = cr.x - this.player.x;
-        const dy = cr.y - this.player.y;
-        const d = Math.hypot(dx, dy);
-        if (d <= 86) {
-          const dot = d > 0.001 ? (dx * dirVec.x + dy * dirVec.y) / d : 1;
-          const isMount =
-            cr.kind === CreatureKind.HORSE ||
-            cr.kind === CreatureKind.CAMEL ||
-            cr.kind === CreatureKind.BOAT;
-          const score = d - dot * 22 - (isMount ? 8 : 0);
-          if (score < bestScore) {
-            bestScore = score;
-            best = cr;
-          }
-        }
-      }
-    }
-    return best;
+    const aimed = this.getAimedTarget();
+    if (aimed?.kind !== 'tamed_animal' || !aimed.creatureId) return null;
+    return (
+      this.entities.creatures.find(
+        (cr) =>
+          cr.id === aimed.creatureId &&
+          (cr.tamed || cr.kind === CreatureKind.BOAT)
+      ) || null
+    );
   }
 
   // =========================================================================
@@ -11335,6 +11305,35 @@ export class GameEngine {
     const srcSlot = getSlot(source);
     if (!srcSlot || srcSlot.count <= 0) return false;
     const dstSlot = getSlot(dest);
+
+    if (dstSlot && dstSlot.itemId === srcSlot.itemId) {
+      const maxStack = ITEMS[dstSlot.itemId]?.maxStack || 99;
+      if (maxStack > 1 && dstSlot.count < maxStack) {
+        const transfer = Math.min(srcSlot.count, maxStack - dstSlot.count);
+        const newDstCount = dstSlot.count + transfer;
+        const newSrcCount = srcSlot.count - transfer;
+        setSlot(dest, { ...dstSlot, count: newDstCount });
+        setSlot(
+          source,
+          newSrcCount > 0 ? { ...srcSlot, count: newSrcCount } : null
+        );
+        this.syncPlayerMountedCreatureData();
+        if (this.multiplayer.isOnline && this.multiplayer.role === 'GUEST') {
+          this.multiplayer.sendGuestMountEvent({
+            action: 'mount_inventory',
+            creatureId: cr.id,
+            ownerId: this.getLocalOwnerId(),
+            mountInventory: cr.mountInventory,
+          });
+        } else if (this.multiplayer.isOnline && this.multiplayer.role === 'HOST') {
+          this.multiplayer.sendCreaturesSync(this.entities.creatures);
+        }
+        void this.saveGame(true);
+        soundManager.playPickup();
+        this.emitUiSnapshot();
+        return true;
+      }
+    }
 
     setSlot(source, dstSlot);
     setSlot(dest, srcSlot);
