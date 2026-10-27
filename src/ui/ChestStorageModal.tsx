@@ -1,14 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import {
-  ArrowDownToLine,
-  ArrowUpFromLine,
-  Check,
-  Edit3,
-  Layers,
-  Package,
-  Trash2,
-  X,
-} from 'lucide-react';
+import { Check, Edit3, Trash2, X } from 'lucide-react';
 import { ITEMS } from '../game/core/ItemRegistry';
 import {
   CHEST_STORAGE_SIZE,
@@ -39,12 +30,10 @@ export const ChestStorageModal: React.FC<ChestStorageModalProps> = ({
   onClose,
 }) => {
   const chest = engine.getChestById(chestId);
-  const [selectedSource, setSelectedSource] = useState<'chest' | 'player'>(
-    'player'
-  );
-  const [selectedIndex, setSelectedIndex] = useState<number>(
-    player.selectedHotbarIndex
-  );
+  const [selectedSlot, setSelectedSlot] = useState<{
+    container: 'chest' | 'player';
+    index: number;
+  } | null>(null);
   const [editingName, setEditingName] = useState(false);
   const [nameInput, setNameInput] = useState(
     chest?.customName || 'Baú de Madeira'
@@ -54,6 +43,7 @@ export const ChestStorageModal: React.FC<ChestStorageModalProps> = ({
   useEffect(() => {
     if (chest) {
       setNameInput(chest.customName || 'Baú de Madeira');
+      setSelectedSlot(null);
     }
   }, [chest?.id, chest?.customName]);
 
@@ -70,10 +60,52 @@ export const ChestStorageModal: React.FC<ChestStorageModalProps> = ({
   ).length;
 
   const activeSlot =
-    selectedSource === 'chest'
-      ? chestSlots[selectedIndex] || null
-      : player.inventory[selectedIndex] || null;
+    selectedSlot === null
+      ? null
+      : selectedSlot.container === 'chest'
+      ? chestSlots[selectedSlot.index] || null
+      : player.inventory[selectedSlot.index] || null;
   const activeItemDef = activeSlot ? ITEMS[activeSlot.itemId] : null;
+
+  const handleSlotClick = (container: 'chest' | 'player', index: number) => {
+    const clickedSlot =
+      container === 'chest' ? chestSlots[index] : player.inventory[index];
+
+    if (!selectedSlot) {
+      if (clickedSlot && clickedSlot.count > 0) {
+        setSelectedSlot({ container, index });
+      }
+      return;
+    }
+
+    if (
+      selectedSlot.container === container &&
+      selectedSlot.index === index
+    ) {
+      setSelectedSlot(null);
+      return;
+    }
+
+    const srcSlot =
+      selectedSlot.container === 'chest'
+        ? chestSlots[selectedSlot.index]
+        : player.inventory[selectedSlot.index];
+
+    if (!srcSlot || srcSlot.count <= 0) {
+      if (clickedSlot && clickedSlot.count > 0) {
+        setSelectedSlot({ container, index });
+      } else {
+        setSelectedSlot(null);
+      }
+      return;
+    }
+
+    engine.moveOrSwapChestAndPlayerSlot(chest.id, selectedSlot, {
+      container,
+      index,
+    });
+    setSelectedSlot(null);
+  };
 
   const handleSaveName = (e: React.FormEvent) => {
     e.preventDefault();
@@ -146,48 +178,8 @@ export const ChestStorageModal: React.FC<ChestStorageModalProps> = ({
             )}
           </div>
 
-          {/* Quick Actions + Help (?) + Close */}
+          {/* Actions + Help (?) + Close */}
           <div className="flex items-center gap-1.5 flex-wrap">
-            <HoldIconButton
-              onClick={() => engine.quickStackToChest(chest.id)}
-              tooltipTitle="Empilhar Iguais"
-              tooltipDesc="Guarda apenas itens que já existem neste baú."
-              className="min-h-[32px] px-2 medieval-btn-gold text-[9px] sm:text-[10px] font-pixel font-bold flex items-center gap-1"
-            >
-              <Layers className="w-3.5 h-3.5" />
-              <span>Empilhar</span>
-            </HoldIconButton>
-
-            <HoldIconButton
-              onClick={() => engine.depositBackpackToChest(chest.id)}
-              tooltipTitle="Guardar Mochila"
-              tooltipDesc="Transfere os itens da mochila (preserva a mão ativa)."
-              className="min-h-[32px] px-2 medieval-btn-wood text-[9px] sm:text-[10px] font-pixel font-bold flex items-center gap-1"
-            >
-              <ArrowUpFromLine className="w-3.5 h-3.5 text-amber-300" />
-              <span>Guardar</span>
-            </HoldIconButton>
-
-            <HoldIconButton
-              onClick={() => engine.takeAllFromChest(chest.id)}
-              tooltipTitle="Retirar Tudo"
-              tooltipDesc="Puxa todos os itens do baú para a sua mochila."
-              className="min-h-[32px] px-2 medieval-btn-emerald text-[9px] sm:text-[10px] font-pixel font-bold flex items-center gap-1"
-            >
-              <ArrowDownToLine className="w-3.5 h-3.5" />
-              <span>Retirar</span>
-            </HoldIconButton>
-
-            <HoldIconButton
-              onClick={() => engine.sortChestStorage(chest.id)}
-              tooltipTitle="Organizar Baú"
-              tooltipDesc="Agrupa pilhas e ordena por categoria."
-              className="min-h-[32px] px-2 medieval-btn-wood text-[9px] sm:text-[10px] font-pixel font-bold flex items-center gap-1"
-            >
-              <Package className="w-3.5 h-3.5 text-amber-300" />
-              <span>Organizar</span>
-            </HoldIconButton>
-
             <HoldIconButton
               onClick={() => {
                 if (engine.pickupChestStructure(chest.id)) {
@@ -222,7 +214,9 @@ export const ChestStorageModal: React.FC<ChestStorageModalProps> = ({
                 BAÚ ({usedChestSlots}/{CHEST_STORAGE_SIZE})
               </span>
               <span className="text-[9px] text-[#c4ab7d]">
-                Toque p/ retirar
+                {selectedSlot
+                  ? 'Clique no destino p/ mover ou trocar'
+                  : 'Clique no item p/ selecionar'}
               </span>
             </div>
 
@@ -230,22 +224,18 @@ export const ChestStorageModal: React.FC<ChestStorageModalProps> = ({
               {chestSlots.slice(0, CHEST_STORAGE_SIZE).map((slot, idx) => {
                 const def = slot ? ITEMS[slot.itemId] : null;
                 const isSel =
-                  selectedSource === 'chest' && selectedIndex === idx;
+                  selectedSlot?.container === 'chest' &&
+                  selectedSlot.index === idx;
                 return (
                   <button
                     key={idx}
-                    onClick={() => {
-                      if (slot) {
-                        engine.transferChestToPlayer(chest.id, idx);
-                        setSelectedSource('chest');
-                        setSelectedIndex(idx);
-                      } else {
-                        setSelectedSource('chest');
-                        setSelectedIndex(idx);
-                      }
-                    }}
+                    onClick={() => handleSlotClick('chest', idx)}
                     className={`relative aspect-square min-h-[36px] sm:min-h-[42px] flex flex-col items-center justify-center p-0.5 transition-transform ${
-                      isSel ? 'mc-slot-active' : 'mc-slot'
+                      isSel
+                        ? 'mc-slot-active ring-2 ring-amber-400'
+                        : selectedSlot
+                        ? 'mc-slot hover:border-amber-400/70'
+                        : 'mc-slot'
                     }`}
                   >
                     {slot && def ? (
@@ -267,7 +257,7 @@ export const ChestStorageModal: React.FC<ChestStorageModalProps> = ({
               })}
             </div>
 
-            {/* Selected Slot Action Strip */}
+            {/* Selected Slot Info Strip */}
             <div className="mc-slot p-2 flex items-center justify-between gap-2 min-h-[50px]">
               {activeSlot && activeItemDef ? (
                 <>
@@ -278,102 +268,24 @@ export const ChestStorageModal: React.FC<ChestStorageModalProps> = ({
                       className="w-6 h-6 pixelated shrink-0"
                     />
                     <div className="min-w-0">
-                      <div className="font-pixel text-[10px] font-bold text-white truncate">
-                        {activeItemDef.name} (x{activeSlot.count})
+                      <div className="font-pixel text-[10px] font-bold text-amber-300 truncate">
+                        Selecionado: {activeItemDef.name} (x{activeSlot.count})
                       </div>
                       <div className="text-[9px] text-[#c4ab7d] truncate">
-                        {activeItemDef.description}
+                        Clique em qualquer slot vazio ou ocupado para mover ou trocar de posição.
                       </div>
                     </div>
                   </div>
-
-                  <div className="flex items-center gap-1 shrink-0">
-                    {selectedSource === 'chest' ? (
-                      <>
-                        <button
-                          onClick={() =>
-                            engine.transferChestToPlayer(
-                              chest.id,
-                              selectedIndex,
-                              1
-                            )
-                          }
-                          className="px-2 py-1 medieval-btn-wood text-[9px] font-bold"
-                        >
-                          -1
-                        </button>
-                        {activeSlot.count > 1 && (
-                          <button
-                            onClick={() =>
-                              engine.transferChestToPlayer(
-                                chest.id,
-                                selectedIndex,
-                                Math.ceil(activeSlot.count / 2)
-                              )
-                            }
-                            className="px-2 py-1 medieval-btn-wood text-[9px] font-bold"
-                          >
-                            50%
-                          </button>
-                        )}
-                        <button
-                          onClick={() =>
-                            engine.transferChestToPlayer(
-                              chest.id,
-                              selectedIndex
-                            )
-                          }
-                          className="px-2 py-1 medieval-btn-emerald text-[9px] font-bold"
-                        >
-                          Retirar
-                        </button>
-                      </>
-                    ) : (
-                      <>
-                        <button
-                          onClick={() =>
-                            engine.transferPlayerToChest(
-                              chest.id,
-                              selectedIndex,
-                              1
-                            )
-                          }
-                          className="px-2 py-1 medieval-btn-wood text-[9px] font-bold"
-                        >
-                          +1
-                        </button>
-                        {activeSlot.count > 1 && (
-                          <button
-                            onClick={() =>
-                              engine.transferPlayerToChest(
-                                chest.id,
-                                selectedIndex,
-                                Math.ceil(activeSlot.count / 2)
-                              )
-                            }
-                            className="px-2 py-1 medieval-btn-wood text-[9px] font-bold"
-                          >
-                            50%
-                          </button>
-                        )}
-                        <button
-                          onClick={() =>
-                            engine.transferPlayerToChest(
-                              chest.id,
-                              selectedIndex
-                            )
-                          }
-                          className="px-2 py-1 medieval-btn-gold text-[9px] font-bold"
-                        >
-                          Guardar
-                        </button>
-                      </>
-                    )}
-                  </div>
+                  <button
+                    onClick={() => setSelectedSlot(null)}
+                    className="px-2 py-1 medieval-btn-wood text-[9px] font-bold shrink-0"
+                  >
+                    Cancelar
+                  </button>
                 </>
               ) : (
                 <div className="text-[10px] text-[#8c6d46] w-full text-center">
-                  Toque em qualquer item para transferir.
+                  Clique em um item e depois clique no local de destino (Baú ou Mochila).
                 </div>
               )}
             </div>
@@ -386,7 +298,9 @@ export const ChestStorageModal: React.FC<ChestStorageModalProps> = ({
                 MOCHILA ({usedPlayerSlots}/{TOTAL_INVENTORY_SIZE})
               </span>
               <span className="text-[9px] text-amber-300">
-                Toque p/ guardar
+                {selectedSlot
+                  ? 'Clique no destino p/ mover ou trocar'
+                  : 'Clique no item p/ selecionar'}
               </span>
             </div>
 
@@ -397,22 +311,18 @@ export const ChestStorageModal: React.FC<ChestStorageModalProps> = ({
                   const idx = offset + HOTBAR_SIZE;
                   const def = slot ? ITEMS[slot.itemId] : null;
                   const isSel =
-                    selectedSource === 'player' && selectedIndex === idx;
+                    selectedSlot?.container === 'player' &&
+                    selectedSlot.index === idx;
                   return (
                     <button
                       key={idx}
-                      onClick={() => {
-                        if (slot) {
-                          engine.transferPlayerToChest(chest.id, idx);
-                          setSelectedSource('player');
-                          setSelectedIndex(idx);
-                        } else {
-                          setSelectedSource('player');
-                          setSelectedIndex(idx);
-                        }
-                      }}
+                      onClick={() => handleSlotClick('player', idx)}
                       className={`relative aspect-square min-h-[36px] sm:min-h-[42px] flex flex-col items-center justify-center p-0.5 ${
-                        isSel ? 'mc-slot-active' : 'mc-slot'
+                        isSel
+                          ? 'mc-slot-active ring-2 ring-amber-400'
+                          : selectedSlot
+                          ? 'mc-slot hover:border-amber-400/70'
+                          : 'mc-slot'
                       }`}
                     >
                       {slot && def ? (
@@ -445,22 +355,18 @@ export const ChestStorageModal: React.FC<ChestStorageModalProps> = ({
                 {player.inventory.slice(0, HOTBAR_SIZE).map((slot, idx) => {
                   const def = slot ? ITEMS[slot.itemId] : null;
                   const isSel =
-                    selectedSource === 'player' && selectedIndex === idx;
+                    selectedSlot?.container === 'player' &&
+                    selectedSlot.index === idx;
                   return (
                     <button
                       key={idx}
-                      onClick={() => {
-                        if (slot) {
-                          engine.transferPlayerToChest(chest.id, idx);
-                          setSelectedSource('player');
-                          setSelectedIndex(idx);
-                        } else {
-                          setSelectedSource('player');
-                          setSelectedIndex(idx);
-                        }
-                      }}
+                      onClick={() => handleSlotClick('player', idx)}
                       className={`relative aspect-square min-h-[36px] sm:min-h-[42px] flex flex-col items-center justify-center p-0.5 ${
-                        isSel ? 'mc-slot-active' : 'mc-slot'
+                        isSel
+                          ? 'mc-slot-active ring-2 ring-amber-400'
+                          : selectedSlot
+                          ? 'mc-slot hover:border-amber-400/70'
+                          : 'mc-slot'
                       }`}
                     >
                       <span className="absolute top-0 left-0.5 text-[7px] font-mono-tabular text-amber-400/80">
@@ -492,20 +398,20 @@ export const ChestStorageModal: React.FC<ChestStorageModalProps> = ({
       {showHelp && (
         <WindowHelpModal
           title="Ajuda — Baú de Madeira"
-          subtitle="Transferência rápida e organização de estoque"
+          subtitle="Como mover e organizar itens entre a Mochila e o Baú"
           onClose={() => setShowHelp(false)}
           sections={[
             {
-              title: '1. Guardar e Retirar c/ 1 Toque',
-              body: 'Toque em qualquer item da sua Mochila (à direita) para guardá-lo no baú, ou toque em um item do Baú (à esquerda) para puxá-lo para a mochila.',
+              title: '1. Selecionar e Mover (Estilo Minecraft)',
+              body: 'Clique primeiro sobre o item que deseja mover (no Baú ou na Mochila) para selecioná-lo. Em seguida, clique no slot de destino onde deseja colocá-lo.',
             },
             {
-              title: '2. Empilhar & Guardar Tudo',
-              body: 'O botão Empilhar envia para o baú apenas os itens da sua mochila que já possuem pilha igual dentro do baú. O botão Guardar envia toda a mochila de uma vez.',
+              title: '2. Troca de Posição e Desseleção',
+              body: 'Se você clicar em um slot de destino que já possui outro item, os dois itens trocam de posição imediatamente. Após qualquer movimento, o item é desselecionado automaticamente.',
             },
             {
               title: '3. Renomear & Recolher',
-              body: 'Toque no ícone de lápis ao lado do título para dar um nome ao baú (ex: Minérios, Comidas), ou use Recolher para desmontar o baú.',
+              body: 'Toque no ícone de lápis ao lado do título para dar um nome ao baú, ou use Recolher para desmontar o baú.',
             },
           ]}
         />

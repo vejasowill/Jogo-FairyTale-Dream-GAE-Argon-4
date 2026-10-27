@@ -205,6 +205,7 @@ export interface NatureNode {
   requiredTool: ToolType;
   requiredTier: number;
   hitFlashTimer: number;
+  breakIdleTimer?: number;
   animOffset: number;
 }
 
@@ -222,6 +223,7 @@ export interface PlacedStructure {
   orientation?: 'auto' | 'horizontal' | 'vertical';
   lightRadius?: number;
   hitFlashTimer: number;
+  breakIdleTimer?: number;
   lootItems?: { itemId: string; count: number }[];
   storageSlots?: (InventorySlot | null)[]; // 24-slot persistent interactive storage for CHEST
   customName?: string;
@@ -604,7 +606,7 @@ export interface OnlineActivationStep {
 }
 
 // REGRA PERMANENTE: A cada nova atualização do jogo, incremente a versão para o número seguinte da beta (ex: 0.4.4-beta -> 0.4.5-beta).
-export const GAME_VERSION = '0.4.8-beta';
+export const GAME_VERSION = '0.4.9-beta';
 export const CURRENT_WORLD_GEN_VERSION = 3;
 
 export interface OnlineSessionInfo {

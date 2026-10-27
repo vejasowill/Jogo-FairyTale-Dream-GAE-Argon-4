@@ -117,6 +117,7 @@ export class GameEngine {
   public showHitboxPreview = false;
   public innocentFireEnabled = false;
   private preferredTargetCreatureId: string | null = null;
+  private activeBreakingTargetId: string | null = null;
 
   private canvas: HTMLCanvasElement | null = null;
   private rafId: number | null = null;
@@ -3330,8 +3331,10 @@ export class GameEngine {
     const canSpike = this.spikeTrapTimer >= 0.85;
     if (canSpike) this.spikeTrapTimer = 0;
 
-    for (let dy = -1; dy <= 1; dy++) {
-      for (let dx = -1; dx <= 1; dx++) {
+    let regeneratedAnyBreakable = false;
+
+    for (let dy = -2; dy <= 2; dy++) {
+      for (let dx = -2; dx <= 2; dx++) {
         const key = WorldManager.chunkKey(pChunk.cx + dx, pChunk.cy + dy);
         const chunk = this.world.chunks[key];
         if (!chunk) continue;
@@ -3340,11 +3343,35 @@ export class GameEngine {
           if (node.hitFlashTimer > 0) {
             node.hitFlashTimer = Math.max(0, node.hitFlashTimer - dt);
           }
+          // Minecraft-style continuous breaking: if breaking stops or becomes inactive, regenerate full HP
+          if (node.hp < node.maxHp) {
+            node.breakIdleTimer = (node.breakIdleTimer ?? 0) - dt;
+            if (node.breakIdleTimer <= 0) {
+              node.hp = node.maxHp;
+              node.breakIdleTimer = 0;
+              if (this.activeBreakingTargetId === node.id) {
+                this.activeBreakingTargetId = null;
+              }
+              regeneratedAnyBreakable = true;
+            }
+          }
         }
 
         for (const st of chunk.structures) {
           if (st.hitFlashTimer > 0) {
             st.hitFlashTimer = Math.max(0, st.hitFlashTimer - dt);
+          }
+          // Minecraft-style continuous breaking: if breaking stops or becomes inactive, regenerate full HP
+          if (st.hp < st.maxHp) {
+            st.breakIdleTimer = (st.breakIdleTimer ?? 0) - dt;
+            if (st.breakIdleTimer <= 0) {
+              st.hp = st.maxHp;
+              st.breakIdleTimer = 0;
+              if (this.activeBreakingTargetId === st.id) {
+                this.activeBreakingTargetId = null;
+              }
+              regeneratedAnyBreakable = true;
+            }
           }
 
           if (canZap && st.type === PlaceableType.GUARDIAN_TOTEM) {
@@ -3412,6 +3439,49 @@ export class GameEngine {
           }
         }
       }
+    }
+
+    if (regeneratedAnyBreakable) {
+      this.emitUiSnapshot();
+    }
+  }
+
+  /**
+   * Restores full HP (`maxHp`) to any partially-broken NatureNode or PlacedStructure
+   * whenever breaking is interrupted (e.g., player switches target, attacks a creature, or swings at air).
+   */
+  private resetInterruptedBreakingTargets(activeTargetId: string | null): void {
+    const pTile = this.world.worldToTile(this.player.x, this.player.y);
+    const pChunk = this.world.tileToChunk(pTile.tx, pTile.ty);
+    let restoredAny = false;
+
+    for (let dy = -2; dy <= 2; dy++) {
+      for (let dx = -2; dx <= 2; dx++) {
+        const chunk =
+          this.world.chunks[
+            WorldManager.chunkKey(pChunk.cx + dx, pChunk.cy + dy)
+          ];
+        if (!chunk) continue;
+        for (const node of chunk.nodes) {
+          if (node.id !== activeTargetId && node.hp < node.maxHp) {
+            node.hp = node.maxHp;
+            node.breakIdleTimer = 0;
+            restoredAny = true;
+          }
+        }
+        for (const st of chunk.structures) {
+          if (st.id !== activeTargetId && st.hp < st.maxHp) {
+            st.hp = st.maxHp;
+            st.breakIdleTimer = 0;
+            restoredAny = true;
+          }
+        }
+      }
+    }
+
+    this.activeBreakingTargetId = activeTargetId;
+    if (restoredAny) {
+      this.emitUiSnapshot();
     }
   }
 
@@ -3568,6 +3638,7 @@ export class GameEngine {
         : [];
 
     if (targetsToHit.length > 0) {
+      this.resetInterruptedBreakingTargets(null);
       for (const cr of targetsToHit) {
         this.damageCreature(
           cr,
@@ -3807,6 +3878,7 @@ export class GameEngine {
                   st.type === PlaceableType.HEALING_FOUNTAIN)
             );
             if (isWorldFixedLandmark) {
+              this.resetInterruptedBreakingTargets(null);
               soundManager.playHitStone();
               this.addFloatingText(
                 'Estrutura ancestral fixa do mundo',
@@ -3829,6 +3901,7 @@ export class GameEngine {
             );
 
             if (!evalBreak.canBreak) {
+              this.resetInterruptedBreakingTargets(null);
               soundManager.playHitStone();
               this.addFloatingText(
                 evalBreak.blockReason || req.requirementLabel,
@@ -3839,9 +3912,11 @@ export class GameEngine {
               return;
             }
 
+            this.resetInterruptedBreakingTargets(st.id);
             const structDmg = evalBreak.force;
             st.hp -= structDmg;
             st.hitFlashTimer = 0.15;
+            st.breakIdleTimer = 1.15;
             if (req.requiredTool === ToolType.PICKAXE) {
               soundManager.playHitStone();
               this.renderer.spawnBurst(sx, sy, 'STONE', st.hp <= 0 ? 14 : 7);
@@ -3862,6 +3937,7 @@ export class GameEngine {
               );
             }
             if (st.hp <= 0) {
+              this.activeBreakingTargetId = null;
               const structBreakKey = `break_struct:${st.id}:${st.tileX},${st.tileY}`;
               if (!this.tryClaimWorldAction(structBreakKey)) {
                 chunk.structures.splice(si, 1);
@@ -3892,14 +3968,17 @@ export class GameEngine {
               }
               this.spawnDrop(st.itemId, 1, sx, sy);
               chunk.structures.splice(si, 1);
-              this.emitUiSnapshot();
             }
             this.syncChunkAtTile(st.tileX, st.tileY);
+            this.emitUiSnapshot();
             return;
           }
         }
       }
     }
+
+    // Swung without hitting a breakable node/structure: interrupt any active breaking progress
+    this.resetInterruptedBreakingTargets(null);
 
     if (blockedPeacefulNpc) {
       this.addFloatingText(
@@ -5689,6 +5768,7 @@ export class GameEngine {
     );
 
     if (!evalBreak.canBreak) {
+      this.resetInterruptedBreakingTargets(null);
       this.addFloatingText(
         evalBreak.blockReason || 'Ferramenta inadequada para este material',
         nx,
@@ -5699,9 +5779,11 @@ export class GameEngine {
       return;
     }
 
+    this.resetInterruptedBreakingTargets(node.id);
     const power = evalBreak.force;
     node.hp -= power;
     node.hitFlashTimer = 0.16;
+    node.breakIdleTimer = 1.15;
 
     if (bp.requiredTool === ToolType.PICKAXE) {
       soundManager.playHitStone();
@@ -5717,9 +5799,11 @@ export class GameEngine {
     this.addFloatingText(`-${Math.round(power)}`, nx, ny - 12, '#fde047');
 
     if (node.hp <= 0) {
+      this.activeBreakingTargetId = null;
       const nodeBreakKey = `break_node:${node.id}:${node.tileX},${node.tileY}`;
       if (!this.tryClaimWorldAction(nodeBreakKey)) {
         chunk.nodes.splice(nodeIndex, 1);
+        this.emitUiSnapshot();
         return;
       }
       const survivalBonusChance = (this.player.attributes.survival - 1) * 0.1;
@@ -5740,6 +5824,7 @@ export class GameEngine {
       chunk.nodes.splice(nodeIndex, 1);
     }
     this.syncChunkAtTile(node.tileX, node.tileY);
+    this.emitUiSnapshot();
   }
 
   private damageCreature(
@@ -7075,32 +7160,16 @@ export class GameEngine {
       indexA < 0 ||
       indexA >= this.player.inventory.length ||
       indexB < 0 ||
-      indexB >= this.player.inventory.length
+      indexB >= this.player.inventory.length ||
+      indexA === indexB
     ) {
       return;
     }
     const slotA = this.player.inventory[indexA];
     const slotB = this.player.inventory[indexB];
 
-    // If same item type, stack them up to maxStack!
-    if (slotA && slotB && slotA.itemId === slotB.itemId && indexA !== indexB) {
-      const def = ITEMS[slotA.itemId];
-      if (def && slotB.count < def.maxStack) {
-        const space = def.maxStack - slotB.count;
-        const move = Math.min(space, slotA.count);
-        slotB.count += move;
-        slotA.count -= move;
-        if (slotA.count <= 0) {
-          this.player.inventory[indexA] = null;
-        }
-        soundManager.playPickup();
-        this.emitUiSnapshot();
-        return;
-      }
-    }
-
-    this.player.inventory[indexA] = slotB;
-    this.player.inventory[indexB] = slotA;
+    this.player.inventory[indexA] = slotB ? { ...slotB } : null;
+    this.player.inventory[indexB] = slotA ? { ...slotA } : null;
     soundManager.playPickup();
     this.emitUiSnapshot();
   }
@@ -7774,27 +7843,92 @@ export class GameEngine {
     const slotA = slots[indexA];
     const slotB = slots[indexB];
 
-    if (slotA && slotB && slotA.itemId === slotB.itemId) {
-      const def = ITEMS[slotA.itemId];
-      if (def && slotB.count < def.maxStack) {
-        const move = Math.min(def.maxStack - slotB.count, slotA.count);
-        slotB.count += move;
-        slotA.count -= move;
-        if (slotA.count <= 0) {
-          slots[indexA] = null;
-        }
-        soundManager.playPickup();
-        this.syncChunkAtTile(chest.tileX, chest.tileY);
-        this.emitUiSnapshot();
-        return;
-      }
-    }
-
-    slots[indexA] = slotB;
-    slots[indexB] = slotA;
+    slots[indexA] = slotB ? { ...slotB } : null;
+    slots[indexB] = slotA ? { ...slotA } : null;
     soundManager.playPickup();
     this.syncChunkAtTile(chest.tileX, chest.tileY);
     this.emitUiSnapshot();
+  }
+
+  /**
+   * Minecraft-style 2-click item move/swap across Chest slots and Player Inventory slots:
+   * - Click 1 selects the item slot (`source`).
+   * - Click 2 clicks the destination slot (`dest`).
+   * - If `dest` is empty, moves the item there.
+   * - If `dest` has another item, swaps their positions directly.
+   */
+  public moveOrSwapChestAndPlayerSlot(
+    chestId: string,
+    source: { container: 'chest' | 'player'; index: number },
+    dest: { container: 'chest' | 'player'; index: number }
+  ): boolean {
+    if (
+      source.container === dest.container &&
+      source.index === dest.index
+    ) {
+      return false;
+    }
+
+    const chest = this.getChestById(chestId);
+    if (!chest) return false;
+    const chestSlots = this.ensureChestStorageInitialized(chest);
+
+    const getSlot = (
+      loc: { container: 'chest' | 'player'; index: number }
+    ): InventorySlot | null => {
+      if (loc.container === 'chest') {
+        if (loc.index < 0 || loc.index >= chestSlots.length) return null;
+        return chestSlots[loc.index];
+      }
+      if (loc.index < 0 || loc.index >= this.player.inventory.length) {
+        return null;
+      }
+      return this.player.inventory[loc.index];
+    };
+
+    const setSlot = (
+      loc: { container: 'chest' | 'player'; index: number },
+      val: InventorySlot | null
+    ): void => {
+      if (loc.container === 'chest') {
+        if (loc.index >= 0 && loc.index < chestSlots.length) {
+          chestSlots[loc.index] = val ? { ...val } : null;
+        }
+      } else {
+        if (loc.index >= 0 && loc.index < this.player.inventory.length) {
+          this.player.inventory[loc.index] = val ? { ...val } : null;
+        }
+      }
+    };
+
+    const srcSlot = getSlot(source);
+    if (!srcSlot || srcSlot.count <= 0) return false;
+    const dstSlot = getSlot(dest);
+
+    // Special case: moving gold_coin from a treasure chest into a player slot adds to gold purse
+    if (
+      source.container === 'chest' &&
+      dest.container === 'player' &&
+      srcSlot.itemId === 'gold_coin'
+    ) {
+      this.addItemToInventory('gold_coin', srcSlot.count);
+      setSlot(source, dstSlot);
+      setSlot(dest, null);
+      soundManager.playPickup();
+      this.syncChunkAtTile(chest.tileX, chest.tileY);
+      this.emitUiSnapshot();
+      return true;
+    }
+
+    setSlot(source, dstSlot);
+    setSlot(dest, srcSlot);
+
+    soundManager.playPickup();
+    if (source.container === 'chest' || dest.container === 'chest') {
+      this.syncChunkAtTile(chest.tileX, chest.tileY);
+    }
+    this.emitUiSnapshot();
+    return true;
   }
 
   /**
@@ -11082,6 +11216,80 @@ export class GameEngine {
     } else {
       this.addFloatingText('Alforje cheio (8/8 Slots)!', this.player.x, this.player.y - 20, '#f43f5e');
     }
+  }
+
+  /**
+   * Minecraft-style 2-click item move/swap across Mount Saddlebag (`mount`) and Player Inventory (`player`).
+   */
+  public moveOrSwapMountAndPlayerSlot(
+    creatureId: string,
+    source: { container: 'mount' | 'player'; index: number },
+    dest: { container: 'mount' | 'player'; index: number }
+  ): boolean {
+    if (
+      source.container === dest.container &&
+      source.index === dest.index
+    ) {
+      return false;
+    }
+
+    const cr = this.entities.creatures.find(
+      (c) => c.id === creatureId && c.tamed && c.hasSaddle
+    );
+    if (!cr || !this.isCreatureOwnedByLocalPlayer(cr)) return false;
+    this.ensureMountInventoryInitialized(cr);
+    const mountSlots = cr.mountInventory!;
+
+    const getSlot = (
+      loc: { container: 'mount' | 'player'; index: number }
+    ): InventorySlot | null => {
+      if (loc.container === 'mount') {
+        if (loc.index < 0 || loc.index >= mountSlots.length) return null;
+        return mountSlots[loc.index];
+      }
+      if (loc.index < 0 || loc.index >= this.player.inventory.length) {
+        return null;
+      }
+      return this.player.inventory[loc.index];
+    };
+
+    const setSlot = (
+      loc: { container: 'mount' | 'player'; index: number },
+      val: InventorySlot | null
+    ): void => {
+      if (loc.container === 'mount') {
+        if (loc.index >= 0 && loc.index < mountSlots.length) {
+          mountSlots[loc.index] = val ? { ...val } : null;
+        }
+      } else {
+        if (loc.index >= 0 && loc.index < this.player.inventory.length) {
+          this.player.inventory[loc.index] = val ? { ...val } : null;
+        }
+      }
+    };
+
+    const srcSlot = getSlot(source);
+    if (!srcSlot || srcSlot.count <= 0) return false;
+    const dstSlot = getSlot(dest);
+
+    setSlot(source, dstSlot);
+    setSlot(dest, srcSlot);
+
+    this.syncPlayerMountedCreatureData();
+    if (this.multiplayer.isOnline && this.multiplayer.role === 'GUEST') {
+      this.multiplayer.sendGuestMountEvent({
+        action: 'mount_inventory',
+        creatureId: cr.id,
+        ownerId: this.getLocalOwnerId(),
+        mountInventory: cr.mountInventory,
+      });
+    } else if (this.multiplayer.isOnline && this.multiplayer.role === 'HOST') {
+      this.multiplayer.sendCreaturesSync(this.entities.creatures);
+    }
+    void this.saveGame(true);
+    soundManager.playPickup();
+    this.emitUiSnapshot();
+    return true;
   }
 
   // =========================================================================

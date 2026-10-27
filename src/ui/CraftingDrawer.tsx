@@ -202,8 +202,8 @@ export const CraftingDrawer: React.FC<CraftingDrawerProps> = ({
   const [selectedRecipeId, setSelectedRecipeId] = useState<string>(
     RECIPES[0]?.id || ''
   );
-  const [selectedInvIndex, setSelectedInvIndex] = useState<number>(
-    player.selectedHotbarIndex
+  const [selectedInvIndex, setSelectedInvIndex] = useState<number | null>(
+    null
   );
   const [campfireBannerMsg, setCampfireBannerMsg] = useState<string | null>(
     null
@@ -215,7 +215,7 @@ export const CraftingDrawer: React.FC<CraftingDrawerProps> = ({
       setActiveTab(initialTab);
       setActiveStation(stationContext);
       setCategoryFilter('ALL');
-      setSelectedInvIndex(player.selectedHotbarIndex);
+      setSelectedInvIndex(null);
       setCampfireBannerMsg(null);
     }
   }, [isOpen, initialTab, stationContext]);
@@ -274,7 +274,8 @@ export const CraftingDrawer: React.FC<CraftingDrawerProps> = ({
     filteredRecipes[0] ||
     stationRecipes[0];
 
-  const selectedSlot = player.inventory[selectedInvIndex] || null;
+  const selectedSlot =
+    selectedInvIndex !== null ? player.inventory[selectedInvIndex] || null : null;
   const selectedSlotItem = selectedSlot ? ITEMS[selectedSlot.itemId] : null;
 
   // Find all recipes where the selected inventory item is used as an ingredient
@@ -362,13 +363,30 @@ export const CraftingDrawer: React.FC<CraftingDrawerProps> = ({
   };
 
   const handleInventorySlotClick = (idx: number) => {
-    setSelectedInvIndex(idx);
-  };
+    const clickedSlot = player.inventory[idx];
+    if (selectedInvIndex === null) {
+      if (clickedSlot && clickedSlot.count > 0) {
+        setSelectedInvIndex(idx);
+      }
+      return;
+    }
 
-  const handleSwapWithHotbarActive = () => {
-    if (selectedInvIndex === player.selectedHotbarIndex) return;
-    engine.swapInventorySlots(selectedInvIndex, player.selectedHotbarIndex);
-    setSelectedInvIndex(player.selectedHotbarIndex);
+    if (selectedInvIndex === idx) {
+      setSelectedInvIndex(null);
+      return;
+    }
+
+    if (!player.inventory[selectedInvIndex]) {
+      if (clickedSlot && clickedSlot.count > 0) {
+        setSelectedInvIndex(idx);
+      } else {
+        setSelectedInvIndex(null);
+      }
+      return;
+    }
+
+    engine.swapInventorySlots(selectedInvIndex, idx);
+    setSelectedInvIndex(null);
   };
 
   const resultItem = selectedRecipe
@@ -1323,7 +1341,9 @@ export const CraftingDrawer: React.FC<CraftingDrawerProps> = ({
                     MOCHILA (24 SLOTS · 3x8)
                   </span>
                   <span className="text-[#8c6d46]">
-                    Toque para inspecionar função ou mover
+                    {selectedInvIndex !== null
+                      ? 'Clique no slot de destino para mover/trocar'
+                      : 'Clique em um item para selecionar'}
                   </span>
                 </div>
                 <div className="grid grid-cols-8 gap-1">
@@ -1336,20 +1356,13 @@ export const CraftingDrawer: React.FC<CraftingDrawerProps> = ({
                       return (
                         <button
                           key={idx}
-                          onClick={() => {
-                            if (
-                              selectedInvIndex !== idx &&
-                              player.inventory[selectedInvIndex] &&
-                              !slot
-                            ) {
-                              engine.swapInventorySlots(selectedInvIndex, idx);
-                              setSelectedInvIndex(idx);
-                            } else {
-                              handleInventorySlotClick(idx);
-                            }
-                          }}
+                          onClick={() => handleInventorySlotClick(idx)}
                           className={`relative aspect-square min-h-[36px] sm:min-h-[42px] flex flex-col items-center justify-center p-0.5 ${
-                            isSel ? 'mc-slot-active' : 'mc-slot'
+                            isSel
+                              ? 'mc-slot-active ring-2 ring-amber-400'
+                              : selectedInvIndex !== null
+                              ? 'mc-slot hover:border-amber-400/70'
+                              : 'mc-slot'
                           }`}
                         >
                           {slot && def ? (
@@ -1387,21 +1400,13 @@ export const CraftingDrawer: React.FC<CraftingDrawerProps> = ({
                     return (
                       <button
                         key={idx}
-                        onClick={() => {
-                          if (
-                            selectedInvIndex !== idx &&
-                            player.inventory[selectedInvIndex] &&
-                            !slot
-                          ) {
-                            engine.swapInventorySlots(selectedInvIndex, idx);
-                            setSelectedInvIndex(idx);
-                          } else {
-                            handleInventorySlotClick(idx);
-                          }
-                          engine.selectHotbarSlot(idx);
-                        }}
+                        onClick={() => handleInventorySlotClick(idx)}
                         className={`relative aspect-square min-h-[38px] sm:min-h-[44px] flex flex-col items-center justify-center p-0.5 ${
-                          isSel ? 'mc-slot-active' : 'mc-slot'
+                          isSel
+                            ? 'mc-slot-active ring-2 ring-amber-400'
+                            : selectedInvIndex !== null
+                            ? 'mc-slot hover:border-amber-400/70'
+                            : 'mc-slot'
                         }`}
                       >
                         <span className="absolute top-0 left-0.5 text-[7px] font-mono-tabular text-amber-400/80">
@@ -1651,43 +1656,42 @@ export const CraftingDrawer: React.FC<CraftingDrawerProps> = ({
                     )}
 
                     <div className="grid grid-cols-2 gap-1.5 pt-1">
-                      {selectedSlotItem.category === ItemCategory.CONSUMABLE && (
-                        <button
-                          onClick={() => engine.consumeSlotItem(selectedInvIndex)}
-                          className="col-span-2 min-h-[34px] px-2 py-1 medieval-btn-emerald text-[10px] font-bold flex items-center justify-center gap-1"
-                        >
-                          <Utensils className="w-3.5 h-3.5" />
-                          <span>Usar</span>
-                        </button>
-                      )}
+                      {selectedSlotItem.category === ItemCategory.CONSUMABLE &&
+                        selectedInvIndex !== null && (
+                          <button
+                            onClick={() => {
+                              engine.consumeSlotItem(selectedInvIndex);
+                              if (!engine.player.inventory[selectedInvIndex]) {
+                                setSelectedInvIndex(null);
+                              }
+                            }}
+                            className="col-span-2 min-h-[34px] px-2 py-1 medieval-btn-emerald text-[10px] font-bold flex items-center justify-center gap-1"
+                          >
+                            <Utensils className="w-3.5 h-3.5" />
+                            <span>Usar</span>
+                          </button>
+                        )}
 
-                      {selectedSlotItem.category === ItemCategory.ARMOR && (
-                        <button
-                          onClick={() =>
-                            engine.equipArmorFromSlot(selectedInvIndex)
-                          }
-                          className="col-span-2 min-h-[34px] px-2 py-1 medieval-btn-gold text-[10px] font-bold flex items-center justify-center gap-1"
-                        >
-                          <Shield className="w-3.5 h-3.5" />
-                          <span>Equipar</span>
-                        </button>
-                      )}
+                      {selectedSlotItem.category === ItemCategory.ARMOR &&
+                        selectedInvIndex !== null && (
+                          <button
+                            onClick={() => {
+                              engine.equipArmorFromSlot(selectedInvIndex);
+                              setSelectedInvIndex(null);
+                            }}
+                            className="col-span-2 min-h-[34px] px-2 py-1 medieval-btn-gold text-[10px] font-bold flex items-center justify-center gap-1"
+                          >
+                            <Shield className="w-3.5 h-3.5" />
+                            <span>Equipar</span>
+                          </button>
+                        )}
 
-                      {selectedInvIndex >= HOTBAR_SIZE && (
+                      {selectedSlot.count > 1 && selectedInvIndex !== null && (
                         <button
-                          onClick={handleSwapWithHotbarActive}
-                          className="min-h-[34px] px-2 py-1 medieval-btn-gold text-[10px] font-bold flex items-center justify-center gap-1"
-                        >
-                          <Hand className="w-3 h-3" />
-                          <span>Mão</span>
-                        </button>
-                      )}
-
-                      {selectedSlot.count > 1 && (
-                        <button
-                          onClick={() =>
-                            engine.splitInventorySlot(selectedInvIndex)
-                          }
+                          onClick={() => {
+                            engine.splitInventorySlot(selectedInvIndex);
+                            setSelectedInvIndex(null);
+                          }}
                           className="min-h-[34px] px-2 py-1 medieval-btn-wood text-[10px] font-bold flex items-center justify-center gap-1"
                         >
                           <Layers className="w-3 h-3" />
@@ -1695,20 +1699,23 @@ export const CraftingDrawer: React.FC<CraftingDrawerProps> = ({
                         </button>
                       )}
 
-                      <button
-                        onClick={() =>
-                          engine.dropInventorySlot(selectedInvIndex, true)
-                        }
-                        className="min-h-[34px] px-2 py-1 medieval-btn-crimson text-[10px] font-bold flex items-center justify-center gap-1"
-                      >
-                        <Trash2 className="w-3 h-3" />
-                        <span>Soltar</span>
-                      </button>
+                      {selectedInvIndex !== null && (
+                        <button
+                          onClick={() => {
+                            engine.dropInventorySlot(selectedInvIndex, true);
+                            setSelectedInvIndex(null);
+                          }}
+                          className="min-h-[34px] px-2 py-1 medieval-btn-crimson text-[10px] font-bold flex items-center justify-center gap-1"
+                        >
+                          <Trash2 className="w-3 h-3" />
+                          <span>Soltar</span>
+                        </button>
+                      )}
                     </div>
                   </>
                 ) : (
                   <div className="py-5 text-center text-[11px] text-[#8c6d46]">
-                    Selecione um item.
+                    Clique em um item para selecioná-lo e depois clique no local de destino para movê-lo ou trocar de posição.
                   </div>
                 )}
               </div>

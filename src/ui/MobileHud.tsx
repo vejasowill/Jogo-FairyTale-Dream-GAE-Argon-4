@@ -106,6 +106,10 @@ export const MobileHud: React.FC<MobileHudProps> = ({
   const [joystickActive, setJoystickActive] = useState(false);
   const [itemToast, setItemToast] = useState<string | null>(null);
   const [saddlebagMountId, setSaddlebagMountId] = useState<string | null>(null);
+  const [selectedSaddleSlot, setSelectedSaddleSlot] = useState<{
+    container: 'mount' | 'player';
+    index: number;
+  } | null>(null);
   const [showSaddlebagHelp, setShowSaddlebagHelp] = useState(false);
 
   const [selectedEditKey, setSelectedEditKey] =
@@ -1059,7 +1063,10 @@ export const MobileHud: React.FC<MobileHudProps> = ({
       {saddlebagCreature && (
         <div
           className="pointer-events-auto fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-2 sm:p-4"
-          onClick={() => setSaddlebagMountId(null)}
+          onClick={() => {
+            setSelectedSaddleSlot(null);
+            setSaddlebagMountId(null);
+          }}
         >
           <div
             className="w-full max-w-3xl medieval-panel flex flex-col max-h-[92dvh] overflow-hidden"
@@ -1088,7 +1095,10 @@ export const MobileHud: React.FC<MobileHudProps> = ({
                 <WindowHelpButton onClick={() => setShowSaddlebagHelp(true)} />
                 <button
                   type="button"
-                  onClick={() => setSaddlebagMountId(null)}
+                  onClick={() => {
+                    setSelectedSaddleSlot(null);
+                    setSaddlebagMountId(null);
+                  }}
                   className="min-h-[32px] min-w-[32px] medieval-btn-crimson flex items-center justify-center"
                 >
                   <X className="w-4 h-4" />
@@ -1104,25 +1114,52 @@ export const MobileHud: React.FC<MobileHudProps> = ({
                     ALFORJE ({MOUNT_STORAGE_SIZE})
                   </span>
                   <span className="text-[9px] text-[#c4ab7d]">
-                    Toque p/ retirar
+                    {selectedSaddleSlot
+                      ? 'Clique no destino'
+                      : 'Clique p/ selecionar'}
                   </span>
                 </div>
                 <div className="grid grid-cols-4 gap-1.5">
                   {saddlebagSlots.map((slot, idx) => {
                     const def = slot ? ITEMS[slot.itemId] : null;
+                    const isSel =
+                      selectedSaddleSlot?.container === 'mount' &&
+                      selectedSaddleSlot.index === idx;
                     return (
                       <button
                         key={idx}
                         type="button"
-                        onClick={() =>
-                          slot &&
-                          engine.transferMountSlotToInventory(
+                        onClick={() => {
+                          if (!selectedSaddleSlot) {
+                            if (slot && slot.count > 0) {
+                              setSelectedSaddleSlot({
+                                container: 'mount',
+                                index: idx,
+                              });
+                            }
+                            return;
+                          }
+                          if (
+                            selectedSaddleSlot.container === 'mount' &&
+                            selectedSaddleSlot.index === idx
+                          ) {
+                            setSelectedSaddleSlot(null);
+                            return;
+                          }
+                          engine.moveOrSwapMountAndPlayerSlot(
                             saddlebagCreature.id,
-                            idx,
-                            true
-                          )
-                        }
-                        className="aspect-square min-h-[44px] mc-slot flex items-center justify-center relative"
+                            selectedSaddleSlot,
+                            { container: 'mount', index: idx }
+                          );
+                          setSelectedSaddleSlot(null);
+                        }}
+                        className={`aspect-square min-h-[44px] flex items-center justify-center relative ${
+                          isSel
+                            ? 'mc-slot-active ring-2 ring-amber-400'
+                            : selectedSaddleSlot
+                            ? 'mc-slot hover:border-amber-400/70'
+                            : 'mc-slot'
+                        }`}
                       >
                         {slot && def && (
                           <>
@@ -1149,7 +1186,9 @@ export const MobileHud: React.FC<MobileHudProps> = ({
                     MOCHILA
                   </span>
                   <span className="text-[9px] text-amber-300">
-                    Toque p/ guardar
+                    {selectedSaddleSlot
+                      ? 'Clique no destino p/ mover ou trocar'
+                      : 'Clique no item p/ selecionar'}
                   </span>
                 </div>
                 <div className="grid grid-cols-8 gap-1">
@@ -1157,21 +1196,44 @@ export const MobileHud: React.FC<MobileHudProps> = ({
                     .slice(0, TOTAL_INVENTORY_SIZE)
                     .map((slot, idx) => {
                       const def = slot ? ITEMS[slot.itemId] : null;
+                      const isSel =
+                        selectedSaddleSlot?.container === 'player' &&
+                        selectedSaddleSlot.index === idx;
                       return (
                         <button
                           key={idx}
                           type="button"
-                          onClick={() =>
-                            slot &&
-                            engine.transferInventorySlotToMount(
+                          onClick={() => {
+                            if (!selectedSaddleSlot) {
+                              if (slot && slot.count > 0) {
+                                setSelectedSaddleSlot({
+                                  container: 'player',
+                                  index: idx,
+                                });
+                              }
+                              return;
+                            }
+                            if (
+                              selectedSaddleSlot.container === 'player' &&
+                              selectedSaddleSlot.index === idx
+                            ) {
+                              setSelectedSaddleSlot(null);
+                              return;
+                            }
+                            engine.moveOrSwapMountAndPlayerSlot(
                               saddlebagCreature.id,
-                              idx,
-                              true
-                            )
-                          }
-                          className={`aspect-square min-h-[36px] mc-slot flex items-center justify-center relative ${
-                            idx < HOTBAR_SIZE ? 'border-amber-500/40' : ''
-                          }`}
+                              selectedSaddleSlot,
+                              { container: 'player', index: idx }
+                            );
+                            setSelectedSaddleSlot(null);
+                          }}
+                          className={`aspect-square min-h-[36px] flex items-center justify-center relative ${
+                            isSel
+                              ? 'mc-slot-active ring-2 ring-amber-400'
+                              : selectedSaddleSlot
+                              ? 'mc-slot hover:border-amber-400/70'
+                              : 'mc-slot'
+                          } ${idx < HOTBAR_SIZE ? 'border-amber-500/40' : ''}`}
                         >
                           {slot && def && (
                             <>
@@ -1200,8 +1262,8 @@ export const MobileHud: React.FC<MobileHudProps> = ({
               onClose={() => setShowSaddlebagHelp(false)}
               sections={[
                 {
-                  title: '1. Guardar e Retirar',
-                  body: 'Toque em qualquer item da sua Mochila à direita para guardá-lo no Alforje, ou toque em um slot do Alforje à esquerda para devolvê-lo à mochila.',
+                  title: '1. Selecionar e Mover (Estilo Minecraft)',
+                  body: 'Clique em um item (no Alforje ou na Mochila) para selecioná-lo e depois clique no slot de destino. Se o destino tiver outro item, eles trocam de posição e o item é desselecionado.',
                 },
                 {
                   title: '2. Posse Exclusiva',
