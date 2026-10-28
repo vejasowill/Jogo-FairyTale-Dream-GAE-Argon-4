@@ -357,6 +357,7 @@ export class SaveManager {
     return {
       soundEnabled: true,
       soundVolume: 0.35,
+      musicVolume: 0.2,
       autoSaveIntervalSec: 20,
       serverSyncEnabled: true,
       customServerUrl: '',
@@ -387,9 +388,30 @@ export class SaveManager {
           // ignore
         }
       }
+      let resolvedMusicVolume =
+        typeof parsed.musicVolume === 'number' && Number.isFinite(parsed.musicVolume)
+          ? Math.max(0, Math.min(1, parsed.musicVolume))
+          : defaults.musicVolume;
+      if (!parsed._musicVol20Migrated && Math.abs(resolvedMusicVolume - 0.3) < 0.001) {
+        resolvedMusicVolume = 0.2;
+        try {
+          localStorage.setItem(
+            SETTINGS_KEY,
+            JSON.stringify({
+              ...parsed,
+              musicVolume: 0.2,
+              _wideCamMigrated: true,
+              _musicVol20Migrated: true,
+            })
+          );
+        } catch {
+          // ignore
+        }
+      }
       return {
         ...defaults,
         ...parsed,
+        musicVolume: resolvedMusicVolume,
         cameraZoom: Math.max(0.55, Math.min(2.5, resolvedZoom)),
         controlLayout: {
           ...defaults.controlLayout,
@@ -405,7 +427,11 @@ export class SaveManager {
     try {
       localStorage.setItem(
         SETTINGS_KEY,
-        JSON.stringify({ ...settings, _wideCamMigrated: true })
+        JSON.stringify({
+          ...settings,
+          _wideCamMigrated: true,
+          _musicVol20Migrated: true,
+        })
       );
     } catch {
       // ignore storage quota errors

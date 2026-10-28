@@ -4242,6 +4242,27 @@ export class GameRenderer {
       : 1 + Math.sin(globalTime * 3.5) * 0.022;
     const breathScaleX = 2 - breathScaleY;
 
+    const hurtShakeX =
+      player.hitFlashTimer > 0 ? Math.sin(globalTime * 65) * 2.0 : 0;
+
+    if (player.hitFlashTimer > 0) {
+      ctx.save();
+      ctx.strokeStyle = 'rgba(239, 68, 68, 0.72)';
+      ctx.lineWidth = 1.6;
+      ctx.beginPath();
+      ctx.ellipse(
+        player.x,
+        isSwimming ? player.y + 6 : player.y + 8,
+        11.5,
+        4.6,
+        0,
+        0,
+        Math.PI * 2
+      );
+      ctx.stroke();
+      ctx.restore();
+    }
+
     ctx.save();
     if (isSwimming || isBoatMount) {
       // Half-sprite rendering: in water OR seated inside a boat hull!
@@ -4249,10 +4270,10 @@ export class GameRenderer {
       const srcHalfH = Math.max(1, Math.round(sprite.height * ratio));
       const drawHalfH = isBoatMount ? 16 : 15;
       const yAnchorOffset = isBoatMount ? 3 : 6;
-      ctx.translate(drawX, drawY + yAnchorOffset - walkHop);
+      ctx.translate(drawX + hurtShakeX, drawY + yAnchorOffset - walkHop);
       ctx.scale(breathScaleX, breathScaleY);
       if (player.hitFlashTimer > 0) {
-        ctx.filter = 'brightness(2.0)';
+        ctx.filter = 'brightness(2.0) contrast(1.2)';
       }
       ctx.drawImage(
         sprite,
@@ -4266,14 +4287,27 @@ export class GameRenderer {
         drawHalfH
       );
     } else {
-      ctx.translate(drawX, drawY - walkHop);
+      ctx.translate(drawX + hurtShakeX, drawY - walkHop);
       ctx.scale(breathScaleX, breathScaleY);
       if (player.hitFlashTimer > 0) {
-        ctx.filter = 'brightness(2.0)';
+        ctx.filter = 'brightness(2.0) contrast(1.2)';
       }
       ctx.drawImage(sprite, -15, -19, 30, 30);
     }
     ctx.restore();
+
+    // Overhead mini HP bar on the player character in the world when damaged (matching other mobs)
+    if (player.hp < player.maxHp || player.hitFlashTimer > 0) {
+      const headTopY =
+        isSwimming || isBoatMount ? drawY - 12 : drawY - 21;
+      this.drawMiniBar(
+        ctx,
+        drawX,
+        headTopY,
+        player.hp / Math.max(1, player.maxHp),
+        player.hitFlashTimer > 0 ? '#ef4444' : '#22c55e'
+      );
+    }
 
     if (isSwimming) {
       ctx.save();
@@ -4531,6 +4565,8 @@ export class GameRenderer {
       ? 1 + Math.sin(globalTime * 12) * 0.035
       : 1 + Math.sin(globalTime * 3.5) * 0.022;
     const breathScaleX = 2 - breathScaleY;
+    const rpHurtShakeX =
+      rp.hitFlashTimer > 0 ? Math.sin(globalTime * 65) * 2.0 : 0;
 
     ctx.save();
     if (isSwimming || isBoatMount) {
@@ -4538,10 +4574,10 @@ export class GameRenderer {
       const srcHalfH = Math.max(1, Math.round(sprite.height * ratio));
       const drawHalfH = isBoatMount ? 16 : 15;
       const yAnchorOffset = isBoatMount ? 3 : 6;
-      ctx.translate(drawX, drawY + yAnchorOffset - walkHop);
+      ctx.translate(drawX + rpHurtShakeX, drawY + yAnchorOffset - walkHop);
       ctx.scale(breathScaleX, breathScaleY);
       if (rp.hitFlashTimer > 0) {
-        ctx.filter = 'brightness(2.0)';
+        ctx.filter = 'brightness(2.0) contrast(1.2)';
       }
       ctx.drawImage(
         sprite,
@@ -4555,10 +4591,10 @@ export class GameRenderer {
         drawHalfH
       );
     } else {
-      ctx.translate(drawX, drawY - walkHop);
+      ctx.translate(drawX + rpHurtShakeX, drawY - walkHop);
       ctx.scale(breathScaleX, breathScaleY);
       if (rp.hitFlashTimer > 0) {
-        ctx.filter = 'brightness(2.0)';
+        ctx.filter = 'brightness(2.0) contrast(1.2)';
       }
       ctx.drawImage(sprite, -15, -19, 30, 30);
     }

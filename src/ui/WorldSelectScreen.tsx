@@ -945,9 +945,37 @@ export const WorldSelectScreen: React.FC<WorldSelectScreenProps> = ({
                 </p>
               </div>
 
-              {/* Server Sync */}
+              {/* Server Sync & Audio */}
               <div className="medieval-inset p-3 space-y-2.5">
                 <div className="font-pixel text-[10px] text-amber-400 font-bold">
+                  ÁUDIO & MÚSICA AMBIENTE
+                </div>
+                <div className="space-y-1">
+                  <div className="flex items-center justify-between text-xs">
+                    <span className="text-[#e5d5b5] font-bold">
+                      Volume da Música (Dia / Noite)
+                    </span>
+                    <span className="font-mono-tabular text-amber-300 font-bold">
+                      {Math.round((settings.musicVolume ?? 0.2) * 100)}%
+                    </span>
+                  </div>
+                  <input
+                    type="range"
+                    min={0}
+                    max={1}
+                    step={0.05}
+                    value={settings.musicVolume ?? 0.2}
+                    onChange={(e) =>
+                      onUpdateSettings({
+                        ...settings,
+                        musicVolume: Number(e.target.value),
+                      })
+                    }
+                    className="w-full accent-amber-500"
+                  />
+                </div>
+
+                <div className="pt-2 border-t border-[#3d281a] font-pixel text-[10px] text-amber-400 font-bold">
                   SINCRONIZAÇÃO DE SAVES
                 </div>
                 <label className="flex items-center justify-between gap-2 cursor-pointer">

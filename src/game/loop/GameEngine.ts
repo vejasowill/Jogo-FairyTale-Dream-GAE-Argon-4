@@ -132,6 +132,7 @@ export class GameEngine {
   private totemZapTimer = 0;
   private spikeTrapTimer = 0;
   private campfireRestCooldown = 0;
+  private hungerDamageTimer = 0;
   public activeStationStructureId: string | null = null;
   private fallbackThermalStations: Record<string, PlacedStructure> = {};
   private customTargetTile: { tx: number; ty: number } | null = null;
@@ -270,6 +271,11 @@ export class GameEngine {
 
     soundManager.enabled = settings.soundEnabled;
     soundManager.volume = settings.soundVolume;
+    soundManager.setMusicVolume(settings.musicVolume ?? 0.2);
+    soundManager.setMusicPaused(this.isPaused || this.isGameOver);
+    soundManager.updateAmbientMusic(
+      this.metadata.timeOfDay >= 19.5 || this.metadata.timeOfDay < 5.5
+    );
 
     const initialReveal = Math.max(
       10,
@@ -309,6 +315,7 @@ export class GameEngine {
       cancelAnimationFrame(this.rafId);
       this.rafId = null;
     }
+    soundManager.stopAmbientMusic();
     this.input.detach();
     this.multiplayer.disconnect(false);
   }
@@ -352,6 +359,7 @@ export class GameEngine {
         this.player.vy = 0;
         this.player.isMoving = false;
       }
+      soundManager.setMusicPaused(this.isPaused || this.isGameOver);
       this.emitUiSnapshot();
     }
   }
@@ -362,6 +370,7 @@ export class GameEngine {
     const dt = Math.min(0.1, Math.max(0.001, rawDt));
 
     this.syncPauseState();
+    soundManager.setMusicPaused(this.isPaused || this.isGameOver);
 
     if (!this.isPaused && !this.isGameOver) {
       this.update(dt);
@@ -426,6 +435,9 @@ export class GameEngine {
     }
 
     const isNight = this.metadata.timeOfDay >= 20 || this.metadata.timeOfDay < 5.5;
+    const isNightMusic =
+      this.metadata.timeOfDay >= 19.5 || this.metadata.timeOfDay < 5.5;
+    soundManager.updateAmbientMusic(isNightMusic);
 
     // Hotbar number keys 1..8
     if (this.input.hotbarKeyPressed !== null) {
@@ -862,16 +874,38 @@ export class GameEngine {
     }
 
     if (this.player.hunger > 65 || nearWarmth || nearFountain || nearSheep) {
+      this.hungerDamageTimer = 0;
       const regenRate =
         (nearWarmth ? 2.5 : 0.6) +
         (nearFountain ? 5.0 : 0) +
         (nearSheep ? 1.0 : 0);
       this.player.hp = Math.min(this.player.maxHp, this.player.hp + dt * regenRate);
     } else if (this.player.hunger <= 0) {
-      this.player.hp = Math.max(0, this.player.hp - dt * 1.5);
-      if (this.player.hp <= 0) {
-        this.handlePlayerDeath();
+      const minStarveHp = Math.ceil(this.player.maxHp * 0.1);
+      if (this.player.hp > minStarveHp) {
+        this.hungerDamageTimer += dt;
+        if (this.hungerDamageTimer >= 3.0) {
+          this.hungerDamageTimer -= 3.0;
+          const prevHp = this.player.hp;
+          this.player.hp = Math.max(minStarveHp, this.player.hp - 5);
+          const lost = Math.max(1, Math.round(prevHp - this.player.hp));
+          this.player.hitFlashTimer = 0.25;
+          soundManager.playPlayerHurt();
+          this.renderer.spawnBurst(this.player.x, this.player.y, 'BLOOD', 7);
+          this.renderer.spawnRipple(this.player.x, this.player.y, '#f87171', 18, 0.3);
+          this.addFloatingText(
+            `-${lost} HP (Fome)`,
+            this.player.x,
+            this.player.y - 20,
+            '#ef4444'
+          );
+          this.emitUiSnapshot();
+        }
+      } else {
+        this.hungerDamageTimer = 0;
       }
+    } else {
+      this.hungerDamageTimer = 0;
     }
   }
 
@@ -6734,6 +6768,13 @@ export class GameEngine {
     this.player.hp = Math.max(0, this.player.hp - finalDmg);
     this.player.hitFlashTimer = 0.25;
     soundManager.playPlayerHurt();
+    this.renderer.spawnBurst(
+      this.player.x,
+      this.player.y,
+      'BLOOD',
+      this.player.hp <= 0 ? 16 : 9
+    );
+    this.renderer.spawnRipple(this.player.x, this.player.y, '#f87171', 18, 0.32);
 
     // Rule: If the player is attacked, ONLY combat-capable tamed allies (Camel & Boar) in 'follow' state attack whoever attacked the player to defend them
     // (focusing on a single enemy until defeating it or dying).
@@ -6774,7 +6815,7 @@ export class GameEngine {
       this.player.y = ky;
     }
 
-    this.addFloatingText(`-${finalDmg} HP`, this.player.x, this.player.y - 20, '#ef4444');
+    this.addFloatingText(`-${finalDmg}`, this.player.x, this.player.y - 18, '#f87171');
     this.emitUiSnapshot();
 
     if (this.player.hp <= 0) {
@@ -13097,6 +13138,7 @@ export class GameEngine {
     this.settings = { ...newSettings };
     soundManager.enabled = newSettings.soundEnabled;
     soundManager.volume = newSettings.soundVolume;
+    soundManager.setMusicVolume(newSettings.musicVolume ?? 0.2);
     this.camera.zoom = newSettings.cameraZoom;
     if (
       newSettings.playerName &&
