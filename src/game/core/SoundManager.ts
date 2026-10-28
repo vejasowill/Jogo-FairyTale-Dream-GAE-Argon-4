@@ -12,6 +12,7 @@ class SoundManager {
   private desiredTrack: MusicTrack | 'none' = 'none';
   private activeTrack: MusicTrack | 'none' = 'none';
   private isPausedByGame = false;
+  private isMuffledByUi = false;
 
   // Lightweight cached compressed bytes (~515KB each) and single active decoded AudioBuffer
   private rawTrackBytes: Record<MusicTrack, ArrayBuffer | null> = {
@@ -29,6 +30,14 @@ class SoundManager {
 
   private musicSource: AudioBufferSourceNode | null = null;
   private musicGain: GainNode | null = null;
+  private musicFilter: BiquadFilterNode | null = null;
+  private musicEchoDelay: DelayNode | null = null;
+  private musicEchoFeedback: GainNode | null = null;
+  private musicEchoWet: GainNode | null = null;
+
+  private fadeStopTimer: number | null = null;
+  private fadingOutSource: AudioBufferSourceNode | null = null;
+
   private trackOffsets: Record<MusicTrack, number> = {
     day: 0,
     night: 0,
@@ -98,6 +107,64 @@ class SoundManager {
     return this.ctx;
   }
 
+  private ensureMusicAudioGraph(ctx: AudioContext): void {
+    if (this.musicGain && this.musicFilter && this.musicEchoDelay && this.musicEchoFeedback && this.musicEchoWet) {
+      return;
+    }
+
+    this.musicGain = ctx.createGain();
+    this.musicFilter = ctx.createBiquadFilter();
+    this.musicFilter.type = 'lowpass';
+    this.musicFilter.frequency.setValueAtTime(this.isMuffledByUi ? 620 : 7500, ctx.currentTime);
+    this.musicFilter.Q.setValueAtTime(0.85, ctx.currentTime);
+
+    this.musicEchoDelay = ctx.createDelay(1.0);
+    this.musicEchoDelay.delayTime.setValueAtTime(0.175, ctx.currentTime);
+
+    this.musicEchoFeedback = ctx.createGain();
+    this.musicEchoFeedback.gain.setValueAtTime(0.36, ctx.currentTime);
+
+    this.musicEchoWet = ctx.createGain();
+    this.musicEchoWet.gain.setValueAtTime(this.isMuffledByUi ? 0.42 : 0.0, ctx.currentTime);
+
+    // Dry path: Filter -> Master Music Gain -> Destination
+    this.musicFilter.connect(this.musicGain);
+
+    // Muffled Echo path: Filter -> Delay -> Wet Gain -> Master Music Gain, with Delay <-> Feedback loop
+    this.musicFilter.connect(this.musicEchoDelay);
+    this.musicEchoDelay.connect(this.musicEchoFeedback);
+    this.musicEchoFeedback.connect(this.musicEchoDelay);
+    this.musicEchoDelay.connect(this.musicEchoWet);
+    this.musicEchoWet.connect(this.musicGain);
+
+    this.musicGain.connect(ctx.destination);
+  }
+
+  private getTargetMusicGain(): number {
+    const base = Math.max(0, Math.min(1, this.musicVolume));
+    return this.isMuffledByUi ? base * 0.5 : base;
+  }
+
+  private clearPendingFadeStop(): void {
+    if (this.fadeStopTimer !== null && typeof window !== 'undefined') {
+      window.clearTimeout(this.fadeStopTimer);
+      this.fadeStopTimer = null;
+    }
+    if (this.fadingOutSource) {
+      try {
+        this.fadingOutSource.stop();
+      } catch {
+        // ignore
+      }
+      try {
+        this.fadingOutSource.disconnect();
+      } catch {
+        // ignore
+      }
+      this.fadingOutSource = null;
+    }
+  }
+
   private async loadAndDecodeTrack(track: MusicTrack): Promise<AudioBuffer | null> {
     if (this.decodedBuffers[track]) {
       return this.decodedBuffers[track];
@@ -140,7 +207,7 @@ class SoundManager {
     return promise;
   }
 
-  private stopCurrentSourceNode(saveOffset: boolean): void {
+  private stopCurrentSourceNode(saveOffset: boolean, withFadeOut = true): void {
     if (!this.musicSource) return;
 
     if (saveOffset && this.activeTrack !== 'none' && this.ctx) {
@@ -152,23 +219,63 @@ class SoundManager {
       }
     }
 
+    const sourceToStop = this.musicSource;
+    this.musicSource = null;
+
+    this.clearPendingFadeStop();
+
+    if (withFadeOut && this.ctx && this.musicGain && this.ctx.state === 'running') {
+      const now = this.ctx.currentTime;
+      const fadeDuration = 0.55;
+      try {
+        const currentVal = Math.max(0.0001, this.musicGain.gain.value);
+        this.musicGain.gain.cancelScheduledValues(now);
+        this.musicGain.gain.setValueAtTime(currentVal, now);
+        this.musicGain.gain.linearRampToValueAtTime(0.0001, now + fadeDuration);
+        this.fadingOutSource = sourceToStop;
+        if (typeof window !== 'undefined') {
+          this.fadeStopTimer = window.setTimeout(() => {
+            this.fadeStopTimer = null;
+            if (this.fadingOutSource === sourceToStop) {
+              this.fadingOutSource = null;
+            }
+            try {
+              sourceToStop.stop();
+            } catch {
+              // ignore
+            }
+            try {
+              sourceToStop.disconnect();
+            } catch {
+              // ignore
+            }
+          }, Math.round(fadeDuration * 1000) + 30);
+        }
+        return;
+      } catch {
+        // fallback to immediate stop
+      }
+    }
+
     try {
-      this.musicSource.stop();
+      sourceToStop.stop();
     } catch {
       // ignore if already stopped
     }
     try {
-      this.musicSource.disconnect();
+      sourceToStop.disconnect();
     } catch {
       // ignore
     }
-    this.musicSource = null;
   }
 
   public setMusicVolume(vol: number): void {
     this.musicVolume = Math.max(0, Math.min(1, Number.isFinite(vol) ? vol : 0.2));
-    if (this.musicGain && this.ctx) {
-      this.musicGain.gain.setValueAtTime(this.musicVolume, this.ctx.currentTime);
+    if (this.musicGain && this.ctx && this.musicSource) {
+      const now = this.ctx.currentTime;
+      this.musicGain.gain.cancelScheduledValues(now);
+      this.musicGain.gain.setValueAtTime(this.musicGain.gain.value, now);
+      this.musicGain.gain.linearRampToValueAtTime(this.getTargetMusicGain(), now + 0.25);
     }
     this.syncMusicPlayback();
   }
@@ -178,6 +285,38 @@ class SoundManager {
     if (this.isPausedByGame === nextPaused) return;
     this.isPausedByGame = nextPaused;
     this.syncMusicPlayback();
+  }
+
+  public setMusicMuffled(muffled: boolean): void {
+    const nextMuffled = Boolean(muffled);
+    if (this.isMuffledByUi === nextMuffled) return;
+    this.isMuffledByUi = nextMuffled;
+
+    if (this.ctx && this.musicGain && this.musicFilter && this.musicEchoWet) {
+      const now = this.ctx.currentTime;
+      const rampSec = 0.38;
+      const targetGain = this.getTargetMusicGain();
+      const targetFreq = this.isMuffledByUi ? 620 : 7500;
+      const targetWet = this.isMuffledByUi ? 0.42 : 0.0;
+
+      try {
+        if (this.musicSource) {
+          this.musicGain.gain.cancelScheduledValues(now);
+          this.musicGain.gain.setValueAtTime(this.musicGain.gain.value, now);
+          this.musicGain.gain.linearRampToValueAtTime(targetGain, now + rampSec);
+        }
+
+        this.musicFilter.frequency.cancelScheduledValues(now);
+        this.musicFilter.frequency.setValueAtTime(this.musicFilter.frequency.value, now);
+        this.musicFilter.frequency.linearRampToValueAtTime(targetFreq, now + rampSec);
+
+        this.musicEchoWet.gain.cancelScheduledValues(now);
+        this.musicEchoWet.gain.setValueAtTime(this.musicEchoWet.gain.value, now);
+        this.musicEchoWet.gain.linearRampToValueAtTime(targetWet, now + rampSec);
+      } catch {
+        // ignore
+      }
+    }
   }
 
   public updateAmbientMusic(isNight: boolean): void {
@@ -191,10 +330,11 @@ class SoundManager {
   }
 
   public stopAmbientMusic(): void {
-    this.stopCurrentSourceNode(false);
+    this.stopCurrentSourceNode(false, true);
     this.desiredTrack = 'none';
     this.activeTrack = 'none';
     this.isPausedByGame = false;
+    this.isMuffledByUi = false;
     this.trackOffsets.day = 0;
     this.trackOffsets.night = 0;
   }
@@ -202,36 +342,34 @@ class SoundManager {
   private syncMusicPlayback(): void {
     this.bindLifecycleListeners();
 
-    const effectiveVolume = Math.max(0, Math.min(1, this.musicVolume));
+    const baseVolume = Math.max(0, Math.min(1, this.musicVolume));
+    const targetVolume = this.getTargetMusicGain();
     const isDocumentHidden =
       typeof document !== 'undefined' && Boolean(document.hidden);
 
-    // If paused, hidden, muted, or no track desired, stop active source and preserve offset
+    // If paused, hidden, muted, or no track desired, fade out active source and preserve offset
     if (
       this.desiredTrack === 'none' ||
       this.isPausedByGame ||
       isDocumentHidden ||
-      effectiveVolume <= 0.001
+      baseVolume <= 0.001
     ) {
-      this.stopCurrentSourceNode(true);
+      this.stopCurrentSourceNode(true, !isDocumentHidden);
       return;
     }
 
     const targetTrack = this.desiredTrack;
 
-    // If switching between Day and Night, stop previous track and reset its offset
+    // If switching between Day and Night, fade out previous track and reset its offset
     if (this.activeTrack !== 'none' && this.activeTrack !== targetTrack) {
       const prevTrack = this.activeTrack;
-      this.stopCurrentSourceNode(false);
+      this.stopCurrentSourceNode(false, false);
       this.trackOffsets[prevTrack] = 0;
       this.activeTrack = 'none';
     }
 
     // Already playing the desired track
     if (this.musicSource && this.activeTrack === targetTrack) {
-      if (this.musicGain && this.ctx) {
-        this.musicGain.gain.setValueAtTime(effectiveVolume, this.ctx.currentTime);
-      }
       return;
     }
 
@@ -256,20 +394,30 @@ class SoundManager {
     }
 
     try {
-      if (!this.musicGain) {
-        this.musicGain = ctx.createGain();
-        this.musicGain.connect(ctx.destination);
-      }
-      this.musicGain.gain.setValueAtTime(effectiveVolume, ctx.currentTime);
+      this.clearPendingFadeStop();
+      this.ensureMusicAudioGraph(ctx);
+      if (!this.musicGain || !this.musicFilter || !this.musicEchoWet) return;
+
+      const now = ctx.currentTime;
+      const fadeInDuration = 1.25;
+
+      this.musicFilter.frequency.cancelScheduledValues(now);
+      this.musicFilter.frequency.setValueAtTime(this.isMuffledByUi ? 620 : 7500, now);
+      this.musicEchoWet.gain.cancelScheduledValues(now);
+      this.musicEchoWet.gain.setValueAtTime(this.isMuffledByUi ? 0.42 : 0.0, now);
+
+      this.musicGain.gain.cancelScheduledValues(now);
+      this.musicGain.gain.setValueAtTime(0.0001, now);
+      this.musicGain.gain.linearRampToValueAtTime(targetVolume, now + fadeInDuration);
 
       const source = ctx.createBufferSource();
       source.buffer = buffer;
       source.loop = true;
-      source.connect(this.musicGain);
+      source.connect(this.musicFilter);
 
       const offset =
         buffer.duration > 0 ? this.trackOffsets[targetTrack] % buffer.duration : 0;
-      this.sourceStartCtxTime = ctx.currentTime;
+      this.sourceStartCtxTime = now;
       this.sourceStartOffset = offset;
       source.start(0, offset);
 

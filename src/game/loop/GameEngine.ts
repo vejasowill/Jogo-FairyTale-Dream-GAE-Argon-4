@@ -111,6 +111,8 @@ export class GameEngine {
 
   public isPaused = false;
   private uiPauseRequested = false;
+  private isPauseMenuOpen = false;
+  private isMuffledOverlayOpen = false;
   public isGameOver = false;
   public lastSaveStatus = 'Salvo';
   public buildDemolishMode = false;
@@ -270,10 +272,22 @@ export class GameEngine {
     this.camera.zoom = settings.cameraZoom || 1.15;
     this.renderer = new GameRenderer();
 
+    if (this.player.bonusMaxHpFromItems === undefined) {
+      const legacyExtra =
+        (this.player.maxHp || 100) -
+        this.getPlayerStatusMaxHp() -
+        this.getTotalEquipmentMaxHpBonus();
+      this.player.bonusMaxHpFromItems = Math.max(0, Math.round(legacyExtra));
+    }
+    this.recalculatePlayerMaxHp();
+
     soundManager.enabled = settings.soundEnabled;
     soundManager.volume = settings.soundVolume;
     soundManager.setMusicVolume(settings.musicVolume ?? 0.2);
-    soundManager.setMusicPaused(this.isPaused || this.isGameOver);
+    soundManager.setMusicPaused(this.isPauseMenuOpen || this.isGameOver);
+    soundManager.setMusicMuffled(
+      this.isMuffledOverlayOpen && !this.isPauseMenuOpen && !this.isGameOver
+    );
     soundManager.updateAmbientMusic(
       this.metadata.timeOfDay >= 19.5 || this.metadata.timeOfDay < 5.5
     );
@@ -344,6 +358,18 @@ export class GameEngine {
    * Requests or releases a real game pause from UI screens (Map, Inventory, Craft, Pause, Saddlebag, HUD Edit).
    * Automatically respects the multiplayer rule: never pauses when network players are connected.
    */
+  public setAudioMenuState(
+    isPauseMenu: boolean,
+    isMuffledOverlay: boolean
+  ): void {
+    this.isPauseMenuOpen = Boolean(isPauseMenu);
+    this.isMuffledOverlayOpen = Boolean(isMuffledOverlay);
+    soundManager.setMusicPaused(this.isPauseMenuOpen || this.isGameOver);
+    soundManager.setMusicMuffled(
+      this.isMuffledOverlayOpen && !this.isPauseMenuOpen && !this.isGameOver
+    );
+  }
+
   public setUiPauseRequested(requested: boolean): void {
     this.uiPauseRequested = Boolean(requested);
     this.syncPauseState();
@@ -360,7 +386,10 @@ export class GameEngine {
         this.player.vy = 0;
         this.player.isMoving = false;
       }
-      soundManager.setMusicPaused(this.isPaused || this.isGameOver);
+      soundManager.setMusicPaused(this.isPauseMenuOpen || this.isGameOver);
+      soundManager.setMusicMuffled(
+        this.isMuffledOverlayOpen && !this.isPauseMenuOpen && !this.isGameOver
+      );
       this.emitUiSnapshot();
     }
   }
@@ -371,7 +400,10 @@ export class GameEngine {
     const dt = Math.min(0.1, Math.max(0.001, rawDt));
 
     this.syncPauseState();
-    soundManager.setMusicPaused(this.isPaused || this.isGameOver);
+    soundManager.setMusicPaused(this.isPauseMenuOpen || this.isGameOver);
+    soundManager.setMusicMuffled(
+      this.isMuffledOverlayOpen && !this.isPauseMenuOpen && !this.isGameOver
+    );
 
     if (!this.isPaused && !this.isGameOver) {
       this.update(dt);
@@ -882,7 +914,8 @@ export class GameEngine {
         (nearSheep ? 1.0 : 0);
       this.player.hp = Math.min(this.player.maxHp, this.player.hp + dt * regenRate);
     } else if (this.player.hunger <= 0) {
-      const minStarveHp = Math.ceil(this.player.maxHp * 0.1);
+      // Hunger drains HP down to 10% of the character's pure status Max HP (ignoring any item or armor effects)
+      const minStarveHp = Math.ceil(this.getPlayerStatusMaxHp() * 0.1);
       if (this.player.hp > minStarveHp) {
         this.hungerDamageTimer += dt;
         if (this.hungerDamageTimer >= 3.0) {
@@ -3918,109 +3951,13 @@ export class GameEngine {
       }
     }
 
+    // Watering can refill & irrigation are triggered via the Interact button (performInteractAction)
     if (
       equippedTool === ToolType.WATERING_CAN ||
       heldItem?.id === 'watering_can' ||
       heldItem?.id === 'watering_can_full'
     ) {
-      const tile = this.world.worldToTile(hitCenterX, hitCenterY);
-      const isWaterTile =
-        this.world.computeBiomeAtTile(tile.tx, tile.ty) === BiomeType.OCEAN;
-      const structAtTile = this.world.getStructureAtTile(tile.tx, tile.ty);
-      const isWaterSource =
-        structAtTile?.type === PlaceableType.VILLAGE_WELL ||
-        structAtTile?.type === PlaceableType.HEALING_FOUNTAIN;
-
-      // Refill watering can if hitting water or well/fountain
-      if (isWaterTile || isWaterSource) {
-        this.player.inventory[this.player.selectedHotbarIndex] = {
-          itemId: 'watering_can_full',
-          count: 1,
-        };
-        soundManager.playTameSuccess();
-        this.renderer.spawnBurst(hitCenterX, hitCenterY, 'WATER', 14);
-        this.renderer.spawnRipple(hitCenterX, hitCenterY, '#38bdf8', 26, 0.45);
-        this.addFloatingText(
-          'Regador Enchido! (12 Cargas de Água)',
-          this.player.x,
-          this.player.y - 20,
-          '#38bdf8'
-        );
-        this.emitUiSnapshot();
-        return;
-      }
-
-      // Irrigate Tilled Soil
-      const { cx, cy } = this.world.tileToChunk(tile.tx, tile.ty);
-      const chunk = this.world.chunks[WorldManager.chunkKey(cx, cy)];
-      const soilSt = chunk?.structures.find(
-        (s) =>
-          s.tileX === tile.tx &&
-          s.tileY === tile.ty &&
-          s.type === PlaceableType.TILLED_SOIL
-      );
-
-      if (soilSt) {
-        if (heldItem?.id === 'watering_can') {
-          this.addFloatingText(
-            'Regador vazio! Encha em um lago, mar ou poço',
-            this.player.x,
-            this.player.y - 20,
-            '#38bdf8'
-          );
-          return;
-        }
-
-        soilSt.isWatered = true;
-        soilSt.waterLevel = 100;
-        soundManager.playTameSuccess();
-        this.renderer.spawnBurst(
-          tile.tx * TILE_SIZE + 16,
-          tile.ty * TILE_SIZE + 16,
-          'WATER',
-          10
-        );
-        this.renderer.spawnRipple(
-          tile.tx * TILE_SIZE + 16,
-          tile.ty * TILE_SIZE + 16,
-          '#60a5fa',
-          20,
-          0.35
-        );
-
-        const currentSlot =
-          this.player.inventory[this.player.selectedHotbarIndex];
-        if (currentSlot) {
-          const currentCharges =
-            (currentSlot as any).charges !== undefined
-              ? (currentSlot as any).charges
-              : 12;
-          const newCharges = currentCharges - 1;
-          if (newCharges <= 0) {
-            this.player.inventory[this.player.selectedHotbarIndex] = {
-              itemId: 'watering_can',
-              count: 1,
-            };
-            this.addFloatingText(
-              'Solo Irrigado! O regador esvaziou',
-              tile.tx * TILE_SIZE + 16,
-              tile.ty * TILE_SIZE,
-              '#38bdf8'
-            );
-          } else {
-            (currentSlot as any).charges = newCharges;
-            this.addFloatingText(
-              `Solo Irrigado! (${newCharges}/12) 💧`,
-              tile.tx * TILE_SIZE + 16,
-              tile.ty * TILE_SIZE,
-              '#38bdf8'
-            );
-          }
-        }
-        this.syncChunkAtTile(tile.tx, tile.ty);
-        this.emitUiSnapshot();
-        return;
-      }
+      // Do not consume watering can charges or refill on the Attack/Break button
     }
 
     // B2. Check Nature Nodes & Dismantling Structures strictly at the visually selected target or forward look tile
@@ -4229,13 +4166,150 @@ export class GameEngine {
     }
   }
 
+  private tryUseWateringCanInteraction(target?: AimedTargetInfo | null): boolean {
+    const heldSlot = this.player.inventory[this.player.selectedHotbarIndex];
+    const heldItem = heldSlot ? ITEMS[heldSlot.itemId] : null;
+    if (
+      !heldItem ||
+      (heldItem.toolType !== ToolType.WATERING_CAN &&
+        heldItem.id !== 'watering_can' &&
+        heldItem.id !== 'watering_can_full')
+    ) {
+      return false;
+    }
+
+    const dirVec = this.getDirectionOffset(this.player.direction);
+    const lookX = target ? target.worldX : this.player.x + dirVec.x * 28;
+    const lookY = target ? target.worldY : this.player.y + dirVec.y * 28;
+    const tile = this.world.worldToTile(lookX, lookY);
+
+    const isWaterTile =
+      target?.kind === 'water_source' ||
+      this.world.isTileSwimmableWater(tile.tx, tile.ty) ||
+      this.world.computeBiomeAtTile(tile.tx, tile.ty) === BiomeType.OCEAN;
+    const structAtTile = this.world.getStructureAtTile(tile.tx, tile.ty);
+    const isWaterSource =
+      target?.stationType === PlaceableType.VILLAGE_WELL ||
+      target?.stationType === PlaceableType.HEALING_FOUNTAIN ||
+      structAtTile?.type === PlaceableType.VILLAGE_WELL ||
+      structAtTile?.type === PlaceableType.HEALING_FOUNTAIN;
+
+    if (isWaterTile || isWaterSource) {
+      this.player.swingDuration = 0.22;
+      this.player.swingTimer = 0.22;
+      const newSlot: InventorySlot & { charges?: number } = {
+        itemId: 'watering_can_full',
+        count: 1,
+        charges: 12,
+      };
+      this.player.inventory[this.player.selectedHotbarIndex] = newSlot;
+      soundManager.playTameSuccess();
+      this.renderer.spawnBurst(lookX, lookY, 'WATER', 14);
+      this.renderer.spawnRipple(lookX, lookY, '#38bdf8', 26, 0.45);
+      this.addFloatingText(
+        'Regador Enchido! (12/12 Cargas de Água) 💧',
+        this.player.x,
+        this.player.y - 20,
+        '#38bdf8'
+      );
+      this.emitUiSnapshot();
+      return true;
+    }
+
+    const { cx, cy } = this.world.tileToChunk(tile.tx, tile.ty);
+    const chunk = this.world.chunks[WorldManager.chunkKey(cx, cy)];
+    const soilSt = chunk?.structures.find(
+      (s) =>
+        (target?.structureId ? s.id === target.structureId : true) &&
+        s.tileX === tile.tx &&
+        s.tileY === tile.ty &&
+        s.type === PlaceableType.TILLED_SOIL
+    );
+
+    if (soilSt) {
+      // Allow harvesting a fully mature stage 3 crop if already watered, or water it if dry/growing
+      if (soilSt.cropType && soilSt.growthStage === 3) {
+        return false;
+      }
+
+      if (heldItem.id === 'watering_can') {
+        soundManager.playSwing();
+        this.addFloatingText(
+          'Regador vazio! Interaja com um rio, mar ou poço para encher 💧',
+          this.player.x,
+          this.player.y - 20,
+          '#38bdf8'
+        );
+        return true;
+      }
+
+      this.player.swingDuration = 0.22;
+      this.player.swingTimer = 0.22;
+      soilSt.isWatered = true;
+      soilSt.waterLevel = 100;
+      soundManager.playTameSuccess();
+      this.renderer.spawnBurst(
+        tile.tx * TILE_SIZE + 16,
+        tile.ty * TILE_SIZE + 16,
+        'WATER',
+        10
+      );
+      this.renderer.spawnRipple(
+        tile.tx * TILE_SIZE + 16,
+        tile.ty * TILE_SIZE + 16,
+        '#60a5fa',
+        20,
+        0.35
+      );
+
+      const currentSlot =
+        this.player.inventory[this.player.selectedHotbarIndex];
+      if (currentSlot) {
+        const currentCharges =
+          (currentSlot as any).charges !== undefined
+            ? (currentSlot as any).charges
+            : 12;
+        const newCharges = currentCharges - 1;
+        if (newCharges <= 0) {
+          this.player.inventory[this.player.selectedHotbarIndex] = {
+            itemId: 'watering_can',
+            count: 1,
+          };
+          this.addFloatingText(
+            'Solo Irrigado! O regador esvaziou',
+            tile.tx * TILE_SIZE + 16,
+            tile.ty * TILE_SIZE,
+            '#38bdf8'
+          );
+        } else {
+          (currentSlot as any).charges = newCharges;
+          this.addFloatingText(
+            `Solo Irrigado! (${newCharges}/12) 💧`,
+            tile.tx * TILE_SIZE + 16,
+            tile.ty * TILE_SIZE,
+            '#38bdf8'
+          );
+        }
+      }
+      this.syncChunkAtTile(tile.tx, tile.ty);
+      this.emitUiSnapshot();
+      return true;
+    }
+
+    return false;
+  }
+
   /**
-   * BUTTON 2: BOTÃO DE INTERAÇÃO — Interage com aquilo que está sendo mirado (Bancada, Fornalha, Altar, Fogueira, Animal ou Recurso)
+   * BUTTON 2: BOTÃO DE INTERAÇÃO — Interage com aquilo que está sendo mirado (Bancada, Fornalha, Altar, Fogueira, Animal, Regador ou Recurso)
    */
   public performInteractAction(): void {
     if (this.isPaused || this.isGameOver) return;
 
     const target = this.getAimedTarget();
+    if (this.tryUseWateringCanInteraction(target)) {
+      return;
+    }
+
     if (!target) {
       this.addFloatingText(
         'Nada próximo para interagir',
@@ -5377,6 +5451,15 @@ export class GameEngine {
       return;
     }
 
+    if (
+      heldItem.toolType === ToolType.WATERING_CAN ||
+      heldItem.id === 'watering_can' ||
+      heldItem.id === 'watering_can_full'
+    ) {
+      this.performInteractAction();
+      return;
+    }
+
     this.addFloatingText(
       `${heldItem.name}: use o Botão de Ataque/Coleta`,
       this.player.x,
@@ -5739,6 +5822,43 @@ export class GameEngine {
     // 1. Check nearby Interactive Structures (Workbench, Furnace, Solar Altar, Campfire, Village Well, Market Stall, Chest, House, Door)
     const pTile = this.world.worldToTile(this.player.x, this.player.y);
     const pChunk = this.world.tileToChunk(pTile.tx, pTile.ty);
+    const heldSlot = this.player.inventory[this.player.selectedHotbarIndex];
+    const isHoldingWateringCan = Boolean(
+      heldSlot &&
+        (heldSlot.itemId === 'watering_can' ||
+          heldSlot.itemId === 'watering_can_full')
+    );
+
+    // 1.0 If holding a watering can, check nearby water tiles for refilling via Interact button
+    if (isHoldingWateringCan) {
+      for (let wyOff = -2; wyOff <= 2; wyOff++) {
+        for (let wxOff = -2; wxOff <= 2; wxOff++) {
+          const wtx = pTile.tx + wxOff;
+          const wty = pTile.ty + wyOff;
+          if (
+            this.world.isTileSwimmableWater(wtx, wty) ||
+            this.world.computeBiomeAtTile(wtx, wty) === BiomeType.OCEAN
+          ) {
+            const wwx = wtx * TILE_SIZE + TILE_SIZE / 2;
+            const wwy = wty * TILE_SIZE + TILE_SIZE / 2;
+            const score = computeDirectionalScore(wwx, wwy, -14);
+            if (Number.isFinite(score)) {
+              candidates.push({
+                score,
+                info: {
+                  kind: 'water_source',
+                  label: 'Água Fresca',
+                  actionHint: 'Encher Regador (12/12) 💧',
+                  worldX: wwx,
+                  worldY: wwy,
+                  iconItemId: 'watering_can_full',
+                },
+              });
+            }
+          }
+        }
+      }
+    }
 
     for (let dy = -1; dy <= 1; dy++) {
       for (let dx = -1; dx <= 1; dx++) {
@@ -5755,6 +5875,8 @@ export class GameEngine {
           if (st.type === PlaceableType.TILLED_SOIL) {
             if (distPlayer <= TILE_SIZE * 2.2) {
               const crop = st.cropType;
+              const wateringBias = isHoldingWateringCan ? -12 : 8;
+              const wateringEmpty = heldSlot?.itemId === 'watering_can';
               if (crop) {
                 const itemDef = ITEMS[crop];
                 const cropName = itemDef?.name || crop;
@@ -5777,20 +5899,26 @@ export class GameEngine {
                 } else {
                   const stageNum = (st.growthStage || 0) + 1;
                   const pct = Math.round((st.growthProgress || 0) * 100);
-                  const hint = st.isWatered
+                  const hint = isHoldingWateringCan
+                    ? wateringEmpty
+                      ? 'Regador Vazio! Encha na água 💧'
+                      : 'Regar Planta 💧'
+                    : st.isWatered
                     ? st.fertilized
                       ? 'Adubado ✦'
                       : 'Solo Irrigado ♥'
                     : 'Use Regador 💧';
                   candidates.push({
-                    score: computeDirectionalScore(sx, sy, 8),
+                    score: computeDirectionalScore(sx, sy, wateringBias),
                     info: {
                       kind: 'crop',
                       label: `${cropName} (${stageNum}/4 · ${pct}%)`,
                       actionHint: hint,
                       worldX: sx,
                       worldY: sy,
-                      iconItemId: crop,
+                      iconItemId: isHoldingWateringCan
+                        ? heldSlot!.itemId
+                        : crop,
                       structureId: st.id,
                       cropType: crop,
                       cropStage: st.growthStage,
@@ -5800,16 +5928,26 @@ export class GameEngine {
                 }
               } else {
                 candidates.push({
-                  score: computeDirectionalScore(sx, sy, 12),
+                  score: computeDirectionalScore(
+                    sx,
+                    sy,
+                    isHoldingWateringCan ? -12 : 12
+                  ),
                   info: {
                     kind: 'crop',
                     label: st.isWatered
                       ? 'Terra Arada (Irrigada)'
                       : 'Terra Arada (Seca)',
-                    actionHint: 'Plantar Semente 🌱',
+                    actionHint: isHoldingWateringCan
+                      ? wateringEmpty
+                        ? 'Regador Vazio! Encha na água 💧'
+                        : 'Regar Solo Arado 💧'
+                      : 'Plantar Semente 🌱',
                     worldX: sx,
                     worldY: sy,
-                    iconItemId: 'wheat_seeds',
+                    iconItemId: isHoldingWateringCan
+                      ? heldSlot!.itemId
+                      : 'wheat_seeds',
                     structureId: st.id,
                     cropStage: 0,
                     isWatered: st.isWatered,
@@ -5900,11 +6038,15 @@ export class GameEngine {
               : '';
 
             const actionHint =
-              insideResidents.length > 0 &&
-              (st.type === PlaceableType.VILLAGE_HOUSE ||
-                st.type === PlaceableType.EXPLORER_TENT ||
-                st.type === PlaceableType.WOOD_DOOR ||
-                st.type === PlaceableType.IRON_GATE)
+              isHoldingWateringCan &&
+              (st.type === PlaceableType.VILLAGE_WELL ||
+                st.type === PlaceableType.HEALING_FOUNTAIN)
+                ? 'Encher Regador (12/12) 💧'
+                : insideResidents.length > 0 &&
+                  (st.type === PlaceableType.VILLAGE_HOUSE ||
+                    st.type === PlaceableType.EXPLORER_TENT ||
+                    st.type === PlaceableType.WOOD_DOOR ||
+                    st.type === PlaceableType.IRON_GATE)
                 ? `🚪 Bater na Porta (${insideNames}) 🏠`
                 : st.type === PlaceableType.WOOD_DOOR ||
                   st.type === PlaceableType.IRON_GATE
@@ -5994,7 +6136,6 @@ export class GameEngine {
     }
 
     // 2. Check nearby Wild Domesticable Animals & Tamed Pets / Mounts / Boats
-    const heldSlot = this.player.inventory[this.player.selectedHotbarIndex];
     const isHoldingSaddle = Boolean(heldSlot && heldSlot.itemId === 'saddle');
 
     for (const cr of this.entities.creatures) {
@@ -7164,13 +7305,7 @@ export class GameEngine {
         if (!this.player.equippedBySlot[eqSlot]) {
           this.player.equippedBySlot[eqSlot] = itemDef.id;
           this.player.equippedArmorId = this.player.equippedBySlot.body;
-          if (itemDef.maxHpBonus) {
-            this.player.maxHp += itemDef.maxHpBonus;
-            this.player.hp = Math.min(
-              this.player.maxHp,
-              this.player.hp + itemDef.maxHpBonus
-            );
-          }
+          this.recalculatePlayerMaxHp();
           recoveredStacks++;
           continue;
         }
@@ -7246,16 +7381,13 @@ export class GameEngine {
       for (const eqSlot of ['head', 'body', 'legs', 'feet'] as EquipmentSlot[]) {
         const eqId = this.player.equippedBySlot[eqSlot];
         if (eqId) {
-          const def = ITEMS[eqId];
-          if (def?.maxHpBonus) {
-            this.player.maxHp = Math.max(50, this.player.maxHp - def.maxHpBonus);
-          }
           bagItems.push({ itemId: eqId, count: 1 });
           this.player.equippedBySlot[eqSlot] = null;
         }
       }
     }
     this.player.equippedArmorId = null;
+    this.recalculatePlayerMaxHp();
 
     const droppedGold = Math.max(0, Math.floor(this.player.goldCoins || 0));
     this.player.goldCoins = 0;
@@ -7575,7 +7707,10 @@ export class GameEngine {
 
     // 3. Permanent Max HP Upgrade (Primordial Ambrosia)
     if (item.permanentMaxHpBonus) {
-      this.player.maxHp += item.permanentMaxHpBonus;
+      this.player.bonusMaxHpFromItems =
+        Math.max(0, Math.floor(this.player.bonusMaxHpFromItems || 0)) +
+        item.permanentMaxHpBonus;
+      this.recalculatePlayerMaxHp();
       this.player.maxStamina += 15;
     }
 
@@ -7633,6 +7768,51 @@ export class GameEngine {
     this.emitUiSnapshot();
   }
 
+  /**
+   * Returns the character's pure real status Max HP (base 100 + level + vitality),
+   * strictly excluding any item or armor effects.
+   */
+  public getPlayerStatusMaxHp(): number {
+    const lvl = Math.max(1, Math.floor(this.player.level || 1));
+    const vit = Math.max(1, Math.floor(this.player.attributes?.vitality || 1));
+    return 100 + (lvl - 1) * 10 + (vit - 1) * 18;
+  }
+
+  /**
+   * Returns the appendix Max HP bonus granted by equipped armor pieces.
+   */
+  public getTotalEquipmentMaxHpBonus(): number {
+    const eq = this.player.equippedBySlot || {
+      head: null,
+      body: this.player.equippedArmorId || null,
+      legs: null,
+      feet: null,
+    };
+    let total = 0;
+    for (const slot of ['head', 'body', 'legs', 'feet'] as EquipmentSlot[]) {
+      const id = eq[slot];
+      if (id && ITEMS[id]?.maxHpBonus) {
+        total += ITEMS[id].maxHpBonus || 0;
+      }
+    }
+    return total;
+  }
+
+  /**
+   * Recalculates total Max HP as (Status Max HP + Permanent Item Bonus + Armor Appendix Bonus).
+   * Never heals or adds current HP — only clamps current HP if it exceeds the new total Max HP.
+   */
+  public recalculatePlayerMaxHp(): void {
+    const statusMax = this.getPlayerStatusMaxHp();
+    const permItemBonus = Math.max(
+      0,
+      Math.floor(this.player.bonusMaxHpFromItems || 0)
+    );
+    const armorBonus = this.getTotalEquipmentMaxHpBonus();
+    this.player.maxHp = statusMax + permItemBonus + armorBonus;
+    this.player.hp = Math.min(this.player.hp, this.player.maxHp);
+  }
+
   public getTotalDefenseBonus(): number {
     const eq = this.player.equippedBySlot || {
       head: null,
@@ -7685,13 +7865,6 @@ export class GameEngine {
     const targetSlot: EquipmentSlot = item.equipSlot || 'body';
     const previousItemId = this.player.equippedBySlot[targetSlot];
 
-    // Remove previous piece's Max HP bonus if any
-    if (previousItemId && ITEMS[previousItemId]?.maxHpBonus) {
-      const oldHpBonus = ITEMS[previousItemId].maxHpBonus || 0;
-      this.player.maxHp = Math.max(50, this.player.maxHp - oldHpBonus);
-      this.player.hp = Math.min(this.player.hp, this.player.maxHp);
-    }
-
     this.player.equippedBySlot[targetSlot] = item.id;
     this.player.equippedArmorId = this.player.equippedBySlot.body;
     this.consumeInventoryAt(slotIndex, 1);
@@ -7703,11 +7876,8 @@ export class GameEngine {
       }
     }
 
-    // Apply new piece's Max HP bonus if any
-    if (item.maxHpBonus) {
-      this.player.maxHp += item.maxHpBonus;
-      this.player.hp = Math.min(this.player.maxHp, this.player.hp + item.maxHpBonus);
-    }
+    // Recalculate Max HP appendix from armor without healing current HP
+    this.recalculatePlayerMaxHp();
 
     const slotLabelMap: Record<EquipmentSlot, string> = {
       head: 'Cabeça',
@@ -7734,13 +7904,9 @@ export class GameEngine {
 
     const added = this.addItemToInventory(itemId, 1);
     if (added) {
-      const def = ITEMS[itemId];
-      if (def?.maxHpBonus) {
-        this.player.maxHp = Math.max(50, this.player.maxHp - def.maxHpBonus);
-        this.player.hp = Math.min(this.player.hp, this.player.maxHp);
-      }
       this.player.equippedBySlot[equipSlot] = null;
       this.player.equippedArmorId = this.player.equippedBySlot.body;
+      this.recalculatePlayerMaxHp();
       soundManager.playPickup();
       this.emitUiSnapshot();
     } else {
@@ -10613,7 +10779,7 @@ export class GameEngine {
       this.player.level += 1;
       this.player.xpToNext = Math.round(this.player.xpToNext * 1.35);
       this.player.attributePoints += 1;
-      this.player.maxHp += 10;
+      this.recalculatePlayerMaxHp();
       this.player.hp = this.player.maxHp;
       this.player.hunger = this.player.maxHunger;
       soundManager.playLevelUp();
@@ -10635,8 +10801,8 @@ export class GameEngine {
     this.player.attributePoints -= 1;
     this.player.attributes[attr] += 1;
     if (attr === 'vitality') {
-      this.player.maxHp += 18;
-      this.player.hp += 18;
+      this.recalculatePlayerMaxHp();
+      this.player.hp = Math.min(this.player.maxHp, this.player.hp + 18);
     }
     soundManager.playCraft();
     this.emitUiSnapshot();

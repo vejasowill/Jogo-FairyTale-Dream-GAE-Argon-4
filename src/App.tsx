@@ -423,11 +423,17 @@ export default function App() {
   }, [activeWorldSave]);
 
   // Synchronize real game pause whenever Map, Inventory, Craft, Character, Pause, Chest, NPC Trade, Stall, Saddlebag, or HUD Editor is open.
-  // GameEngine automatically disables pause while network multiplayer players are connected.
+  // Music stops ONLY on Pause menu; in Craft, Map, Inventory, and other UI screens, music stays playing at half volume with muffled echo.
   useEffect(() => {
     if (!engineRef.current) return;
     const shouldRequestPause =
       activeModal !== 'NONE' || isEditingHud || isMountSaddlebagOpen;
+    const isPauseMenu = activeModal === 'PAUSE';
+    const isMuffledOverlay =
+      (activeModal !== 'NONE' && activeModal !== 'PAUSE') ||
+      isEditingHud ||
+      isMountSaddlebagOpen;
+    engineRef.current.setAudioMenuState(isPauseMenu, isMuffledOverlay);
     engineRef.current.setUiPauseRequested(shouldRequestPause);
   }, [activeModal, isEditingHud, isMountSaddlebagOpen]);
 

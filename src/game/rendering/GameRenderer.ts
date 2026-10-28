@@ -38,7 +38,8 @@ export interface AimedTargetInfo {
     | 'villager'
     | 'node'
     | 'crop'
-    | 'death_bag';
+    | 'death_bag'
+    | 'water_source';
   label: string;
   actionHint: string;
   worldX: number;

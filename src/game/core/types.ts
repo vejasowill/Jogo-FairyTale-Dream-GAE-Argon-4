@@ -555,6 +555,7 @@ export interface PlayerState {
   equippedArmorId: string | null; // Legacy chest/primary armor ID synced for backward compatibility
   equippedBySlot: PlayerEquipment; // 4-slot equipment: head, body, legs, feet
   appearance: PlayerAppearance; // Custom visual appearance (skin, hair, base clothes)
+  bonusMaxHpFromItems?: number; // Permanent max HP bonus from items (excluded from base status max HP)
   strengthBuffTimer?: number;
   speedBuffTimer?: number;
   fishingState?: FishingState | null;
@@ -624,7 +625,7 @@ export interface OnlineActivationStep {
 }
 
 // REGRA PERMANENTE: A cada nova atualização do jogo, incremente a versão para o número seguinte da beta (ex: 0.4.4-beta -> 0.4.5-beta).
-export const GAME_VERSION = '0.5.6-beta';
+export const GAME_VERSION = '0.5.7-beta';
 export const CURRENT_WORLD_GEN_VERSION = 3;
 
 export interface OnlineSessionInfo {

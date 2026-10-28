@@ -188,6 +188,10 @@ export const CharacterPetsModal: React.FC<CharacterPetsModalProps> = ({
 
   const totalDefPct = Math.round(engine.getTotalDefenseBonus() * 100);
   const totalSpeedPct = Math.round(engine.getTotalEquipmentSpeedBonus() * 100);
+  const armorHpBonus = engine.getTotalEquipmentMaxHpBonus();
+  const baseStatusMaxHp =
+    engine.getPlayerStatusMaxHp() +
+    Math.max(0, Math.floor(player.bonusMaxHpFromItems || 0));
 
   const playerPreviewUrl = (() => {
     const c = spriteAtlas.getPlayerSprite(previewDir, 0, player);
@@ -225,7 +229,9 @@ export const CharacterPetsModal: React.FC<CharacterPetsModalProps> = ({
       key: 'vitality',
       name: 'Vitalidade',
       desc: '+18 Vida Máx.',
-      bonusText: `HP: ${player.maxHp}`,
+      bonusText: `HP: ${baseStatusMaxHp}${
+        armorHpBonus > 0 ? ` (+${armorHpBonus})` : ''
+      }`,
       icon: <Heart className="w-4 h-4 text-rose-400" />,
     },
     {
@@ -357,6 +363,11 @@ export const CharacterPetsModal: React.FC<CharacterPetsModalProps> = ({
                   <span className="text-sky-300 font-bold">
                     DEF -{totalDefPct}%
                   </span>
+                  {armorHpBonus > 0 && (
+                    <span className="text-rose-300 font-bold">
+                      HP +{armorHpBonus}
+                    </span>
+                  )}
                   {totalSpeedPct > 0 && (
                     <span className="text-emerald-400 font-bold">
                       VEL +{totalSpeedPct}%
@@ -483,6 +494,11 @@ export const CharacterPetsModal: React.FC<CharacterPetsModalProps> = ({
                               {def.defenseBonus && (
                                 <span className="text-sky-300">
                                   -{Math.round(def.defenseBonus * 100)}% Dano
+                                </span>
+                              )}
+                              {def.maxHpBonus && (
+                                <span className="text-rose-300">
+                                  +{def.maxHpBonus} HP Máx
                                 </span>
                               )}
                               {def.speedBonus && (

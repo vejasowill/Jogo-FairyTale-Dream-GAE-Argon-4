@@ -191,6 +191,10 @@ export const MobileHud: React.FC<MobileHudProps> = ({
   };
 
   const isNight = timeOfDay >= 19.5 || timeOfDay < 5.5;
+  const armorHpBonus = engine.getTotalEquipmentMaxHpBonus();
+  const baseStatusMaxHp =
+    engine.getPlayerStatusMaxHp() +
+    Math.max(0, Math.floor(player.bonusMaxHpFromItems || 0));
   const hpPercent = Math.max(
     0,
     Math.min(100, (player.hp / player.maxHp) * 100)
@@ -393,7 +397,10 @@ export const MobileHud: React.FC<MobileHudProps> = ({
                   HP
                 </span>
                 <span className="font-mono-tabular text-white">
-                  {Math.ceil(player.hp)}
+                  {Math.ceil(player.hp)}/{baseStatusMaxHp}
+                  {armorHpBonus > 0 && (
+                    <span className="text-sky-300"> (+{armorHpBonus})</span>
+                  )}
                 </span>
               </div>
               <div className="h-1.5 w-full bg-[#120b07] border border-[#4a301e] overflow-hidden">
@@ -427,7 +434,7 @@ export const MobileHud: React.FC<MobileHudProps> = ({
           {activeMount && (
             <div className="pt-0.5 border-t border-[#3b2516] flex items-center gap-1.5">
               <span className="text-[8px] font-pixel text-amber-300 truncate max-w-[70px]">
-                🐎 {activeMount.name}
+                {activeMount.kind === 'BOAT' ? '⛵' : '🐎'} {activeMount.name}
               </span>
               <div className="flex-1 h-1.5 bg-[#120b07] border border-[#4a301e] overflow-hidden">
                 <div
@@ -759,26 +766,44 @@ export const MobileHud: React.FC<MobileHudProps> = ({
                     engine.mountCreature(nearbyMountTarget.id);
                   }
                 }}
-                tooltipTitle={activeMount ? 'Desmontar (R)' : 'Cavalgar (R)'}
-                tooltipDesc={`Montar ou sair de ${nearbyMountTarget.name}.`}
+                tooltipTitle={
+                  nearbyMountTarget.kind === 'BOAT'
+                    ? activeMount
+                      ? 'Desembarcar (R)'
+                      : 'Embarcar (R)'
+                    : activeMount
+                    ? 'Desmontar (R)'
+                    : 'Cavalgar (R)'
+                }
+                tooltipDesc={
+                  nearbyMountTarget.kind === 'BOAT'
+                    ? `Embarcar ou desembarcar de ${nearbyMountTarget.name}.`
+                    : `Montar ou sair de ${nearbyMountTarget.name}.`
+                }
                 tooltipAlign="top"
                 className={`min-h-[28px] px-2.5 text-[10px] font-pixel font-bold flex items-center gap-1 ${
                   activeMount ? 'medieval-btn-crimson' : 'medieval-btn-gold'
                 }`}
               >
-                <span>🐎 {activeMount ? 'Sair' : 'Cavalgar'}</span>
+                <span>
+                  {nearbyMountTarget.kind === 'BOAT'
+                    ? `⛵ ${activeMount ? 'Desembarcar' : 'Embarcar'}`
+                    : `🐎 ${activeMount ? 'Sair' : 'Cavalgar'}`}
+                </span>
               </HoldIconButton>
 
-              <HoldIconButton
-                onClick={() => setSaddlebagMountId(nearbyMountTarget.id)}
-                tooltipTitle="Alforje (8 Slots)"
-                tooltipDesc="Abre a bolsa de carga da montaria."
-                tooltipAlign="top"
-                className="min-h-[28px] px-2 medieval-btn-wood text-[10px] font-pixel font-bold flex items-center gap-1"
-              >
-                <Package className="w-3 h-3 text-amber-300" />
-                <span>Alforje</span>
-              </HoldIconButton>
+              {nearbyMountTarget.kind !== 'BOAT' && (
+                <HoldIconButton
+                  onClick={() => setSaddlebagMountId(nearbyMountTarget.id)}
+                  tooltipTitle="Alforje (8 Slots)"
+                  tooltipDesc="Abre a bolsa de carga da montaria."
+                  tooltipAlign="top"
+                  className="min-h-[28px] px-2 medieval-btn-wood text-[10px] font-pixel font-bold flex items-center gap-1"
+                >
+                  <Package className="w-3 h-3 text-amber-300" />
+                  <span>Alforje</span>
+                </HoldIconButton>
+              )}
             </div>
           )}
 
@@ -938,16 +963,23 @@ export const MobileHud: React.FC<MobileHudProps> = ({
                   }`}
                 >
                   <span>
-                    🐎{' '}
-                    {activeMount
-                      ? player.isMoving &&
-                        (activeMount.kind === 'HORSE' ||
-                          activeMount.kind === 'CAMEL')
-                        ? player.isGalloping
-                          ? 'Trote'
-                          : 'Galope'
-                        : 'Desmontar'
-                      : 'Cavalgar'}
+                    {(activeMount?.kind || nearbyPrimalMountCandidate?.kind) ===
+                    'BOAT' ? (
+                      <>⛵ {activeMount ? 'Desembarcar' : 'Embarcar'}</>
+                    ) : (
+                      <>
+                        🐎{' '}
+                        {activeMount
+                          ? player.isMoving &&
+                            (activeMount.kind === 'HORSE' ||
+                              activeMount.kind === 'CAMEL')
+                            ? player.isGalloping
+                              ? 'Trote'
+                              : 'Galope'
+                            : 'Desmontar'
+                          : 'Cavalgar'}
+                      </>
+                    )}
                   </span>
                 </button>
               )}
@@ -1014,7 +1046,20 @@ export const MobileHud: React.FC<MobileHudProps> = ({
               >
                 <Hand className="w-4 h-4" />
                 <span className="text-[7px] font-pixel font-bold mt-0.5">
-                  Interagir
+                  {(selectedItem?.id === 'watering_can' ||
+                    selectedItem?.id === 'watering_can_full') &&
+                  snapshot.aimedTarget
+                    ? snapshot.aimedTarget.kind === 'water_source' ||
+                      snapshot.aimedTarget.stationType ===
+                        PlaceableType.VILLAGE_WELL ||
+                      snapshot.aimedTarget.stationType ===
+                        PlaceableType.HEALING_FOUNTAIN
+                      ? 'Encher'
+                      : snapshot.aimedTarget.kind === 'crop' &&
+                        snapshot.aimedTarget.cropStage !== 3
+                      ? 'Regar'
+                      : 'Interagir'
+                    : 'Interagir'}
                 </span>
               </button>
             </div>
