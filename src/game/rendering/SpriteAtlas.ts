@@ -2780,6 +2780,150 @@ class SpriteAtlasManager {
       ],
       { d: '#2a1205', b: '#78350f', l: '#b45309', w: '#38bdf8' }
     );
+
+    // Carne de Cordeiro Crua (raw_lamb) — Lamb chop with bone & marbling
+    registerItem(
+      'raw_lamb',
+      [
+        '................',
+        '.........dddd...',
+        '........dwwwwd..',
+        '.......dwwdddd..',
+        '....ddddwwd.....',
+        '..ddrrrrrrdd....',
+        '.drrpppppprrd...',
+        '.drppwwpppprd...',
+        '.drrpppppprrd...',
+        '..ddrrrrrrdd....',
+        '....dddddd......',
+        '................',
+        '................',
+        '................',
+        '................',
+        '................',
+      ],
+      { d: '#450a0a', w: '#f8fafc', r: '#dc2626', p: '#fda4af' }
+    );
+
+    // Carne de Cordeiro Assada (cooked_lamb) — Roasted golden-brown lamb chop
+    registerItem(
+      'cooked_lamb',
+      [
+        '....ss..ss......',
+        '.....ss..ss.....',
+        '........dwwwwd..',
+        '.......dwwdddd..',
+        '....ddddwwd.....',
+        '..ddbbbbbbdd....',
+        '.dbbllllllbbd...',
+        '.dbllyyylllbd...',
+        '.dbbllllllbbd...',
+        '..ddbbbbbbdd....',
+        '....dddddd......',
+        '................',
+        '................',
+        '................',
+        '................',
+        '................',
+      ],
+      { d: '#2a1205', w: '#f1f5f9', b: '#78350f', l: '#b45309', y: '#fbbf24', s: '#cbd5e1' }
+    );
+
+    // Carne Suína Crua (raw_pork) — Raw pork loin cut with fat cap
+    registerItem(
+      'raw_pork',
+      [
+        '................',
+        '....dddddddd....',
+        '..ddwwwwwwwwdd..',
+        '.dwwrrrrrrrrwwd.',
+        '.dwrpppppppprwd.',
+        '.dwrppwwwwpprwd.',
+        '.dwrpppppppprwd.',
+        '..ddrrrrrrrrdd..',
+        '....dddddddd....',
+        '................',
+        '................',
+        '................',
+        '................',
+        '................',
+        '................',
+        '................',
+      ],
+      { d: '#450a0a', w: '#fef2f2', r: '#e11d48', p: '#fb7185' }
+    );
+
+    // Carne Suína Assada (cooked_pork) — Seared golden pork roast with grill marks
+    registerItem(
+      'cooked_pork',
+      [
+        '....ss....ss....',
+        '.....ss..ss.....',
+        '....dddddddd....',
+        '..ddyyyyyyyydd..',
+        '.dyylllllllllyd.',
+        '.dylbbllllbblyd.',
+        '.dyllllbbllllyd.',
+        '..ddbbbbbbbbdd..',
+        '....dddddddd....',
+        '................',
+        '................',
+        '................',
+        '................',
+        '................',
+        '................',
+        '................',
+      ],
+      { d: '#2a1205', y: '#f59e0b', l: '#b45309', b: '#78350f', s: '#e2e8f0' }
+    );
+
+    // Muda de Árvore (oak_sapling) — Young oak sprout with bright green leaves & root ball
+    registerItem(
+      'oak_sapling',
+      [
+        '......dddd......',
+        '....ddggggdd....',
+        '...dggllllggd...',
+        '...dggllllggd...',
+        '....ddggggdd....',
+        '......dbbd......',
+        '......dbbd......',
+        '.....ddbbdd.....',
+        '....dssssssd....',
+        '.....dddddd.....',
+        '................',
+        '................',
+        '................',
+        '................',
+        '................',
+        '................',
+      ],
+      { d: '#052e16', g: '#16a34a', l: '#4ade80', b: '#78350f', s: '#5c3a1e' }
+    );
+
+    // Muda de Palmeira (palm_sapling) — Tropical palm sprout with arching fronds & coconut seed base
+    registerItem(
+      'palm_sapling',
+      [
+        '....ddd..ddd....',
+        '..ddggddddggdd..',
+        '.dgllggggggllgd.',
+        '..dd..dbbd..dd..',
+        '......dbbd......',
+        '......dbbd......',
+        '.....dccccd.....',
+        '....dccccccd....',
+        '.....dddddd.....',
+        '................',
+        '................',
+        '................',
+        '................',
+        '................',
+        '................',
+        '................',
+      ],
+      { d: '#052e16', g: '#15803d', l: '#84cc16', b: '#b45309', c: '#78350f' }
+    );
   }
 
   private buildNatureNodes(): void {
@@ -4392,6 +4536,45 @@ class SpriteAtlasManager {
         ctx.fillRect(0, 6, 24, 3);
         ctx.fillRect(0, 12, 24, 3);
         ctx.fillRect(0, 18, 24, 3);
+      })
+    );
+
+    // OAK_SAPLING default preview sprite
+    this.structureSprites.set(
+      PlaceableType.OAK_SAPLING,
+      createFrames(24, 28, (ctx, f) => {
+        const sway = f % 2 === 0 ? 0 : 1;
+        ctx.fillStyle = 'rgba(0,0,0,0.22)';
+        ctx.fillRect(6, 23, 12, 3);
+        ctx.fillStyle = '#5c3a1e';
+        ctx.fillRect(8, 21, 8, 3);
+        ctx.fillStyle = '#78350f';
+        ctx.fillRect(11, 14, 2, 8);
+        ctx.fillStyle = '#052e16';
+        ctx.fillRect(6 + sway, 6, 12, 10);
+        ctx.fillStyle = '#16a34a';
+        ctx.fillRect(7 + sway, 7, 10, 8);
+        ctx.fillStyle = '#4ade80';
+        ctx.fillRect(8 + sway, 8, 6, 4);
+      })
+    );
+
+    // PALM_SAPLING default preview sprite
+    this.structureSprites.set(
+      PlaceableType.PALM_SAPLING,
+      createFrames(24, 28, (ctx, f) => {
+        const sway = f % 2 === 0 ? 0 : 1;
+        ctx.fillStyle = 'rgba(0,0,0,0.22)';
+        ctx.fillRect(6, 23, 12, 3);
+        ctx.fillStyle = '#78350f';
+        ctx.fillRect(8, 20, 8, 4);
+        ctx.fillStyle = '#b45309';
+        ctx.fillRect(11, 13, 2, 8);
+        ctx.fillStyle = '#15803d';
+        ctx.fillRect(4 + sway, 8, 16, 4);
+        ctx.fillRect(8 + sway, 5, 8, 6);
+        ctx.fillStyle = '#84cc16';
+        ctx.fillRect(5 + sway, 8, 14, 2);
       })
     );
   }

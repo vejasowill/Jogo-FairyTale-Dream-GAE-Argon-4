@@ -1532,6 +1532,88 @@ export const ITEMS: Record<string, ItemDefinition> = {
     maxStack: 50,
     placeableType: PlaceableType.IRON_LANTERN,
   },
+
+  // === NOVOS ALIMENTOS DE CAÇA (CORDEIRO & CARNE SUÍNA) E MUDAS DE REFLORESTAMENTO ===
+  raw_lamb: {
+    id: 'raw_lamb',
+    name: 'Carne de Cordeiro Crua',
+    description:
+      'Corte macio de carne obtido de ovelhas. Pode ser consumido cru em emergências ou assado na Fogueira ou Fornalha.',
+    purposeSummary:
+      'Alimento Cru (+14 Fome, +5 HP, +10 Energia): Asse na Fogueira ou Fornalha para preparar Carne de Cordeiro Assada!',
+    category: ItemCategory.CONSUMABLE,
+    rarity: RarityTier.BASIC,
+    maxStack: 50,
+    hpRestore: 5,
+    hungerRestore: 14,
+    staminaRestore: 10,
+  },
+  cooked_lamb: {
+    id: 'cooked_lamb',
+    name: 'Carne de Cordeiro Assada',
+    description:
+      'Costeleta de cordeiro suculenta assada lentamente na brasa. Excelente fonte de energia e vitalidade.',
+    purposeSummary:
+      'Refeição Assada (+42 Fome, +26 HP, +30 Energia): Sustento nutritivo preparado na Fogueira ou Fornalha.',
+    category: ItemCategory.CONSUMABLE,
+    rarity: RarityTier.BASIC,
+    maxStack: 50,
+    hpRestore: 26,
+    hungerRestore: 42,
+    staminaRestore: 30,
+  },
+  raw_pork: {
+    id: 'raw_pork',
+    name: 'Carne Suína Crua',
+    description:
+      'Corte robusto de carne obtido de javalis selvagens. Pode ser assado na Fogueira ou Fornalha para liberar todo seu sabor.',
+    purposeSummary:
+      'Alimento Cru (+16 Fome, +6 HP, +12 Energia): Asse na Fogueira ou Fornalha para preparar Carne Suína Assada!',
+    category: ItemCategory.CONSUMABLE,
+    rarity: RarityTier.BASIC,
+    maxStack: 50,
+    hpRestore: 6,
+    hungerRestore: 16,
+    staminaRestore: 12,
+  },
+  cooked_pork: {
+    id: 'cooked_pork',
+    name: 'Carne Suína Assada',
+    description:
+      'Lombo suíno dourado na brasa, muito nutritivo para longas expedições e combates.',
+    purposeSummary:
+      'Refeição Assada (+48 Fome, +30 HP, +35 Energia): Sustento vigoroso preparado na Fogueira ou Fornalha.',
+    category: ItemCategory.CONSUMABLE,
+    rarity: RarityTier.BASIC,
+    maxStack: 50,
+    hpRestore: 30,
+    hungerRestore: 48,
+    staminaRestore: 35,
+  },
+  oak_sapling: {
+    id: 'oak_sapling',
+    name: 'Muda de Árvore',
+    description:
+      'Brote vivo de Carvalho da Planície. Plante no solo: possui 3 estágios (Muda → Árvore Pequena → Árvore Adulta em 3 min, sem hitbox enquanto cresce e aceita Adubo Orgânico). Se quebrada antes de adulta, devolve apenas a muda.',
+    purposeSummary:
+      'Reflorestamento (Sem Hitbox · 3 min p/ Crescer · Aceita Adubo): Cresce em 3 estágios até virar um Carvalho da Planície adulto.',
+    category: ItemCategory.PLACEABLE,
+    rarity: RarityTier.BASIC,
+    maxStack: 50,
+    placeableType: PlaceableType.OAK_SAPLING,
+  },
+  palm_sapling: {
+    id: 'palm_sapling',
+    name: 'Muda de Palmeira',
+    description:
+      'Brote tropical de Palmeira Costeira. Plante no solo: possui 3 estágios (Muda → Palmeira Pequena → Palmeira Adulta em 5 min, sem hitbox enquanto cresce e aceita Adubo Orgânico). Se quebrada antes de adulta, devolve apenas a muda.',
+    purposeSummary:
+      'Reflorestamento (Sem Hitbox · 5 min p/ Crescer · Aceita Adubo): Cresce em 3 estágios até virar uma Palmeira Costeira adulta.',
+    category: ItemCategory.PLACEABLE,
+    rarity: RarityTier.BASIC,
+    maxStack: 50,
+    placeableType: PlaceableType.PALM_SAPLING,
+  },
 };
 
 export const CONSTRUCTION_BLUEPRINTS: Record<PlaceableType, ConstructionBlueprint> = {
@@ -2033,6 +2115,38 @@ export const CONSTRUCTION_BLUEPRINTS: Record<PlaceableType, ConstructionBlueprin
     lightRadius: 0,
     isInteractive: true,
   },
+  [PlaceableType.OAK_SAPLING]: {
+    type: PlaceableType.OAK_SAPLING,
+    role: 'MOBILIA',
+    roleLabel: 'Muda de Carvalho (3 Estágios · 3 min)',
+    layer: 'FURNITURE',
+    layerLabel: 'Camada Botânica (Não Pode Ser Sobreposta)',
+    hasHitbox: false,
+    hitboxBehavior: 'NONE',
+    hitboxLabel: 'Sem Hitbox (Livre Passagem até Fase Adulta)',
+    continuityMode: 'STANDALONE',
+    continuityLabel: 'Muda → Árvore Pequena → Árvore Adulta',
+    connectionGroup: 'none',
+    connectsToGroups: [],
+    maxHp: 30,
+    lightRadius: 0,
+  },
+  [PlaceableType.PALM_SAPLING]: {
+    type: PlaceableType.PALM_SAPLING,
+    role: 'MOBILIA',
+    roleLabel: 'Muda de Palmeira (3 Estágios · 5 min)',
+    layer: 'FURNITURE',
+    layerLabel: 'Camada Botânica (Não Pode Ser Sobreposta)',
+    hasHitbox: false,
+    hitboxBehavior: 'NONE',
+    hitboxLabel: 'Sem Hitbox (Livre Passagem até Fase Adulta)',
+    continuityMode: 'STANDALONE',
+    continuityLabel: 'Muda → Palmeira Pequena → Palmeira Adulta',
+    connectionGroup: 'none',
+    connectsToGroups: [],
+    maxHp: 30,
+    lightRadius: 0,
+  },
 };
 
 export function getConstructionBlueprint(
@@ -2069,10 +2183,8 @@ export const NATURE_BLUEPRINTS: Record<NatureNodeType, NatureNodeBlueprint> = {
     hitboxRadius: 7,
     drops: [
       { itemId: 'wood', min: 3, max: 5, chance: 1.0 },
-      { itemId: 'fiber', min: 1, max: 2, chance: 0.65 },
+      { itemId: 'oak_sapling', min: 1, max: 2, chance: 1.0 },
       { itemId: 'apple', min: 1, max: 2, chance: 0.45 },
-      { itemId: 'wheat_seeds', min: 1, max: 2, chance: 0.4 },
-      { itemId: 'carrot_seeds', min: 1, max: 2, chance: 0.25 },
     ],
   },
   [NatureNodeType.BERRY_BUSH]: {
@@ -2089,8 +2201,6 @@ export const NATURE_BLUEPRINTS: Record<NatureNodeType, NatureNodeBlueprint> = {
     drops: [
       { itemId: 'berry', min: 2, max: 4, chance: 1.0 },
       { itemId: 'fiber', min: 2, max: 3, chance: 0.9 },
-      { itemId: 'berry_seeds', min: 1, max: 1, chance: 0.5 },
-      { itemId: 'herb_seeds', min: 1, max: 1, chance: 0.3 },
     ],
   },
   [NatureNodeType.BOULDER]: {
@@ -2106,7 +2216,7 @@ export const NATURE_BLUEPRINTS: Record<NatureNodeType, NatureNodeBlueprint> = {
     hitboxRadius: 9,
     drops: [
       { itemId: 'stone', min: 3, max: 5, chance: 1.0 },
-      { itemId: 'flint', min: 1, max: 3, chance: 0.75 },
+      { itemId: 'flint', min: 1, max: 2, chance: 0.2 },
     ],
   },
   [NatureNodeType.CACTUS]: {
@@ -2121,10 +2231,8 @@ export const NATURE_BLUEPRINTS: Record<NatureNodeType, NatureNodeBlueprint> = {
     hasHitbox: true,
     hitboxRadius: 7,
     drops: [
-      { itemId: 'wood', min: 2, max: 3, chance: 0.8 },
-      { itemId: 'fiber', min: 2, max: 4, chance: 1.0 },
+      { itemId: 'fiber', min: 2, max: 4, chance: 0.8 },
       { itemId: 'cactus_fruit', min: 2, max: 3, chance: 1.0 },
-      { itemId: 'solar_seeds', min: 1, max: 2, chance: 0.45 },
     ],
   },
   [NatureNodeType.PALM_TREE]: {
@@ -2140,6 +2248,7 @@ export const NATURE_BLUEPRINTS: Record<NatureNodeType, NatureNodeBlueprint> = {
     hitboxRadius: 6,
     drops: [
       { itemId: 'wood', min: 2, max: 4, chance: 1.0 },
+      { itemId: 'palm_sapling', min: 1, max: 2, chance: 1.0 },
       { itemId: 'coconut', min: 1, max: 2, chance: 0.75 },
     ],
   },
@@ -2155,8 +2264,7 @@ export const NATURE_BLUEPRINTS: Record<NatureNodeType, NatureNodeBlueprint> = {
     hasHitbox: true,
     hitboxRadius: 9,
     drops: [
-      { itemId: 'iron_ore', min: 2, max: 4, chance: 1.0 },
-      { itemId: 'stone', min: 1, max: 3, chance: 0.8 },
+      { itemId: 'iron_ore', min: 1, max: 4, chance: 1.0 },
     ],
   },
   [NatureNodeType.HARDWOOD_TREE]: {
@@ -2172,7 +2280,6 @@ export const NATURE_BLUEPRINTS: Record<NatureNodeType, NatureNodeBlueprint> = {
     hitboxRadius: 8,
     drops: [
       { itemId: 'hardwood', min: 2, max: 4, chance: 1.0 },
-      { itemId: 'wood', min: 2, max: 3, chance: 0.8 },
       { itemId: 'apple', min: 1, max: 2, chance: 0.5 },
     ],
   },
@@ -2188,8 +2295,7 @@ export const NATURE_BLUEPRINTS: Record<NatureNodeType, NatureNodeBlueprint> = {
     hasHitbox: true,
     hitboxRadius: 8,
     drops: [
-      { itemId: 'solar_crystal', min: 2, max: 3, chance: 1.0 },
-      { itemId: 'flint', min: 1, max: 2, chance: 0.65 },
+      { itemId: 'solar_crystal', min: 1, max: 3, chance: 1.0 },
     ],
   },
   [NatureNodeType.SUNSTONE_OBELISK]: {
@@ -2204,8 +2310,8 @@ export const NATURE_BLUEPRINTS: Record<NatureNodeType, NatureNodeBlueprint> = {
     hasHitbox: true,
     hitboxRadius: 9,
     drops: [
-      { itemId: 'astral_shard', min: 1, max: 3, chance: 1.0 },
-      { itemId: 'solar_crystal', min: 2, max: 3, chance: 0.9 },
+      { itemId: 'astral_shard', min: 1, max: 1, chance: 1.0 },
+      { itemId: 'solar_crystal', min: 1, max: 3, chance: 0.9 },
     ],
   },
   [NatureNodeType.PEARL_CLAM]: {
@@ -2220,8 +2326,7 @@ export const NATURE_BLUEPRINTS: Record<NatureNodeType, NatureNodeBlueprint> = {
     hasHitbox: true,
     hitboxRadius: 9,
     drops: [
-      { itemId: 'abyssal_pearl', min: 1, max: 2, chance: 1.0 },
-      { itemId: 'stone', min: 2, max: 3, chance: 0.7 },
+      { itemId: 'abyssal_pearl', min: 1, max: 1, chance: 1.0 },
     ],
   },
   [NatureNodeType.ANCIENT_WORLD_TREE]: {
@@ -2236,8 +2341,8 @@ export const NATURE_BLUEPRINTS: Record<NatureNodeType, NatureNodeBlueprint> = {
     hasHitbox: true,
     hitboxRadius: 10,
     drops: [
-      { itemId: 'primordial_essence', min: 1, max: 3, chance: 1.0 },
-      { itemId: 'hardwood', min: 3, max: 5, chance: 1.0 },
+      { itemId: 'primordial_essence', min: 1, max: 1, chance: 1.0 },
+      { itemId: 'hardwood', min: 4, max: 8, chance: 1.0 },
     ],
   },
 };
@@ -2256,6 +2361,12 @@ export const ITEM_BASE_PRICES: Record<string, number> = {
   gold_coin: 1,
   stone: 2,
   tilled_soil: 2,
+  oak_sapling: 2,
+  palm_sapling: 3,
+  raw_lamb: 7,
+  raw_pork: 8,
+  cooked_lamb: 15,
+  cooked_pork: 16,
 
   // === TIER 1.5: SEMENTES INICIAIS, FRUTAS DE BIOMA, SAFRA AGRÍCOLA & SUBPRODUTOS ===
   wheat_seeds: 3,
@@ -2575,6 +2686,18 @@ export const STRUCTURE_MATERIAL_REQUIREMENTS: Record<
     requiredTool: ToolType.HOE,
     requiredTier: 0,
     requirementLabel: 'Mão Livre ou Enxada',
+  },
+  [PlaceableType.OAK_SAPLING]: {
+    materialKind: 'FIBER_FOLIAGE',
+    requiredTool: ToolType.NONE,
+    requiredTier: 0,
+    requirementLabel: 'Mão Livre ou Machado',
+  },
+  [PlaceableType.PALM_SAPLING]: {
+    materialKind: 'FIBER_FOLIAGE',
+    requiredTool: ToolType.NONE,
+    requiredTier: 0,
+    requirementLabel: 'Mão Livre ou Machado',
   },
 
   // === MADEIRA RÚSTICA (Quebrável com a Mão com força menor; ideal com Machado) ===

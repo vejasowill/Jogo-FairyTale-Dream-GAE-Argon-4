@@ -2732,6 +2732,19 @@ export class WorldManager {
       (s) => s.tileX === tx && s.tileY === ty
     );
 
+    // 0. Sapling non-overlapping rules:
+    // - Nothing can be placed on top of an existing Sapling (no floor, wall, furniture, or trap)
+    if (existingOnTile.some((s) => WorldManager.isSaplingStructure(s.type))) {
+      return false;
+    }
+    // - A Sapling can only be planted on natural land with no existing structures or nature nodes on that tile
+    if (WorldManager.isSaplingStructure(placeableType)) {
+      if (biome === BiomeType.OCEAN) return false;
+      if (existingOnTile.length > 0) return false;
+      if (chunk.nodes.some((n) => n.tileX === tx && n.tileY === ty)) return false;
+      return true;
+    }
+
     // 1. Placing a WOOD_BRIDGE (requires Ocean without an existing bridge)
     if (placeableType === PlaceableType.WOOD_BRIDGE) {
       return (
@@ -2865,6 +2878,16 @@ export class WorldManager {
     }
 
     return false;
+  }
+
+  /**
+   * Returns true if `type` is a tree sapling structure (OAK_SAPLING or PALM_SAPLING).
+   */
+  public static isSaplingStructure(type: PlaceableType): boolean {
+    return (
+      type === PlaceableType.OAK_SAPLING ||
+      type === PlaceableType.PALM_SAPLING
+    );
   }
 
   /**
@@ -3061,6 +3084,15 @@ export class WorldManager {
       lightRadius: bp.lightRadius,
       hitFlashTimer: 0,
       attachedToWall: isMountingTorchOnWall ? true : undefined,
+      growthStage: WorldManager.isSaplingStructure(placeableType)
+        ? 0
+        : undefined,
+      growthProgress: WorldManager.isSaplingStructure(placeableType)
+        ? 0
+        : undefined,
+      fertilized: WorldManager.isSaplingStructure(placeableType)
+        ? false
+        : undefined,
       storageSlots:
         placeableType === PlaceableType.CHEST
           ? new Array(CHEST_STORAGE_SIZE).fill(null)
@@ -3193,7 +3225,10 @@ export class WorldManager {
     // Check existing structures on the tile
     for (const st of chunk.structures) {
       if (st.tileX === tx && st.tileY === ty) {
-        if (st.type === PlaceableType.TILLED_SOIL) {
+        if (
+          st.type === PlaceableType.TILLED_SOIL ||
+          WorldManager.isSaplingStructure(st.type)
+        ) {
           return false;
         }
         const bp = CONSTRUCTION_BLUEPRINTS[st.type];
@@ -3249,14 +3284,73 @@ export class WorldManager {
   }
 
   /**
-   * Updates agriculture state (moisture evaporation & crop growth progression).
+   * Converts a fully grown sapling (Stage 3 = Adult Tree) into a mature NatureNode on its tile.
+   */
+  public MatureSaplingIntoTree(
+    chunk: ChunkData,
+    sapling: PlacedStructure
+  ): boolean {
+    const idx = chunk.structures.indexOf(sapling);
+    if (idx !== -1) {
+      chunk.structures.splice(idx, 1);
+    }
+    const alreadyHasNode = chunk.nodes.some(
+      (n) => n.tileX === sapling.tileX && n.tileY === sapling.tileY
+    );
+    if (!alreadyHasNode) {
+      const targetNodeType =
+        sapling.type === PlaceableType.PALM_SAPLING
+          ? NatureNodeType.PALM_TREE
+          : NatureNodeType.OAK_TREE;
+      const r = hash2D(sapling.tileX, sapling.tileY, this.seed + 31);
+      chunk.nodes.push(
+        this.createNatureNode(targetNodeType, sapling.tileX, sapling.tileY, r)
+      );
+    }
+    if (!chunk.preserved) {
+      WorldManager.lockChunkTerrainSnapshot(
+        chunk,
+        chunk.genVersion ?? this.worldGenVersion,
+        chunk.generatedGameVersion ?? GAME_VERSION
+      );
+    }
+    return true;
+  }
+
+  /**
+   * Updates agriculture state (moisture evaporation, crop growth, and tree sapling 3-stage growth).
    * Called during each tick for active chunks.
    */
   public updateAgriculture(dt: number, isRaining = false): void {
     const stageDuration = 22; // ~22s per stage watered, or ~11s with fertilizer
 
     for (const chunk of Object.values(this.chunks)) {
-      for (const st of chunk.structures) {
+      for (let i = chunk.structures.length - 1; i >= 0; i--) {
+        const st = chunk.structures[i];
+        if (!st) continue;
+
+        // A. Tree Sapling 3-stage growth:
+        // Stage 0 (Muda) -> Stage 1 (Árvore/Palmeira Pequena) -> Stage 2 (Árvore/Palmeira Adulta)
+        // Oak Sapling total = 180s (3 minutes -> 90s per stage transition)
+        // Palm Sapling total = 300s (5 minutes -> 150s per stage transition)
+        if (WorldManager.isSaplingStructure(st.type)) {
+          const saplingStageDuration =
+            st.type === PlaceableType.PALM_SAPLING ? 150 : 90;
+          const fertBoost = st.fertilized ? 2.0 : 1.0;
+          const progressSpeed = (1 / saplingStageDuration) * fertBoost;
+          st.growthStage = st.growthStage ?? 0;
+          st.growthProgress = (st.growthProgress || 0) + dt * progressSpeed;
+
+          if (st.growthProgress >= 1) {
+            st.growthProgress = 0;
+            st.growthStage += 1;
+            if (st.growthStage >= 2) {
+              this.MatureSaplingIntoTree(chunk, st);
+            }
+          }
+          continue;
+        }
+
         if (st.type !== PlaceableType.TILLED_SOIL) continue;
 
         // 1. Water & Hydration logic

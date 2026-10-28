@@ -2427,6 +2427,117 @@ export class GameRenderer {
     ctx.restore();
   }
 
+  /**
+   * Renders Stage 1 (`growthStage === 0`: Muda) and Stage 2 (`growthStage === 1`: Árvore/Palmeira Pequena)
+   * for planted `OAK_SAPLING` and `PALM_SAPLING` structures.
+   */
+  private drawTreeSaplingStage(
+    ctx: CanvasRenderingContext2D,
+    st: PlacedStructure,
+    wx: number,
+    wy: number,
+    globalTime: number
+  ): void {
+    const cx = wx + TILE_SIZE / 2;
+    const baseY = wy + TILE_SIZE - 4;
+    const sway = Math.round(
+      Math.sin(globalTime * 2.8 + st.tileX * 0.7 + st.tileY * 0.5)
+    );
+    const stage = st.growthStage || 0;
+    const isPalm = st.type === PlaceableType.PALM_SAPLING;
+
+    if (stage === 0) {
+      // === ESTÁGIO 1: MUDA (Brote pequeno recém-plantado) ===
+      ctx.fillStyle = 'rgba(0, 0, 0, 0.22)';
+      ctx.fillRect(cx - 6, baseY - 1, 12, 3);
+      // Montinho de terra fofa / semente de coco na base
+      ctx.fillStyle = isPalm ? '#78350f' : '#5c3a1e';
+      ctx.fillRect(cx - 5, baseY - 3, 10, 3);
+      ctx.fillStyle = isPalm ? '#92400e' : '#78350f';
+      ctx.fillRect(cx - 3, baseY - 4, 6, 2);
+
+      if (!isPalm) {
+        // Muda de Carvalho (pequeno caule e 3 folhinhas tenras)
+        ctx.fillStyle = '#78350f';
+        ctx.fillRect(cx - 1, baseY - 11, 2, 8);
+        ctx.fillStyle = '#052e16';
+        ctx.fillRect(cx - 6 + sway, baseY - 18, 12, 8);
+        ctx.fillStyle = '#16a34a';
+        ctx.fillRect(cx - 5 + sway, baseY - 17, 10, 6);
+        ctx.fillStyle = '#4ade80';
+        ctx.fillRect(cx - 4 + sway, baseY - 16, 6, 3);
+      } else {
+        // Muda de Palmeira (caule tropical curto e 2 folhas arqueadas)
+        ctx.fillStyle = '#b45309';
+        ctx.fillRect(cx - 1, baseY - 11, 2, 7);
+        ctx.fillStyle = '#052e16';
+        ctx.fillRect(cx - 8 + sway, baseY - 15, 16, 5);
+        ctx.fillRect(cx - 4 + sway, baseY - 18, 8, 5);
+        ctx.fillStyle = '#15803d';
+        ctx.fillRect(cx - 7 + sway, baseY - 14, 14, 3);
+        ctx.fillStyle = '#84cc16';
+        ctx.fillRect(cx - 5 + sway, baseY - 16, 10, 2);
+      }
+    } else {
+      // === ESTÁGIO 2: ÁRVORE PEQUENA / PALMEIRA PEQUENA (Porte intermediário jovem) ===
+      ctx.fillStyle = 'rgba(0, 0, 0, 0.28)';
+      ctx.fillRect(cx - 10, baseY - 2, 20, 4);
+
+      if (!isPalm) {
+        // Árvore Pequena de Carvalho (tronco jovem com galhos e copa frondosa compacta)
+        ctx.fillStyle = '#2a1205';
+        ctx.fillRect(cx - 3, baseY - 18, 6, 17);
+        ctx.fillStyle = '#78350f';
+        ctx.fillRect(cx - 2, baseY - 17, 4, 15);
+        ctx.fillStyle = '#92400e';
+        ctx.fillRect(cx - 1, baseY - 16, 2, 13);
+
+        // Copa jovem em camadas
+        ctx.fillStyle = '#052e16';
+        ctx.fillRect(cx - 12 + sway, baseY - 32, 24, 16);
+        ctx.fillRect(cx - 9 + sway, baseY - 36, 18, 6);
+        ctx.fillStyle = '#15803d';
+        ctx.fillRect(cx - 11 + sway, baseY - 31, 22, 13);
+        ctx.fillRect(cx - 8 + sway, baseY - 35, 16, 5);
+        ctx.fillStyle = '#22c55e';
+        ctx.fillRect(cx - 9 + sway, baseY - 30, 18, 9);
+        ctx.fillStyle = '#4ade80';
+        ctx.fillRect(cx - 6 + sway, baseY - 33, 11, 5);
+      } else {
+        // Palmeira Pequena (tronco anelado jovem inclinado e coroa de palmas)
+        ctx.fillStyle = '#451a03';
+        ctx.fillRect(cx - 3, baseY - 22, 6, 21);
+        ctx.fillStyle = '#92400e';
+        ctx.fillRect(cx - 2, baseY - 21, 4, 19);
+        ctx.fillStyle = '#b45309';
+        for (let ty = baseY - 19; ty < baseY - 3; ty += 4) {
+          ctx.fillRect(cx - 2, ty, 4, 2);
+        }
+
+        // Coroa de folhas de palmeira jovem
+        ctx.fillStyle = '#052e16';
+        ctx.fillRect(cx - 14 + sway, baseY - 28, 28, 7);
+        ctx.fillRect(cx - 8 + sway, baseY - 34, 16, 8);
+        ctx.fillStyle = '#15803d';
+        ctx.fillRect(cx - 13 + sway, baseY - 27, 26, 5);
+        ctx.fillRect(cx - 7 + sway, baseY - 33, 14, 6);
+        ctx.fillStyle = '#84cc16';
+        ctx.fillRect(cx - 10 + sway, baseY - 27, 20, 2);
+        ctx.fillRect(cx - 5 + sway, baseY - 32, 10, 3);
+      }
+    }
+
+    // Brilho dourado de adubo orgânico ativo
+    if (st.fertilized) {
+      const sparkleFrame = Math.floor(globalTime * 5 + st.tileX + st.tileY) % 3;
+      const sx = cx + (sparkleFrame - 1) * 6;
+      const sy = baseY - (stage === 0 ? 15 : 28) + (sparkleFrame % 2) * 3;
+      ctx.fillStyle = '#fde047';
+      ctx.fillRect(sx - 1, sy, 3, 1);
+      ctx.fillRect(sx, sy - 1, 1, 3);
+    }
+  }
+
   private drawStructure(
     ctx: CanvasRenderingContext2D,
     world: WorldManager,
@@ -2474,6 +2585,31 @@ export class GameRenderer {
       ctx.restore();
       if (st.hp < st.maxHp) {
         this.drawMiniBar(ctx, wx + TILE_SIZE / 2, wy - 14, st.hp / st.maxHp, '#38bdf8');
+      }
+      return;
+    }
+
+    // Special 3-stage rendering for Tree Saplings:
+    // Stage 0 = Muda (Sprout), Stage 1 = Árvore Pequena / Palmeira Pequena (Young Tree)
+    // (Stage 2 transforms into an adult NatureNode in WorldManager)
+    if (
+      st.type === PlaceableType.OAK_SAPLING ||
+      st.type === PlaceableType.PALM_SAPLING
+    ) {
+      ctx.save();
+      if (st.hitFlashTimer > 0) {
+        ctx.filter = 'brightness(1.7)';
+      }
+      this.drawTreeSaplingStage(ctx, st, wx, wy, globalTime);
+      ctx.restore();
+      if (st.hp < st.maxHp) {
+        this.drawMiniBar(
+          ctx,
+          wx + TILE_SIZE / 2,
+          wy - 6,
+          st.hp / st.maxHp,
+          '#4ade80'
+        );
       }
       return;
     }

@@ -33,6 +33,7 @@ import {
   MarketPurchaseOffer,
   MarketStallSlot,
   MOUNT_STORAGE_SIZE,
+  NatureNodeType,
   OnlineSessionInfo,
   PlaceableType,
   PlacedStructure,
@@ -5030,12 +5031,82 @@ export class GameEngine {
       return;
     }
 
-    // 0B. Organic Bone Fertilizer application
+    // 0B. Organic Bone Fertilizer application (Crops & Tree Saplings)
     if (heldItem.id === 'bone_fertilizer') {
       const target = this.getTargetTileForPlacement();
       if (!target) return;
       const { cx, cy } = this.world.tileToChunk(target.tx, target.ty);
       const chunk = this.world.getOrCreateChunk(cx, cy);
+
+      // Check if there is a Tree Sapling (OAK_SAPLING or PALM_SAPLING) on target tile (or aimed target)
+      let saplingSt = chunk.structures.find(
+        (s) =>
+          s.tileX === target.tx &&
+          s.tileY === target.ty &&
+          WorldManager.isSaplingStructure(s.type)
+      );
+      let saplingChunk = chunk;
+      if (!saplingSt) {
+        const aimed = this.getAimedTarget();
+        if (aimed?.structureId) {
+          const aimedTile = this.world.worldToTile(aimed.worldX, aimed.worldY);
+          const aimedChunkCoord = this.world.tileToChunk(aimedTile.tx, aimedTile.ty);
+          const candidateChunk = this.world.getOrCreateChunk(
+            aimedChunkCoord.cx,
+            aimedChunkCoord.cy
+          );
+          const foundSapling = candidateChunk.structures.find(
+            (s) =>
+              s.id === aimed.structureId &&
+              WorldManager.isSaplingStructure(s.type)
+          );
+          if (foundSapling) {
+            saplingSt = foundSapling;
+            saplingChunk = candidateChunk;
+          }
+        }
+      }
+
+      if (saplingSt) {
+        const saplingTx = saplingSt.tileX;
+        const saplingTy = saplingSt.tileY;
+        saplingSt.fertilized = true;
+        saplingSt.growthStage = (saplingSt.growthStage || 0) + 1;
+        saplingSt.growthProgress = 0;
+
+        const maturedNow = saplingSt.growthStage >= 2;
+        if (maturedNow) {
+          this.world.MatureSaplingIntoTree(saplingChunk, saplingSt);
+        }
+
+        this.consumeInventoryAt(this.player.selectedHotbarIndex, 1);
+        soundManager.playLevelUp();
+        this.renderer.spawnBurst(
+          saplingTx * TILE_SIZE + 16,
+          saplingTy * TILE_SIZE + 16,
+          maturedNow ? 'LEAF' : 'GOLD',
+          14
+        );
+        this.renderer.spawnRipple(
+          saplingTx * TILE_SIZE + 16,
+          saplingTy * TILE_SIZE + 16,
+          '#4ade80',
+          24,
+          0.45
+        );
+        this.addFloatingText(
+          maturedNow
+            ? 'Árvore Adulta Cresceu! 🌳✦'
+            : 'Muda Adubada! Evoluiu p/ Árvore Pequena ✦',
+          saplingTx * TILE_SIZE + 16,
+          saplingTy * TILE_SIZE,
+          '#4ade80'
+        );
+        this.syncChunkAtTile(saplingTx, saplingTy);
+        this.emitUiSnapshot();
+        return;
+      }
+
       const soilSt = chunk.structures.find(
         (s) =>
           s.tileX === target.tx &&
@@ -5045,7 +5116,7 @@ export class GameEngine {
 
       if (!soilSt || !soilSt.cropType) {
         this.addFloatingText(
-          'Use o adubo em um solo com planta em crescimento',
+          'Use o adubo em uma muda de árvore ou planta em crescimento',
           this.player.x,
           this.player.y - 20,
           '#fde047'
@@ -5749,6 +5820,40 @@ export class GameEngine {
             continue;
           }
 
+          // 1B. Tree Saplings (OAK_SAPLING / PALM_SAPLING) within reach
+          if (WorldManager.isSaplingStructure(st.type)) {
+            if (distPlayer <= TILE_SIZE * 2.2) {
+              const isPalm = st.type === PlaceableType.PALM_SAPLING;
+              const stageIdx = st.growthStage || 0;
+              const pct = Math.round((st.growthProgress || 0) * 100);
+              const stageLabel =
+                stageIdx === 0
+                  ? isPalm
+                    ? 'Muda de Palmeira (1/3 · Muda)'
+                    : 'Muda de Árvore (1/3 · Muda)'
+                  : isPalm
+                  ? 'Palmeira Pequena (2/3)'
+                  : 'Árvore Pequena (2/3)';
+              const hint = st.fertilized
+                ? `Adubada ✦ (${pct}%)`
+                : `Crescendo (${pct}%) · Aceita Adubo 🌱`;
+              candidates.push({
+                score: computeDirectionalScore(sx, sy, 8),
+                info: {
+                  kind: 'crop',
+                  label: stageLabel,
+                  actionHint: hint,
+                  worldX: sx,
+                  worldY: sy,
+                  iconItemId: isPalm ? 'palm_sapling' : 'oak_sapling',
+                  structureId: st.id,
+                  cropStage: stageIdx,
+                },
+              });
+            }
+            continue;
+          }
+
           if (
             st.type !== PlaceableType.WORKBENCH &&
             st.type !== PlaceableType.FURNACE &&
@@ -6167,6 +6272,26 @@ export class GameEngine {
           );
         }
       }
+      // Arbusto de Frutas: 50% de chance de 1 a 2 sementes aleatórias (trigo, cenoura, erva, solar, amora)
+      if (node.type === NatureNodeType.BERRY_BUSH && Math.random() <= 0.5) {
+        const seedPool = [
+          'wheat_seeds',
+          'carrot_seeds',
+          'herb_seeds',
+          'solar_seeds',
+          'berry_seeds',
+        ];
+        const randomSeedId =
+          seedPool[Math.floor(Math.random() * seedPool.length)];
+        let seedCount = 1 + Math.floor(Math.random() * 2);
+        if (Math.random() < survivalBonusChance) seedCount += 1;
+        this.spawnDrop(
+          randomSeedId,
+          seedCount,
+          nx + (Math.random() - 0.5) * 14,
+          ny + (Math.random() - 0.5) * 14
+        );
+      }
       this.gainXp(bp.xpReward);
       chunk.nodes.splice(nodeIndex, 1);
     }
@@ -6355,86 +6480,226 @@ export class GameEngine {
       };
 
       if (cr.kind === CreatureKind.ZOMBIE) {
-        this.spawnDrop(
-          'dark_essence',
-          (cr.isElite ? 2 : 1) + Math.floor(Math.random() * 2),
-          cr.x,
-          cr.y
-        );
-        if (Math.random() < 0.65) this.spawnDrop('fiber', 2, cr.x + 6, cr.y);
         if (cr.isElite) {
-          this.spawnDrop('iron_ore', 2, cr.x - 6, cr.y);
+          // Zumbi Ancião — elite (2 a 3 essências sombrias; 1 minérios de ferro)
+          this.spawnDrop(
+            'dark_essence',
+            2 + Math.floor(Math.random() * 2),
+            cr.x,
+            cr.y
+          );
+          this.spawnDrop('iron_ore', 1, cr.x - 6, cr.y);
+        } else {
+          // Zumbi Errante (1 a 2 essências sombrias)
+          this.spawnDrop(
+            'dark_essence',
+            1 + Math.floor(Math.random() * 2),
+            cr.x,
+            cr.y
+          );
         }
         grantPlayerXp(Math.round(35 * eliteMult));
       } else if (cr.kind === CreatureKind.OGRE) {
-        this.spawnDrop(
-          'ogre_hide',
-          (cr.isElite ? 2 : 1) + Math.floor(Math.random() * 2),
-          cr.x,
-          cr.y
-        );
-        this.spawnDrop('iron_ore', cr.isElite ? 4 : 2, cr.x + 8, cr.y);
         if (cr.isElite) {
-          this.spawnDrop('healing_salve', 1, cr.x - 8, cr.y);
+          // Ogro Brutal Alfa — elite (2 a 3 peles de ogro; 2 a 4 minérios de ferro)
+          this.spawnDrop(
+            'ogre_hide',
+            2 + Math.floor(Math.random() * 2),
+            cr.x,
+            cr.y
+          );
+          this.spawnDrop(
+            'iron_ore',
+            2 + Math.floor(Math.random() * 3),
+            cr.x + 8,
+            cr.y
+          );
+        } else {
+          // Ogro Brutamontes (1 a 2 peles de ogro; 2 minérios de ferro)
+          this.spawnDrop(
+            'ogre_hide',
+            1 + Math.floor(Math.random() * 2),
+            cr.x,
+            cr.y
+          );
+          this.spawnDrop('iron_ore', 2, cr.x + 8, cr.y);
         }
         grantPlayerXp(Math.round(95 * eliteMult));
       } else if (cr.kind === CreatureKind.FOREST_STALKER) {
-        this.spawnDrop(
-          'spider_silk',
-          (cr.isElite ? 2 : 1) + Math.floor(Math.random() * 2),
-          cr.x,
-          cr.y
-        );
-        if (Math.random() < 0.65) this.spawnDrop('berry', 2, cr.x + 6, cr.y);
+        if (cr.isElite) {
+          // Aranha Rainha Sombria — elite (2 a 3 sedas de aranha)
+          this.spawnDrop(
+            'spider_silk',
+            2 + Math.floor(Math.random() * 2),
+            cr.x,
+            cr.y
+          );
+        } else {
+          // Aranha Tecelã da Mata (1 a 2 sedas de aranha)
+          this.spawnDrop(
+            'spider_silk',
+            1 + Math.floor(Math.random() * 2),
+            cr.x,
+            cr.y
+          );
+        }
         grantPlayerXp(Math.round(48 * eliteMult));
       } else if (cr.kind === CreatureKind.DESERT_SCORPION) {
-        this.spawnDrop(
-          'scorpion_stinger',
-          cr.isElite ? 2 : 1,
-          cr.x,
-          cr.y
-        );
-        if (Math.random() < 0.55 || cr.isElite) {
+        if (cr.isElite) {
+          // Escorpião Imperador Dourado — elite (2 ferrões de escorpião; 1 cristal solar)
+          this.spawnDrop('scorpion_stinger', 2, cr.x, cr.y);
           this.spawnDrop('solar_crystal', 1, cr.x + 6, cr.y);
+        } else {
+          // Escorpião Rei da Areia (1 ferrão de escorpião; 20% de chance de 1 cristal solar)
+          this.spawnDrop('scorpion_stinger', 1, cr.x, cr.y);
+          if (Math.random() < 0.2) {
+            this.spawnDrop('solar_crystal', 1, cr.x + 6, cr.y);
+          }
         }
         grantPlayerXp(Math.round(62 * eliteMult));
       } else if (cr.kind === CreatureKind.STONE_GOLEM) {
-        this.spawnDrop('golem_core', cr.isElite ? 2 : 1, cr.x, cr.y);
-        this.spawnDrop('iron_ore', cr.isElite ? 4 : 2, cr.x + 8, cr.y);
-        this.spawnDrop('stone', 3, cr.x - 8, cr.y);
+        if (cr.isElite) {
+          // Colosso Rúnico Ancestral — elite (1 núcleo de golem; 4 minérios de ferro)
+          this.spawnDrop('golem_core', 1, cr.x, cr.y);
+          this.spawnDrop('iron_ore', 4, cr.x + 8, cr.y);
+        } else {
+          // Colosso Rúnico de Pedra (1 núcleo de golem; 3 pedras brutas)
+          this.spawnDrop('golem_core', 1, cr.x, cr.y);
+          this.spawnDrop('stone', 3, cr.x - 8, cr.y);
+        }
         grantPlayerXp(Math.round(115 * eliteMult));
       } else if (cr.kind === CreatureKind.BANDIT) {
-        this.spawnDrop(
-          'gold_coin',
-          (cr.isElite ? 3 : 1) + Math.floor(Math.random() * 2),
-          cr.x,
-          cr.y
-        );
-        if (Math.random() < 0.6) {
-          this.spawnDrop('wool_bandage', 1, cr.x + 6, cr.y);
-        }
         if (cr.isElite) {
-          this.spawnDrop('iron_bar', 2, cr.x - 6, cr.y);
+          // Líder Saqueador Corvo — elite (20 a 40 moedas de ouro)
+          this.spawnDrop(
+            'gold_coin',
+            20 + Math.floor(Math.random() * 21),
+            cr.x,
+            cr.y
+          );
+        } else {
+          // Saqueador Renegado (5 a 20 moedas de ouro; 30% de chance de 1 bandagem de lã)
+          this.spawnDrop(
+            'gold_coin',
+            5 + Math.floor(Math.random() * 16),
+            cr.x,
+            cr.y
+          );
+          if (Math.random() < 0.3) {
+            this.spawnDrop('wool_bandage', 1, cr.x + 6, cr.y);
+          }
         }
         grantPlayerXp(Math.round(58 * eliteMult));
       } else if (
         cr.kind === CreatureKind.VILLAGER ||
         cr.kind === CreatureKind.WANDERER
       ) {
-        this.spawnDrop('gold_coin', 2, cr.x, cr.y);
-        this.spawnDrop('iron_bar', 1, cr.x + 6, cr.y);
+        const npcName = (cr.name || '').trim();
+        // Andarilhos
+        if (
+          cr.kind === CreatureKind.WANDERER ||
+          cr.npcRole === 'andarilho' ||
+          npcName === 'Andarilho Kael' ||
+          npcName === 'Peregrina Mira' ||
+          npcName === 'Viajante Doran' ||
+          npcName === 'Nômade Lyris' ||
+          npcName === 'Caminhante Tomas' ||
+          npcName === 'Exploradora Vesper'
+        ) {
+          const coins = Math.floor(Math.random() * 11); // 0 a 10 moedas
+          if (coins > 0) {
+            this.spawnDrop('gold_coin', coins, cr.x, cr.y);
+          }
+          if (Math.random() < 0.3) {
+            this.spawnDrop('cooked_fish', 1, cr.x + 6, cr.y);
+          }
+        }
+        // Ferreiros
+        else if (
+          npcName === 'Mestre Borin' ||
+          npcName === 'Ferreiro Kaelen'
+        ) {
+          this.spawnDrop(
+            'charcoal',
+            1 + Math.floor(Math.random() * 3),
+            cr.x,
+            cr.y
+          );
+        } else if (
+          npcName === 'Durgan da Forja' ||
+          npcName === 'Thrain Martelo-Forte' ||
+          cr.npcRole === 'ferreiro'
+        ) {
+          const ironCount = Math.floor(Math.random() * 4); // 0 a 3 ferros
+          if (ironCount > 0) {
+            this.spawnDrop('iron_bar', ironCount, cr.x, cr.y);
+          }
+        }
+        // Mercadores e boticários
+        else if (
+          npcName === 'Mercadora Lyra' ||
+          npcName === 'Mercador Vaen'
+        ) {
+          this.spawnDrop(
+            'gold_coin',
+            1 + Math.floor(Math.random() * 5),
+            cr.x,
+            cr.y
+          );
+        } else if (
+          npcName === 'Mercadora Selene' ||
+          npcName === 'Boticária Elara' ||
+          cr.npcRole === 'mercador'
+        ) {
+          this.spawnDrop('herbal_poultice', 1, cr.x, cr.y);
+        }
+        // Guardiões
+        else if (
+          npcName === 'Capitão Thorne' ||
+          npcName === 'Sentinela Garrick' ||
+          npcName === 'Valéria Escudo-Solar' ||
+          npcName === 'Comandante Roland' ||
+          cr.npcRole === 'guardiao'
+        ) {
+          if (Math.random() < 0.3) {
+            this.spawnDrop('wood_sword', 1, cr.x, cr.y);
+          }
+        }
+        // Anciãos
+        else if (npcName === 'Ancião Aldric') {
+          this.spawnDrop('cooked_fish', 1, cr.x, cr.y);
+        } else if (
+          npcName === 'Sábio Vaelen' ||
+          npcName === 'Matriarca Aurelia'
+        ) {
+          if (Math.random() < 0.5) {
+            this.spawnDrop('herbal_poultice', 1, cr.x, cr.y);
+          }
+        } else if (npcName === 'Oráculo Orion' || cr.npcRole === 'anciao') {
+          if (Math.random() < 0.3) {
+            this.spawnDrop('shadow_elixir', 1, cr.x, cr.y);
+          }
+        }
         grantPlayerXp(40);
       } else if (cr.kind === CreatureKind.SHEEP) {
-        this.spawnDrop('wool', 2, cr.x, cr.y);
+        // Ovelha (1 a 2 lãs; 1 carne de cordeiro)
+        this.spawnDrop('wool', 1 + Math.floor(Math.random() * 2), cr.x, cr.y);
+        this.spawnDrop('raw_lamb', 1, cr.x + 6, cr.y);
         grantPlayerXp(15);
       } else if (cr.kind === CreatureKind.BOAR) {
-        this.spawnDrop('apple', 2, cr.x, cr.y);
+        // Javali (1 a 2 carnes suínas)
+        this.spawnDrop(
+          'raw_pork',
+          1 + Math.floor(Math.random() * 2),
+          cr.x,
+          cr.y
+        );
         grantPlayerXp(20);
       } else if (cr.kind === CreatureKind.CAMEL) {
-        this.spawnDrop('cactus_fruit', 2, cr.x, cr.y);
+        // Camelo (nada)
         grantPlayerXp(25);
       } else if (cr.kind === CreatureKind.HORSE) {
-        this.spawnDrop('apple', 2, cr.x, cr.y);
+        // Cavalo (nada)
         grantPlayerXp(22);
       }
 
