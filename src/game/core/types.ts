@@ -247,6 +247,7 @@ export interface PlacedStructure {
   stallSalesCount?: number;
   stallTotalGoldEarned?: number;
   stallUnclaimedGold?: number;
+  ownerSleeping?: boolean;
   // Thermal Station Processing (CAMPFIRE & FURNACE — Minecraft-inspired Fuel + Timed Prep)
   fuelItemId?: string | null;
   fuelCount?: number;
@@ -621,7 +622,7 @@ export interface OnlineActivationStep {
 }
 
 // REGRA PERMANENTE: A cada nova atualização do jogo, incremente a versão para o número seguinte da beta (ex: 0.4.4-beta -> 0.4.5-beta).
-export const GAME_VERSION = '0.5.1-beta';
+export const GAME_VERSION = '0.5.2-beta';
 export const CURRENT_WORLD_GEN_VERSION = 3;
 
 export interface OnlineSessionInfo {

@@ -2629,17 +2629,30 @@ export class GameRenderer {
 
     // D. Market Stall: Render displayed merchandise on counter, Owner Nameplate, and Customer Offer Exclamation (`!`)
     if (st.type === PlaceableType.MARKET_STALL) {
+      const isVillagerStall =
+        st.ownerType === 'VILLAGER' ||
+        (!st.ownerType &&
+          Boolean(st.villageId || st.id.startsWith('world_struct_')));
+      const isVillagerSleeping = isVillagerStall && Boolean(st.ownerSleeping);
+
       const activeSlots = Array.isArray(st.stallSlots)
         ? st.stallSlots.filter((s) => s !== null && s.count > 0 && s.enabled)
         : [];
+      let displayItemIds: string[] = [];
+      if (!isVillagerSleeping) {
+        if (activeSlots.length > 0) {
+          displayItemIds = activeSlots.slice(0, 4).map((s) => s!.itemId);
+        } else if (isVillagerStall) {
+          displayItemIds = ['healing_salve', 'rope', 'apple', 'saddle'];
+        }
+      }
 
       // Draw up to 4 mini item icons displayed on the wooden market counter
-      if (activeSlots.length > 0) {
-        const displayCount = Math.min(4, activeSlots.length);
+      if (displayItemIds.length > 0) {
+        const displayCount = Math.min(4, displayItemIds.length);
         const startX = centerX - (displayCount * 9) / 2;
         for (let i = 0; i < displayCount; i++) {
-          const sl = activeSlots[i]!;
-          const itemSprite = spriteAtlas.getItemCanvas(sl.itemId);
+          const itemSprite = spriteAtlas.getItemCanvas(displayItemIds[i]);
           ctx.drawImage(
             itemSprite,
             Math.round(startX + i * 9),
@@ -2695,6 +2708,8 @@ export class GameRenderer {
           ? isOpen
             ? `👑 ${st.customName || 'Sua Tenda'} (${activeSlots.length} à venda)`
             : `🔒 ${st.customName || 'Sua Tenda'} (Fechada)`
+          : isVillagerSleeping
+          ? `🌙 ${st.customName || 'Tenda da Vila'} · Dono dormindo`
           : `🏪 ${st.customName || 'Tenda da Vila'} · Dono: ${st.ownerName || 'Mercador'}`;
         ctx.save();
         ctx.font = 'bold 6px "Plus Jakarta Sans", sans-serif';

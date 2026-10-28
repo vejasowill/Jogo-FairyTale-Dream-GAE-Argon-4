@@ -1085,7 +1085,43 @@ export const MobileHud: React.FC<MobileHudProps> = ({
                 </div>
               </div>
 
-              <div className="flex items-center gap-1.5 shrink-0">
+              <div className="flex items-center gap-1.5 flex-wrap shrink-0">
+                <HoldIconButton
+                  onClick={() => {
+                    engine.takeAllFromMount(saddlebagCreature.id);
+                    setSelectedSaddleSlot(null);
+                  }}
+                  tooltipTitle="Retirar Tudo"
+                  tooltipDesc="Retira todos os itens do alforje para a sua mochila."
+                  className="min-h-[32px] px-2 medieval-btn-wood text-[9px] sm:text-[10px] font-pixel font-bold flex items-center gap-1"
+                >
+                  <span>Retirar Tudo</span>
+                </HoldIconButton>
+
+                <HoldIconButton
+                  onClick={() => {
+                    engine.depositAllToMount(saddlebagCreature.id);
+                    setSelectedSaddleSlot(null);
+                  }}
+                  tooltipTitle="Guardar Tudo"
+                  tooltipDesc="Guarda os itens da mochila dentro do alforje."
+                  className="min-h-[32px] px-2 medieval-btn-wood text-[9px] sm:text-[10px] font-pixel font-bold flex items-center gap-1"
+                >
+                  <span>Guardar Tudo</span>
+                </HoldIconButton>
+
+                <HoldIconButton
+                  onClick={() => {
+                    engine.sortMountStorage(saddlebagCreature.id);
+                    setSelectedSaddleSlot(null);
+                  }}
+                  tooltipTitle="Organizar"
+                  tooltipDesc="Agrupa pilhas iguais e organiza os itens do alforje."
+                  className="min-h-[32px] px-2 medieval-btn-gold text-[9px] sm:text-[10px] font-pixel font-bold flex items-center gap-1"
+                >
+                  <span>Organizar</span>
+                </HoldIconButton>
+
                 <WindowHelpButton onClick={() => setShowSaddlebagHelp(true)} />
                 <button
                   type="button"

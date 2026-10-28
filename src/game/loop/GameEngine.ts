@@ -1181,39 +1181,181 @@ export class GameEngine {
         if (st.type !== PlaceableType.MARKET_STALL) continue;
         this.ensureMarketStallInitialized(st);
 
-        if (st.ownerType === 'VILLAGER' && !st.ownerId) {
-          const sx = st.tileX * TILE_SIZE + TILE_SIZE / 2;
-          const sy = st.tileY * TILE_SIZE + TILE_SIZE / 2;
-          let bestMerchant: CreatureEntity | null = null;
-          let bestScore = Infinity;
+        if (st.ownerType === 'VILLAGER') {
+          const currentOwnerAlive =
+            st.ownerId &&
+            this.entities.creatures.some(
+              (c) =>
+                c.id === st.ownerId &&
+                (c.kind === CreatureKind.VILLAGER ||
+                  c.kind === CreatureKind.WANDERER) &&
+                c.hp > 0
+            );
 
-          for (const cr of this.entities.creatures) {
-            if (cr.kind !== CreatureKind.VILLAGER || cr.hp <= 0) continue;
-            const d = Math.hypot(cr.x - sx, cr.y - sy);
-            if (d > 380 && (!st.villageId || cr.villageId !== st.villageId)) {
-              continue;
+          if (!currentOwnerAlive) {
+            const sx = st.tileX * TILE_SIZE + TILE_SIZE / 2;
+            const sy = st.tileY * TILE_SIZE + TILE_SIZE / 2;
+            let bestMerchant: CreatureEntity | null = null;
+            let bestScore = Infinity;
+
+            for (const cr of this.entities.creatures) {
+              if (cr.kind !== CreatureKind.VILLAGER || cr.hp <= 0) continue;
+              const d = Math.hypot(cr.x - sx, cr.y - sy);
+              if (d > 380 && (!st.villageId || cr.villageId !== st.villageId)) {
+                continue;
+              }
+              const roleBonus = cr.npcRole === 'mercador' ? -220 : 0;
+              const villageBonus =
+                st.villageId && cr.villageId === st.villageId ? -120 : 0;
+              const score = d + roleBonus + villageBonus;
+              if (score < bestScore) {
+                bestScore = score;
+                bestMerchant = cr;
+              }
             }
-            const roleBonus = cr.npcRole === 'mercador' ? -220 : 0;
-            const villageBonus =
-              st.villageId && cr.villageId === st.villageId ? -120 : 0;
-            const score = d + roleBonus + villageBonus;
-            if (score < bestScore) {
-              bestScore = score;
-              bestMerchant = cr;
+
+            if (bestMerchant) {
+              st.ownerId = bestMerchant.id;
+              st.ownerName = `${bestMerchant.name} (${
+                bestMerchant.npcProfessionLabel || 'Mercador'
+              })`;
+            } else if (!st.ownerName) {
+              st.ownerName = 'Mercador da Vila';
             }
           }
 
-          if (bestMerchant) {
-            st.ownerId = bestMerchant.id;
-            st.ownerName = `${bestMerchant.name} (${
-              bestMerchant.npcProfessionLabel || 'Mercador'
-            })`;
-          } else if (!st.ownerName) {
-            st.ownerName = 'Mercador da Vila';
+          if (this.isVillagerStallOwnerAlive(st)) {
+            const hasGoods =
+              Array.isArray(st.stallSlots) &&
+              st.stallSlots.some((s) => s !== null && s.count > 0);
+            if (!hasGoods) {
+              this.populateVillagerStallMerchandise(st);
+            }
+            st.ownerSleeping = this.isVillagerStallOwnerSleeping(st);
+            st.stallOpen = !st.ownerSleeping;
+          } else {
+            st.ownerSleeping = false;
           }
         }
       }
     }
+  }
+
+  /**
+   * Finds the living Villager/Wanderer entity that owns a Villager Market Stall.
+   */
+  public getVillagerStallOwnerEntity(
+    stall: PlacedStructure
+  ): CreatureEntity | null {
+    if (stall.ownerType !== 'VILLAGER') return null;
+    if (stall.ownerId) {
+      const direct = this.entities.creatures.find(
+        (c) =>
+          c.id === stall.ownerId &&
+          (c.kind === CreatureKind.VILLAGER ||
+            c.kind === CreatureKind.WANDERER) &&
+          c.hp > 0
+      );
+      if (direct) return direct;
+    }
+    if (stall.villageId) {
+      const villageMerchant =
+        this.entities.creatures.find(
+          (c) =>
+            c.kind === CreatureKind.VILLAGER &&
+            c.villageId === stall.villageId &&
+            c.hp > 0 &&
+            c.npcRole === 'mercador'
+        ) ||
+        this.entities.creatures.find(
+          (c) =>
+            c.kind === CreatureKind.VILLAGER &&
+            c.villageId === stall.villageId &&
+            c.hp > 0
+        );
+      if (villageMerchant) return villageMerchant;
+    }
+    return null;
+  }
+
+  /**
+   * Returns true if the Villager owner of a Market Stall is currently sleeping inside their house (`isInsideHouse`).
+   * While sleeping, the stall's merchandise is hidden until they wake up.
+   */
+  public isVillagerStallOwnerSleeping(stall: PlacedStructure): boolean {
+    if (stall.ownerType !== 'VILLAGER') return false;
+    const ownerNpc = this.getVillagerStallOwnerEntity(stall);
+    if (ownerNpc) {
+      return Boolean(ownerNpc.isInsideHouse);
+    }
+    return Boolean(
+      this.metadata.timeOfDay >= 20.0 || this.metadata.timeOfDay < 5.5
+    );
+  }
+
+  /**
+   * Populates a Villager-owned Market Stall (`stall.ownerType === 'VILLAGER'`) with the villager's showcase merchandise.
+   */
+  public populateVillagerStallMerchandise(stall: PlacedStructure): void {
+    if (stall.ownerType !== 'VILLAGER') return;
+    const ownerNpc = this.getVillagerStallOwnerEntity(stall);
+    const nextSlots: (MarketStallSlot | null)[] = new Array(
+      MARKET_STALL_SIZE
+    ).fill(null);
+
+    const showcaseList: Array<{ itemId: string; count: number }> = [];
+    const seenIds = new Set<string>();
+
+    if (ownerNpc && Array.isArray(ownerNpc.trades)) {
+      for (const tr of ownerNpc.trades) {
+        if (
+          tr.receiveItemId &&
+          ITEMS[tr.receiveItemId] &&
+          tr.receiveItemId !== 'gold_coin' &&
+          !seenIds.has(tr.receiveItemId)
+        ) {
+          seenIds.add(tr.receiveItemId);
+          showcaseList.push({
+            itemId: tr.receiveItemId,
+            count: Math.max(2, tr.receiveCount * 2),
+          });
+        }
+      }
+    }
+
+    const fallbackGoods: Array<{ itemId: string; count: number }> = [
+      { itemId: 'healing_salve', count: 3 },
+      { itemId: 'rope', count: 4 },
+      { itemId: 'apple', count: 6 },
+      { itemId: 'saddle', count: 1 },
+      { itemId: 'iron_bar', count: 3 },
+      { itemId: 'torch', count: 5 },
+    ];
+    for (const fg of fallbackGoods) {
+      if (showcaseList.length >= 6) break;
+      if (!seenIds.has(fg.itemId) && ITEMS[fg.itemId]) {
+        seenIds.add(fg.itemId);
+        showcaseList.push(fg);
+      }
+    }
+
+    for (
+      let i = 0;
+      i < Math.min(showcaseList.length, MARKET_STALL_SIZE);
+      i++
+    ) {
+      const entry = showcaseList[i];
+      nextSlots[i] = {
+        itemId: entry.itemId,
+        count: entry.count,
+        unitPrice: Math.max(1, getItemBasePrice(entry.itemId)),
+        enabled: true,
+      };
+    }
+
+    stall.stallSlots = nextSlots;
+    stall.ownerSleeping = this.isVillagerStallOwnerSleeping(stall);
+    stall.stallOpen = !stall.ownerSleeping;
   }
 
   /**
@@ -1222,21 +1364,14 @@ export class GameEngine {
    */
   public isVillagerStallOwnerAlive(stall: PlacedStructure): boolean {
     if (stall.ownerType !== 'VILLAGER') return false;
-    if (stall.ownerId) {
-      return this.entities.creatures.some(
-        (c) =>
-          c.id === stall.ownerId &&
-          c.kind === CreatureKind.VILLAGER &&
-          c.hp > 0
-      );
+    if (this.getVillagerStallOwnerEntity(stall)) {
+      return true;
     }
-    if (stall.villageId) {
-      return this.entities.creatures.some(
-        (c) =>
-          c.kind === CreatureKind.VILLAGER &&
-          c.villageId === stall.villageId &&
-          c.hp > 0
-      );
+    // If the village chunk hasn't spawned its landmark mobs yet, treat the village merchant as alive
+    const { cx, cy } = this.world.tileToChunk(stall.tileX, stall.tileY);
+    const chunk = this.world.chunks[WorldManager.chunkKey(cx, cy)];
+    if (chunk && !chunk.mobsPopulated && stall.villageId) {
+      return true;
     }
     return false;
   }
@@ -3902,9 +4037,7 @@ export class GameEngine {
             const sy = st.tileY * TILE_SIZE + TILE_SIZE / 2;
             const isWorldFixedLandmark = Boolean(
               (st.villageId || st.id.startsWith('world_struct_')) &&
-                (st.type === PlaceableType.VILLAGE_HOUSE ||
-                  st.type === PlaceableType.VILLAGE_WELL ||
-                  st.type === PlaceableType.HEALING_FOUNTAIN)
+                st.type === PlaceableType.HEALING_FOUNTAIN
             );
             if (isWorldFixedLandmark) {
               this.resetInterruptedBreakingTargets(null);
@@ -3957,14 +4090,6 @@ export class GameEngine {
             this.renderer.spawnRipple(sx, sy, '#fbbf24', 18, 0.3);
             this.addFloatingText(`-${structDmg}`, sx, sy - 12, '#fde047');
 
-            if (st.villageId) {
-              this.provokeVillage(
-                st.villageId,
-                null,
-                35,
-                '⚔ Vandalismo! A vila se voltou contra você!'
-              );
-            }
             if (st.hp <= 0) {
               this.activeBreakingTargetId = null;
               const structBreakKey = `break_struct:${st.id}:${st.tileX},${st.tileY}`;
@@ -3973,6 +4098,41 @@ export class GameEngine {
                 this.emitUiSnapshot();
                 return;
               }
+
+              // Villagers ONLY become hostile when the player BREAKS an owned village structure
+              // (House, Well, Market Stall, or Village Chest)
+              const isOwnedVillageStructure =
+                st.ownerType !== 'PLAYER' &&
+                Boolean(
+                  st.villageId ||
+                    st.ownerType === 'VILLAGER' ||
+                    st.id.startsWith('world_struct_')
+                ) &&
+                (st.type === PlaceableType.VILLAGE_HOUSE ||
+                  st.type === PlaceableType.VILLAGE_WELL ||
+                  st.type === PlaceableType.MARKET_STALL ||
+                  st.type === PlaceableType.CHEST);
+
+              if (st.type === PlaceableType.VILLAGE_HOUSE) {
+                for (const resident of this.getHouseResidents(st.id)) {
+                  if (resident.isInsideHouse) {
+                    this.exitVillagerFromHouse(resident, false);
+                  }
+                  resident.homeHouseId = undefined;
+                  resident.homeX = undefined;
+                  resident.homeY = undefined;
+                }
+              }
+
+              if (isOwnedVillageStructure) {
+                this.provokeVillage(
+                  st.villageId,
+                  null,
+                  45,
+                  '⚔ Estrutura da vila destruída! Os aldeões ficaram hostis!'
+                );
+              }
+
               if (st.type === PlaceableType.CHEST) {
                 this.dropChestContents(st, sx, sy);
                 this.addFloatingText(
@@ -4645,8 +4805,72 @@ export class GameEngine {
         return;
       }
 
-      // 3B. Horse or Camel: If holding a Saddle and unsaddled, equip the Saddle!
       const heldSlot = this.player.inventory[this.player.selectedHotbarIndex];
+
+      // 3B. Holding Food + Pressing Interact: Heal tamed pet!
+      if (heldSlot && this.isFoodItemForPet(heldSlot.itemId, tamed)) {
+        if (tamed.hp < tamed.maxHp) {
+          const foodDef = ITEMS[heldSlot.itemId];
+          const baseHeal =
+            (foodDef?.hpRestore || 0) +
+            Math.round((foodDef?.hungerRestore || 0) * 0.65);
+          const isFav = tamed.favoriteFoodIds.includes(heldSlot.itemId);
+          const healAmount = Math.max(
+            isFav ? 32 : 20,
+            Math.round(baseHeal * (isFav ? 1.25 : 1.0))
+          );
+          const prevHp = tamed.hp;
+          tamed.hp = Math.min(tamed.maxHp, tamed.hp + healAmount);
+          const actualHealed = Math.max(1, Math.round(tamed.hp - prevHp));
+          if (tamed.mountMaxStamina) {
+            tamed.mountStamina = Math.min(
+              tamed.mountMaxStamina,
+              (tamed.mountStamina ?? tamed.mountMaxStamina) + 35
+            );
+          }
+
+          this.consumeInventoryAt(this.player.selectedHotbarIndex, 1);
+          soundManager.playTameSuccess();
+          this.renderer.spawnBurst(tamed.x, tamed.y - 8, 'HEAL', 14);
+          this.renderer.spawnRipple(tamed.x, tamed.y, '#4ade80', 24, 0.45);
+          this.addFloatingText(
+            `♥ +${actualHealed} HP (${tamed.name}: ${Math.round(tamed.hp)}/${tamed.maxHp})`,
+            tamed.x,
+            tamed.y - 22,
+            '#4ade80'
+          );
+
+          if (this.multiplayer.isOnline && this.multiplayer.role === 'GUEST') {
+            this.multiplayer.sendGuestMountEvent({
+              action: 'tame',
+              creatureId: tamed.id,
+              tamed: true,
+              tameProgress: 100,
+              aiState: tamed.aiState,
+              hp: tamed.hp,
+              ownerId: tamed.ownerId,
+              ownerName: tamed.ownerName,
+            });
+          } else if (
+            this.multiplayer.isOnline &&
+            this.multiplayer.role === 'HOST'
+          ) {
+            this.multiplayer.sendCreaturesSync(this.entities.creatures);
+          }
+          this.emitUiSnapshot();
+        } else {
+          soundManager.playPickup();
+          this.addFloatingText(
+            `♥ ${tamed.name} já está com a vida cheia (${tamed.maxHp}/${tamed.maxHp})!`,
+            tamed.x,
+            tamed.y - 22,
+            '#4ade80'
+          );
+        }
+        return;
+      }
+
+      // 3C. Horse or Camel: If holding a Saddle and unsaddled, equip the Saddle!
       if (
         (tamed.kind === CreatureKind.HORSE || tamed.kind === CreatureKind.CAMEL) &&
         !tamed.hasSaddle &&
@@ -4657,20 +4881,16 @@ export class GameEngine {
         return;
       }
 
-      // 3C. Saddled Horse or Camel: Mount or Dismount!
+      // 3D. Saddled Horse or Camel: Interacting removes and collects the Saddle/Alforje if inventory has room!
       if (
         (tamed.kind === CreatureKind.HORSE || tamed.kind === CreatureKind.CAMEL) &&
         tamed.hasSaddle
       ) {
-        if (this.player.mountedEntityId === tamed.id) {
-          this.dismountCreature();
-        } else {
-          this.mountCreature(tamed.id);
-        }
+        this.removeSaddleFromCreature(tamed.id);
         return;
       }
 
-      // 3D. Unsaddled Horse/Camel or Sheep/Boar: Cycle through 3 Pet States ('follow' -> 'stay' -> 'graze')
+      // 3E. Unsaddled Horse/Camel or Sheep/Boar: Cycle through 3 Pet States ('follow' -> 'stay' -> 'graze')
       this.toggleTamedAnimalState(tamed.id);
       soundManager.playPickup();
       const stateLabel =
@@ -5572,7 +5792,9 @@ export class GameEngine {
                         : ''
                     } 🏪`
                   : this.isVillagerStallOwnerAlive(st)
-                  ? `Tenda de ${st.ownerName || 'Mercador'} 🏪`
+                  ? this.isVillagerStallOwnerSleeping(st)
+                    ? `Tenda de ${st.ownerName || 'Mercador'} (🌙 Dormindo)`
+                    : `Tenda de ${st.ownerName || 'Mercador'} 🏪`
                   : 'Tenda sem Dono · Tomar Posse 🏪'
                 : st.type === PlaceableType.VILLAGE_HOUSE ||
                   st.type === PlaceableType.EXPLORER_TENT
@@ -5706,13 +5928,32 @@ export class GameEngine {
           continue;
         }
 
+        if (heldSlot && this.isFoodItemForPet(heldSlot.itemId, cr)) {
+          candidates.push({
+            score: computeDirectionalScore(cr.x, cr.y, -5),
+            info: {
+              kind: 'tamed_animal',
+              label: `${cr.name} (${Math.round(cr.hp)}/${cr.maxHp} HP)`,
+              actionHint:
+                cr.hp < cr.maxHp
+                  ? `Curar Pet ♥ (${ITEMS[heldSlot.itemId]?.name || 'Comida'})`
+                  : 'Vida Cheia ♥',
+              worldX: cr.x,
+              worldY: cr.y,
+              creatureId: cr.id,
+              iconItemId: heldSlot.itemId,
+            },
+          });
+          continue;
+        }
+
         if (isMountSpecies && !cr.hasSaddle && isHoldingSaddle) {
           candidates.push({
             score: computeDirectionalScore(cr.x, cr.y, -5),
             info: {
               kind: 'tamed_animal',
-              label: `${cr.name} (Sem Sela)`,
-              actionHint: 'Equipar Sela de Montaria 鞍',
+              label: `${cr.name} (Sem Alforje)`,
+              actionHint: 'Equipar Alforje/Sela 鞍',
               worldX: cr.x,
               worldY: cr.y,
               creatureId: cr.id,
@@ -5727,10 +5968,10 @@ export class GameEngine {
             score: computeDirectionalScore(cr.x, cr.y, -4),
             info: {
               kind: 'tamed_animal',
-              label: `${cr.name} [Selado${ownerBadge}]`,
+              label: `${cr.name} [Alforje${ownerBadge}]`,
               actionHint: isOccupiedByOther
                 ? '🔒 Assento ocupado!'
-                : 'Cavalgar (1 Assento) 🐎',
+                : 'Retirar Alforje 鞍 (Use Cavalgar p/ montar)',
               worldX: cr.x,
               worldY: cr.y,
               creatureId: cr.id,
@@ -7436,9 +7677,7 @@ export class GameEngine {
 
     const isWorldFixedLandmark = Boolean(
       (st.villageId || st.id.startsWith('world_struct_')) &&
-        (st.type === PlaceableType.VILLAGE_HOUSE ||
-          st.type === PlaceableType.VILLAGE_WELL ||
-          st.type === PlaceableType.HEALING_FOUNTAIN)
+        st.type === PlaceableType.HEALING_FOUNTAIN
     );
     if (isWorldFixedLandmark) {
       this.addFloatingText(
@@ -7450,18 +7689,28 @@ export class GameEngine {
       return false;
     }
 
-    const dismantleKey = `dismantle_struct:${st.id}:${tx},${ty}`;
-    if (!this.tryClaimWorldAction(dismantleKey)) {
+    const isOwnedVillageBuilding =
+      st.ownerType !== 'PLAYER' &&
+      Boolean(st.villageId || st.ownerType === 'VILLAGER') &&
+      (st.type === PlaceableType.VILLAGE_HOUSE ||
+        st.type === PlaceableType.VILLAGE_WELL ||
+        st.type === PlaceableType.MARKET_STALL ||
+        st.type === PlaceableType.CHEST);
+
+    if (isOwnedVillageBuilding) {
+      soundManager.playHitWood();
+      this.addFloatingText(
+        '🔒 Estrutura com dono na vila! Só pode ser quebrada atacando.',
+        tx * TILE_SIZE + 16,
+        ty * TILE_SIZE,
+        '#f43f5e'
+      );
       return false;
     }
 
-    if (st.villageId) {
-      this.provokeVillage(
-        st.villageId,
-        null,
-        35,
-        '⚔ Desmontar estruturas da vila irritou os guardas!'
-      );
+    const dismantleKey = `dismantle_struct:${st.id}:${tx},${ty}`;
+    if (!this.tryClaimWorldAction(dismantleKey)) {
+      return false;
     }
 
     if (st.type === PlaceableType.CHEST) {
@@ -8037,7 +8286,7 @@ export class GameEngine {
   }
 
   /**
-   * "Guardar Mochila": Deposits all items from the player's 24 backpack slots (indices 8..31) into the chest, keeping hotbar intact.
+   * "Guardar Tudo": Deposits all items from the player's backpack (indices 8..31) and non-tool/weapon items from hotbar into the chest.
    */
   public depositBackpackToChest(chestId: string): number {
     const chest = this.getChestById(chestId);
@@ -8045,6 +8294,7 @@ export class GameEngine {
     const slots = this.ensureChestStorageInitialized(chest);
 
     let totalMoved = 0;
+    // 1. Deposit all backpack slots (8..31)
     for (let i = HOTBAR_SIZE; i < this.player.inventory.length; i++) {
       const pSlot = this.player.inventory[i];
       if (!pSlot || pSlot.count <= 0) continue;
@@ -8055,10 +8305,29 @@ export class GameEngine {
       }
     }
 
+    // 2. Also deposit non-tool/non-weapon items from the hotbar (0..7) so "Guardar Tudo" works even if items are in the hotbar
+    for (let i = 0; i < HOTBAR_SIZE; i++) {
+      const pSlot = this.player.inventory[i];
+      if (!pSlot || pSlot.count <= 0) continue;
+      const def = ITEMS[pSlot.itemId];
+      if (
+        def &&
+        (def.category === ItemCategory.TOOL ||
+          def.category === ItemCategory.WEAPON)
+      ) {
+        continue;
+      }
+      const moved = this.addItemToChestStorage(slots, pSlot.itemId, pSlot.count);
+      if (moved > 0) {
+        this.consumeInventoryAt(i, moved);
+        totalMoved += moved;
+      }
+    }
+
     if (totalMoved > 0) {
       soundManager.playCraft();
       this.addFloatingText(
-        `Mochila Guardada (${totalMoved} itens)`,
+        `Guardado no Baú (${totalMoved} itens)`,
         this.player.x,
         this.player.y - 22,
         '#38bdf8'
@@ -8227,6 +8496,20 @@ export class GameEngine {
       }
       stall.stallSlots = next;
     }
+
+    // When a villager owns the stall, always ensure their merchandise is stocked on display (and update sleeping state)
+    if (stall.ownerType === 'VILLAGER') {
+      const hasGoods = stall.stallSlots.some((s) => s !== null && s.count > 0);
+      if (!hasGoods && this.isVillagerStallOwnerAlive(stall)) {
+        this.populateVillagerStallMerchandise(stall);
+      } else {
+        stall.ownerSleeping = this.isVillagerStallOwnerSleeping(stall);
+        stall.stallOpen = !stall.ownerSleeping;
+      }
+    } else {
+      stall.ownerSleeping = false;
+    }
+
     return stall.stallSlots;
   }
 
@@ -8237,27 +8520,34 @@ export class GameEngine {
     tryAddToPlayerFirst = false
   ): void {
     const slots = this.ensureMarketStallInitialized(stall);
-    for (let i = 0; i < slots.length; i++) {
-      const sl = slots[i];
-      if (!sl || sl.count <= 0) continue;
-      if (tryAddToPlayerFirst && this.addItemToInventory(sl.itemId, sl.count)) {
+    // Only drop physical items if the stall belonged to a Player
+    if (stall.ownerType === 'PLAYER') {
+      for (let i = 0; i < slots.length; i++) {
+        const sl = slots[i];
+        if (!sl || sl.count <= 0) continue;
+        if (tryAddToPlayerFirst && this.addItemToInventory(sl.itemId, sl.count)) {
+          slots[i] = null;
+          continue;
+        }
+        this.spawnDrop(
+          sl.itemId,
+          sl.count,
+          wx + (Math.random() - 0.5) * 20,
+          wy + (Math.random() - 0.5) * 20
+        );
         slots[i] = null;
-        continue;
       }
-      this.spawnDrop(
-        sl.itemId,
-        sl.count,
-        wx + (Math.random() - 0.5) * 20,
-        wy + (Math.random() - 0.5) * 20
-      );
-      slots[i] = null;
-    }
-    const unclaimedGold = Math.max(0, Math.floor(stall.stallUnclaimedGold || 0));
-    if (unclaimedGold > 0) {
-      if (!tryAddToPlayerFirst || !this.addItemToInventory('gold_coin', unclaimedGold)) {
-        this.spawnDrop('gold_coin', unclaimedGold, wx, wy);
+      const unclaimedGold = Math.max(0, Math.floor(stall.stallUnclaimedGold || 0));
+      if (unclaimedGold > 0) {
+        if (!tryAddToPlayerFirst || !this.addItemToInventory('gold_coin', unclaimedGold)) {
+          this.spawnDrop('gold_coin', unclaimedGold, wx, wy);
+        }
+        stall.stallUnclaimedGold = 0;
       }
-      stall.stallUnclaimedGold = 0;
+    } else {
+      for (let i = 0; i < slots.length; i++) {
+        slots[i] = null;
+      }
     }
     stall.pendingCustomerOffer = null;
   }
@@ -8371,6 +8661,8 @@ export class GameEngine {
       stall.ownerId = 'player';
       stall.ownerName = 'Você (Mercador)';
       stall.villageId = undefined;
+      stall.ownerSleeping = false;
+      stall.stallSlots = new Array(MARKET_STALL_SIZE).fill(null);
       stall.pendingCustomerOffer = null;
       soundManager.playCraft();
       this.syncChunkAtTile(stall.tileX, stall.tileY);
@@ -8379,6 +8671,21 @@ export class GameEngine {
         ok: true,
         message: 'Você assumiu a posse desta Tenda de Vendas como Mercador!',
       };
+    }
+
+    // Rule: To transfer ownership of a Player's Market Stall to a Villager, the stall MUST be completely empty!
+    if (stall.ownerType === 'PLAYER') {
+      const slots = this.ensureMarketStallInitialized(stall);
+      const hasItemsOnCounter = slots.some((s) => s !== null && s.count > 0);
+      const hasUnclaimedGold = (stall.stallUnclaimedGold || 0) > 0;
+      if (hasItemsOnCounter || hasUnclaimedGold) {
+        soundManager.playHitWood();
+        return {
+          ok: false,
+          message:
+            'A tenda precisa estar completamente vazia (sem itens no balcão e sem moedas na caixinha) para passar a posse a um aldeão!',
+        };
+      }
     }
 
     const npc = villagerId
@@ -8396,13 +8703,83 @@ export class GameEngine {
     stall.ownerName = npc
       ? `${npc.name} (${npc.npcProfessionLabel || 'Mercador'})`
       : 'Mercador da Vila';
+    if (npc?.villageId) {
+      stall.villageId = npc.villageId;
+    }
     stall.pendingCustomerOffer = null;
+    this.populateVillagerStallMerchandise(stall);
     soundManager.playPickup();
     this.syncChunkAtTile(stall.tileX, stall.tileY);
     this.emitUiSnapshot();
     return {
       ok: true,
-      message: `Dono da tenda definido para ${stall.ownerName}.`,
+      message: `Posse transferida para ${stall.ownerName}! Mercadorias do aldeão em exposição.`,
+    };
+  }
+
+  /**
+   * Allows the player to purchase 1 unit of an item displayed on a Villager-owned Market Stall (`stall.ownerType === 'VILLAGER'`).
+   * Since villager stalls always keep merchandise on display (except when sleeping), the stock replenishes automatically.
+   */
+  public buyFromVillagerStall(
+    stallId: string,
+    stallSlotIdx: number
+  ): { ok: boolean; message: string } {
+    const stall = this.getMarketStallById(stallId);
+    if (!stall || stall.ownerType !== 'VILLAGER') {
+      return { ok: false, message: 'Tenda de aldeão não encontrada.' };
+    }
+    if (this.isVillagerStallOwnerSleeping(stall)) {
+      soundManager.playHitWood();
+      return {
+        ok: false,
+        message: 'O aldeão proprietário está dormindo no momento!',
+      };
+    }
+
+    const slots = this.ensureMarketStallInitialized(stall);
+    const slot = slots[stallSlotIdx];
+    if (!slot || slot.count <= 0) {
+      return { ok: false, message: 'Item indisponível neste slot.' };
+    }
+
+    const price = Math.max(1, slot.unitPrice || getItemBasePrice(slot.itemId));
+    const ownedCoins = this.getItemCount('gold_coin');
+    if (ownedCoins < price) {
+      soundManager.playHitWood();
+      return {
+        ok: false,
+        message: `Você precisa de ${price} Moedas de Ouro (possui ${ownedCoins}).`,
+      };
+    }
+
+    if (!this.canFitItemInInventory(slot.itemId, 1)) {
+      soundManager.playHitWood();
+      return { ok: false, message: 'Mochila cheia!' };
+    }
+
+    this.removeItemFromInventory('gold_coin', price);
+    this.addItemToInventory(slot.itemId, 1);
+
+    const ownerNpc = this.getVillagerStallOwnerEntity(stall);
+    if (ownerNpc) {
+      ownerNpc.affinity = Math.min(100, (ownerNpc.affinity ?? 55) + 4);
+    }
+
+    const itemName = ITEMS[slot.itemId]?.name || slot.itemId;
+    soundManager.playCraft();
+    this.gainXp(15);
+    this.addFloatingText(
+      `🛒 Comprou 1x ${itemName} (-${price}g)`,
+      this.player.x,
+      this.player.y - 22,
+      '#4ade80'
+    );
+    this.syncChunkAtTile(stall.tileX, stall.tileY);
+    this.emitUiSnapshot();
+    return {
+      ok: true,
+      message: `Comprou 1x ${itemName} por ${price} Moedas!`,
     };
   }
 
@@ -10594,6 +10971,23 @@ export class GameEngine {
         }
         break;
       }
+      case 'unsaddle': {
+        const cr = this.entities.creatures.find(
+          (c) => c.id === event.creatureId
+        );
+        if (cr) {
+          if (
+            cr.ownerId &&
+            cr.ownerId !== guestOwnerId &&
+            cr.ownerId !== peerId
+          ) {
+            break;
+          }
+          cr.hasSaddle = false;
+          cr.mountInventory = new Array(MOUNT_STORAGE_SIZE).fill(null);
+        }
+        break;
+      }
       case 'spawn_boat': {
         if (
           event.creature &&
@@ -10714,6 +11108,31 @@ export class GameEngine {
     this.emitUiSnapshot();
   }
 
+  /**
+   * Returns true if `itemId` is a valid food item that can heal a tamed pet when pressing the Interact button.
+   */
+  private isFoodItemForPet(
+    itemId: string | undefined | null,
+    cr: CreatureEntity
+  ): boolean {
+    if (!itemId) return false;
+    const item = ITEMS[itemId];
+    if (!item) return false;
+    if (
+      item.specialUse === 'bomb' ||
+      item.specialUse === 'recall' ||
+      item.specialUse === 'peace_treaty'
+    ) {
+      return false;
+    }
+    return Boolean(
+      item.category === ItemCategory.CONSUMABLE ||
+        cr.favoriteFoodIds.includes(item.id) ||
+        (item.hpRestore && item.hpRestore > 0) ||
+        (item.hungerRestore && item.hungerRestore > 0)
+    );
+  }
+
   public ensureMountInventoryInitialized(cr: CreatureEntity): void {
     if (!Array.isArray(cr.mountInventory) || cr.mountInventory.length !== MOUNT_STORAGE_SIZE) {
       const prev = Array.isArray(cr.mountInventory) ? cr.mountInventory : [];
@@ -10790,6 +11209,124 @@ export class GameEngine {
       `鞍 Sela Equipada em ${cr.name}! (Montável + 8 Slots de Alforje)`,
       cr.x,
       cr.y - 24,
+      '#fde047'
+    );
+    this.emitUiSnapshot();
+    return true;
+  }
+
+  /**
+   * Removes and collects the Saddle/Alforje (`'saddle'`) from a tamed Horse or Camel when the player interacts with it,
+   * provided the player's inventory has enough space for the saddle and any items stored in its saddlebag.
+   */
+  public removeSaddleFromCreature(creatureId: string): boolean {
+    const cr = this.entities.creatures.find(
+      (c) =>
+        c.id === creatureId &&
+        c.tamed &&
+        c.hasSaddle &&
+        (c.kind === CreatureKind.HORSE || c.kind === CreatureKind.CAMEL)
+    );
+    if (!cr) return false;
+
+    if (!this.isCreatureOwnedByLocalPlayer(cr)) {
+      soundManager.playHitWood();
+      this.addFloatingText(
+        `🔒 Somente ${cr.ownerName || 'o dono'} pode retirar o alforje de ${cr.name}!`,
+        cr.x,
+        cr.y - 20,
+        '#f43f5e'
+      );
+      return false;
+    }
+
+    if (
+      this.player.mountedEntityId === cr.id ||
+      this.isMountOccupiedByOtherPlayer(cr)
+    ) {
+      soundManager.playHitWood();
+      this.addFloatingText(
+        'Desmonte antes de retirar o alforje!',
+        cr.x,
+        cr.y - 20,
+        '#f43f5e'
+      );
+      return false;
+    }
+
+    this.ensureMountInventoryInitialized(cr);
+    const itemsToCollect: Array<{ itemId: string; count: number }> = [
+      { itemId: 'saddle', count: 1 },
+    ];
+    for (const sl of cr.mountInventory!) {
+      if (sl && sl.count > 0) {
+        itemsToCollect.push({ itemId: sl.itemId, count: sl.count });
+      }
+    }
+
+    // Simulate inventory capacity to ensure the saddle + any saddlebag items all fit in the player's inventory
+    const simInv: (InventorySlot | null)[] = this.player.inventory.map((s) =>
+      s ? { ...s } : null
+    );
+    const tryFitInSim = (itemId: string, count: number): boolean => {
+      if (itemId === 'gold_coin') return true;
+      const def = ITEMS[itemId];
+      if (!def) return false;
+      let rem = count;
+      for (let i = 0; i < simInv.length && rem > 0; i++) {
+        const s = simInv[i];
+        if (s && s.itemId === itemId && s.count < def.maxStack) {
+          const add = Math.min(rem, def.maxStack - s.count);
+          s.count += add;
+          rem -= add;
+        }
+      }
+      for (let i = 0; i < simInv.length && rem > 0; i++) {
+        if (simInv[i] === null) {
+          const add = Math.min(rem, def.maxStack);
+          simInv[i] = { itemId, count: add };
+          rem -= add;
+        }
+      }
+      return rem <= 0;
+    };
+
+    for (const entry of itemsToCollect) {
+      if (!tryFitInSim(entry.itemId, entry.count)) {
+        soundManager.playHitWood();
+        this.addFloatingText(
+          'Mochila sem espaço para recolher o alforje!',
+          cr.x,
+          cr.y - 20,
+          '#f43f5e'
+        );
+        return false;
+      }
+    }
+
+    for (const entry of itemsToCollect) {
+      this.addItemToInventory(entry.itemId, entry.count);
+    }
+    cr.hasSaddle = false;
+    cr.mountInventory = new Array(MOUNT_STORAGE_SIZE).fill(null);
+
+    if (this.multiplayer.isOnline && this.multiplayer.role === 'GUEST') {
+      this.multiplayer.sendGuestMountEvent({
+        action: 'unsaddle',
+        creatureId: cr.id,
+        ownerId: this.getLocalOwnerId(),
+      });
+    } else if (this.multiplayer.isOnline && this.multiplayer.role === 'HOST') {
+      this.multiplayer.sendCreaturesSync(this.entities.creatures);
+    }
+
+    void this.saveGame(true);
+    soundManager.playPickup();
+    this.renderer.spawnBurst(cr.x, cr.y - 6, 'GOLD', 10);
+    this.addFloatingText(
+      `鞍 Alforje retirado e guardado na mochila!`,
+      cr.x,
+      cr.y - 22,
       '#fde047'
     );
     this.emitUiSnapshot();
@@ -11353,6 +11890,199 @@ export class GameEngine {
     soundManager.playPickup();
     this.emitUiSnapshot();
     return true;
+  }
+
+  /**
+   * "Retirar Tudo" (Alforje): Withdraws all items from the mount's 8-slot saddlebag into the player's inventory.
+   */
+  public takeAllFromMount(creatureId: string): number {
+    const cr = this.entities.creatures.find(
+      (c) => c.id === creatureId && c.tamed && c.hasSaddle
+    );
+    if (!cr || !this.isCreatureOwnedByLocalPlayer(cr)) return 0;
+    this.ensureMountInventoryInitialized(cr);
+    const slots = cr.mountInventory!;
+
+    let totalTaken = 0;
+    for (let i = 0; i < slots.length; i++) {
+      const mSlot = slots[i];
+      if (!mSlot || mSlot.count <= 0) continue;
+      let moved = 0;
+      const count = mSlot.count;
+      for (let k = 0; k < count; k++) {
+        if (this.addItemToInventory(mSlot.itemId, 1)) {
+          moved++;
+        } else {
+          break;
+        }
+      }
+      if (moved > 0) {
+        mSlot.count -= moved;
+        totalTaken += moved;
+        if (mSlot.count <= 0) {
+          slots[i] = null;
+        }
+      }
+    }
+
+    if (totalTaken > 0) {
+      this.syncPlayerMountedCreatureData();
+      if (this.multiplayer.isOnline && this.multiplayer.role === 'GUEST') {
+        this.multiplayer.sendGuestMountEvent({
+          action: 'mount_inventory',
+          creatureId: cr.id,
+          ownerId: this.getLocalOwnerId(),
+          mountInventory: cr.mountInventory,
+        });
+      } else if (this.multiplayer.isOnline && this.multiplayer.role === 'HOST') {
+        this.multiplayer.sendCreaturesSync(this.entities.creatures);
+      }
+      void this.saveGame(true);
+      soundManager.playCraft();
+      this.addFloatingText(
+        `Retirado do Alforje (${totalTaken} itens)`,
+        this.player.x,
+        this.player.y - 22,
+        '#fde047'
+      );
+      this.emitUiSnapshot();
+    }
+    return totalTaken;
+  }
+
+  /**
+   * "Guardar Tudo" (Alforje): Deposits items from the player's backpack (and non-tool hotbar items) into the mount's 8-slot saddlebag.
+   */
+  public depositAllToMount(creatureId: string): number {
+    const cr = this.entities.creatures.find(
+      (c) => c.id === creatureId && c.tamed && c.hasSaddle
+    );
+    if (!cr || !this.isCreatureOwnedByLocalPlayer(cr)) return 0;
+    this.ensureMountInventoryInitialized(cr);
+    const slots = cr.mountInventory!;
+
+    let totalMoved = 0;
+    const depositFromIndex = (idx: number) => {
+      const pSlot = this.player.inventory[idx];
+      if (!pSlot || pSlot.count <= 0) return;
+      const moved = this.addItemToChestStorage(slots, pSlot.itemId, pSlot.count);
+      if (moved > 0) {
+        this.consumeInventoryAt(idx, moved);
+        totalMoved += moved;
+      }
+    };
+
+    // 1. Backpack slots (8..31)
+    for (let i = HOTBAR_SIZE; i < this.player.inventory.length; i++) {
+      depositFromIndex(i);
+    }
+    // 2. Non-tool/non-weapon hotbar slots (0..7)
+    for (let i = 0; i < HOTBAR_SIZE; i++) {
+      const pSlot = this.player.inventory[i];
+      if (!pSlot || pSlot.count <= 0) continue;
+      const def = ITEMS[pSlot.itemId];
+      if (
+        def &&
+        (def.category === ItemCategory.TOOL ||
+          def.category === ItemCategory.WEAPON)
+      ) {
+        continue;
+      }
+      depositFromIndex(i);
+    }
+
+    if (totalMoved > 0) {
+      this.syncPlayerMountedCreatureData();
+      if (this.multiplayer.isOnline && this.multiplayer.role === 'GUEST') {
+        this.multiplayer.sendGuestMountEvent({
+          action: 'mount_inventory',
+          creatureId: cr.id,
+          ownerId: this.getLocalOwnerId(),
+          mountInventory: cr.mountInventory,
+        });
+      } else if (this.multiplayer.isOnline && this.multiplayer.role === 'HOST') {
+        this.multiplayer.sendCreaturesSync(this.entities.creatures);
+      }
+      void this.saveGame(true);
+      soundManager.playCraft();
+      this.addFloatingText(
+        `Guardado no Alforje (${totalMoved} itens)`,
+        this.player.x,
+        this.player.y - 22,
+        '#38bdf8'
+      );
+      this.emitUiSnapshot();
+    }
+    return totalMoved;
+  }
+
+  /**
+   * "Organizar" (Alforje): Merges partial stacks and sorts items in the mount's 8-slot saddlebag.
+   */
+  public sortMountStorage(creatureId: string): void {
+    const cr = this.entities.creatures.find(
+      (c) => c.id === creatureId && c.tamed && c.hasSaddle
+    );
+    if (!cr || !this.isCreatureOwnedByLocalPlayer(cr)) return;
+    this.ensureMountInventoryInitialized(cr);
+    const slots = cr.mountInventory!;
+
+    const totals = new Map<string, number>();
+    for (const sl of slots) {
+      if (sl && sl.count > 0) {
+        totals.set(sl.itemId, (totals.get(sl.itemId) || 0) + sl.count);
+      }
+    }
+
+    const catOrder: Record<ItemCategory, number> = {
+      [ItemCategory.WEAPON]: 1,
+      [ItemCategory.TOOL]: 2,
+      [ItemCategory.ARMOR]: 3,
+      [ItemCategory.CONSUMABLE]: 4,
+      [ItemCategory.PLACEABLE]: 5,
+      [ItemCategory.RESOURCE]: 6,
+    };
+
+    const sortedIds = Array.from(totals.keys()).sort((a, b) => {
+      const da = ITEMS[a];
+      const db = ITEMS[b];
+      if (!da || !db) return a.localeCompare(b);
+      const ca = catOrder[da.category] ?? 99;
+      const cb = catOrder[db.category] ?? 99;
+      if (ca !== cb) return ca - cb;
+      return da.name.localeCompare(db.name, 'pt-BR');
+    });
+
+    const newSlots: (InventorySlot | null)[] = new Array(MOUNT_STORAGE_SIZE).fill(
+      null
+    );
+    let writeIdx = 0;
+    for (const itemId of sortedIds) {
+      const def = ITEMS[itemId];
+      const maxStack = def?.maxStack || 99;
+      let rem = totals.get(itemId) || 0;
+      while (rem > 0 && writeIdx < MOUNT_STORAGE_SIZE) {
+        const take = Math.min(maxStack, rem);
+        newSlots[writeIdx++] = { itemId, count: take };
+        rem -= take;
+      }
+    }
+
+    cr.mountInventory = newSlots;
+    this.syncPlayerMountedCreatureData();
+    if (this.multiplayer.isOnline && this.multiplayer.role === 'GUEST') {
+      this.multiplayer.sendGuestMountEvent({
+        action: 'mount_inventory',
+        creatureId: cr.id,
+        ownerId: this.getLocalOwnerId(),
+        mountInventory: cr.mountInventory,
+      });
+    } else if (this.multiplayer.isOnline && this.multiplayer.role === 'HOST') {
+      this.multiplayer.sendCreaturesSync(this.entities.creatures);
+    }
+    void this.saveGame(true);
+    soundManager.playPickup();
+    this.emitUiSnapshot();
   }
 
   // =========================================================================

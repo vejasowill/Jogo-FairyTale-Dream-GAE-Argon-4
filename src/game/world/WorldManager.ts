@@ -1,5 +1,6 @@
 import {
   CONSTRUCTION_BLUEPRINTS,
+  getItemBasePrice,
   NATURE_BLUEPRINTS,
 } from '../core/ItemRegistry';
 import {
@@ -11,6 +12,7 @@ import {
   GAME_VERSION,
   InventorySlot,
   MARKET_STALL_SIZE,
+  MarketStallSlot,
   NatureNode,
   NatureNodeType,
   PlaceableType,
@@ -1518,6 +1520,28 @@ export class WorldManager {
         }
       }
 
+      let stallSlots: (MarketStallSlot | null)[] | undefined;
+      if (type === PlaceableType.MARKET_STALL) {
+        stallSlots = new Array(MARKET_STALL_SIZE).fill(null);
+        const defaultGoods: Array<{ itemId: string; count: number }> = [
+          { itemId: 'healing_salve', count: 3 },
+          { itemId: 'rope', count: 4 },
+          { itemId: 'apple', count: 6 },
+          { itemId: 'saddle', count: 1 },
+          { itemId: 'iron_bar', count: 3 },
+          { itemId: 'torch', count: 5 },
+        ];
+        for (let i = 0; i < Math.min(defaultGoods.length, MARKET_STALL_SIZE); i++) {
+          const g = defaultGoods[i];
+          stallSlots[i] = {
+            itemId: g.itemId,
+            count: g.count,
+            unitPrice: Math.max(1, getItemBasePrice(g.itemId)),
+            enabled: true,
+          };
+        }
+      }
+
       chunk.structures.push({
         id: `world_struct_${tx}_${ty}_${type}`,
         type,
@@ -1534,6 +1558,7 @@ export class WorldManager {
         hitFlashTimer: 0,
         lootItems,
         storageSlots,
+        stallSlots,
         customName: landmarkName,
         landmarkName,
         villageId,
@@ -1550,6 +1575,7 @@ export class WorldManager {
             : undefined,
         stallOpen:
           type === PlaceableType.MARKET_STALL ? true : undefined,
+        ownerSleeping: false,
       });
     };
 

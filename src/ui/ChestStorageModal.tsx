@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Check, Edit3, Trash2, X } from 'lucide-react';
+import { Check, Edit3, X } from 'lucide-react';
 import { ITEMS } from '../game/core/ItemRegistry';
 import {
   CHEST_STORAGE_SIZE,
@@ -182,16 +182,38 @@ export const ChestStorageModal: React.FC<ChestStorageModalProps> = ({
           <div className="flex items-center gap-1.5 flex-wrap">
             <HoldIconButton
               onClick={() => {
-                if (engine.pickupChestStructure(chest.id)) {
-                  onClose();
-                }
+                engine.takeAllFromChest(chest.id);
+                setSelectedSlot(null);
               }}
-              tooltipTitle="Recolher Baú"
-              tooltipDesc="Desmonta o baú e devolve os itens."
-              className="min-h-[32px] px-2 medieval-btn-crimson text-[9px] sm:text-[10px] font-pixel font-bold flex items-center gap-1"
+              tooltipTitle="Retirar Tudo"
+              tooltipDesc="Retira todos os itens do baú para a sua mochila."
+              className="min-h-[32px] px-2 medieval-btn-wood text-[9px] sm:text-[10px] font-pixel font-bold flex items-center gap-1"
             >
-              <Trash2 className="w-3.5 h-3.5" />
-              <span>Recolher</span>
+              <span>Retirar Tudo</span>
+            </HoldIconButton>
+
+            <HoldIconButton
+              onClick={() => {
+                engine.depositBackpackToChest(chest.id);
+                setSelectedSlot(null);
+              }}
+              tooltipTitle="Guardar Tudo"
+              tooltipDesc="Guarda os itens da mochila dentro do baú."
+              className="min-h-[32px] px-2 medieval-btn-wood text-[9px] sm:text-[10px] font-pixel font-bold flex items-center gap-1"
+            >
+              <span>Guardar Tudo</span>
+            </HoldIconButton>
+
+            <HoldIconButton
+              onClick={() => {
+                engine.sortChestStorage(chest.id);
+                setSelectedSlot(null);
+              }}
+              tooltipTitle="Organizar"
+              tooltipDesc="Agrupa pilhas iguais e organiza os itens do baú."
+              className="min-h-[32px] px-2 medieval-btn-gold text-[9px] sm:text-[10px] font-pixel font-bold flex items-center gap-1"
+            >
+              <span>Organizar</span>
             </HoldIconButton>
 
             <WindowHelpButton onClick={() => setShowHelp(true)} />
@@ -410,8 +432,8 @@ export const ChestStorageModal: React.FC<ChestStorageModalProps> = ({
               body: 'Se você clicar em um slot de destino que já possui outro item, os dois itens trocam de posição imediatamente. Após qualquer movimento, o item é desselecionado automaticamente.',
             },
             {
-              title: '3. Renomear & Recolher',
-              body: 'Toque no ícone de lápis ao lado do título para dar um nome ao baú, ou use Recolher para desmontar o baú.',
+              title: '3. Ações Rápidas (Retirar, Guardar e Organizar)',
+              body: 'Use Retirar Tudo para trazer os itens do baú para a mochila, Guardar Tudo para depositar sua mochila no baú, ou Organizar para empilhar e ordenar os itens.',
             },
           ]}
         />
