@@ -21,6 +21,7 @@ import {
   TILE_SIZE,
   WorldManager,
 } from '../world/WorldManager';
+import { RoofSystem } from '../world/RoofSystem';
 import { Camera } from './Camera';
 import { spriteAtlas } from './SpriteAtlas';
 
@@ -126,6 +127,7 @@ export class GameRenderer {
   private lastPlayerX = 0;
   private lastPlayerY = 0;
   private entityStepMap = new Map<string, number>();
+  private roofSystem = new RoofSystem();
 
   public spawnRipple(
     x: number,
@@ -1081,6 +1083,38 @@ export class GameRenderer {
       item.draw(ctx);
     }
 
+    // 5A. Architectural Roof System for Closed Wall Contours:
+    // Solid (100% opacity) when player is outside; 20% opacity when player enters the building.
+    this.renderBuildingRoofs(
+      ctx,
+      world,
+      player,
+      minCx,
+      maxCx,
+      minCy,
+      maxCy,
+      dt
+    );
+
+    // Re-draw build preview on top if player is actively aiming a placeable item at a roofed structure
+    if (
+      heldItem &&
+      heldItem.category === ItemCategory.PLACEABLE &&
+      heldItem.placeableType &&
+      targetBuildTile
+    ) {
+      this.drawBuildPlacementPreview(
+        ctx,
+        world,
+        player,
+        heldItem.placeableType,
+        targetBuildTile,
+        tileAnimFrame,
+        globalTime,
+        buildOptions
+      );
+    }
+
     // 5B. Active Burst Particles & Guardian Totem Lightning Arcs
     this.drawActiveParticlesAndBolts(ctx);
 
@@ -1266,6 +1300,51 @@ export class GameRenderer {
       lightSources,
       player.hp / Math.max(1, player.maxHp)
     );
+  }
+
+  /**
+   * Renders responsive pitched roofs for all closed wall contours in the active view.
+   * Outside the building: 100% solid roof sprite.
+   * Inside the building (or stepping through its doorway): 20% opacity so everything below is visible.
+   */
+  private renderBuildingRoofs(
+    ctx: CanvasRenderingContext2D,
+    world: WorldManager,
+    player: PlayerState,
+    minCx: number,
+    maxCx: number,
+    minCy: number,
+    maxCy: number,
+    dt: number
+  ): void {
+    const roofs = this.roofSystem.getRoofsForRegion(
+      world,
+      minCx,
+      maxCx,
+      minCy,
+      maxCy
+    );
+    if (roofs.length === 0) return;
+
+    for (const roof of roofs) {
+      const isInside = this.roofSystem.isWorldPosInsideBuilding(
+        player.x,
+        player.y,
+        roof
+      );
+      const alpha = this.roofSystem.getUpdatedRoofAlpha(roof, isInside, dt);
+
+      ctx.save();
+      ctx.globalAlpha = alpha;
+      ctx.drawImage(
+        roof.canvas,
+        roof.canvasWorldX,
+        roof.canvasWorldY,
+        roof.canvasWidth,
+        roof.canvasHeight
+      );
+      ctx.restore();
+    }
   }
 
   /**

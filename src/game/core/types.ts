@@ -622,7 +622,7 @@ export interface OnlineActivationStep {
 }
 
 // REGRA PERMANENTE: A cada nova atualização do jogo, incremente a versão para o número seguinte da beta (ex: 0.4.4-beta -> 0.4.5-beta).
-export const GAME_VERSION = '0.5.4-beta';
+export const GAME_VERSION = '0.5.5-beta';
 export const CURRENT_WORLD_GEN_VERSION = 3;
 
 export interface OnlineSessionInfo {
