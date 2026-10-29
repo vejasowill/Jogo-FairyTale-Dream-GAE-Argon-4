@@ -395,6 +395,41 @@ export class EntityManager {
     );
   }
 
+  public static isWildAnimalKind(kind: CreatureKind): boolean {
+    return (
+      kind === CreatureKind.SHEEP ||
+      kind === CreatureKind.BOAR ||
+      kind === CreatureKind.CAMEL ||
+      kind === CreatureKind.HORSE
+    );
+  }
+
+  /**
+   * Counts living hostile mobs and untamed wild animals currently inside chunk `(cx, cy)`.
+   * Used to enforce the global natural spawn cap of max 3 hostile mobs and max 3 wild animals per chunk separately.
+   */
+  public getChunkNaturalCreatureCounts(
+    world: WorldManager,
+    cx: number,
+    cy: number
+  ): { hostileMobs: number; wildAnimals: number } {
+    let hostileMobs = 0;
+    let wildAnimals = 0;
+    for (let i = 0; i < this.creatures.length; i++) {
+      const c = this.creatures[i];
+      if (!c || c.hp <= 0) continue;
+      const { tx, ty } = world.worldToTile(c.x, c.y);
+      const cChunk = world.tileToChunk(tx, ty);
+      if (cChunk.cx !== cx || cChunk.cy !== cy) continue;
+      if (EntityManager.isMonsterKind(c.kind)) {
+        hostileMobs++;
+      } else if (!c.tamed && EntityManager.isWildAnimalKind(c.kind)) {
+        wildAnimals++;
+      }
+    }
+    return { hostileMobs, wildAnimals };
+  }
+
   public static getFaction(cr: CreatureEntity): CreatureFaction {
     if (cr.tamed) return 'PLAYER_ALLY';
     if (
@@ -486,6 +521,7 @@ export class EntityManager {
       npcRole?: NpcRole;
       villageId?: string;
       nameIndex?: number;
+      ignoreNaturalChunkCap?: boolean;
     }
   ): CreatureEntity | null {
     const { tx, ty } = world.worldToTile(wx, wy);
@@ -493,6 +529,23 @@ export class EntityManager {
       if (!world.isTileSwimmableWater(tx, ty)) return null;
     } else {
       if (!world.isTileWalkable(tx, ty, false)) return null;
+    }
+
+    // Regra global de limite de spawn por geração natural:
+    // Máximo de 3 mobs hostis e 3 animais selvagens por chunk (contados separadamente)
+    if (!options?.ignoreNaturalChunkCap) {
+      const { cx, cy } = world.tileToChunk(tx, ty);
+      const isHostileMob = EntityManager.isMonsterKind(kind);
+      const isWildAnimal = EntityManager.isWildAnimalKind(kind);
+      if (isHostileMob || isWildAnimal) {
+        const counts = this.getChunkNaturalCreatureCounts(world, cx, cy);
+        if (isHostileMob && counts.hostileMobs >= 3) {
+          return null;
+        }
+        if (isWildAnimal && counts.wildAnimals >= 3) {
+          return null;
+        }
+      }
     }
 
     const isElite = Boolean(options?.isElite);
@@ -1226,7 +1279,8 @@ export class EntityManager {
     const sy = playerY + Math.sin(angle) * dist;
 
     const biome = world.getBiomeAtWorld(sx, sy);
-    if (biome === BiomeType.OCEAN) return;
+    // Ilha (BiomeType.ISLAND) só possui spawn de mobs/animais no momento de sua descoberta
+    if (biome === BiomeType.OCEAN || biome === BiomeType.ISLAND) return;
 
     const zone = world.getEcologicalZoneAtWorld(sx, sy);
     const distFromOriginTiles = Math.hypot(sx / TILE_SIZE, sy / TILE_SIZE);
@@ -1414,9 +1468,105 @@ export class EntityManager {
     for (let i = 0; i < groupSize; i++) {
       const offsetX = i === 0 ? 0 : (Math.random() - 0.5) * 48;
       const offsetY = i === 0 ? 0 : (Math.random() - 0.5) * 48;
-      this.trySpawnCreatureAt(world, kind, sx + offsetX, sy + offsetY, {
+      const candX = sx + offsetX;
+      const candY = sy + offsetY;
+      if (world.getBiomeAtWorld(candX, candY) === BiomeType.ISLAND) continue;
+      this.trySpawnCreatureAt(world, kind, candX, candY, {
         isElite: i === 0 && isElite,
       });
+    }
+  }
+
+  /**
+   * Realiza o spawn único de mobs e animais selvagens no bioma ILHA (`BiomeType.ISLAND`)
+   * exatamente no momento de sua descoberta, com chance de spawn 30% maior (`* 1.3`)
+   * e respeitando o limite global por chunk (máx 3 mobs hostis e 3 animais selvagens).
+   */
+  public spawnIslandDiscoveryCreatures(
+    world: WorldManager,
+    chunk: ChunkData,
+    isNight: boolean
+  ): void {
+    if (!chunk || chunk.islandMobsPopulated) return;
+    chunk.islandMobsPopulated = true;
+
+    const islandTiles: { tx: number; ty: number; zone: EcologicalZone }[] = [];
+    for (let ly = 0; ly < CHUNK_SIZE; ly++) {
+      for (let lx = 0; lx < CHUNK_SIZE; lx++) {
+        const idx = ly * CHUNK_SIZE + lx;
+        if (chunk.tiles[idx] === BiomeType.ISLAND) {
+          const tx = chunk.cx * CHUNK_SIZE + lx;
+          const ty = chunk.cy * CHUNK_SIZE + ly;
+          if (world.isTileWalkable(tx, ty, false)) {
+            const zone =
+              chunk.ecologicalZones?.[idx] ??
+              world.getEcologicalZoneAtTile(tx, ty);
+            islandTiles.push({ tx, ty, zone });
+          }
+        }
+      }
+    }
+
+    if (islandTiles.length === 0) return;
+
+    // Chance de spawn de qualquer tipo 30% maior (* 1.3) na descoberta da Ilha
+    const ISLAND_SPAWN_BOOST = 1.3;
+    const baseAttemptChance = 0.48 * ISLAND_SPAWN_BOOST; // ~62.4% por tentativa
+    const maxAttempts = Math.min(6, Math.max(2, Math.ceil(islandTiles.length / 18)));
+
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
+      if (Math.random() > baseAttemptChance) continue;
+
+      const pick =
+        islandTiles[Math.floor(Math.random() * islandTiles.length)];
+      const wx = pick.tx * TILE_SIZE + TILE_SIZE / 2;
+      const wy = pick.ty * TILE_SIZE + TILE_SIZE / 2;
+      const distFromOriginTiles = Math.hypot(pick.tx, pick.ty);
+      const roll = Math.random();
+
+      // Decide entre animal selvagem e mob hostil na descoberta da ilha
+      const animalRollThreshold = isNight ? 0.42 : 0.62;
+      if (roll < animalRollThreshold) {
+        const subRoll = Math.random();
+        const animalKind =
+          subRoll < 0.42
+            ? CreatureKind.SHEEP
+            : subRoll < 0.76
+            ? CreatureKind.BOAR
+            : subRoll < 0.94
+            ? CreatureKind.HORSE
+            : CreatureKind.CAMEL;
+        this.trySpawnCreatureAt(world, animalKind, wx, wy);
+      } else {
+        if (this.isNearSafeSanctuary(world, wx, wy)) continue;
+        const subRoll = Math.random();
+        let mobKind: CreatureKind = CreatureKind.ZOMBIE;
+        if (
+          pick.zone === EcologicalZone.ROCKY_HIGHLANDS &&
+          subRoll < 0.45
+        ) {
+          mobKind = CreatureKind.STONE_GOLEM;
+        } else if (
+          (pick.zone === EcologicalZone.DENSE_WOODLAND ||
+            pick.zone === EcologicalZone.ANCIENT_GROVE ||
+            pick.zone === EcologicalZone.OVERGROWN_SHRUBLAND) &&
+          subRoll < 0.48
+        ) {
+          mobKind = CreatureKind.FOREST_STALKER;
+        } else if (subRoll < 0.35) {
+          mobKind = CreatureKind.BANDIT;
+        } else if (subRoll < 0.58 && distFromOriginTiles > 18) {
+          mobKind = CreatureKind.OGRE;
+        } else if (subRoll < 0.72) {
+          mobKind = CreatureKind.DESERT_SCORPION;
+        } else {
+          mobKind = CreatureKind.ZOMBIE;
+        }
+        const isElite =
+          distFromOriginTiles > 24 &&
+          Math.random() < 0.18 * ISLAND_SPAWN_BOOST;
+        this.trySpawnCreatureAt(world, mobKind, wx, wy, { isElite });
+      }
     }
   }
 

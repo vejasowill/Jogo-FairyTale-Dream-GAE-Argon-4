@@ -9,6 +9,7 @@ import {
   User,
   Wind,
   X,
+  Zap,
 } from 'lucide-react';
 import { ITEMS } from '../game/core/ItemRegistry';
 import {
@@ -218,6 +219,24 @@ export const CharacterPetsModal: React.FC<CharacterPetsModalProps> = ({
         : (entry.def.equipSlot || 'body') === selectedSlotFilter
     );
 
+  const strengthLv = Math.max(0, Math.floor(player.attributes.strength ?? 0));
+  const agilityLv = Math.max(0, Math.floor(player.attributes.agility ?? 0));
+  const survivalLv = Math.max(0, Math.floor(player.attributes.survival ?? 0));
+  const attackSpeedLv = Math.max(
+    0,
+    Math.floor(player.attributes.attackSpeed ?? 0)
+  );
+  const defenseLv = Math.max(0, Math.floor(player.attributes.defense ?? 0));
+  const statusDefPct = Math.round(engine.getStatusDefenseBonus() * 100);
+  const equipDefPct = Math.round(engine.getEquipmentDefenseBonus() * 100);
+  const attackCooldownSec = engine.getPlayerAttackCooldownSec();
+
+  const heldSlot = player.inventory[player.selectedHotbarIndex];
+  const heldItem = heldSlot ? ITEMS[heldSlot.itemId] : null;
+  const strengthMult = 1 + strengthLv * 0.12;
+  const statusBaseAttack = Math.round(4 * strengthMult);
+  const totalAttack = Math.round((heldItem?.attackDamage || 4) * strengthMult);
+
   const attributesList: {
     key: keyof PlayerAttributes;
     name: string;
@@ -238,21 +257,41 @@ export const CharacterPetsModal: React.FC<CharacterPetsModalProps> = ({
       key: 'strength',
       name: 'Força',
       desc: '+12% Dano/Coleta',
-      bonusText: `+${Math.round((player.attributes.strength - 1) * 12)}%`,
+      bonusText: `ATQ Base: ${statusBaseAttack} (+${Math.round(
+        strengthLv * 12
+      )}%)`,
       icon: <Swords className="w-4 h-4 text-amber-400" />,
+    },
+    {
+      key: 'attackSpeed',
+      name: 'Vel. ATK',
+      desc: '+8% Vel. Ataque/Quebra',
+      bonusText: `${attackCooldownSec.toFixed(2)}s (+${Math.round(
+        attackSpeedLv * 8
+      )}%)`,
+      icon: <Zap className="w-4 h-4 text-yellow-400" />,
+    },
+    {
+      key: 'defense',
+      name: 'Defesa',
+      desc: '+3% Redução de Dano',
+      bonusText: `-${statusDefPct}% Status${
+        equipDefPct > 0 ? ` (-${equipDefPct}% Armadura)` : ''
+      }`,
+      icon: <Shield className="w-4 h-4 text-indigo-400" />,
     },
     {
       key: 'agility',
       name: 'Agilidade',
-      desc: '+6% Velocidade',
-      bonusText: `+${Math.round((player.attributes.agility - 1) * 6)}%`,
+      desc: '+6% Velocidade Mov.',
+      bonusText: `+${Math.round(agilityLv * 6)}%`,
       icon: <Wind className="w-4 h-4 text-sky-400" />,
     },
     {
       key: 'survival',
       name: 'Sobrevivência',
       desc: '-8% Fome / +10% Drop',
-      bonusText: `+${Math.round((player.attributes.survival - 1) * 10)}%`,
+      bonusText: `+${Math.round(survivalLv * 10)}%`,
       icon: <Shield className="w-4 h-4 text-emerald-400" />,
     },
   ];
@@ -274,11 +313,6 @@ export const CharacterPetsModal: React.FC<CharacterPetsModalProps> = ({
         return 'Companheiro fiel';
     }
   };
-
-  const heldSlot = player.inventory[player.selectedHotbarIndex];
-  const heldItem = heldSlot ? ITEMS[heldSlot.itemId] : null;
-  const strengthMult = 1 + (player.attributes.strength - 1) * 0.12;
-  const totalAttack = Math.round((heldItem?.attackDamage || 8) * strengthMult);
 
   return (
     <div
@@ -716,7 +750,7 @@ export const CharacterPetsModal: React.FC<CharacterPetsModalProps> = ({
         ) : activeTab === 'stats' ? (
           /* TAB 2: ATTRIBUTES */
           <div className="flex-1 overflow-y-auto p-2.5 sm:p-3.5 space-y-2.5">
-            <div className="medieval-inset p-2 grid grid-cols-2 sm:grid-cols-5 gap-2 text-center">
+            <div className="medieval-inset p-2 grid grid-cols-2 sm:grid-cols-6 gap-2 text-center">
               <div className="mc-slot p-1.5">
                 <div className="text-[9px] text-[#c4ab7d]">Nível</div>
                 <div className="font-pixel text-[11px] text-amber-400 font-bold">
@@ -737,7 +771,16 @@ export const CharacterPetsModal: React.FC<CharacterPetsModalProps> = ({
               <div className="mc-slot p-1.5">
                 <div className="text-[9px] text-[#c4ab7d]">Ataque</div>
                 <div className="font-mono-tabular text-[11px] text-rose-400 font-bold">
-                  {totalAttack} ATQ
+                  {statusBaseAttack} ATQ
+                  {heldItem?.attackDamage
+                    ? ` (${totalAttack} Arma)`
+                    : ''}
+                </div>
+              </div>
+              <div className="mc-slot p-1.5">
+                <div className="text-[9px] text-[#c4ab7d]">Vel. ATK</div>
+                <div className="font-mono-tabular text-[11px] text-yellow-300 font-bold">
+                  {attackCooldownSec.toFixed(2)}s
                 </div>
               </div>
               <div className="mc-slot p-1.5">
@@ -746,7 +789,7 @@ export const CharacterPetsModal: React.FC<CharacterPetsModalProps> = ({
                   -{totalDefPct}%
                 </div>
               </div>
-              <div className="mc-slot p-1.5 col-span-2 sm:col-span-1">
+              <div className="mc-slot p-1.5">
                 <div className="text-[9px] text-[#c4ab7d]">Pontos</div>
                 <div className="font-pixel text-[11px] text-emerald-400 font-bold">
                   {player.attributePoints} PTS
@@ -767,7 +810,7 @@ export const CharacterPetsModal: React.FC<CharacterPetsModalProps> = ({
                         {attr.name}
                       </span>
                       <span className="text-[11px] font-mono-tabular text-amber-400 font-bold">
-                        Nv.{player.attributes[attr.key]}
+                        Nv.{player.attributes[attr.key] ?? 0}
                       </span>
                     </div>
                     <p className="text-[10px] text-[#e5d5b5] truncate">
@@ -970,8 +1013,8 @@ export const CharacterPetsModal: React.FC<CharacterPetsModalProps> = ({
               body: 'Equipe peças de Cabeça, Superior, Inferior e Pés para reduzir o dano recebido e ganhar velocidade. Tudo altera o visual do seu personagem em tempo real.',
             },
             {
-              title: '2. Atributos RPG',
-              body: 'Ao subir de nível você ganha Pontos de Atributo para elevar Vitalidade (+Vida), Força (+Dano/Coleta), Agilidade (+Velocidade) ou Sobrevivência (-Fome/+Drop).',
+              title: '2. Atributos RPG (Nv. 0+)',
+              body: 'Ao subir de nível você ganha Pontos de Atributo para evoluir Vitalidade (+Vida), Força (+Dano/Coleta, iniciando com 4 de ATQ no Nv. 0), Vel. ATK (+Velocidade de Ataque/Quebra), Defesa (+Redução de Dano), Agilidade (+Velocidade de Movimento) ou Sobrevivência (-Fome/+Drop).',
             },
             {
               title: '3. Estados dos Pets (Base, Seguindo e Pastar)',

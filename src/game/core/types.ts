@@ -2,6 +2,7 @@ export enum BiomeType {
   OCEAN = 'OCEAN',
   PLAINS = 'PLAINS',
   DESERT = 'DESERT',
+  ISLAND = 'ISLAND',
 }
 
 export enum EcologicalZone {
@@ -282,11 +283,12 @@ export interface ChunkData {
   landmarkName?: string;
   villageId?: string;
   mobsPopulated?: boolean;
+  islandMobsPopulated?: boolean;
   // Saved-World Chunk Preservation & Versioning (Explored chunks are frozen; only new unexplored chunks use newer worldGen)
   genVersion?: number; // World generator version used when this chunk was originally generated
   generatedGameVersion?: string; // Beta version string (e.g., '0.4.3-beta', '0.4.4-beta') when this chunk was generated
   preserved?: boolean; // True once explored or modified by the player — prevents future updates from altering this chunk
-  compactTiles?: string; // 256-char compact encoding of tiles ('O' | 'P' | 'D') so exact terrain is preserved in localStorage
+  compactTiles?: string; // 256-char compact encoding of tiles ('O' | 'P' | 'D' | 'I') so exact terrain is preserved in localStorage
   compactZones?: string; // 256-char compact encoding of ecologicalZones ('0'..'B')
   compactVariants?: string; // 256-char compact encoding of tileVariants ('0'..'3')
 }
@@ -386,6 +388,10 @@ export interface CreatureEntity {
   navRecalcTimer?: number;
   orbitSign?: number;
   retaliateTargetId?: string;
+  fleeTargetId?: string;
+  fleeFromX?: number;
+  fleeFromY?: number;
+  fleeTimer?: number;
   combatTargetId?: string | null;
   specialCooldown?: number;
   // Village NPC Affinity, Role & Trading
@@ -496,8 +502,10 @@ export interface MapWaypoint {
 export interface PlayerAttributes {
   vitality: number; // +18 Max HP per point
   strength: number; // +12% Melee & Harvest Damage per point
-  agility: number; // +6% Move & Attack Speed per point
+  agility: number; // +6% Move Speed per point
   survival: number; // -8% Hunger drain & +10% resource bonus chance per point
+  attackSpeed: number; // +8% Attack & Harvest Speed per point
+  defense: number; // +3% Damage Reduction per point
 }
 
 export type PlayerEquipment = Record<EquipmentSlot, string | null>;
@@ -630,7 +638,7 @@ export interface OnlineActivationStep {
 }
 
 // REGRA PERMANENTE: A cada nova atualização do jogo, incremente a versão para o número seguinte da beta (ex: 0.4.4-beta -> 0.4.5-beta).
-export const GAME_VERSION = '0.5.7-beta';
+export const GAME_VERSION = '0.5.8-beta';
 export const CURRENT_WORLD_GEN_VERSION = 3;
 
 export interface OnlineSessionInfo {

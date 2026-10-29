@@ -1517,13 +1517,21 @@ export class GameRenderer {
     }
 
     // =========================================================================
-    // B. PLAINS <-> DESERT ECOTONE AUTO-TILING (Organic Grass/Sand Blending)
+    // B. PLAINS / ISLAND <-> DESERT / SHORE ECOTONE AUTO-TILING (Organic Grass/Sand Blending)
     // =========================================================================
-    if (biome === BiomeType.DESERT) {
-      const nPlains = n === BiomeType.PLAINS;
-      const sPlains = s === BiomeType.PLAINS;
-      const wPlains = w === BiomeType.PLAINS;
-      const ePlains = e === BiomeType.PLAINS;
+    if (
+      biome === BiomeType.DESERT ||
+      (biome === BiomeType.ISLAND &&
+        world.getTileSubZone(tx, ty, BiomeType.ISLAND) === 1)
+    ) {
+      const isGreenNeighbor = (nx: number, ny: number, nb: BiomeType) =>
+        nb === BiomeType.PLAINS ||
+        (nb === BiomeType.ISLAND &&
+          world.getTileSubZone(nx, ny, BiomeType.ISLAND) !== 1);
+      const nPlains = isGreenNeighbor(tx, ty - 1, n);
+      const sPlains = isGreenNeighbor(tx, ty + 1, s);
+      const wPlains = isGreenNeighbor(tx - 1, ty, w);
+      const ePlains = isGreenNeighbor(tx + 1, ty, e);
 
       if (nPlains || sPlains || wPlains || ePlains) {
         // Draw encroaching pixel grass tufts & olive border over the sand edge
@@ -1696,7 +1704,7 @@ export class GameRenderer {
 
     if (h > 0.28) return;
 
-    if (biome === BiomeType.PLAINS) {
+    if (biome === BiomeType.PLAINS || biome === BiomeType.ISLAND) {
       if (h < 0.09) {
         ctx.fillStyle = '#14532d';
         ctx.fillRect(wx + ox - 1, wy + oy + 3, 6, 2);

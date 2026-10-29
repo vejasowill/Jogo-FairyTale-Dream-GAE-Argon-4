@@ -296,7 +296,11 @@ export class GameEngine {
       10,
       Math.min(20, Math.round(13 / Math.max(0.55, this.camera.zoom)))
     );
-    this.world.revealAround(this.player.x, this.player.y, initialReveal);
+    this.revealWorldAndPopulateIslands(
+      this.player.x,
+      this.player.y,
+      initialReveal
+    );
     if (!isGuestSession) {
       this.entities.spawnInitialAroundPlayer(
         this.world,
@@ -635,7 +639,8 @@ export class GameEngine {
     const speedBuffMult =
       this.player.speedBuffTimer && this.player.speedBuffTimer > 0 ? 1.3 : 1.0;
 
-    const agilityMult = 1 + (this.player.attributes.agility - 1) * 0.06;
+    const agilityMult =
+      1 + Math.max(0, this.player.attributes.agility || 0) * 0.06;
     const equipSpeedMult = 1 + this.getTotalEquipmentSpeedBonus();
     const camelMult = hasCamelBuff ? 1.18 : 1.0;
     const playerSwimSpeed =
@@ -787,7 +792,11 @@ export class GameEngine {
           10,
           Math.min(20, Math.round(13 / Math.max(0.55, this.camera.zoom)))
         );
-        this.world.revealAround(this.player.x, this.player.y, revealRad);
+        this.revealWorldAndPopulateIslands(
+          this.player.x,
+          this.player.y,
+          revealRad
+        );
       } else {
         this.player.animFrame = 0;
         // Passive drift when floating in a river current or ocean coastal surf (never when in a Boat!)
@@ -804,7 +813,11 @@ export class GameEngine {
             10,
             Math.min(20, Math.round(13 / Math.max(0.55, this.camera.zoom)))
           );
-          this.world.revealAround(this.player.x, this.player.y, revealRad);
+          this.revealWorldAndPopulateIslands(
+            this.player.x,
+            this.player.y,
+            revealRad
+          );
         }
       }
 
@@ -862,7 +875,7 @@ export class GameEngine {
 
     const survivalFactor = Math.max(
       0.4,
-      1 - (this.player.attributes.survival - 1) * 0.08
+      1 - Math.max(0, this.player.attributes.survival || 0) * 0.08
     );
     const diffMult =
       this.metadata.difficulty === 'hardcore'
@@ -982,7 +995,44 @@ export class GameEngine {
       10,
       Math.min(20, Math.round(13 / Math.max(0.55, this.camera?.zoom || 1.15)))
     );
-    this.world.revealAround(this.player.x, this.player.y, revealRad);
+    this.revealWorldAndPopulateIslands(
+      this.player.x,
+      this.player.y,
+      revealRad
+    );
+  }
+
+  /**
+   * Reveals fog-of-war around `(wx, wy)` and triggers one-time discovery creature spawning
+   * (+30% spawn chance) for any newly discovered Island (`BiomeType.ISLAND`) chunks.
+   */
+  private revealWorldAndPopulateIslands(
+    wx: number,
+    wy: number,
+    radiusTiles: number
+  ): void {
+    const newlyDiscoveredIslandChunks = this.world.revealAround(
+      wx,
+      wy,
+      radiusTiles
+    );
+    if (
+      newlyDiscoveredIslandChunks.length > 0 &&
+      (!this.multiplayer?.isOnline || this.multiplayer.role !== 'GUEST')
+    ) {
+      const isNight =
+        this.metadata.timeOfDay >= 20 || this.metadata.timeOfDay < 5.5;
+      for (const islandChunk of newlyDiscoveredIslandChunks) {
+        this.entities.spawnIslandDiscoveryCreatures(
+          this.world,
+          islandChunk,
+          isNight
+        );
+      }
+      if (this.multiplayer?.isOnline && this.multiplayer.role === 'HOST') {
+        this.multiplayer.sendCreaturesSync(this.entities.creatures);
+      }
+    }
   }
 
   /**
@@ -2654,44 +2704,118 @@ export class GameEngine {
       }
       // =====================================================================
       // 4. FACTION: WILDLIFE (Peaceful Animals: Sheep, Boar, Camel, Horse)
-      //    - Retaliates if attacked (Boar/Camel) or flees from Monsters (Sheep)
+      //    - Retaliates if attacked (Boar/Camel)
+      //    - Peaceful animals (Sheep/Horse) when attacked flee to keep a minimum safe distance from the attacker
       // =====================================================================
       else {
+        const isPeacefulAnimal =
+          cr.kind === CreatureKind.SHEEP || cr.kind === CreatureKind.HORSE;
+        let handledFleeFromAttacker = false;
+
         if (
-          retaliateTarget &&
-          (cr.kind === CreatureKind.BOAR || cr.kind === CreatureKind.CAMEL) &&
-          cr.attackDamage > 0
+          isPeacefulAnimal &&
+          (cr.fleeTargetId || (cr.fleeTimer !== undefined && cr.fleeTimer > 0))
         ) {
-          const dx = retaliateTarget.x - cr.x;
-          const dy = retaliateTarget.y - cr.y;
-          const dist = Math.max(1, Math.hypot(dx, dy));
-          if (dist > 25) {
-            this.steerCreatureToward(
-              cr,
-              retaliateTarget.x,
-              retaliateTarget.y,
-              cr.moveSpeed * 1.15,
-              dt,
-              false
+          const MIN_SAFE_FLEE_DIST = 210;
+          let attackerX = cr.fleeFromX ?? cr.x;
+          let attackerY = cr.fleeFromY ?? cr.y;
+          let attackerActive = false;
+
+          if (cr.fleeTargetId === 'PLAYER') {
+            if (this.player.hp > 0) {
+              attackerX = this.player.x;
+              attackerY = this.player.y;
+              attackerActive = true;
+            }
+          } else if (cr.fleeTargetId) {
+            const attCr = this.entities.creatures.find(
+              (o) =>
+                o.id === cr.fleeTargetId && o.hp > 0 && !o.isInsideHouse
             );
-          } else {
-            cr.vx = 0;
-            cr.vy = 0;
-            if (cr.attackCooldown <= 0) {
-              cr.attackCooldown = 1.2;
-              cr.attackTimer = 0.25;
-              this.damageCreature(
-                retaliateTarget,
-                cr.attackDamage,
-                cr.x,
-                cr.y,
-                1.0,
-                cr
-              );
+            if (attCr) {
+              attackerX = attCr.x;
+              attackerY = attCr.y;
+              attackerActive = true;
             }
           }
-        } else {
-          this.updateWanderAi(cr, dt);
+
+          cr.fleeFromX = attackerX;
+          cr.fleeFromY = attackerY;
+          const distToAttacker = Math.hypot(cr.x - attackerX, cr.y - attackerY);
+
+          if (attackerActive && distToAttacker < MIN_SAFE_FLEE_DIST) {
+            // Still inside danger radius: flee away from the author of the attack to reach minimum safe distance!
+            cr.fleeTimer = Math.max(cr.fleeTimer || 0, 5.5);
+            cr.aiState = 'flee';
+            const awayX = cr.x - attackerX;
+            const awayY = cr.y - attackerY;
+            const fleeAngle =
+              Math.hypot(awayX, awayY) > 0.01
+                ? Math.atan2(awayY, awayX)
+                : cr.wanderAngle || 0;
+            this.steerCreatureAlongAngle(
+              cr,
+              fleeAngle,
+              cr.moveSpeed * 1.42,
+              dt,
+              false,
+              false
+            );
+            handledFleeFromAttacker = true;
+          } else {
+            // Reached minimum safe distance (>= 210px): count down memory timer while staying alert if attacker approaches again
+            cr.fleeTimer = Math.max(0, (cr.fleeTimer || 0) - dt);
+            if (cr.fleeTimer <= 0) {
+              cr.fleeTargetId = undefined;
+              cr.fleeFromX = undefined;
+              cr.fleeFromY = undefined;
+            }
+            if (cr.aiState === 'flee') {
+              cr.aiState = 'idle';
+              cr.aiTimer = 1.8 + Math.random() * 1.5;
+              cr.vx = 0;
+              cr.vy = 0;
+            }
+          }
+        }
+
+        if (!handledFleeFromAttacker) {
+          if (
+            retaliateTarget &&
+            (cr.kind === CreatureKind.BOAR || cr.kind === CreatureKind.CAMEL) &&
+            cr.attackDamage > 0
+          ) {
+            const dx = retaliateTarget.x - cr.x;
+            const dy = retaliateTarget.y - cr.y;
+            const dist = Math.max(1, Math.hypot(dx, dy));
+            if (dist > 25) {
+              this.steerCreatureToward(
+                cr,
+                retaliateTarget.x,
+                retaliateTarget.y,
+                cr.moveSpeed * 1.15,
+                dt,
+                false
+              );
+            } else {
+              cr.vx = 0;
+              cr.vy = 0;
+              if (cr.attackCooldown <= 0) {
+                cr.attackCooldown = 1.2;
+                cr.attackTimer = 0.25;
+                this.damageCreature(
+                  retaliateTarget,
+                  cr.attackDamage,
+                  cr.x,
+                  cr.y,
+                  1.0,
+                  cr
+                );
+              }
+            }
+          } else {
+            this.updateWanderAi(cr, dt);
+          }
         }
       }
 
@@ -2771,6 +2895,19 @@ export class GameEngine {
         }
       } else {
         cr.animFrame = 0;
+      }
+
+      // Slow progressive HP regeneration when an animal is in idle (and not actively taking hit damage)
+      if (
+        EntityManager.isWildAnimalKind(cr.kind) &&
+        cr.hp > 0 &&
+        cr.hp < cr.maxHp &&
+        cr.hitFlashTimer <= 0 &&
+        (cr.aiState === 'idle' ||
+          ((cr.aiState === 'stay' || cr.aiState === 'graze') &&
+            intentionalSpeed < 1.2))
+      ) {
+        cr.hp = Math.min(cr.maxHp, cr.hp + dt * 1.25);
       }
     }
   }
@@ -4175,8 +4312,7 @@ export class GameEngine {
       return;
     }
 
-    const agilitySpeed = 1 + (this.player.attributes.agility - 1) * 0.06;
-    this.player.swingDuration = Math.max(0.16, 0.28 / agilitySpeed);
+    this.player.swingDuration = this.getPlayerAttackCooldownSec();
     this.player.swingTimer = this.player.swingDuration;
     this.player.stamina = Math.max(0, this.player.stamina - 3);
     soundManager.playSwing();
@@ -4259,8 +4395,9 @@ export class GameEngine {
         ? 1.35
         : 1.0;
     const strengthMult =
-      (1 + (this.player.attributes.strength - 1) * 0.12) * strengthBuff;
-    const baseAttack = (heldItem?.attackDamage || 8) * strengthMult;
+      (1 + Math.max(0, this.player.attributes.strength || 0) * 0.12) *
+      strengthBuff;
+    const baseAttack = (heldItem?.attackDamage || 4) * strengthMult;
     const baseHarvest = (heldItem?.harvestPower || 10) * strengthMult;
     const equippedTool = heldItem?.toolType || ToolType.NONE;
     const equippedTier = heldItem?.toolTier || 0;
@@ -6805,7 +6942,8 @@ export class GameEngine {
           ? 1.35
           : 1.0;
       const strengthMult =
-        (1 + (this.player.attributes.strength - 1) * 0.12) * strengthBuff;
+        (1 + Math.max(0, this.player.attributes.strength || 0) * 0.12) *
+        strengthBuff;
       const evalBreak = evaluateMaterialBreak(
         heldItem?.id || null,
         heldItem?.toolType || ToolType.NONE,
@@ -6904,7 +7042,8 @@ export class GameEngine {
         this.emitUiSnapshot();
         return;
       }
-      const survivalBonusChance = (this.player.attributes.survival - 1) * 0.1;
+      const survivalBonusChance =
+        Math.max(0, this.player.attributes.survival || 0) * 0.1;
       for (const drop of bp.drops) {
         if (Math.random() <= drop.chance) {
           let count =
@@ -7045,6 +7184,18 @@ export class GameEngine {
     ) {
       cr.isHostile = true;
       cr.provokedTimer = 25;
+    }
+
+    // Peaceful animals (Sheep, Horse) flee when attacked to maintain a minimum safe distance from the author of the attack
+    if (cr.kind === CreatureKind.SHEEP || cr.kind === CreatureKind.HORSE) {
+      cr.fleeTargetId = attackerCreature ? attackerCreature.id : 'PLAYER';
+      cr.fleeFromX = sourceX;
+      cr.fleeFromY = sourceY;
+      cr.fleeTimer = 8.0;
+      if (!cr.tamed) {
+        cr.aiState = 'flee';
+        cr.aiTimer = 2.5;
+      }
     }
 
     // Rule: When the player attacks a target, ONLY combat-capable tamed allies (Camel & Boar) in 'follow' state are enabled to attack too
@@ -7958,7 +8109,7 @@ export class GameEngine {
           });
         }
       }
-      this.world.revealAround(deathX, deathY, 6);
+      this.revealWorldAndPopulateIslands(deathX, deathY, 6);
       this.renderer.spawnBurst(deathX, deathY, 'GOLD', 14);
       this.renderer.spawnRipple(deathX, deathY, '#f43f5e', 30, 0.6);
     }
@@ -7998,7 +8149,7 @@ export class GameEngine {
         this.syncPlayerMountedCreatureData();
       }
     }
-    this.world.revealAround(this.player.x, this.player.y, 10);
+    this.revealWorldAndPopulateIslands(this.player.x, this.player.y, 10);
     this.addFloatingText(
       droppedBag
         ? `Renascido em ${respawnLabel} · 🎒 Bolsinha marcada no Mapa (10 min)!`
@@ -8311,8 +8462,34 @@ export class GameEngine {
    */
   public getPlayerStatusMaxHp(): number {
     const lvl = Math.max(1, Math.floor(this.player.level || 1));
-    const vit = Math.max(1, Math.floor(this.player.attributes?.vitality || 1));
-    return 100 + (lvl - 1) * 10 + (vit - 1) * 18;
+    const vit = Math.max(0, Math.floor(this.player.attributes?.vitality ?? 0));
+    return 100 + (lvl - 1) * 10 + vit * 18;
+  }
+
+  /**
+   * Returns the character's base Attack status (Nv. 0 = 4, scaling +12% per Strength level).
+   */
+  public getPlayerBaseAttackStatus(): number {
+    const str = Math.max(0, Math.floor(this.player.attributes?.strength ?? 0));
+    return Math.round(4 * (1 + str * 0.12) * 10) / 10;
+  }
+
+  /**
+   * Returns the Attack/Break Speed multiplier from the `attackSpeed` (Vel ATK) attribute (+8% per level).
+   */
+  public getAttackSpeedMultiplier(): number {
+    const atkSpd = Math.max(
+      0,
+      Math.floor(this.player.attributes?.attackSpeed ?? 0)
+    );
+    return 1 + atkSpd * 0.08;
+  }
+
+  /**
+   * Returns the realistic attack/harvest swing cooldown in seconds (0.42s at Nv. 0, fast enough to chain break hits smoothly).
+   */
+  public getPlayerAttackCooldownSec(): number {
+    return Math.max(0.18, 0.42 / this.getAttackSpeedMultiplier());
   }
 
   /**
@@ -8350,7 +8527,18 @@ export class GameEngine {
     this.player.hp = Math.min(this.player.hp, this.player.maxHp);
   }
 
-  public getTotalDefenseBonus(): number {
+  /**
+   * Returns the damage reduction bonus from the character's `defense` attribute (+3% per level).
+   */
+  public getStatusDefenseBonus(): number {
+    const def = Math.max(0, Math.floor(this.player.attributes?.defense ?? 0));
+    return def * 0.03;
+  }
+
+  /**
+   * Returns the damage reduction bonus granted purely by equipped armor pieces.
+   */
+  public getEquipmentDefenseBonus(): number {
     const eq = this.player.equippedBySlot || {
       head: null,
       body: this.player.equippedArmorId || null,
@@ -8364,7 +8552,14 @@ export class GameEngine {
         total += ITEMS[id].defenseBonus || 0;
       }
     }
-    return Math.min(0.78, total);
+    return total;
+  }
+
+  public getTotalDefenseBonus(): number {
+    return Math.min(
+      0.8,
+      this.getStatusDefenseBonus() + this.getEquipmentDefenseBonus()
+    );
   }
 
   public getTotalEquipmentSpeedBonus(): number {
@@ -11351,10 +11546,12 @@ export class GameEngine {
   public upgradeAttribute(attr: keyof PlayerAttributes): void {
     if (this.player.attributePoints <= 0) return;
     this.player.attributePoints -= 1;
-    this.player.attributes[attr] += 1;
+    this.player.attributes[attr] = (this.player.attributes[attr] || 0) + 1;
     if (attr === 'vitality') {
       this.recalculatePlayerMaxHp();
       this.player.hp = Math.min(this.player.maxHp, this.player.hp + 18);
+    } else if (attr === 'attackSpeed') {
+      this.player.swingDuration = this.getPlayerAttackCooldownSec();
     }
     soundManager.playCraft();
     this.emitUiSnapshot();
@@ -13975,7 +14172,7 @@ export class GameEngine {
 
       // Reveal fog of war around allied remote players too
       if (rp.isMoving) {
-        this.world.revealAround(rp.x, rp.y, 10);
+        this.revealWorldAndPopulateIslands(rp.x, rp.y, 10);
       }
     }
 

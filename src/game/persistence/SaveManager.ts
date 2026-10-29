@@ -94,10 +94,12 @@ export function createInitialPlayerState(): PlayerState {
     xpToNext: 100,
     attributePoints: 0,
     attributes: {
-      vitality: 1,
-      strength: 1,
-      agility: 1,
-      survival: 1,
+      vitality: 0,
+      strength: 0,
+      agility: 0,
+      survival: 0,
+      attackSpeed: 0,
+      defense: 0,
     },
     goldCoins: 0,
     inventory,
@@ -124,7 +126,7 @@ export function createInitialPlayerState(): PlayerState {
     animFrame: 0,
     animTimer: 0,
     swingTimer: 0,
-    swingDuration: 0.28,
+    swingDuration: 0.42,
     hitFlashTimer: 0,
   };
 }
@@ -192,6 +194,31 @@ export function migrateSaveData(rawSave: WorldSaveData): WorldSaveData {
   if (!migrated.player.respawnLabel) {
     migrated.player.respawnLabel = 'Acampamento Inicial';
   }
+
+  const rawAttrs = (migrated.player.attributes || {}) as Partial<
+    PlayerState['attributes']
+  >;
+  const isLegacyOneBased = typeof rawAttrs.attackSpeed !== 'number';
+  migrated.player.attributes = {
+    vitality: Math.max(
+      0,
+      Math.floor((rawAttrs.vitality ?? (isLegacyOneBased ? 1 : 0)) - (isLegacyOneBased ? 1 : 0))
+    ),
+    strength: Math.max(
+      0,
+      Math.floor((rawAttrs.strength ?? (isLegacyOneBased ? 1 : 0)) - (isLegacyOneBased ? 1 : 0))
+    ),
+    agility: Math.max(
+      0,
+      Math.floor((rawAttrs.agility ?? (isLegacyOneBased ? 1 : 0)) - (isLegacyOneBased ? 1 : 0))
+    ),
+    survival: Math.max(
+      0,
+      Math.floor((rawAttrs.survival ?? (isLegacyOneBased ? 1 : 0)) - (isLegacyOneBased ? 1 : 0))
+    ),
+    attackSpeed: Math.max(0, Math.floor(rawAttrs.attackSpeed ?? 0)),
+    defense: Math.max(0, Math.floor(rawAttrs.defense ?? 0)),
+  };
 
   if (!migrated.player.equippedBySlot || typeof migrated.player.equippedBySlot !== 'object') {
     migrated.player.equippedBySlot = {

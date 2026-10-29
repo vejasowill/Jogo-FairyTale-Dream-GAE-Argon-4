@@ -413,6 +413,14 @@ class SpriteAtlasManager {
           }
 
           this.tileSprites.set(`${BiomeType.OCEAN}_${z}_${v}_${f}`, oCanvas);
+
+          // =================================================================
+          // 4. ISLAND HD PIXEL TILE (SubZone 0: Lush Island Green, SubZone 1: Golden Island Beach Sand, SubZone 2: Island Highland)
+          // =================================================================
+          this.tileSprites.set(
+            `${BiomeType.ISLAND}_${z}_${v}_${f}`,
+            z === 1 ? dCanvas : pCanvas
+          );
         }
       }
     }

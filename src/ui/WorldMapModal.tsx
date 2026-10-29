@@ -123,6 +123,8 @@ export const WorldMapModal: React.FC<WorldMapModalProps> = ({
             ctx.fillStyle = '#c98838';
           } else if (zone === EcologicalZone.SHALLOW_REEF) {
             ctx.fillStyle = '#2585b8';
+          } else if (biome === BiomeType.ISLAND) {
+            ctx.fillStyle = '#22c55e';
           } else if (biome === BiomeType.PLAINS) {
             ctx.fillStyle = '#3f7d3b';
           } else if (biome === BiomeType.DESERT) {

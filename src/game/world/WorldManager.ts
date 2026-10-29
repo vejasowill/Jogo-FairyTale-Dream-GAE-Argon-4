@@ -159,7 +159,14 @@ export class WorldManager {
     let out = '';
     for (let i = 0; i < total; i++) {
       const t = tiles[i];
-      out += t === BiomeType.OCEAN ? 'O' : t === BiomeType.DESERT ? 'D' : 'P';
+      out +=
+        t === BiomeType.OCEAN
+          ? 'O'
+          : t === BiomeType.DESERT
+          ? 'D'
+          : t === BiomeType.ISLAND
+          ? 'I'
+          : 'P';
     }
     return out;
   }
@@ -175,6 +182,8 @@ export class WorldManager {
           ? BiomeType.OCEAN
           : ch === 'D'
           ? BiomeType.DESERT
+          : ch === 'I'
+          ? BiomeType.ISLAND
           : BiomeType.PLAINS;
     }
     return tiles;
@@ -599,12 +608,73 @@ export class WorldManager {
   }
 
   /**
+   * Checks whether a dry-land tile `(tx, ty)` is surrounded by water in all 8 directions
+   * (either an oceanic island or an inland/coastal island surrounded by rivers, lakes, or sea).
+   */
+  private isLandSurroundedByWater(
+    tx: number,
+    ty: number,
+    raw?: {
+      waterKind: 'none' | 'ocean' | 'river' | 'lake';
+      isIslandLand: boolean;
+      continentalElev: number;
+      riverMeander: number;
+      climate: number;
+    }
+  ): boolean {
+    const baseRaw = raw ?? this.getRawWaterAtTile(tx, ty);
+    if (baseRaw.waterKind !== 'none') return false;
+    if (baseRaw.isIslandLand) return true;
+
+    const OCEAN_LEVEL = 0.312;
+    // Fast early-out for deep continental interior far from oceans and river channels
+    if (
+      baseRaw.continentalElev >= OCEAN_LEVEL + 0.075 &&
+      Math.abs(baseRaw.riverMeander) > 0.045
+    ) {
+      return false;
+    }
+
+    const dirs: [number, number][] = [
+      [1, 0],
+      [-1, 0],
+      [0, 1],
+      [0, -1],
+      [1, 1],
+      [-1, 1],
+      [1, -1],
+      [-1, -1],
+    ];
+    const maxIslandRadius = 12;
+
+    for (let d = 0; d < dirs.length; d++) {
+      const [dx, dy] = dirs[d];
+      let foundWaterInDir = false;
+      for (let step = 1; step <= maxIslandRadius; step++) {
+        if (
+          this.getRawWaterAtTile(tx + dx * step, ty + dy * step).waterKind !==
+          'none'
+        ) {
+          foundWaterInDir = true;
+          break;
+        }
+      }
+      if (!foundWaterInDir) {
+        return false;
+      }
+    }
+
+    return true;
+  }
+
+  /**
    * Returns complete hydrological & coastal beach classification at `(tx, ty)`.
    * Every Ocean border (both mainland and oceanic islands) has a wide sandy beach (`isOceanBeach = true`).
    */
   public getHydrologyAtTile(tx: number, ty: number): {
     waterKind: 'none' | 'ocean' | 'river' | 'lake';
     isOceanBeach: boolean;
+    isIslandLand: boolean;
     continentalElev: number;
     riverMeander: number;
     climate: number;
@@ -614,18 +684,22 @@ export class WorldManager {
       return {
         waterKind: raw.waterKind,
         isOceanBeach: false,
+        isIslandLand: false,
         continentalElev: raw.continentalElev,
         riverMeander: raw.riverMeander,
         climate: raw.climate,
       };
     }
 
+    const isIsland = this.isLandSurroundedByWater(tx, ty, raw);
+
     const OCEAN_LEVEL = 0.312;
     // Fast O(1) early-out for inland continent tiles far from any ocean
-    if (!raw.isIslandLand && raw.continentalElev >= OCEAN_LEVEL + 0.056) {
+    if (!isIsland && raw.continentalElev >= OCEAN_LEVEL + 0.056) {
       return {
         waterKind: 'none',
         isOceanBeach: false,
+        isIslandLand: false,
         continentalElev: raw.continentalElev,
         riverMeander: raw.riverMeander,
         climate: raw.climate,
@@ -636,12 +710,13 @@ export class WorldManager {
     const beachNoise =
       smoothNoise(tx * 0.08, ty * 0.08, this.seed + 601) * 0.011;
     if (
-      !raw.isIslandLand &&
+      !isIsland &&
       raw.continentalElev < OCEAN_LEVEL + 0.025 + beachNoise
     ) {
       return {
         waterKind: 'none',
         isOceanBeach: true,
+        isIslandLand: false,
         continentalElev: raw.continentalElev,
         riverMeander: raw.riverMeander,
         climate: raw.climate,
@@ -686,6 +761,7 @@ export class WorldManager {
         return {
           waterKind: 'none',
           isOceanBeach: true,
+          isIslandLand: isIsland,
           continentalElev: raw.continentalElev,
           riverMeander: raw.riverMeander,
           climate: raw.climate,
@@ -696,6 +772,7 @@ export class WorldManager {
     return {
       waterKind: 'none',
       isOceanBeach: false,
+      isIslandLand: isIsland,
       continentalElev: raw.continentalElev,
       riverMeander: raw.riverMeander,
       climate: raw.climate,
@@ -762,7 +839,12 @@ export class WorldManager {
       return BiomeType.OCEAN;
     }
 
-    // Ocean borders (and island shores) are always wide sandy beaches
+    // Todo e qualquer solo que seja rodeado por água é definido como bioma ILHA (BiomeType.ISLAND)
+    if (hydro.isIslandLand) {
+      return BiomeType.ISLAND;
+    }
+
+    // Ocean borders on mainland are wide sandy beaches
     if (hydro.isOceanBeach) {
       return BiomeType.DESERT;
     }
@@ -846,7 +928,10 @@ export class WorldManager {
       e === BiomeType.OCEAN ||
       w === BiomeType.OCEAN;
 
-    if (b === BiomeType.PLAINS) {
+    if (b === BiomeType.PLAINS || b === BiomeType.ISLAND) {
+      if (b === BiomeType.ISLAND && nearWater) {
+        return EcologicalZone.COASTAL_TROPICS;
+      }
       if (nearWater && hydro.climate < 0.46) {
         return EcologicalZone.DESERT_OASIS;
       }
@@ -975,6 +1060,22 @@ export class WorldManager {
 
     const zone = this.getEcologicalZoneAtTile(tx, ty);
     if (true) {
+      if (biome === BiomeType.ISLAND) {
+        if (
+          n === BiomeType.OCEAN ||
+          s === BiomeType.OCEAN ||
+          e === BiomeType.OCEAN ||
+          w === BiomeType.OCEAN ||
+          zone === EcologicalZone.COASTAL_TROPICS
+        ) {
+          return 1; // Golden Tropical Island Shore
+        }
+        if (zone === EcologicalZone.ROCKY_HIGHLANDS) {
+          return 2; // Island Rocky Highland
+        }
+        return 0; // Lush Tropical Island Interior
+      }
+
       if (biome === BiomeType.PLAINS) {
         if (
           n === BiomeType.DESERT ||
@@ -1188,7 +1289,10 @@ export class WorldManager {
         const isNaturalTrail = trailVal < 0.042;
         if (isNaturalTrail) continue;
 
-        const spawnRoll = hash2D(tx, ty, this.seed + 911);
+        // No bioma ILHA (BiomeType.ISLAND), a chance de geração natural na descoberta é 30% maior (* 1.3)
+        const rawSpawnRoll = hash2D(tx, ty, this.seed + 911);
+        const spawnRoll =
+          biome === BiomeType.ISLAND ? rawSpawnRoll / 1.3 : rawSpawnRoll;
         const rarityRoll = hash2D(tx, ty, this.seed + 4099);
         const clusterNoise = smoothNoise(tx * 0.22, ty * 0.22, this.seed + 1291);
 
@@ -2459,10 +2563,11 @@ export class WorldManager {
     return this.getTileBiomeFast(tx, ty);
   }
 
-  public revealAround(wx: number, wy: number, radiusTiles = 9): void {
+  public revealAround(wx: number, wy: number, radiusTiles = 9): ChunkData[] {
     const center = this.worldToTile(wx, wy);
     const r2 = radiusTiles * radiusTiles;
     const touchedChunks = new Set<ChunkData>();
+    const newlyDiscoveredIslandChunks = new Set<ChunkData>();
     for (let dy = -radiusTiles; dy <= radiusTiles; dy++) {
       for (let dx = -radiusTiles; dx <= radiusTiles; dx++) {
         if (dx * dx + dy * dy <= r2) {
@@ -2470,8 +2575,17 @@ export class WorldManager {
           const ty = center.ty + dy;
           const { cx, cy, lx, ly } = this.tileToChunk(tx, ty);
           const chunk = this.getOrCreateChunk(cx, cy);
-          chunk.explored[ly * CHUNK_SIZE + lx] = 1;
+          const tileIdx = ly * CHUNK_SIZE + lx;
+          const wasExplored = chunk.explored[tileIdx] === 1;
+          chunk.explored[tileIdx] = 1;
           touchedChunks.add(chunk);
+          if (
+            !wasExplored &&
+            !chunk.islandMobsPopulated &&
+            chunk.tiles[tileIdx] === BiomeType.ISLAND
+          ) {
+            newlyDiscoveredIslandChunks.add(chunk);
+          }
         }
       }
     }
@@ -2485,6 +2599,7 @@ export class WorldManager {
         );
       }
     }
+    return Array.from(newlyDiscoveredIslandChunks);
   }
 
   /**
