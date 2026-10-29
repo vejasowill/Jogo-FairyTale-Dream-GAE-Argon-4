@@ -112,11 +112,35 @@ function tileKey(tx: number, ty: number): string {
 
 export class RoofSystem {
   private lastSignature = '';
+  private lastMinCx = 0;
+  private lastMaxCx = -1;
+  private lastMinCy = 0;
+  private lastMaxCy = -1;
   private cachedRoofs: BuildingRoof[] = [];
+  private cachedTileMap = new Map<string, BuildingRoof>();
+  private regionCache = new Map<
+    string,
+    {
+      sig: string;
+      roofs: BuildingRoof[];
+      tileMap: Map<string, BuildingRoof>;
+    }
+  >();
+  private roofCanvasCache = new Map<
+    string,
+    {
+      canvas: HTMLCanvasElement;
+      worldX: number;
+      worldY: number;
+      width: number;
+      height: number;
+    }
+  >();
   private roofAlphaMap = new Map<string, number>();
 
   public invalidate(): void {
     this.lastSignature = '';
+    this.regionCache.clear();
   }
 
   /**
@@ -172,6 +196,10 @@ export class RoofSystem {
     }
 
     this.lastSignature = sig;
+    this.lastMinCx = minCx;
+    this.lastMaxCx = maxCx;
+    this.lastMinCy = minCy;
+    this.lastMaxCy = maxCy;
     this.cachedRoofs = this.buildRoofsInRegion(
       world,
       padMinCx,
@@ -179,7 +207,79 @@ export class RoofSystem {
       padMinCy,
       padMaxCy
     );
+    this.cachedTileMap.clear();
+    for (let i = 0; i < this.cachedRoofs.length; i++) {
+      const b = this.cachedRoofs[i];
+      for (const k of b.footprintSet) {
+        this.cachedTileMap.set(k, b);
+      }
+    }
     return this.cachedRoofs;
+  }
+
+  /**
+   * Returns the enclosed `BuildingRoof` structure that contains tile `(tx, ty)`
+   * (either in its interior, doorway, internal wall, or perimeter wall footprint),
+   * or `null` if `(tx, ty)` is not part of an enclosed roofed structure.
+   * Uses O(1) Map lookup and per-region caching so querying multiple chunks in the same frame never rebuilds roofs.
+   */
+  public getBuildingAtTile(
+    world: WorldManager,
+    tx: number,
+    ty: number
+  ): BuildingRoof | null {
+    const key = tileKey(tx, ty);
+    const cx = Math.floor(tx / CHUNK_SIZE);
+    const cy = Math.floor(ty / CHUNK_SIZE);
+
+    // Fast path: if (cx, cy) is inside the active rendered camera region, use the O(1) cachedTileMap directly!
+    if (
+      this.lastSignature &&
+      cx >= this.lastMinCx &&
+      cx <= this.lastMaxCx &&
+      cy >= this.lastMinCy &&
+      cy <= this.lastMaxCy
+    ) {
+      return this.cachedTileMap.get(key) || null;
+    }
+
+    const regionKey = `${cx},${cy}`;
+    const padMinCx = cx - 1;
+    const padMaxCx = cx + 1;
+    const padMinCy = cy - 1;
+    const padMaxCy = cy + 1;
+
+    const sig = this.computeRegionSignature(
+      world,
+      padMinCx,
+      padMaxCx,
+      padMinCy,
+      padMaxCy
+    );
+    let entry = this.regionCache.get(regionKey);
+    if (!entry || entry.sig !== sig) {
+      const roofs = this.buildRoofsInRegion(
+        world,
+        padMinCx,
+        padMaxCx,
+        padMinCy,
+        padMaxCy
+      );
+      const tileMap = new Map<string, BuildingRoof>();
+      for (let i = 0; i < roofs.length; i++) {
+        const b = roofs[i];
+        for (const k of b.footprintSet) {
+          tileMap.set(k, b);
+        }
+      }
+      if (this.regionCache.size > 36) {
+        this.regionCache.clear();
+      }
+      entry = { sig, roofs, tileMap };
+      this.regionCache.set(regionKey, entry);
+    }
+
+    return entry.tileMap.get(key) || null;
   }
 
   /**
@@ -771,6 +871,20 @@ export class RoofSystem {
     const width = (maxTx - minTx + 1) * TILE_SIZE + padLeft + padRight;
     const height = (maxTy - minTy + 1) * TILE_SIZE + padTop + padBot;
 
+    const footprintKeyParts: string[] = [];
+    for (let ty = minTy; ty <= maxTy; ty++) {
+      for (let tx = minTx; tx <= maxTx; tx++) {
+        if (footprintSet.has(tileKey(tx, ty))) {
+          footprintKeyParts.push(`${tx - minTx},${ty - minTy}`);
+        }
+      }
+    }
+    const canvasCacheKey = `${style}:${minTx},${minTy},${maxTx},${maxTy}:${footprintKeyParts.join(';')}`;
+    const existingCanvas = this.roofCanvasCache.get(canvasCacheKey);
+    if (existingCanvas) {
+      return existingCanvas;
+    }
+
     const canvas = document.createElement('canvas');
     canvas.width = width;
     canvas.height = height;
@@ -960,12 +1074,17 @@ export class RoofSystem {
       }
     }
 
-    return {
+    const renderedResult = {
       canvas,
       worldX,
       worldY,
       width,
       height,
     };
+    if (this.roofCanvasCache.size > 160) {
+      this.roofCanvasCache.clear();
+    }
+    this.roofCanvasCache.set(canvasCacheKey, renderedResult);
+    return renderedResult;
   }
 }

@@ -21,7 +21,7 @@ import {
   TILE_SIZE,
   WorldManager,
 } from '../world/WorldManager';
-import { RoofSystem } from '../world/RoofSystem';
+import { BuildingRoof, RoofSystem } from '../world/RoofSystem';
 import { Camera } from './Camera';
 import { spriteAtlas } from './SpriteAtlas';
 
@@ -129,6 +129,18 @@ export class GameRenderer {
   private lastPlayerY = 0;
   private entityStepMap = new Map<string, number>();
   private roofSystem = new RoofSystem();
+
+  public getBuildingAtTile(
+    world: WorldManager,
+    tx: number,
+    ty: number
+  ): BuildingRoof | null {
+    return this.roofSystem.getBuildingAtTile(world, tx, ty);
+  }
+
+  public invalidateRoofs(): void {
+    this.roofSystem.invalidate();
+  }
 
   public spawnRipple(
     x: number,
@@ -2668,6 +2680,12 @@ export class GameRenderer {
         drawH = 46;
         groundPadY = 3;
         break;
+      case PlaceableType.BED:
+        // Cozy oak bed with pillow & quilted blanket
+        drawW = 30;
+        drawH = 26;
+        groundPadY = 1;
+        break;
       case PlaceableType.FURNACE:
         // Tall stone blast-smelter with tapered chimney stack
         drawW = 38;
@@ -2943,7 +2961,7 @@ export class GameRenderer {
       }
     }
 
-    // If Villagers are currently sleeping/inside this house and player is nearby, show a cozy occupied indicator
+    // If Villagers are currently sleeping/inside this house or bed and player is nearby, show a cozy occupied indicator
     if (creatures && player) {
       const sleepingInside = creatures.filter(
         (c) => c.isInsideHouse && c.homeHouseId === st.id && c.hp > 0
@@ -2953,11 +2971,23 @@ export class GameRenderer {
         Math.hypot(player.x - centerX, player.y - (wy + 16)) <= 145
       ) {
         const names = sleepingInside.map((r) => r.name).join(' & ');
-        const badgeText = `🏠 ${names} (Em Casa · Bata na Porta)`;
+        const badgeText =
+          st.type === PlaceableType.BED
+            ? `💤 ${names} (Dormindo)`
+            : `🏠 ${names} (Em Casa · Bata na Porta)`;
         ctx.save();
+        if (st.type === PlaceableType.BED) {
+          // Draw sleeping villager head on pillow under blanket
+          ctx.fillStyle = '#0f172a';
+          ctx.fillRect(centerX - 5, wy + 5, 10, 7);
+          ctx.fillStyle = '#fdba74';
+          ctx.fillRect(centerX - 4, wy + 6, 8, 5);
+          ctx.fillStyle = '#451a03';
+          ctx.fillRect(centerX - 4, wy + 5, 8, 2);
+        }
         ctx.font = 'bold 6.5px "Plus Jakarta Sans", sans-serif';
         ctx.textAlign = 'center';
-        const bW = Math.max(88, badgeText.length * 3.8);
+        const bW = Math.max(82, badgeText.length * 3.8);
         ctx.fillStyle = 'rgba(10, 14, 23, 0.88)';
         ctx.fillRect(centerX - bW / 2, drawY - 14, bW, 12);
         ctx.fillStyle = '#fde047';

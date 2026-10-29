@@ -1614,6 +1614,18 @@ export const ITEMS: Record<string, ItemDefinition> = {
     maxStack: 50,
     placeableType: PlaceableType.PALM_SAPLING,
   },
+  bed: {
+    id: 'bed',
+    name: 'Cama de Madeira',
+    description:
+      'Cama aconchegante de carvalho com travesseiro de lã e coberta macia. Funciona como Ponto de Descanso: permite dormir à noite (+100% HP & Energia) e define o Dono de uma Estrutura fechada com telhado!',
+    purposeSummary:
+      'Ponto de Descanso & Dono de Estrutura (Rotacionável H/V · 110 HP): Dormir à noite ou definir posse de casa fechada com telhado.',
+    category: ItemCategory.PLACEABLE,
+    rarity: RarityTier.BASIC,
+    maxStack: 10,
+    placeableType: PlaceableType.BED,
+  },
 };
 
 export const CONSTRUCTION_BLUEPRINTS: Record<PlaceableType, ConstructionBlueprint> = {
@@ -2147,6 +2159,24 @@ export const CONSTRUCTION_BLUEPRINTS: Record<PlaceableType, ConstructionBlueprin
     maxHp: 30,
     lightRadius: 0,
   },
+  [PlaceableType.BED]: {
+    type: PlaceableType.BED,
+    role: 'MOBILIA',
+    roleLabel: 'Ponto de Descanso (Cama)',
+    layer: 'FURNITURE',
+    layerLabel: 'Camada de Mobília (Define Dono de Estrutura com Telhado · Rotacionável)',
+    hasHitbox: true,
+    hitboxBehavior: 'SOLID_COMPACT',
+    hitboxLabel: 'Hitbox Compacta (9px · Dormir & Posse)',
+    hitboxRadius: 9,
+    continuityMode: 'STANDALONE',
+    continuityLabel: 'Cama Rotacionável H/V',
+    connectionGroup: 'none',
+    connectsToGroups: ['wood_floor', 'stone_floor', 'brick_floor', 'carpet'],
+    maxHp: 110,
+    lightRadius: 0,
+    isInteractive: true,
+  },
 };
 
 export function getConstructionBlueprint(
@@ -2397,6 +2427,7 @@ export const ITEM_BASE_PRICES: Record<string, number> = {
   workbench: 12,
   chest: 14,
   campfire: 15,
+  bed: 28,
   furnace: 45,
 
   // Consumíveis & Culinária Inicial
@@ -2760,6 +2791,12 @@ export const STRUCTURE_MATERIAL_REQUIREMENTS: Record<
     requiredTool: ToolType.AXE,
     requiredTier: 0,
     requirementLabel: 'Mão Livre ou Machado',
+  },
+  [PlaceableType.BED]: {
+    materialKind: 'SOFT_WOOD',
+    requiredTool: ToolType.AXE,
+    requiredTier: 0,
+    requirementLabel: 'Mão Livre ou Machado (Ideal: Machado)',
   },
 
   // === ROCHA & ALVENARIA BÁSICA (Quebrável com a Mão lentamente; ideal com Picareta) ===

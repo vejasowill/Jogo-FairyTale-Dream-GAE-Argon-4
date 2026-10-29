@@ -225,6 +225,7 @@ export const MobileHud: React.FC<MobileHudProps> = ({
     selectedItem?.placeableType === PlaceableType.WOOD_WALL ||
     selectedItem?.placeableType === PlaceableType.STONE_WALL ||
     selectedItem?.placeableType === PlaceableType.WOOD_DOOR ||
+    selectedItem?.placeableType === PlaceableType.BED ||
     selectedItem?.placeableType === PlaceableType.VILLAGE_HOUSE ||
     selectedItem?.placeableType === PlaceableType.MARKET_STALL;
 

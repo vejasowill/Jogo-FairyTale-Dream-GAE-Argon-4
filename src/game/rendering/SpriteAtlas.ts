@@ -2924,6 +2924,38 @@ class SpriteAtlasManager {
       ],
       { d: '#052e16', g: '#15803d', l: '#84cc16', b: '#b45309', c: '#78350f' }
     );
+
+    // Cama de Madeira (bed) — Cozy oak bed with carved headboard, white wool pillow & crimson/gold blanket
+    registerItem(
+      'bed',
+      [
+        '................',
+        '..ddd...........',
+        '..dbdddddddd..dd',
+        '..dblwwwwwwdddd.',
+        '..dbwwwwwwwwrrd.',
+        '..dbddddddrrrrd.',
+        '..dbbyyyyrrrrrd.',
+        '..dbbyyyyRRRRrd.',
+        '..dbbyyyyrrrrrd.',
+        '..dbddddddddddbd',
+        '..dbb........dbb',
+        '..ddd........ddd',
+        '................',
+        '................',
+        '................',
+        '................',
+      ],
+      {
+        d: '#2a1205',
+        b: '#78350f',
+        l: '#b45309',
+        w: '#f8fafc',
+        r: '#dc2626',
+        R: '#ef4444',
+        y: '#fde047',
+      }
+    );
   }
 
   private buildNatureNodes(): void {
@@ -4575,6 +4607,50 @@ class SpriteAtlasManager {
         ctx.fillRect(8 + sway, 5, 8, 6);
         ctx.fillStyle = '#84cc16';
         ctx.fillRect(5 + sway, 8, 14, 2);
+      })
+    );
+
+    // BED (Cama de Madeira — Carved oak frame, fluffy wool pillow & crimson-gold quilted blanket)
+    this.structureSprites.set(
+      PlaceableType.BED,
+      createFrames(30, 26, (ctx) => {
+        // Soft ground shadow
+        ctx.fillStyle = 'rgba(0,0,0,0.34)';
+        ctx.fillRect(2, 21, 26, 4);
+        // Dark timber frame outline
+        ctx.fillStyle = '#2a1205';
+        ctx.fillRect(2, 2, 26, 20);
+        // Oak headboard (top/north) & corner posts
+        ctx.fillStyle = '#78350f';
+        ctx.fillRect(3, 3, 24, 5);
+        ctx.fillStyle = '#b45309';
+        ctx.fillRect(4, 3, 22, 3);
+        ctx.fillStyle = '#fde047';
+        ctx.fillRect(6, 4, 2, 2);
+        ctx.fillRect(22, 4, 2, 2);
+        // White wool mattress & fluffy pillow
+        ctx.fillStyle = '#e2e8f0';
+        ctx.fillRect(4, 7, 22, 11);
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(6, 7, 18, 4);
+        ctx.fillStyle = '#cbd5e1';
+        ctx.fillRect(6, 10, 18, 1);
+        // Crimson & gold quilted blanket covering lower 2/3 of bed
+        ctx.fillStyle = '#991b1b';
+        ctx.fillRect(4, 11, 22, 8);
+        ctx.fillStyle = '#dc2626';
+        ctx.fillRect(5, 12, 20, 6);
+        ctx.fillStyle = '#ef4444';
+        ctx.fillRect(6, 13, 18, 3);
+        // Golden trim band across blanket fold
+        ctx.fillStyle = '#fbbf24';
+        ctx.fillRect(4, 11, 22, 1);
+        ctx.fillRect(14, 12, 2, 6);
+        // Oak footboard & legs
+        ctx.fillStyle = '#78350f';
+        ctx.fillRect(3, 19, 24, 2);
+        ctx.fillRect(3, 21, 3, 2);
+        ctx.fillRect(24, 21, 3, 2);
       })
     );
   }

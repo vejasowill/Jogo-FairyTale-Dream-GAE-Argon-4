@@ -476,6 +476,7 @@ export class EntityManager {
     wx: number,
     wy: number,
     options?: {
+      customId?: string;
       isElite?: boolean;
       customName?: string;
       homeX?: number;
@@ -738,7 +739,9 @@ export class EntityManager {
 
     const entity: CreatureEntity = {
       ...cfg,
-      id: `cr_${kind}_${Date.now()}_${Math.floor(Math.random() * 99999)}`,
+      id:
+        options?.customId ||
+        `cr_${kind}_${Date.now()}_${Math.floor(Math.random() * 99999)}`,
       x: spawnWorldX,
       y: spawnWorldY,
       vx: 0,
@@ -834,6 +837,7 @@ export class EntityManager {
             st.type === PlaceableType.HEALING_FOUNTAIN ||
             st.type === PlaceableType.VILLAGE_WELL ||
             st.type === PlaceableType.VILLAGE_HOUSE ||
+            st.type === PlaceableType.BED ||
             st.type === PlaceableType.ROYAL_BANNER ||
             st.type === PlaceableType.CAMPFIRE ||
             st.type === PlaceableType.WORKBENCH ||
@@ -887,12 +891,74 @@ export class EntityManager {
     const centerWy = (chunk.cy * CHUNK_SIZE + 8) * TILE_SIZE + 16;
     const nameSeed = Math.abs(chunk.cx * 31 + chunk.cy * 17);
 
-    // 0. VILLAGE LANDMARKS — Populate with 4 named NPCs (Ferreiro, Mercadora, Guardião, Ancião) bound to Village Houses (up to 2 per house)
+    // 0. VILLAGE LANDMARKS — Populate with Villagers bound to their owned Beds inside the 4 Village Houses (or legacy Village Houses)
     if (
       chunk.landmarkName === 'Vilarejo de Carvalho' ||
       chunk.landmarkName === 'Vila Mercante do Oásis'
     ) {
       const villageId = chunk.villageId || `village_${chunk.cx}_${chunk.cy}`;
+      const villageBeds = chunk.structures.filter(
+        (s) => s.type === PlaceableType.BED && s.ownerType === 'VILLAGER'
+      );
+
+      if (villageBeds.length > 0) {
+        for (let i = 0; i < villageBeds.length; i++) {
+          const bed = villageBeds[i];
+          const role: NpcRole = bed.npcRole || 'mercador';
+          const hx = bed.tileX * TILE_SIZE + TILE_SIZE / 2;
+          const hy = bed.tileY * TILE_SIZE + TILE_SIZE / 2;
+
+          // Candidate walkable plaza/path offsets around the central well and house doors
+          const candidateWorldPositions: Array<[number, number]> = [
+            [
+              (chunk.cx * CHUNK_SIZE + (role === 'ferreiro' || role === 'anciao' ? 4 : 11)) *
+                TILE_SIZE +
+                16,
+              (chunk.cy * CHUNK_SIZE + (role === 'ferreiro' || role === 'mercador' ? 5 : 10)) *
+                TILE_SIZE +
+                16,
+            ],
+            [
+              (chunk.cx * CHUNK_SIZE + (role === 'ferreiro' || role === 'anciao' ? 6 : 9)) *
+                TILE_SIZE +
+                16,
+              (chunk.cy * CHUNK_SIZE + (role === 'ferreiro' || role === 'mercador' ? 7 : 8)) *
+                TILE_SIZE +
+                16,
+            ],
+            [centerWx + (i % 2 === 0 ? -32 : 32), centerWy + (i < 4 ? -32 : 32)],
+            [centerWx - 48, centerWy],
+            [centerWx + 48, centerWy],
+          ];
+
+          for (const [candWx, candWy] of candidateWorldPositions) {
+            const spawned = this.trySpawnCreatureAt(
+              world,
+              CreatureKind.VILLAGER,
+              candWx,
+              candWy,
+              {
+                customId: bed.ownerId,
+                customName: bed.ownerName,
+                npcRole: role,
+                villageId,
+                nameIndex: nameSeed + i,
+                homeX: hx,
+                homeY: hy,
+                homeHouseId: bed.id,
+              }
+            );
+            if (spawned) {
+              bed.ownerId = spawned.id;
+              bed.ownerName = spawned.name;
+              break;
+            }
+          }
+        }
+        return;
+      }
+
+      // Legacy fallback for pre-existing saves with single-tile VILLAGE_HOUSE
       const villageHouses = chunk.structures.filter(
         (s) => s.type === PlaceableType.VILLAGE_HOUSE
       );
@@ -904,7 +970,6 @@ export class EntityManager {
       ];
       for (let i = 0; i < roles.length; i++) {
         const r = roles[i];
-        // Assign at most 2 villagers per house (House 0 gets 2, House 1 gets 1, House 2 gets 1 -> leaving 2 open beds in the village!)
         const assignedHouse =
           villageHouses.length >= 3
             ? villageHouses[i === 0 || i === 1 ? 0 : i === 2 ? 1 : 2]

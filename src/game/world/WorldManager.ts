@@ -15,6 +15,7 @@ import {
   MarketStallSlot,
   NatureNode,
   NatureNodeType,
+  NpcRole,
   PlaceableType,
   PlacedStructure,
 } from '../core/types';
@@ -1542,7 +1543,7 @@ export class WorldManager {
         }
       }
 
-      chunk.structures.push({
+      const createdStruct: PlacedStructure = {
         id: `world_struct_${tx}_${ty}_${type}`,
         type,
         itemId,
@@ -1564,19 +1565,23 @@ export class WorldManager {
         villageId,
         ownerType:
           type === PlaceableType.MARKET_STALL ||
-          (type === PlaceableType.VILLAGE_HOUSE && Boolean(villageId))
+          ((type === PlaceableType.VILLAGE_HOUSE || type === PlaceableType.BED) &&
+            Boolean(villageId))
             ? 'VILLAGER'
             : undefined,
         ownerName:
           type === PlaceableType.MARKET_STALL
             ? 'Mercador da Vila'
-            : type === PlaceableType.VILLAGE_HOUSE && Boolean(villageId)
+            : (type === PlaceableType.VILLAGE_HOUSE || type === PlaceableType.BED) &&
+              Boolean(villageId)
             ? 'Moradores da Vila'
             : undefined,
         stallOpen:
           type === PlaceableType.MARKET_STALL ? true : undefined,
         ownerSleeping: false,
-      });
+      };
+      chunk.structures.push(createdStruct);
+      return createdStruct;
     };
 
     // 0. FRONTIER VILLAGE / DESERT OASIS VILLAGE (Vilarejo da Fronteira / Vila Mercante do Oásis)
@@ -1596,7 +1601,17 @@ export class WorldManager {
         isBoxAllLand(4, 4, 12, 12));
 
     if (shouldGenerateVillage && centerBiome !== BiomeType.OCEAN) {
-      clearNodesInBox(4, 4, 12, 12);
+      // Ensure the full 1..14 village square is dry land and clear of trees/rocks
+      for (let ly = 1; ly <= 14; ly++) {
+        for (let lx = 1; lx <= 14; lx++) {
+          const idx = ly * CHUNK_SIZE + lx;
+          if (chunk.tiles[idx] === BiomeType.OCEAN) {
+            chunk.tiles[idx] = centerBiome;
+          }
+        }
+      }
+      clearNodesInBox(1, 1, 14, 14);
+
       const villageId = `village_${cx}_${cy}`;
       const isDesertVillage = centerBiome === BiomeType.DESERT;
       chunk.villageId = villageId;
@@ -1604,77 +1619,84 @@ export class WorldManager {
         ? 'Vila Mercante do Oásis'
         : 'Vilarejo de Carvalho';
 
-      // Paved Cobblestone Plaza, Brick Forge Patio & Timber Decks
-      for (let ly = 5; ly <= 11; ly++) {
-        for (let lx = 5; lx <= 11; lx++) {
-          if ((lx === 10 || lx === 11) && ly === 10) {
-            addStruct(
-              lx,
-              ly,
-              PlaceableType.BRICK_FLOOR,
-              'brick_floor',
-              undefined,
-              undefined,
-              villageId
-            );
-          } else if (
-            (lx >= 7 && lx <= 9 && ly >= 6 && ly <= 10) ||
-            ly === 8 ||
-            lx === 8
-          ) {
-            addStruct(
-              lx,
-              ly,
-              PlaceableType.STONE_FLOOR,
-              'stone_floor',
-              undefined,
-              undefined,
-              villageId
-            );
-          } else if (
-            (lx === 5 || lx === 6 || lx === 10 || lx === 11) &&
-            (ly === 6 || ly === 7 || ly === 9 || ly === 10)
-          ) {
-            addStruct(
-              lx,
-              ly,
-              PlaceableType.WOOD_FLOOR,
-              'wood_floor',
-              undefined,
-              undefined,
-              villageId
-            );
-          }
+      const roleNamePools: Record<NpcRole, string[]> = {
+        ferreiro: [
+          'Mestre Borin',
+          'Ferreiro Kaelen',
+          'Durgan da Forja',
+          'Thrain Martelo-Forte',
+        ],
+        mercador: [
+          'Mercadora Lyra',
+          'Mercadora Selene',
+          'Mercador Vaen',
+          'Boticária Elara',
+        ],
+        anciao: [
+          'Ancião Aldric',
+          'Sábio Vaelen',
+          'Matriarca Aurelia',
+          'Oráculo Orion',
+        ],
+        guardiao: [
+          'Capitão Thorne',
+          'Sentinela Garrick',
+          'Valéria Escudo-Solar',
+          'Comandante Roland',
+        ],
+        andarilho: [
+          'Andarilho Kael',
+          'Peregrina Mira',
+          'Viajante Doran',
+          'Nômade Lyris',
+        ],
+      };
+
+      const nameSeed = Math.abs(cx * 7 + cy * 13);
+
+      // 1. Central Village Plaza & Cobblestone Pathways around the Well at (8, 8)
+      for (let ly = 6; ly <= 9; ly++) {
+        for (let lx = 6; lx <= 9; lx++) {
+          addStruct(
+            lx,
+            ly,
+            PlaceableType.STONE_FLOOR,
+            'stone_floor',
+            undefined,
+            undefined,
+            villageId
+          );
         }
       }
+      // Connecting stone paths from the central plaza to each of the 4 houses
+      const plazaPaths: Array<[number, number]> = [
+        [3, 5],
+        [4, 5],
+        [5, 6], // To NW Blacksmith House
+        [12, 5],
+        [11, 5],
+        [10, 6], // To NE Merchant House
+        [3, 10],
+        [4, 10],
+        [5, 9],
+        [2, 9], // To SW Elder House & Campfire
+        [12, 10],
+        [11, 10],
+        [10, 9], // To SE Guardian House
+      ];
+      for (const [px, py] of plazaPaths) {
+        addStruct(
+          px,
+          py,
+          PlaceableType.STONE_FLOOR,
+          'stone_floor',
+          undefined,
+          undefined,
+          villageId
+        );
+      }
 
-      // Royal Carpet under the Guild Treasury & Elder Porch
-      addStruct(
-        5,
-        9,
-        PlaceableType.ROYAL_CARPET,
-        'royal_carpet',
-        undefined,
-        undefined,
-        villageId
-      );
-      addStruct(
-        6,
-        9,
-        PlaceableType.ROYAL_CARPET,
-        'royal_carpet',
-        undefined,
-        undefined,
-        villageId
-      );
-
-      // Decorative Wooden Fence Perimeter Posts on Village Corners
-      addStruct(5, 5, PlaceableType.WOOD_FENCE, 'wood_fence', undefined, undefined, villageId);
-      addStruct(6, 5, PlaceableType.WOOD_FENCE, 'wood_fence', undefined, undefined, villageId);
-      addStruct(10, 5, PlaceableType.WOOD_FENCE, 'wood_fence', undefined, undefined, villageId);
-      addStruct(11, 5, PlaceableType.WOOD_FENCE, 'wood_fence', undefined, undefined, villageId);
-
-      // Central Village Well
+      // Central Village Well at (8, 8)
       addStruct(
         8,
         8,
@@ -1685,103 +1707,343 @@ export class WorldManager {
         villageId
       );
 
-      // Three Medieval Timber Cottages (North-West, North-Center & North-East — up to 2 Villagers each)
-      addStruct(
-        5,
-        6,
-        PlaceableType.VILLAGE_HOUSE,
-        'village_house',
-        undefined,
-        'Cabana do Ancião',
-        villageId
-      );
-      addStruct(
-        8,
-        6,
-        PlaceableType.VILLAGE_HOUSE,
-        'village_house',
-        undefined,
-        'Chalé da Guarda & Viajantes',
-        villageId
-      );
-      addStruct(
-        11,
-        6,
-        PlaceableType.VILLAGE_HOUSE,
-        'village_house',
-        undefined,
-        'Residência do Ferreiro',
-        villageId
-      );
+      // Helper to build a real compact 4x4 house (floor, walls, windows, door, 1-2 beds with owners, and interior station/chest)
+      const buildCompactVillageHouse = (cfg: {
+        houseIdx: number;
+        role: NpcRole;
+        houseTitle: string;
+        minLx: number;
+        minLy: number;
+        maxLx: number;
+        maxLy: number;
+        floorType: PlaceableType.WOOD_FLOOR | PlaceableType.STONE_FLOOR | PlaceableType.BRICK_FLOOR;
+        floorItemId: string;
+        wallType: PlaceableType.WOOD_WALL | PlaceableType.STONE_WALL | PlaceableType.BRICK_WALL;
+        wallItemId: string;
+        windowType: PlaceableType.WOOD_WINDOW | PlaceableType.STONE_WINDOW;
+        windowItemId: string;
+        doorCoord: [number, number];
+        windowCoords: Array<[number, number]>;
+        bed1Coord: [number, number];
+        bed2Coord: [number, number];
+        carpetCoord?: [number, number];
+      }): { primaryOwnerId: string; primaryOwnerName: string } => {
+        const bedCount =
+          hash2D(
+            cx * 19 + cfg.houseIdx * 7,
+            cy * 31 + cfg.houseIdx * 11,
+            this.seed + 7103
+          ) < 0.5
+            ? 2
+            : 1;
+        const pool = roleNamePools[cfg.role];
+        const primaryOwnerName = pool[(nameSeed + cfg.houseIdx * 2) % pool.length];
+        const primaryOwnerId = `villager_${villageId}_${cfg.role}_0`;
 
-      // Market Stall & Artisan Stations (South-West & South-East)
+        // A. Place Floor across the entire 4x4 footprint
+        for (let ly = cfg.minLy; ly <= cfg.maxLy; ly++) {
+          for (let lx = cfg.minLx; lx <= cfg.maxLx; lx++) {
+            if (
+              cfg.carpetCoord &&
+              lx === cfg.carpetCoord[0] &&
+              ly === cfg.carpetCoord[1]
+            ) {
+              addStruct(
+                lx,
+                ly,
+                PlaceableType.ROYAL_CARPET,
+                'royal_carpet',
+                undefined,
+                undefined,
+                villageId
+              );
+            } else {
+              addStruct(
+                lx,
+                ly,
+                cfg.floorType,
+                cfg.floorItemId,
+                undefined,
+                undefined,
+                villageId
+              );
+            }
+          }
+        }
+
+        // B. Place Perimeter Walls, Windows, and Door
+        for (let ly = cfg.minLy; ly <= cfg.maxLy; ly++) {
+          for (let lx = cfg.minLx; lx <= cfg.maxLx; lx++) {
+            const isBorder =
+              lx === cfg.minLx ||
+              lx === cfg.maxLx ||
+              ly === cfg.minLy ||
+              ly === cfg.maxLy;
+            if (!isBorder) continue;
+
+            let borderSt: PlacedStructure;
+            if (lx === cfg.doorCoord[0] && ly === cfg.doorCoord[1]) {
+              borderSt = addStruct(
+                lx,
+                ly,
+                PlaceableType.WOOD_DOOR,
+                'wood_door',
+                undefined,
+                cfg.houseTitle,
+                villageId,
+                'horizontal'
+              );
+            } else if (
+              cfg.windowCoords.some(([wx, wy]) => wx === lx && wy === ly)
+            ) {
+              borderSt = addStruct(
+                lx,
+                ly,
+                cfg.windowType,
+                cfg.windowItemId,
+                undefined,
+                cfg.houseTitle,
+                villageId
+              );
+            } else {
+              borderSt = addStruct(
+                lx,
+                ly,
+                cfg.wallType,
+                cfg.wallItemId,
+                undefined,
+                cfg.houseTitle,
+                villageId
+              );
+            }
+            borderSt.ownerType = 'VILLAGER';
+            borderSt.ownerId = primaryOwnerId;
+            borderSt.ownerName = primaryOwnerName;
+            borderSt.npcRole = cfg.role;
+          }
+        }
+
+        // C. Place 1 to 2 Beds inside with their respective Villager owners
+        const bedCoords =
+          bedCount === 2 ? [cfg.bed1Coord, cfg.bed2Coord] : [cfg.bed1Coord];
+        for (let bIdx = 0; bIdx < bedCoords.length; bIdx++) {
+          const [bx, by] = bedCoords[bIdx];
+          const vName = pool[(nameSeed + cfg.houseIdx * 2 + bIdx) % pool.length];
+          const vId = `villager_${villageId}_${cfg.role}_${bIdx}`;
+          const bedSt = addStruct(
+            bx,
+            by,
+            PlaceableType.BED,
+            'bed',
+            undefined,
+            `Cama de ${vName} (${cfg.houseTitle})`,
+            villageId,
+            'horizontal'
+          );
+          bedSt.ownerType = 'VILLAGER';
+          bedSt.ownerId = vId;
+          bedSt.ownerName = vName;
+          bedSt.npcRole = cfg.role;
+          bedSt.isPrimaryStructureOwner = bIdx === 0;
+          bedSt.ownerAssignedAt = bIdx + 1;
+        }
+
+        return { primaryOwnerId, primaryOwnerName };
+      };
+
+      // 1. CASA DO FERREIRO(A) (North-West: lx 1..4, ly 1..4) — Fornalha dentro
+      buildCompactVillageHouse({
+        houseIdx: 0,
+        role: 'ferreiro',
+        houseTitle: 'Casa do Ferreiro',
+        minLx: 1,
+        minLy: 1,
+        maxLx: 4,
+        maxLy: 4,
+        floorType: PlaceableType.STONE_FLOOR,
+        floorItemId: 'stone_floor',
+        wallType: PlaceableType.STONE_WALL,
+        wallItemId: 'stone_wall',
+        windowType: PlaceableType.STONE_WINDOW,
+        windowItemId: 'stone_window',
+        doorCoord: [3, 4],
+        windowCoords: [
+          [2, 1],
+          [1, 2],
+        ],
+        bed1Coord: [2, 2],
+        bed2Coord: [2, 3],
+      });
+      // Furnace inside the Blacksmith's House at (3, 2)
       addStruct(
-        6,
-        10,
-        PlaceableType.MARKET_STALL,
-        'market_stall',
-        undefined,
-        'Tenda de Trocas da Vila',
-        villageId
-      );
-      addStruct(
-        10,
-        10,
-        PlaceableType.WORKBENCH,
-        'workbench',
-        undefined,
-        'Oficina da Vila',
-        villageId
-      );
-      addStruct(
-        11,
-        10,
+        3,
+        2,
         PlaceableType.FURNACE,
         'furnace',
         undefined,
-        'Forja do Vilarejo',
+        'Fornalha do Ferreiro',
         villageId
       );
 
-      // Heraldic Royal Banners, Wrought-Iron Street Lanterns & Torches
+      // 2. CASA DO MERCANTE (North-East: lx 11..14, ly 1..4) — Baú restrito dentro + Tenda de Vendas na frente
+      const merchantHouse = buildCompactVillageHouse({
+        houseIdx: 1,
+        role: 'mercador',
+        houseTitle: 'Casa do Mercante',
+        minLx: 11,
+        minLy: 1,
+        maxLx: 14,
+        maxLy: 4,
+        floorType: PlaceableType.WOOD_FLOOR,
+        floorItemId: 'wood_floor',
+        wallType: PlaceableType.WOOD_WALL,
+        wallItemId: 'wood_wall',
+        windowType: PlaceableType.WOOD_WINDOW,
+        windowItemId: 'wood_window',
+        doorCoord: [12, 4],
+        windowCoords: [
+          [13, 1],
+          [14, 2],
+        ],
+        bed1Coord: [13, 2],
+        bed2Coord: [13, 3],
+        carpetCoord: [12, 3],
+      });
+      // Restricted Chest inside the Merchant's House at (12, 2)
       addStruct(
-        7,
-        5,
-        PlaceableType.ROYAL_BANNER,
-        'royal_banner',
-        undefined,
-        'Estandarte do Vilarejo',
-        villageId
-      );
-      addStruct(
-        9,
-        5,
-        PlaceableType.ROYAL_BANNER,
-        'royal_banner',
-        undefined,
-        'Estandarte do Vilarejo',
-        villageId
-      );
-      addStruct(6, 7, PlaceableType.IRON_LANTERN, 'iron_lantern', undefined, undefined, villageId);
-      addStruct(10, 7, PlaceableType.IRON_LANTERN, 'iron_lantern', undefined, undefined, villageId);
-      addStruct(7, 11, PlaceableType.TORCH, 'torch', undefined, undefined, villageId);
-      addStruct(9, 11, PlaceableType.TORCH, 'torch', undefined, undefined, villageId);
-
-      // Guarded Village Treasury Chest (Opening when affinity < 75 is considered theft!)
-      addStruct(
-        5,
-        9,
+        12,
+        2,
         PlaceableType.CHEST,
         'chest',
         [
-          { itemId: 'gold_coin', count: 5 },
+          { itemId: 'gold_coin', count: 8 },
+          { itemId: 'healing_salve', count: 2 },
+          { itemId: 'saddle', count: 1 },
+        ],
+        'Baú Restrito do Mercante',
+        villageId
+      );
+      // Market Stall in front of the Merchant's House at (13, 6)
+      addStruct(
+        13,
+        5,
+        PlaceableType.WOOD_FLOOR,
+        'wood_floor',
+        undefined,
+        undefined,
+        villageId
+      );
+      addStruct(
+        13,
+        6,
+        PlaceableType.WOOD_FLOOR,
+        'wood_floor',
+        undefined,
+        undefined,
+        villageId
+      );
+      const merchantStall = addStruct(
+        13,
+        6,
+        PlaceableType.MARKET_STALL,
+        'market_stall',
+        undefined,
+        'Tenda de Vendas da Vila',
+        villageId
+      );
+      merchantStall.ownerType = 'VILLAGER';
+      merchantStall.ownerId = merchantHouse.primaryOwnerId;
+      merchantStall.ownerName = merchantHouse.primaryOwnerName;
+
+      // 3. CASA DO ANCIÃO (South-West: lx 1..4, ly 11..14) — Baú da Vila dentro + Fogueira na frente
+      buildCompactVillageHouse({
+        houseIdx: 2,
+        role: 'anciao',
+        houseTitle: 'Casa do Ancião',
+        minLx: 1,
+        minLy: 11,
+        maxLx: 4,
+        maxLy: 14,
+        floorType: PlaceableType.WOOD_FLOOR,
+        floorItemId: 'wood_floor',
+        wallType: PlaceableType.WOOD_WALL,
+        wallItemId: 'wood_wall',
+        windowType: PlaceableType.WOOD_WINDOW,
+        windowItemId: 'wood_window',
+        doorCoord: [3, 11],
+        windowCoords: [
+          [2, 14],
+          [1, 13],
+        ],
+        bed1Coord: [2, 13],
+        bed2Coord: [2, 12],
+        carpetCoord: [3, 12],
+      });
+      // Village Chest inside the Elder's House at (3, 13)
+      addStruct(
+        3,
+        13,
+        PlaceableType.CHEST,
+        'chest',
+        [
+          { itemId: 'gold_coin', count: 6 },
           { itemId: 'iron_bar', count: 3 },
           { itemId: 'warrior_feast', count: 1 },
           { itemId: 'healing_salve', count: 2 },
         ],
-        'Cofre da Guilda da Vila (Protegido)',
+        'Baú da Vila (Casa do Ancião)',
         villageId
       );
+      // Campfire in front of the Elder's House at (2, 9)
+      addStruct(
+        2,
+        9,
+        PlaceableType.CAMPFIRE,
+        'campfire',
+        undefined,
+        'Fogueira da Casa do Ancião',
+        villageId
+      );
+
+      // 4. CASA DO GUARDIÃO (South-East: lx 11..14, ly 11..14) — Mesa de Trabalho dentro
+      buildCompactVillageHouse({
+        houseIdx: 3,
+        role: 'guardiao',
+        houseTitle: 'Casa do Guardião',
+        minLx: 11,
+        minLy: 11,
+        maxLx: 14,
+        maxLy: 14,
+        floorType: PlaceableType.STONE_FLOOR,
+        floorItemId: 'stone_floor',
+        wallType: PlaceableType.STONE_WALL,
+        wallItemId: 'stone_wall',
+        windowType: PlaceableType.STONE_WINDOW,
+        windowItemId: 'stone_window',
+        doorCoord: [12, 11],
+        windowCoords: [
+          [13, 14],
+          [14, 13],
+        ],
+        bed1Coord: [13, 13],
+        bed2Coord: [13, 12],
+      });
+      // Workbench inside the Guardian's House at (12, 13)
+      addStruct(
+        12,
+        13,
+        PlaceableType.WORKBENCH,
+        'workbench',
+        undefined,
+        'Mesa de Trabalho do Guardião',
+        villageId
+      );
+
+      // Plaza Lanterns & Banners around the central Well
+      addStruct(6, 6, PlaceableType.IRON_LANTERN, 'iron_lantern', undefined, undefined, villageId);
+      addStruct(9, 6, PlaceableType.IRON_LANTERN, 'iron_lantern', undefined, undefined, villageId);
+      addStruct(6, 9, PlaceableType.IRON_LANTERN, 'iron_lantern', undefined, undefined, villageId);
+      addStruct(9, 9, PlaceableType.IRON_LANTERN, 'iron_lantern', undefined, undefined, villageId);
       return;
     }
 

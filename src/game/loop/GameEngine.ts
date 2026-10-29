@@ -986,17 +986,27 @@ export class GameEngine {
   }
 
   /**
+   * Returns true if the given structure is a Rest Point ("Ponto de Descanso"):
+   * - Bed (`PlaceableType.BED`)
+   * - Explorer Tent (`PlaceableType.EXPLORER_TENT`)
+   * - Legacy Village House (`PlaceableType.VILLAGE_HOUSE`)
+   */
+  public isRestPointStructure(st: PlacedStructure): boolean {
+    return (
+      st.type === PlaceableType.BED ||
+      st.type === PlaceableType.EXPLORER_TENT ||
+      st.type === PlaceableType.VILLAGE_HOUSE
+    );
+  }
+
+  /**
    * Checks whether a placed structure counts as a valid House/Dwelling or Rest Point.
    * Supports:
-   * - Village Houses (both generated in villages and crafted/placed by the player)
-   * - Explorer Tents (placed by the player or in camps)
+   * - Beds (`PlaceableType.BED`), Explorer Tents (`PlaceableType.EXPLORER_TENT`), and Legacy Village Houses (`PlaceableType.VILLAGE_HOUSE`)
    * - Walled houses (a Wood Door or Iron Gate connected to adjacent walls/windows)
    */
   public isStructureValidHouse(st: PlacedStructure): boolean {
-    if (
-      st.type === PlaceableType.VILLAGE_HOUSE ||
-      st.type === PlaceableType.EXPLORER_TENT
-    ) {
+    if (this.isRestPointStructure(st)) {
       return true;
     }
     if (
@@ -1014,36 +1024,380 @@ export class GameEngine {
   }
 
   /**
+   * Evaluates the Enclosed Structure Ownership ("Dono de Estrutura com Contorno Fechado e Telhado")
+   * for any tile `(tx, ty)` belonging to an enclosed roofed building:
+   * - An enclosed structure ONLY has an owner if a rest point is positioned inside it (`building.interiorSet`).
+   * - If there is more than one rest point inside, the owner is whoever was defined as owner first (`isPrimaryStructureOwner` / earliest `ownerAssignedAt`).
+   * - If the structure owner dies or their rest point is broken, the structure becomes UNOWNED (`ownerType: null`),
+   *   even if there is another rest point inside that has an owner (`structureOwnerClearedAfterLoss = true`),
+   *   and a new owner is ONLY defined when someone subsequently takes ownership ("tomar posse") of a rest point inside the structure!
+   */
+  public getEnclosedBuildingOwnerInfo(
+    tx: number,
+    ty: number
+  ): {
+    interiorRestPoints: PlacedStructure[];
+    primaryRestPoint: PlacedStructure | null;
+    ownerType: 'PLAYER' | 'VILLAGER' | null;
+    ownerId?: string;
+    ownerName?: string;
+    villageId?: string;
+    clearedAfterLoss: boolean;
+  } | null {
+    const building = this.renderer.getBuildingAtTile(this.world, tx, ty);
+    if (!building) return null;
+
+    const minCx = Math.floor(building.minTx / 16);
+    const maxCx = Math.floor(building.maxTx / 16);
+    const minCy = Math.floor(building.minTy / 16);
+    const maxCy = Math.floor(building.maxTy / 16);
+
+    const interiorRestPoints: PlacedStructure[] = [];
+    for (let cy = minCy; cy <= maxCy; cy++) {
+      for (let cx = minCx; cx <= maxCx; cx++) {
+        const chunk = this.world.chunks[WorldManager.chunkKey(cx, cy)];
+        if (!chunk) continue;
+        for (const st of chunk.structures) {
+          if (!this.isRestPointStructure(st)) continue;
+          if (building.interiorSet.has(`${st.tileX},${st.tileY}`)) {
+            interiorRestPoints.push(st);
+          }
+        }
+      }
+    }
+
+    if (interiorRestPoints.length === 0) {
+      return {
+        interiorRestPoints: [],
+        primaryRestPoint: null,
+        ownerType: null,
+        clearedAfterLoss: false,
+      };
+    }
+
+    const isRestPointOwnerAlive = (rp: PlacedStructure): boolean => {
+      if (!rp.ownerType) return false;
+      if (rp.ownerType === 'PLAYER') return true;
+      // Villager owner is valid if the villager is alive OR if the chunk hasn't spawned landmark mobs yet
+      if (this.getHouseResidents(rp.id).length > 0) return true;
+      if (
+        rp.ownerId &&
+        this.entities.creatures.some(
+          (c) => c.id === rp.ownerId && c.hp > 0
+        )
+      ) {
+        return true;
+      }
+      const { cx, cy } = this.world.tileToChunk(rp.tileX, rp.tileY);
+      const chunk = this.world.chunks[WorldManager.chunkKey(cx, cy)];
+      if (chunk && !chunk.mobsPopulated && rp.villageId) {
+        return true;
+      }
+      return false;
+    };
+
+    // 1. Check if there is an active primary rest point (`isPrimaryStructureOwner === true`)
+    let primary =
+      interiorRestPoints.find((rp) => rp.isPrimaryStructureOwner) || null;
+
+    if (primary) {
+      if (!isRestPointOwnerAlive(primary)) {
+        // The primary owner died! Clear structure ownership so the structure becomes unowned even if another bed inside has an owner.
+        this.clearEnclosedBuildingOwnershipOnLoss(tx, ty, primary.id);
+        return {
+          interiorRestPoints,
+          primaryRestPoint: null,
+          ownerType: null,
+          clearedAfterLoss: true,
+        };
+      }
+      return {
+        interiorRestPoints,
+        primaryRestPoint: primary,
+        ownerType: primary.ownerType || null,
+        ownerId: primary.ownerId,
+        ownerName: primary.ownerName,
+        villageId: primary.villageId,
+        clearedAfterLoss: false,
+      };
+    }
+
+    // 2. If any rest point inside is marked `structureOwnerClearedAfterLoss`, the structure stays UNOWNED until someone claims a rest point inside!
+    const clearedAfterLoss = interiorRestPoints.some(
+      (rp) => rp.structureOwnerClearedAfterLoss
+    );
+    if (clearedAfterLoss) {
+      return {
+        interiorRestPoints,
+        primaryRestPoint: null,
+        ownerType: null,
+        clearedAfterLoss: true,
+      };
+    }
+
+    // 3. Otherwise (e.g., player just finished closing walls around existing rest point(s)),
+    // pick the rest point whose owner was defined first (`ownerAssignedAt`).
+    const validOwned = interiorRestPoints
+      .filter((rp) => isRestPointOwnerAlive(rp))
+      .sort(
+        (a, b) =>
+          (a.ownerAssignedAt ?? Number.MAX_SAFE_INTEGER) -
+          (b.ownerAssignedAt ?? Number.MAX_SAFE_INTEGER)
+      );
+
+    if (validOwned.length > 0) {
+      primary = validOwned[0];
+      primary.isPrimaryStructureOwner = true;
+      return {
+        interiorRestPoints,
+        primaryRestPoint: primary,
+        ownerType: primary.ownerType || null,
+        ownerId: primary.ownerId,
+        ownerName: primary.ownerName,
+        villageId: primary.villageId,
+        clearedAfterLoss: false,
+      };
+    }
+
+    return {
+      interiorRestPoints,
+      primaryRestPoint: null,
+      ownerType: null,
+      clearedAfterLoss: false,
+    };
+  }
+
+  /**
+   * Clears the ownership of an enclosed roofed structure when its primary owner dies or its primary rest point is broken.
+   * Ensures the structure remains UNOWNED (`sem dono`) even if another rest point with an owner exists inside,
+   * until someone takes ownership ("tomar posse") of a rest point inside the structure.
+   */
+  public clearEnclosedBuildingOwnershipOnLoss(
+    tx: number,
+    ty: number,
+    lostRestPointId?: string
+  ): void {
+    const building = this.renderer.getBuildingAtTile(this.world, tx, ty);
+    if (!building) return;
+
+    const minCx = Math.floor(building.minTx / 16);
+    const maxCx = Math.floor(building.maxTx / 16);
+    const minCy = Math.floor(building.minTy / 16);
+    const maxCy = Math.floor(building.maxTy / 16);
+
+    for (let cy = minCy; cy <= maxCy; cy++) {
+      for (let cx = minCx; cx <= maxCx; cx++) {
+        const chunk = this.world.chunks[WorldManager.chunkKey(cx, cy)];
+        if (!chunk) continue;
+        for (const st of chunk.structures) {
+          const key = `${st.tileX},${st.tileY}`;
+          if (!building.footprintSet.has(key)) continue;
+
+          if (this.isRestPointStructure(st)) {
+            st.isPrimaryStructureOwner = false;
+            st.structureOwnerClearedAfterLoss = true;
+            if (lostRestPointId && st.id === lostRestPointId) {
+              st.ownerType = undefined;
+              st.ownerId = undefined;
+              st.ownerName = undefined;
+            }
+          } else if (
+            st.type === PlaceableType.WOOD_WALL ||
+            st.type === PlaceableType.STONE_WALL ||
+            st.type === PlaceableType.WOOD_WINDOW ||
+            st.type === PlaceableType.STONE_WINDOW ||
+            st.type === PlaceableType.WOOD_DOOR ||
+            st.type === PlaceableType.IRON_GATE
+          ) {
+            st.ownerType = undefined;
+            st.ownerId = undefined;
+            st.ownerName = undefined;
+          }
+        }
+      }
+    }
+  }
+
+  /**
+   * Called when someone takes ownership ("tomar posse") of a rest point `restPointSt` (or places a new owned rest point).
+   * If the enclosing structure currently has NO owner, `restPointSt` becomes the primary structure owner (`isPrimaryStructureOwner = true`)
+   * and defines the owner of the entire enclosed structure!
+   */
+  public assignEnclosedBuildingPrimaryOwner(restPointSt: PlacedStructure): void {
+    if (!this.isRestPointStructure(restPointSt) || !restPointSt.ownerType) {
+      return;
+    }
+    if (!restPointSt.ownerAssignedAt) {
+      restPointSt.ownerAssignedAt = Date.now();
+    }
+
+    const building = this.renderer.getBuildingAtTile(
+      this.world,
+      restPointSt.tileX,
+      restPointSt.tileY
+    );
+    if (!building) {
+      restPointSt.isPrimaryStructureOwner = true;
+      restPointSt.structureOwnerClearedAfterLoss = false;
+      return;
+    }
+
+    const minCx = Math.floor(building.minTx / 16);
+    const maxCx = Math.floor(building.maxTx / 16);
+    const minCy = Math.floor(building.minTy / 16);
+    const maxCy = Math.floor(building.maxTy / 16);
+
+    // Check if another rest point inside this building is ALREADY the valid primary owner
+    let existingPrimary: PlacedStructure | null = null;
+    for (let cy = minCy; cy <= maxCy && !existingPrimary; cy++) {
+      for (let cx = minCx; cx <= maxCx; cx++) {
+        const chunk = this.world.chunks[WorldManager.chunkKey(cx, cy)];
+        if (!chunk) continue;
+        for (const st of chunk.structures) {
+          if (
+            st.id !== restPointSt.id &&
+            this.isRestPointStructure(st) &&
+            building.interiorSet.has(`${st.tileX},${st.tileY}`) &&
+            st.isPrimaryStructureOwner &&
+            st.ownerType
+          ) {
+            existingPrimary = st;
+            break;
+          }
+        }
+        if (existingPrimary) break;
+      }
+    }
+
+    if (existingPrimary) {
+      // Structure already has a primary owner defined first; keep it!
+      restPointSt.structureOwnerClearedAfterLoss = false;
+      return;
+    }
+
+    // Otherwise, this rest point becomes the new primary owner of the enclosed structure!
+    for (let cy = minCy; cy <= maxCy; cy++) {
+      for (let cx = minCx; cx <= maxCx; cx++) {
+        const chunk = this.world.chunks[WorldManager.chunkKey(cx, cy)];
+        if (!chunk) continue;
+        for (const st of chunk.structures) {
+          const key = `${st.tileX},${st.tileY}`;
+          if (!building.footprintSet.has(key)) continue;
+
+          if (this.isRestPointStructure(st)) {
+            st.isPrimaryStructureOwner = st.id === restPointSt.id;
+            st.structureOwnerClearedAfterLoss = false;
+          } else if (
+            st.type === PlaceableType.WOOD_WALL ||
+            st.type === PlaceableType.STONE_WALL ||
+            st.type === PlaceableType.WOOD_WINDOW ||
+            st.type === PlaceableType.STONE_WINDOW ||
+            st.type === PlaceableType.WOOD_DOOR ||
+            st.type === PlaceableType.IRON_GATE
+          ) {
+            st.ownerType = restPointSt.ownerType;
+            st.ownerId = restPointSt.ownerId;
+            st.ownerName = restPointSt.ownerName;
+            st.villageId = restPointSt.villageId;
+          }
+        }
+      }
+    }
+  }
+
+  /**
+   * Returns all villagers currently sleeping (`isInsideHouse`) inside any rest point of the enclosed building at `(tx, ty)`,
+   * or bound directly to `st.id`.
+   */
+  public getStructureSleepingResidents(
+    st: PlacedStructure,
+    precomputedInfo?: ReturnType<GameEngine['getEnclosedBuildingOwnerInfo']>
+  ): CreatureEntity[] {
+    const buildingInfo =
+      precomputedInfo !== undefined
+        ? precomputedInfo
+        : this.getEnclosedBuildingOwnerInfo(st.tileX, st.tileY);
+    if (buildingInfo && buildingInfo.interiorRestPoints.length > 0) {
+      const result: CreatureEntity[] = [];
+      for (const rp of buildingInfo.interiorRestPoints) {
+        for (const r of this.getHouseResidents(rp.id)) {
+          if (r.isInsideHouse && !result.some((existing) => existing.id === r.id)) {
+            result.push(r);
+          }
+        }
+      }
+      return result;
+    }
+    return this.getHouseResidents(st.id).filter((r) => r.isInsideHouse);
+  }
+
+  /**
    * Returns true if the house/rest point is owned by a player.
    * NPCs (Villagers and Wanderers) are strictly forbidden from invading, claiming, or sleeping in player-owned houses!
    */
   public isHouseOwnedByPlayer(st: PlacedStructure): boolean {
-    return st.ownerType === 'PLAYER';
+    if (st.ownerType === 'PLAYER') return true;
+    const buildingInfo = this.getEnclosedBuildingOwnerInfo(st.tileX, st.tileY);
+    return buildingInfo?.ownerType === 'PLAYER';
   }
 
   /**
-   * Returns true if an NPC (Villager or Wanderer) is allowed to occupy or sleep in this house.
-   * NPCs can ONLY occupy village houses that are not owned by a player.
+   * Returns true if an NPC (Villager or Wanderer) is allowed to occupy or sleep in this rest point / bed.
+   * NPCs can ONLY occupy village beds/houses that are not owned by a player.
    */
   public canNpcOccupyHouse(st: PlacedStructure): boolean {
-    if (!this.isStructureValidHouse(st)) return false;
+    if (!this.isRestPointStructure(st)) return false;
     if (st.ownerType === 'PLAYER') return false;
-    // Only village houses with a villageId or VILLAGER ownerType can be used by NPCs
-    return Boolean(st.villageId || st.ownerType === 'VILLAGER');
+    // Only village beds/houses with a villageId or VILLAGER ownerType can be used by NPCs
+    if (!st.villageId && st.ownerType !== 'VILLAGER') return false;
+    return true;
   }
 
   /**
-   * Returns true if a rest point / house has no owner (and no living villager residents)
-   * so the player can click "Tomar Posse" to claim it as their own.
+   * Returns true if a rest point (or a rest point inside an unowned enclosed structure) can be claimed ("Tomar Posse") by the player.
+   * - If the rest point itself has no owner (and no living villager resident), the player can claim it.
+   * - Or if the enclosed structure became UNOWNED (`ownerType === null`, e.g. after the primary owner died or their bed was broken),
+   *   the player can take ownership of a rest point inside it to become the new owner of the structure!
    */
-  public canPlayerClaimRestPoint(st: PlacedStructure): boolean {
-    if (!this.isStructureValidHouse(st)) return false;
+  public canPlayerClaimRestPoint(
+    st: PlacedStructure,
+    precomputedInfo?: ReturnType<GameEngine['getEnclosedBuildingOwnerInfo']>
+  ): boolean {
+    if (
+      st.type === PlaceableType.WOOD_DOOR ||
+      st.type === PlaceableType.IRON_GATE
+    ) {
+      const buildingInfo =
+        precomputedInfo !== undefined
+          ? precomputedInfo
+          : this.getEnclosedBuildingOwnerInfo(st.tileX, st.tileY);
+      if (!buildingInfo || buildingInfo.ownerType !== null) return false;
+      return buildingInfo.interiorRestPoints.some(
+        (rp) => this.getHouseResidents(rp.id).length === 0 || buildingInfo.clearedAfterLoss
+      );
+    }
+
+    if (!this.isRestPointStructure(st)) return false;
+    const buildingInfo =
+      precomputedInfo !== undefined
+        ? precomputedInfo
+        : this.getEnclosedBuildingOwnerInfo(st.tileX, st.tileY);
+    if (
+      buildingInfo &&
+      buildingInfo.ownerType === null &&
+      buildingInfo.clearedAfterLoss
+    ) {
+      // Enclosed structure lost its primary owner and is currently unowned:
+      // allow taking ownership of a rest point inside if that specific rest point has no living villager, or if it's the player's own bed!
+      return this.getHouseResidents(st.id).length === 0;
+    }
+
     if (st.ownerType === 'PLAYER') return false;
     return this.getHouseResidents(st.id).length === 0;
   }
 
   /**
-   * "Tomar Posse": Claims ownership of an unowned rest point / house for the player.
+   * "Tomar Posse": Claims ownership of an unowned rest point (and its enclosing roofed structure if unowned) for the player.
    */
   public claimRestPointOwnership(structureId?: string): boolean {
     let targetSt: PlacedStructure | null = null;
@@ -1076,6 +1430,23 @@ export class GameEngine {
       return false;
     }
 
+    // If the player clicked "Tomar Posse" while aiming at the door of an unowned enclosed structure,
+    // resolve the target to a claimable rest point inside that structure!
+    if (
+      targetSt.type === PlaceableType.WOOD_DOOR ||
+      targetSt.type === PlaceableType.IRON_GATE
+    ) {
+      const buildingInfo = this.getEnclosedBuildingOwnerInfo(
+        targetSt.tileX,
+        targetSt.tileY
+      );
+      const claimableRp = buildingInfo?.interiorRestPoints.find(
+        (rp) => this.getHouseResidents(rp.id).length === 0
+      );
+      if (!claimableRp) return false;
+      targetSt = claimableRp;
+    }
+
     const ownerName =
       this.multiplayer.localPlayerName ||
       this.settings.playerName ||
@@ -1083,7 +1454,11 @@ export class GameEngine {
     targetSt.ownerType = 'PLAYER';
     targetSt.ownerId = this.getLocalOwnerId();
     targetSt.ownerName = ownerName;
+    targetSt.ownerAssignedAt = Date.now();
     targetSt.villageId = undefined;
+
+    // If the enclosing roofed structure has no owner, taking ownership of this rest point defines the new owner of the structure!
+    this.assignEnclosedBuildingPrimaryOwner(targetSt);
 
     // Evict any stray NPC bindings to this structure
     for (const cr of this.entities.creatures) {
@@ -1100,7 +1475,9 @@ export class GameEngine {
     const sx = targetSt.tileX * TILE_SIZE + TILE_SIZE / 2;
     const sy = targetSt.tileY * TILE_SIZE + TILE_SIZE / 2;
     const restLabel =
-      targetSt.type === PlaceableType.VILLAGE_HOUSE
+      targetSt.type === PlaceableType.BED
+        ? 'Cama de Madeira'
+        : targetSt.type === PlaceableType.VILLAGE_HOUSE
         ? 'Cabana Medieval'
         : targetSt.type === PlaceableType.EXPLORER_TENT
         ? 'Tenda de Explorador'
@@ -1111,7 +1488,7 @@ export class GameEngine {
     this.renderer.spawnBurst(sx, sy - 6, 'GOLD', 16);
     this.renderer.spawnRipple(sx, sy, '#4ade80', 30, 0.55);
     this.addFloatingText(
-      `🏠 Posse tomada! Agora ${restLabel} pertence a ${ownerName}!`,
+      `🏠 Posse tomada! Agora ${restLabel} e a estrutura pertencem a ${ownerName}!`,
       sx,
       sy - 24,
       '#4ade80'
@@ -1123,7 +1500,7 @@ export class GameEngine {
   }
 
   /**
-   * Returns all living Villagers currently registered as residents of a specific House structure (`max 2`).
+   * Returns all living Villagers currently registered as residents of a specific Rest Point / Bed (`st.id`).
    */
   public getHouseResidents(houseId: string): CreatureEntity[] {
     return this.entities.creatures.filter(
@@ -1135,8 +1512,8 @@ export class GameEngine {
   }
 
   /**
-   * Ensures legacy Village Houses without explicit `homeHouseId` bindings link up to 2 nearby unbound villagers,
-   * protects all player-owned houses from NPC invasion, and releases house ownership if all village residents die.
+   * Synchronizes village bed/house assignments, protects player-owned structures from NPC invasion,
+   * and enforces enclosed structure ownership rules if a villager resident dies.
    */
   private syncVillageHouseAssignments(): void {
     const validNpcHouseIds = new Set<string>();
@@ -1149,17 +1526,19 @@ export class GameEngine {
     for (const chunk of Object.values(this.world.chunks)) {
       if (!chunk) continue;
       for (const st of chunk.structures) {
-        if (!this.isStructureValidHouse(st)) continue;
+        if (!this.isRestPointStructure(st)) continue;
 
-        // Any house/tent/door placed by a player (not generated as a world landmark structure) belongs to the player!
+        // Any bed/tent/house placed by a player (not generated as a world landmark structure) belongs to the player!
         if (
           !st.id.startsWith('world_struct_') &&
           !st.villageId &&
-          !st.ownerType
+          !st.ownerType &&
+          !st.structureOwnerClearedAfterLoss
         ) {
           st.ownerType = 'PLAYER';
           st.ownerId = this.getLocalOwnerId();
           st.ownerName = ownerName;
+          st.ownerAssignedAt = st.ownerAssignedAt || Date.now();
         }
 
         if (this.canNpcOccupyHouse(st)) {
@@ -1169,7 +1548,7 @@ export class GameEngine {
       }
     }
 
-    // Clear homeHouseId if a house was dismantled OR if it belongs to a Player (NPCs cannot invade player houses!)
+    // Clear homeHouseId if a bed/house was dismantled OR if it belongs to a Player (NPCs cannot invade player houses!)
     for (const cr of this.entities.creatures) {
       if (cr.homeHouseId && !validNpcHouseIds.has(cr.homeHouseId)) {
         if (cr.isInsideHouse) {
@@ -1183,7 +1562,7 @@ export class GameEngine {
       }
     }
 
-    // Bind unbound village NPCs ONLY to valid non-player village houses (up to 2 per house)
+    // Bind unbound village NPCs ONLY to valid non-player village beds/houses (1 villager per BED, up to 2 per legacy VILLAGE_HOUSE)
     for (const cr of this.entities.creatures) {
       if (
         cr.kind === CreatureKind.VILLAGER &&
@@ -1194,7 +1573,9 @@ export class GameEngine {
         let bestDist = 190;
         for (const h of npcHouses) {
           if (!this.canNpcOccupyHouse(h)) continue;
-          if (this.getHouseResidents(h.id).length >= MAX_VILLAGERS_PER_HOUSE) {
+          const maxCap =
+            h.type === PlaceableType.BED ? 1 : MAX_VILLAGERS_PER_HOUSE;
+          if (this.getHouseResidents(h.id).length >= maxCap) {
             continue;
           }
           const hx = h.tileX * TILE_SIZE + TILE_SIZE / 2;
@@ -1209,30 +1590,46 @@ export class GameEngine {
           cr.homeHouseId = bestHouse.id;
           cr.homeX = bestHouse.tileX * TILE_SIZE + TILE_SIZE / 2;
           cr.homeY = bestHouse.tileY * TILE_SIZE + TILE_SIZE / 2;
+          if (!bestHouse.ownerType) {
+            bestHouse.ownerType = 'VILLAGER';
+            bestHouse.ownerId = cr.id;
+            bestHouse.ownerName = cr.name;
+            this.assignEnclosedBuildingPrimaryOwner(bestHouse);
+          }
         }
       }
     }
 
-    // Update dynamic VILLAGER ownership labels on village houses (or mark unowned if all residents died)
+    // Update dynamic VILLAGER ownership labels on village beds/houses (or clear structure ownership if primary owner died)
     for (const h of npcHouses) {
       if (h.ownerType === 'PLAYER') continue;
+      const { cx, cy } = this.world.tileToChunk(h.tileX, h.tileY);
+      const chunk = this.world.chunks[WorldManager.chunkKey(cx, cy)];
+      if (chunk && !chunk.mobsPopulated && h.villageId) {
+        continue;
+      }
       const residents = this.getHouseResidents(h.id);
       if (residents.length > 0) {
         h.ownerType = 'VILLAGER';
+        h.ownerId = residents[0].id;
         h.ownerName = residents.map((r) => r.name).join(' & ');
       } else {
+        if (h.isPrimaryStructureOwner) {
+          this.clearEnclosedBuildingOwnershipOnLoss(h.tileX, h.tileY, h.id);
+        }
         h.ownerType = undefined;
         h.ownerId = undefined;
         h.ownerName = undefined;
       }
     }
 
-    // Ensure all existing Villagers and Wanderers have their trade offers synchronized with the rebalanced suggested item prices
+    // Ensure all existing Villagers and Wanderers have their trade offers initialized
     for (const cr of this.entities.creatures) {
       if (
         (cr.kind === CreatureKind.VILLAGER ||
           cr.kind === CreatureKind.WANDERER) &&
-        cr.hp > 0
+        cr.hp > 0 &&
+        (!cr.trades || cr.trades.length === 0)
       ) {
         const defaultRole =
           cr.kind === CreatureKind.WANDERER
@@ -1492,8 +1889,10 @@ export class GameEngine {
 
         for (const st of chunk.structures) {
           if (!this.canNpcOccupyHouse(st)) continue;
+          const maxCap =
+            st.type === PlaceableType.BED ? 1 : MAX_VILLAGERS_PER_HOUSE;
           const residents = this.getHouseResidents(st.id).length;
-          if (residents >= MAX_VILLAGERS_PER_HOUSE) continue;
+          if (residents >= maxCap) continue;
 
           const hx = st.tileX * TILE_SIZE + TILE_SIZE / 2;
           const hy = st.tileY * TILE_SIZE + TILE_SIZE / 2;
@@ -1508,7 +1907,8 @@ export class GameEngine {
   }
 
   /**
-   * Settles a Wanderer NPC into a specific non-player Village House (max 2 villagers per house), converting them into a Villager.
+   * Settles a Wanderer NPC into a specific non-player Village Bed/House, converting them into a Villager.
+   * If the enclosing structure currently has no owner, taking ownership of this rest point defines the new owner of the structure!
    */
   public settleWandererIntoHouse(
     wanderer: CreatureEntity,
@@ -1516,8 +1916,10 @@ export class GameEngine {
   ): boolean {
     if (wanderer.kind !== CreatureKind.WANDERER) return false;
     if (!this.canNpcOccupyHouse(house)) return false;
+    const maxCap =
+      house.type === PlaceableType.BED ? 1 : MAX_VILLAGERS_PER_HOUSE;
     const currentResidents = this.getHouseResidents(house.id).length;
-    if (currentResidents >= MAX_VILLAGERS_PER_HOUSE) return false;
+    if (currentResidents >= maxCap) return false;
 
     const hx = house.tileX * TILE_SIZE + TILE_SIZE / 2;
     const hy = house.tileY * TILE_SIZE + TILE_SIZE / 2;
@@ -1528,6 +1930,12 @@ export class GameEngine {
       hy,
       house.villageId
     );
+    house.ownerType = 'VILLAGER';
+    house.ownerId = wanderer.id;
+    house.ownerName = wanderer.name;
+    house.ownerAssignedAt = Date.now();
+    this.assignEnclosedBuildingPrimaryOwner(house);
+
     const newCount = this.getHouseResidents(house.id).length;
 
     soundManager.playTameSuccess();
@@ -1535,7 +1943,7 @@ export class GameEngine {
     this.renderer.spawnBurst(hx, hy - 6, 'TAME', 12);
     this.renderer.spawnRipple(hx, hy, '#4ade80', 30, 0.55);
     this.addFloatingText(
-      `🏠 ${wanderer.name} virou Aldeão! (${newCount}/${MAX_VILLAGERS_PER_HOUSE} na Casa)`,
+      `🏠 ${wanderer.name} virou Aldeão! (${newCount}/${maxCap})`,
       wanderer.x,
       wanderer.y - 24,
       '#4ade80'
@@ -1545,7 +1953,7 @@ export class GameEngine {
   }
 
   /**
-   * Brings a Villager out of their house onto a valid passable tile in front of the entrance.
+   * Brings a Villager out of their house/bed onto a valid passable tile in front of the house door (or bed).
    * When `calledByKnock` is true, starts the inactivity countdown (`outsideNightTimer`) before they go back inside.
    */
   private exitVillagerFromHouse(
@@ -1565,15 +1973,51 @@ export class GameEngine {
       cr.stallInspectionsToday = {};
     }
 
-    const baseX = cr.homeX ?? cr.x;
-    const baseY = cr.homeY ?? cr.y;
+    let baseX = cr.homeX ?? cr.x;
+    let baseY = cr.homeY ?? cr.y;
+
+    // If the villager's bed is inside an enclosed roofed house, step out through the house's door!
+    const homeTile = this.world.worldToTile(baseX, baseY);
+    const building = this.renderer.getBuildingAtTile(
+      this.world,
+      homeTile.tx,
+      homeTile.ty
+    );
+    if (building) {
+      const minCx = Math.floor(building.minTx / 16);
+      const maxCx = Math.floor(building.maxTx / 16);
+      const minCy = Math.floor(building.minTy / 16);
+      const maxCy = Math.floor(building.maxTy / 16);
+      let foundDoor = false;
+      for (let cy = minCy; cy <= maxCy && !foundDoor; cy++) {
+        for (let cx = minCx; cx <= maxCx; cx++) {
+          const chunk = this.world.chunks[WorldManager.chunkKey(cx, cy)];
+          if (!chunk) continue;
+          const doorSt = chunk.structures.find(
+            (s) =>
+              (s.type === PlaceableType.WOOD_DOOR ||
+                s.type === PlaceableType.IRON_GATE) &&
+              building.footprintSet.has(`${s.tileX},${s.tileY}`)
+          );
+          if (doorSt) {
+            doorSt.isOpen = true;
+            baseX = doorSt.tileX * TILE_SIZE + TILE_SIZE / 2;
+            baseY = doorSt.tileY * TILE_SIZE + TILE_SIZE / 2;
+            foundDoor = true;
+            break;
+          }
+        }
+      }
+    }
+
     const spreadX = slotIndex === 0 ? -8 : 8;
     const candidateOffsets: [number, number][] = [
       [spreadX, 24],
       [0, 26],
+      [spreadX, -24],
+      [0, -26],
       [22, 16],
       [-22, 16],
-      [spreadX, -24],
       [24, 0],
       [-24, 0],
     ];
@@ -1632,8 +2076,14 @@ export class GameEngine {
     this.emitUiSnapshot();
   }
 
+  private houseSyncTimer = 0;
+
   private updateCreatures(dt: number): void {
-    this.syncVillageHouseAssignments();
+    this.houseSyncTimer -= dt;
+    if (this.houseSyncTimer <= 0) {
+      this.houseSyncTimer = 0.65;
+      this.syncVillageHouseAssignments();
+    }
     this.updatePlayerStallCustomerTraffic(dt);
     const isSunsetOrNight =
       this.metadata.timeOfDay >= 17.5 || this.metadata.timeOfDay < 5.5;
@@ -3023,7 +3473,7 @@ export class GameEngine {
     const dy = cr.homeY - cr.y;
     const distHome = Math.hypot(dx, dy);
 
-    if (distHome <= 26) {
+    if (distHome <= 34) {
       cr.isInsideHouse = true;
       cr.outsideNightTimer = 0;
       cr.vx = 0;
@@ -3034,7 +3484,7 @@ export class GameEngine {
       this.renderer.spawnBurst(cr.homeX, cr.homeY, 'WOOD', 5);
       this.renderer.spawnRipple(cr.homeX, cr.homeY, '#fde047', 18, 0.35);
       this.addFloatingText(
-        `🏠 ${cr.name} entrou em casa`,
+        `💤 ${cr.name} foi dormir`,
         cr.homeX,
         cr.homeY - 20,
         '#fde047'
@@ -4071,21 +4521,45 @@ export class GameEngine {
                 return;
               }
 
-              // Villagers ONLY become hostile when the player BREAKS an owned village structure
-              // (House, Well, Market Stall, or Village Chest)
-              const isOwnedVillageStructure =
-                st.ownerType !== 'PLAYER' &&
-                Boolean(
-                  st.villageId ||
-                    st.ownerType === 'VILLAGER' ||
-                    st.id.startsWith('world_struct_')
-                ) &&
-                (st.type === PlaceableType.VILLAGE_HOUSE ||
-                  st.type === PlaceableType.VILLAGE_WELL ||
-                  st.type === PlaceableType.MARKET_STALL ||
-                  st.type === PlaceableType.CHEST);
+              // Check enclosed structure ownership BEFORE removing the broken structure
+              const enclosedOwnerInfo = this.getEnclosedBuildingOwnerInfo(
+                st.tileX,
+                st.tileY
+              );
+              const isEnclosedVillagerOwned =
+                enclosedOwnerInfo?.ownerType === 'VILLAGER';
 
-              if (st.type === PlaceableType.VILLAGE_HOUSE) {
+              // Villagers become hostile when the player BREAKS an owned village structure
+              // (an enclosed house owned by a villager, a bed owned by a villager, a well, a market stall, or a village chest)
+              const isOwnedVillageStructure =
+                isEnclosedVillagerOwned ||
+                (st.ownerType !== 'PLAYER' &&
+                  Boolean(
+                    st.villageId ||
+                      st.ownerType === 'VILLAGER' ||
+                      st.id.startsWith('world_struct_')
+                  ) &&
+                  (st.type === PlaceableType.VILLAGE_HOUSE ||
+                    st.type === PlaceableType.BED ||
+                    st.type === PlaceableType.VILLAGE_WELL ||
+                    st.type === PlaceableType.MARKET_STALL ||
+                    st.type === PlaceableType.CHEST));
+
+              // If the broken structure is the primary rest point of an enclosed building,
+              // the enclosed structure becomes UNOWNED even if another rest point with an owner is inside!
+              if (
+                this.isRestPointStructure(st) &&
+                (st.isPrimaryStructureOwner ||
+                  enclosedOwnerInfo?.primaryRestPoint?.id === st.id)
+              ) {
+                this.clearEnclosedBuildingOwnershipOnLoss(
+                  st.tileX,
+                  st.tileY,
+                  st.id
+                );
+              }
+
+              if (this.isRestPointStructure(st)) {
                 for (const resident of this.getHouseResidents(st.id)) {
                   if (resident.isInsideHouse) {
                     this.exitVillagerFromHouse(resident, false);
@@ -4098,10 +4572,10 @@ export class GameEngine {
 
               if (isOwnedVillageStructure) {
                 this.provokeVillage(
-                  st.villageId,
+                  st.villageId || enclosedOwnerInfo?.villageId,
                   null,
                   45,
-                  '⚔ Estrutura da vila destruída! Os aldeões ficaram hostis!'
+                  '⚔ Estrutura com dono destruída! Os aldeões ficaram hostis!'
                 );
               }
 
@@ -4485,9 +4959,7 @@ export class GameEngine {
         if (doorSt) {
           // If this door belongs to a house with villagers currently sleeping/sheltered inside, knock on the door to call them out!
           if (this.isStructureValidHouse(doorSt)) {
-            const insideResidents = this.getHouseResidents(doorSt.id).filter(
-              (r) => r.isInsideHouse
-            );
+            const insideResidents = this.getStructureSleepingResidents(doorSt);
             if (insideResidents.length > 0) {
               this.knockOnHouseDoor(doorSt, insideResidents);
               return;
@@ -4615,6 +5087,7 @@ export class GameEngine {
       }
 
       if (
+        target.stationType === PlaceableType.BED ||
         target.stationType === PlaceableType.EXPLORER_TENT ||
         target.stationType === PlaceableType.VILLAGE_HOUSE
       ) {
@@ -4623,13 +5096,13 @@ export class GameEngine {
         if (houseSt) {
           const allResidents = this.getHouseResidents(houseSt.id);
           const insideResidents = allResidents.filter((r) => r.isInsideHouse);
-          // If residents are currently inside this house, knocking on the door calls them outside to interact!
+          // If residents are currently sleeping in this bed/house, wake/call them to interact!
           if (insideResidents.length > 0) {
             this.knockOnHouseDoor(houseSt, insideResidents);
             return;
           }
 
-          // If this house belongs to living Villagers, the player cannot sleep in their beds
+          // If this bed/house belongs to living Villagers, the player cannot sleep in their bed
           if (houseSt.ownerType !== 'PLAYER' && allResidents.length > 0) {
             soundManager.playHitWood();
             this.renderer.spawnRipple(
@@ -4639,8 +5112,10 @@ export class GameEngine {
               22,
               0.4
             );
+            const maxCap =
+              houseSt.type === PlaceableType.BED ? 1 : MAX_VILLAGERS_PER_HOUSE;
             this.addFloatingText(
-              `🏠 Moradia de ${houseSt.ownerName || 'Aldeões da Vila'} (${allResidents.length}/${MAX_VILLAGERS_PER_HOUSE})`,
+              `🛏️ Cama de ${houseSt.ownerName || 'Aldeão da Vila'} (${allResidents.length}/${maxCap})`,
               target.worldX,
               target.worldY - 22,
               '#fde047'
@@ -4649,14 +5124,16 @@ export class GameEngine {
             return;
           }
 
-          // If the rest point has NO owner, automatically claim ownership ("Tomar Posse") for the player!
+          // If the rest point (or its enclosing structure) has NO owner, automatically claim ownership ("Tomar Posse") for the player!
           if (this.canPlayerClaimRestPoint(houseSt)) {
             this.claimRestPointOwnership(houseSt.id);
           }
         }
 
         const restLabel =
-          target.stationType === PlaceableType.VILLAGE_HOUSE
+          target.stationType === PlaceableType.BED
+            ? 'Cama de Madeira'
+            : target.stationType === PlaceableType.VILLAGE_HOUSE
             ? 'Cabana Medieval'
             : 'Tenda de Explorador';
         this.setPlayerRespawnPoint(target.worldX, target.worldY, restLabel);
@@ -5273,10 +5750,9 @@ export class GameEngine {
         const placedSt = this.world.getStructureAtTile(target.tx, target.ty);
         if (
           placedSt &&
-          (placedSt.type === PlaceableType.EXPLORER_TENT ||
+          (placedSt.type === PlaceableType.BED ||
+            placedSt.type === PlaceableType.EXPLORER_TENT ||
             placedSt.type === PlaceableType.VILLAGE_HOUSE ||
-            placedSt.type === PlaceableType.WOOD_DOOR ||
-            placedSt.type === PlaceableType.IRON_GATE ||
             placedSt.type === PlaceableType.MARKET_STALL)
         ) {
           placedSt.ownerType = 'PLAYER';
@@ -5285,7 +5761,14 @@ export class GameEngine {
             this.multiplayer.localPlayerName ||
             this.settings.playerName ||
             'Aventureiro';
+          placedSt.ownerAssignedAt = Date.now();
           placedSt.villageId = undefined;
+          if (this.isRestPointStructure(placedSt)) {
+            this.assignEnclosedBuildingPrimaryOwner(placedSt);
+          }
+        } else if (placedSt) {
+          // If a wall/window/door was placed and just closed a roofed contour, evaluate structure ownership from any rest point inside!
+          this.getEnclosedBuildingOwnerInfo(target.tx, target.ty);
         }
         this.consumeInventoryAt(this.player.selectedHotbarIndex, 1);
         if (result.replacedItemId) {
@@ -5997,6 +6480,7 @@ export class GameEngine {
             st.type !== PlaceableType.FURNACE &&
             st.type !== PlaceableType.SOLAR_ALTAR &&
             st.type !== PlaceableType.CAMPFIRE &&
+            st.type !== PlaceableType.BED &&
             st.type !== PlaceableType.EXPLORER_TENT &&
             st.type !== PlaceableType.HEALING_FOUNTAIN &&
             st.type !== PlaceableType.CHEST &&
@@ -6019,21 +6503,39 @@ export class GameEngine {
                 ? st.lootItems!.length
                 : 0;
             const isHouseStruct = this.isStructureValidHouse(st);
-            const allHouseResidents = isHouseStruct
+            const enclosedInfo = isHouseStruct
+              ? this.getEnclosedBuildingOwnerInfo(st.tileX, st.tileY)
+              : null;
+            const allHouseResidents = this.isRestPointStructure(st)
               ? this.getHouseResidents(st.id)
+              : enclosedInfo
+              ? enclosedInfo.interiorRestPoints.flatMap((rp) =>
+                  this.getHouseResidents(rp.id)
+                )
               : [];
             const houseResidents = allHouseResidents.length;
-            const insideResidents = allHouseResidents.filter(
-              (r) => r.isInsideHouse
-            );
+            const insideResidents = isHouseStruct
+              ? this.getStructureSleepingResidents(st, enclosedInfo)
+              : [];
             const insideNames = insideResidents.map((r) => r.name).join(' & ');
             const canClaimRestPoint =
-              isHouseStruct && this.canPlayerClaimRestPoint(st);
+              isHouseStruct && this.canPlayerClaimRestPoint(st, enclosedInfo);
+
+            // Resolve displayed owner badge:
+            // - For doors or enclosed structures: shows the Enclosed Structure Owner (defined by the primary rest point inside, or "Sem Dono" if none/lost).
+            // - For standalone rest points: shows the rest point's owner.
+            const effectiveOwnerType = enclosedInfo
+              ? enclosedInfo.ownerType
+              : st.ownerType || null;
+            const effectiveOwnerName = enclosedInfo
+              ? enclosedInfo.ownerName
+              : st.ownerName;
+
             const houseOwnerBadge = isHouseStruct
-              ? st.ownerType === 'PLAYER'
-                ? ` [🏠 Dono: ${st.ownerName || 'Você'}]`
-                : houseResidents > 0
-                ? ` [🏠 Dono: ${st.ownerName || 'Aldeões'} (${houseResidents}/${MAX_VILLAGERS_PER_HOUSE})]`
+              ? effectiveOwnerType === 'PLAYER'
+                ? ` [🏠 Dono: ${effectiveOwnerName || 'Você'}]`
+                : effectiveOwnerType === 'VILLAGER'
+                ? ` [🏠 Dono: ${effectiveOwnerName || 'Aldeão'}]`
                 : ' [🏠 Sem Dono]'
               : '';
 
@@ -6043,7 +6545,8 @@ export class GameEngine {
                 st.type === PlaceableType.HEALING_FOUNTAIN)
                 ? 'Encher Regador (12/12) 💧'
                 : insideResidents.length > 0 &&
-                  (st.type === PlaceableType.VILLAGE_HOUSE ||
+                  (st.type === PlaceableType.BED ||
+                    st.type === PlaceableType.VILLAGE_HOUSE ||
                     st.type === PlaceableType.EXPLORER_TENT ||
                     st.type === PlaceableType.WOOD_DOOR ||
                     st.type === PlaceableType.IRON_GATE)
@@ -6077,13 +6580,14 @@ export class GameEngine {
                     ? `Tenda de ${st.ownerName || 'Mercador'} (🌙 Dormindo)`
                     : `Tenda de ${st.ownerName || 'Mercador'} 🏪`
                   : 'Tenda sem Dono · Tomar Posse 🏪'
-                : st.type === PlaceableType.VILLAGE_HOUSE ||
+                : st.type === PlaceableType.BED ||
+                  st.type === PlaceableType.VILLAGE_HOUSE ||
                   st.type === PlaceableType.EXPLORER_TENT
-                ? st.ownerType === 'PLAYER'
-                  ? `Descansar (Dono: ${st.ownerName || 'Você'}) 🏠`
+                ? st.ownerType === 'PLAYER' && effectiveOwnerType === 'PLAYER'
+                  ? `Descansar (Dono: ${st.ownerName || 'Você'}) 🛏️`
                   : houseResidents > 0
-                  ? `Moradia de ${st.ownerName || 'Aldeões'} 🏠`
-                  : 'Sem Dono · Tomar Posse & Descansar 🏠'
+                  ? `Cama de ${st.ownerName || 'Aldeão'} 🛏️`
+                  : 'Sem Dono · Tomar Posse & Descansar 🛏️'
                 : st.type === PlaceableType.CAMPFIRE
                 ? st.outputCount && st.outputCount > 0
                   ? `Pronto: ${st.outputCount}x ${
@@ -6116,6 +6620,7 @@ export class GameEngine {
                   itemDef?.name ||
                   'Estação'
                 }${
+                  st.type === PlaceableType.BED ||
                   st.type === PlaceableType.VILLAGE_HOUSE ||
                   st.type === PlaceableType.EXPLORER_TENT
                     ? houseOwnerBadge
@@ -6822,6 +7327,38 @@ export class GameEngine {
           }
         }
         grantPlayerXp(40);
+
+        // If this villager owned a bed/rest point, release their bed ownership;
+        // and if their bed was the primary owner of an enclosed structure, the enclosed structure becomes UNOWNED
+        // even if another bed with a living villager exists inside!
+        for (const chunk of Object.values(this.world.chunks)) {
+          if (!chunk) continue;
+          for (const st of chunk.structures) {
+            if (
+              this.isRestPointStructure(st) &&
+              (st.id === cr.homeHouseId || st.ownerId === cr.id)
+            ) {
+              const enclosedInfo = this.getEnclosedBuildingOwnerInfo(
+                st.tileX,
+                st.tileY
+              );
+              if (
+                st.isPrimaryStructureOwner ||
+                enclosedInfo?.primaryRestPoint?.id === st.id
+              ) {
+                this.clearEnclosedBuildingOwnershipOnLoss(
+                  st.tileX,
+                  st.tileY,
+                  st.id
+                );
+              }
+              st.ownerType = undefined;
+              st.ownerId = undefined;
+              st.ownerName = undefined;
+              st.isPrimaryStructureOwner = false;
+            }
+          }
+        }
       } else if (cr.kind === CreatureKind.SHEEP) {
         // Ovelha (1 a 2 lãs; 1 carne de cordeiro)
         this.spawnDrop('wool', 1 + Math.floor(Math.random() * 2), cr.x, cr.y);
@@ -8161,13 +8698,19 @@ export class GameEngine {
       return false;
     }
 
+    const enclosedOwnerInfo = this.getEnclosedBuildingOwnerInfo(tx, ty);
+    const isEnclosedVillagerOwned =
+      enclosedOwnerInfo?.ownerType === 'VILLAGER';
+
     const isOwnedVillageBuilding =
-      st.ownerType !== 'PLAYER' &&
-      Boolean(st.villageId || st.ownerType === 'VILLAGER') &&
-      (st.type === PlaceableType.VILLAGE_HOUSE ||
-        st.type === PlaceableType.VILLAGE_WELL ||
-        st.type === PlaceableType.MARKET_STALL ||
-        st.type === PlaceableType.CHEST);
+      isEnclosedVillagerOwned ||
+      (st.ownerType !== 'PLAYER' &&
+        Boolean(st.villageId || st.ownerType === 'VILLAGER') &&
+        (st.type === PlaceableType.VILLAGE_HOUSE ||
+          st.type === PlaceableType.BED ||
+          st.type === PlaceableType.VILLAGE_WELL ||
+          st.type === PlaceableType.MARKET_STALL ||
+          st.type === PlaceableType.CHEST));
 
     if (isOwnedVillageBuilding) {
       soundManager.playHitWood();
@@ -8204,6 +8747,15 @@ export class GameEngine {
         ty * TILE_SIZE + 16,
         true
       );
+    }
+
+    // If dismantling the primary rest point of an enclosed building, clear the enclosed structure's ownership!
+    if (
+      this.isRestPointStructure(st) &&
+      (st.isPrimaryStructureOwner ||
+        enclosedOwnerInfo?.primaryRestPoint?.id === st.id)
+    ) {
+      this.clearEnclosedBuildingOwnershipOnLoss(tx, ty, st.id);
     }
 
     chunk.structures.splice(targetIdx, 1);

@@ -194,6 +194,7 @@ export enum PlaceableType {
   TILLED_SOIL = 'TILLED_SOIL',
   OAK_SAPLING = 'OAK_SAPLING',
   PALM_SAPLING = 'PALM_SAPLING',
+  BED = 'BED',
 }
 
 export interface NatureNode {
@@ -239,10 +240,14 @@ export interface PlacedStructure {
   waterLevel?: number; // Nível de umidade no solo 0..1
   fertilized?: boolean; // Adubado com adubo orgânico (crescimento acelerado)
   lastWateredDay?: number;
-  // Market Stall Ownership, Merchandise & Customer Offers
+  // Market Stall & Structure / Rest Point Ownership
   ownerType?: 'PLAYER' | 'VILLAGER';
   ownerId?: string;
   ownerName?: string;
+  npcRole?: NpcRole;
+  isPrimaryStructureOwner?: boolean; // True when this rest point's owner was the first owner defined inside an enclosed roofed structure
+  ownerAssignedAt?: number; // Sequential order/timestamp when ownership of this rest point was assigned
+  structureOwnerClearedAfterLoss?: boolean; // True when the enclosed structure's primary owner died or had their rest point broken, keeping the structure unowned until someone takes ownership again
   stallOpen?: boolean;
   stallSlots?: (MarketStallSlot | null)[]; // 8-slot merchandise display for MARKET_STALL
   pendingCustomerOffer?: MarketPurchaseOffer | null;

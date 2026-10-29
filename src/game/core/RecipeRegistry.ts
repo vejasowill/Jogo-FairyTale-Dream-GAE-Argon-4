@@ -586,16 +586,16 @@ export const RECIPES: CraftingRecipe[] = [
     ],
   },
   {
-    id: 'craft_village_house',
-    resultItemId: 'village_house',
+    id: 'craft_bed',
+    resultItemId: 'bed',
     resultCount: 1,
     requiredStation: PlaceableType.WORKBENCH,
     craftTimeSec: 0,
-    rarity: RarityTier.RARE,
+    rarity: RarityTier.BASIC,
     ingredients: [
-      { itemId: 'wood', count: 14 },
-      { itemId: 'stone', count: 10 },
+      { itemId: 'wood', count: 5 },
       { itemId: 'wool', count: 2 },
+      { itemId: 'fiber', count: 2 },
     ],
   },
   {
