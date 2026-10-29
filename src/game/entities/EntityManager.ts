@@ -549,8 +549,6 @@ export class EntityManager {
     }
 
     const isElite = Boolean(options?.isElite);
-    const hpMult = isElite ? 1.4 : 1.0;
-    const dmgMult = isElite ? 1.25 : 1.0;
 
     const createConfig = (): Omit<
       CreatureEntity,
@@ -651,9 +649,9 @@ export class EntityManager {
               options?.customName ||
               (isElite ? 'Zumbi Ancião' : 'Zumbi Errante'),
             isHostile: true,
-            hp: Math.round(65 * hpMult),
-            maxHp: Math.round(65 * hpMult),
-            attackDamage: Math.round(14 * dmgMult),
+            hp: isElite ? Math.round(65 * 2) : 65,
+            maxHp: isElite ? Math.round(65 * 2) : 65,
+            attackDamage: isElite ? Math.round(10 * 1.5) : 10,
             moveSpeed: isElite ? 52 : 48,
             swimSpeed: isElite ? 31 : 28,
             favoriteFoodIds: [],
@@ -665,9 +663,9 @@ export class EntityManager {
               options?.customName ||
               (isElite ? 'Ogro Brutal Alfa' : 'Ogro Brutamontes'),
             isHostile: true,
-            hp: Math.round(190 * hpMult),
-            maxHp: Math.round(190 * hpMult),
-            attackDamage: Math.round(32 * dmgMult),
+            hp: isElite ? Math.round(195 * 2) : 195,
+            maxHp: isElite ? Math.round(195 * 2) : 195,
+            attackDamage: isElite ? Math.round(40 * 1.5) : 40,
             moveSpeed: isElite ? 43 : 40,
             swimSpeed: isElite ? 28 : 25,
             favoriteFoodIds: [],
@@ -679,9 +677,9 @@ export class EntityManager {
               options?.customName ||
               (isElite ? 'Aranha Rainha Sombria' : 'Aranha Tecelã da Mata'),
             isHostile: true,
-            hp: Math.round(82 * hpMult),
-            maxHp: Math.round(82 * hpMult),
-            attackDamage: Math.round(17 * dmgMult),
+            hp: isElite ? Math.round(85 * 2) : 85,
+            maxHp: isElite ? Math.round(85 * 2) : 85,
+            attackDamage: isElite ? Math.round(10 * 1.5) : 10,
             moveSpeed: isElite ? 64 : 58,
             swimSpeed: isElite ? 39 : 35,
             favoriteFoodIds: [],
@@ -694,9 +692,9 @@ export class EntityManager {
               options?.customName ||
               (isElite ? 'Escorpião Imperador Dourado' : 'Escorpião Rei da Areia'),
             isHostile: true,
-            hp: Math.round(115 * hpMult),
-            maxHp: Math.round(115 * hpMult),
-            attackDamage: Math.round(22 * dmgMult),
+            hp: isElite ? Math.round(100 * 2) : 100,
+            maxHp: isElite ? Math.round(100 * 2) : 100,
+            attackDamage: isElite ? Math.round(15 * 1.5) : 15,
             moveSpeed: isElite ? 56 : 52,
             swimSpeed: isElite ? 30 : 27,
             favoriteFoodIds: [],
@@ -709,9 +707,9 @@ export class EntityManager {
               options?.customName ||
               (isElite ? 'Colosso Rúnico Ancestral' : 'Colosso Rúnico de Pedra'),
             isHostile: true,
-            hp: Math.round(235 * hpMult),
-            maxHp: Math.round(235 * hpMult),
-            attackDamage: Math.round(36 * dmgMult),
+            hp: isElite ? Math.round(300 * 2) : 300,
+            maxHp: isElite ? Math.round(300 * 2) : 300,
+            attackDamage: isElite ? Math.round(60 * 1.5) : 60,
             moveSpeed: isElite ? 39 : 35,
             swimSpeed: isElite ? 22 : 19,
             favoriteFoodIds: [],
@@ -724,13 +722,13 @@ export class EntityManager {
               options?.customName ||
               (isElite ? 'Líder Saqueador Corvo' : 'Saqueador Renegado'),
             isHostile: true,
-            hp: Math.round(95 * hpMult),
-            maxHp: Math.round(95 * hpMult),
-            attackDamage: Math.round(19 * dmgMult),
+            hp: isElite ? Math.round(110 * 1.4) : 110,
+            maxHp: isElite ? Math.round(110 * 1.4) : 110,
+            attackDamage: isElite ? Math.round(15 * 1.25) : 15,
             moveSpeed: isElite ? 60 : 55,
             swimSpeed: isElite ? 37 : 34,
             favoriteFoodIds: [],
-            specialCooldown: 6.0,
+            specialCooldown: 0,
           };
         case CreatureKind.VILLAGER: {
           const role: NpcRole =

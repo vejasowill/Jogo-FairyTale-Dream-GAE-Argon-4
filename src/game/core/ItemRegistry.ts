@@ -125,9 +125,9 @@ export const ITEMS: Record<string, ItemDefinition> = {
     id: 'coconut',
     name: 'Coco Costeiro',
     description:
-      'Colhido de palmeiras costeiras. Hidrata profundamente, auxilia na domesticação de animais e é base do Elixir Tropical e Banquete do Guerreiro.',
+      'Colhido de palmeiras costeiras. Hidrata profundamente, remove todos os efeitos ativos sobre o personagem e auxilia na domesticação de animais.',
     purposeSummary:
-      'Consumir (+24 Fome, +35 Energia), Domesticar Animais, ou preparar Elixir Tropical de Coco (+30% Velocidade), Banquete do Guerreiro e Ração.',
+      'Consumir (+24 Fome, +35 Energia, remove todos os efeitos ativos), Domesticar Animais, ou preparar Elixir Tropical de Coco e Banquete do Guerreiro.',
     category: ItemCategory.CONSUMABLE,
     rarity: RarityTier.BASIC,
     maxStack: 50,
@@ -167,25 +167,23 @@ export const ITEMS: Record<string, ItemDefinition> = {
     id: 'coconut_elixir',
     name: 'Elixir Tropical de Coco',
     description:
-      'Tônico refrescante preparado com Coco Costeiro e Fruto de Cacto. Concede o efeito Passos de Vento (+30% Velocidade por 45s).',
+      'Tônico refrescante preparado com Coco Costeiro e Fruto de Cacto. Purifica o organismo, removendo todos os efeitos aplicados sobre o personagem.',
     purposeSummary:
-      'Restaura +40 Fome, +25 HP, +80 Energia e concede +30% Velocidade de Movimento por 45 segundos.',
+      'Restaura +40 Fome, +25 HP, +80 Energia e remove todos os efeitos aplicados sobre o personagem.',
     category: ItemCategory.CONSUMABLE,
     rarity: RarityTier.RARE,
     maxStack: 25,
     hungerRestore: 40,
     hpRestore: 25,
     staminaRestore: 80,
-    buffType: 'speed',
-    buffDuration: 45,
   },
   healing_salve: {
     id: 'healing_salve',
     name: 'Elixir de Ervas & Âmbar',
     description:
-      'Bálsamo regenerador destilado na Fornalha com Cristal Solar e frutas medicinais.',
+      'Bálsamo regenerador destilado na Fornalha com Cristal Solar e frutas medicinais. Remove todos os efeitos aplicados sobre o personagem.',
     purposeSummary:
-      'Restaura +65 Vida, +40 Energia e +15 Fome em situações críticas de combate.',
+      'Restaura +65 Vida, +40 Energia, +15 Fome e remove todos os efeitos aplicados sobre o personagem.',
     category: ItemCategory.CONSUMABLE,
     rarity: RarityTier.RARE,
     maxStack: 25,
@@ -732,17 +730,17 @@ export const ITEMS: Record<string, ItemDefinition> = {
     description:
       'Corta carvalhos, palmeiras, cactos e desbloqueia a extração de Árvores Ancestrais de Madeira Nobre.',
     purposeSummary:
-      'Ferramenta Nv.1: Corta árvores comuns rapidamente e permite colher Madeira Nobre Ancestral.',
+      'Ferramenta Nv.1 (Corpo-a-corpo · Individual): 10 de dano, alcance de 33px e poder de coleta 10.',
     category: ItemCategory.TOOL,
     rarity: RarityTier.BASIC,
     maxStack: 1,
     toolType: ToolType.AXE,
     toolTier: 1,
-    attackDamage: 14,
+    attackDamage: 10,
     attackDelivery: 'melee',
     attackTargetScope: 'single',
-    attackRange: 46,
-    harvestPower: 22,
+    attackRange: 33,
+    harvestPower: 10,
   },
   stone_pickaxe: {
     id: 'stone_pickaxe',
@@ -750,17 +748,17 @@ export const ITEMS: Record<string, ItemDefinition> = {
     description:
       'Quebra rochas comuns rapidamente e desbloqueia a mineração de Minério de Ferro e Cristais Solares.',
     purposeSummary:
-      'Ferramenta Nv.1: Extrai Pedra, Sílex, Minério de Ferro e Drusas de Cristal Solar.',
+      'Ferramenta Nv.1 (Corpo-a-corpo · Individual): 8 de dano, alcance de 33px e poder de coleta 10.',
     category: ItemCategory.TOOL,
     rarity: RarityTier.BASIC,
     maxStack: 1,
     toolType: ToolType.PICKAXE,
     toolTier: 1,
-    attackDamage: 12,
+    attackDamage: 8,
     attackDelivery: 'melee',
     attackTargetScope: 'single',
-    attackRange: 46,
-    harvestPower: 22,
+    attackRange: 33,
+    harvestPower: 10,
   },
   wood_sword: {
     id: 'wood_sword',
@@ -806,17 +804,17 @@ export const ITEMS: Record<string, ItemDefinition> = {
     description:
       'Corta Árvores Ancestrais de Madeira Nobre e desbloqueia a colheita das raras Árvores-Coração Primordiais.',
     purposeSummary:
-      'Ferramenta Nv.2: Necessária para extrair Essência da Árvore-Coração Primordial.',
+      'Ferramenta Nv.2 (Corpo-a-corpo · Individual): 15 de dano, alcance de 33px e poder de coleta 20.',
     category: ItemCategory.TOOL,
     rarity: RarityTier.RARE,
     maxStack: 1,
     toolType: ToolType.AXE,
     toolTier: 2,
-    attackDamage: 24,
+    attackDamage: 15,
     attackDelivery: 'melee',
     attackTargetScope: 'single',
-    attackRange: 50,
-    harvestPower: 42,
+    attackRange: 33,
+    harvestPower: 20,
   },
   iron_pickaxe: {
     id: 'iron_pickaxe',
@@ -824,17 +822,17 @@ export const ITEMS: Record<string, ItemDefinition> = {
     description:
       'Capaz de minerar Cristais Solares e desbloquear a extração de Ostras Abissais e Obeliscos Astrais.',
     purposeSummary:
-      'Ferramenta Nv.2: Necessária para extrair Fragmento Astral e Pérola Abissal.',
+      'Ferramenta Nv.2 (Corpo-a-corpo · Individual): 12 de dano, alcance de 33px e poder de coleta 20.',
     category: ItemCategory.TOOL,
     rarity: RarityTier.RARE,
     maxStack: 1,
     toolType: ToolType.PICKAXE,
     toolTier: 2,
-    attackDamage: 21,
+    attackDamage: 12,
     attackDelivery: 'melee',
     attackTargetScope: 'single',
-    attackRange: 50,
-    harvestPower: 42,
+    attackRange: 33,
+    harvestPower: 20,
   },
   iron_sword: {
     id: 'iron_sword',
@@ -899,35 +897,37 @@ export const ITEMS: Record<string, ItemDefinition> = {
     id: 'primordial_axe',
     name: 'Machado Primordial do Bosque',
     description:
-      'Obra-prima imbuída com Essência Primordial. Corta qualquer árvore em instantes e serve como arma devastadora.',
-    purposeSummary: 'Ferramenta Nv.3 Máxima: Poder de coleta 85 e 45 de dano.',
+      'Obra-prima imbuída com Essência Primordial. Corta qualquer árvore rapidamente e serve como arma confiável.',
+    purposeSummary:
+      'Ferramenta Nv.3 (Corpo-a-corpo · Individual): 20 de dano, alcance de 33px e poder de coleta 30.',
     category: ItemCategory.TOOL,
     rarity: RarityTier.VERY_RARE,
     maxStack: 1,
     toolType: ToolType.AXE,
     toolTier: 3,
-    attackDamage: 45,
+    attackDamage: 20,
     attackDelivery: 'melee',
     attackTargetScope: 'single',
-    attackRange: 58,
-    harvestPower: 85,
+    attackRange: 33,
+    harvestPower: 30,
   },
   primordial_pickaxe: {
     id: 'primordial_pickaxe',
     name: 'Picareta Astral de Hélio',
     description:
       'Perfura até os Obeliscos mais antigos e Ostras Abissais com energia solar concentrada.',
-    purposeSummary: 'Ferramenta Nv.3 Máxima: Poder de mineração 85 e 40 de dano.',
+    purposeSummary:
+      'Ferramenta Nv.3 (Corpo-a-corpo · Individual): 18 de dano, alcance de 33px e poder de coleta 30.',
     category: ItemCategory.TOOL,
     rarity: RarityTier.VERY_RARE,
     maxStack: 1,
     toolType: ToolType.PICKAXE,
     toolTier: 3,
-    attackDamage: 40,
+    attackDamage: 18,
     attackDelivery: 'melee',
     attackTargetScope: 'single',
-    attackRange: 58,
-    harvestPower: 85,
+    attackRange: 33,
+    harvestPower: 30,
   },
   abyssal_trident: {
     id: 'abyssal_trident',
@@ -2242,11 +2242,11 @@ export const NATURE_BLUEPRINTS: Record<NatureNodeType, NatureNodeBlueprint> = {
     type: NatureNodeType.OAK_TREE,
     name: 'Carvalho da Planície',
     rarity: RarityTier.BASIC,
-    maxHp: 55,
+    maxHp: 70,
     materialKind: 'SOFT_WOOD',
     requiredTool: ToolType.AXE,
     requiredTier: 0,
-    xpReward: 12,
+    xpReward: 10,
     hasHitbox: true,
     hitboxRadius: 7,
     drops: [
@@ -2275,11 +2275,11 @@ export const NATURE_BLUEPRINTS: Record<NatureNodeType, NatureNodeBlueprint> = {
     type: NatureNodeType.BOULDER,
     name: 'Rocha Cinzenta',
     rarity: RarityTier.BASIC,
-    maxHp: 60,
+    maxHp: 70,
     materialKind: 'ROUGH_STONE',
     requiredTool: ToolType.PICKAXE,
     requiredTier: 0,
-    xpReward: 14,
+    xpReward: 10,
     hasHitbox: true,
     hitboxRadius: 9,
     drops: [
@@ -2291,11 +2291,11 @@ export const NATURE_BLUEPRINTS: Record<NatureNodeType, NatureNodeBlueprint> = {
     type: NatureNodeType.CACTUS,
     name: 'Cacto Gigante',
     rarity: RarityTier.BASIC,
-    maxHp: 40,
+    maxHp: 50,
     materialKind: 'FIBER_FOLIAGE',
     requiredTool: ToolType.AXE,
     requiredTier: 0,
-    xpReward: 11,
+    xpReward: 10,
     hasHitbox: true,
     hitboxRadius: 7,
     drops: [
@@ -2307,7 +2307,7 @@ export const NATURE_BLUEPRINTS: Record<NatureNodeType, NatureNodeBlueprint> = {
     type: NatureNodeType.PALM_TREE,
     name: 'Palmeira Costeira',
     rarity: RarityTier.BASIC,
-    maxHp: 50,
+    maxHp: 70,
     materialKind: 'SOFT_WOOD',
     requiredTool: ToolType.AXE,
     requiredTier: 0,
@@ -2328,7 +2328,7 @@ export const NATURE_BLUEPRINTS: Record<NatureNodeType, NatureNodeBlueprint> = {
     materialKind: 'IRON_MINERAL',
     requiredTool: ToolType.PICKAXE,
     requiredTier: 1,
-    xpReward: 28,
+    xpReward: 25,
     hasHitbox: true,
     hitboxRadius: 9,
     drops: [
@@ -2339,11 +2339,11 @@ export const NATURE_BLUEPRINTS: Record<NatureNodeType, NatureNodeBlueprint> = {
     type: NatureNodeType.HARDWOOD_TREE,
     name: 'Árvore Ancestral Dourada',
     rarity: RarityTier.RARE,
-    maxHp: 120,
+    maxHp: 110,
     materialKind: 'HARDWOOD',
     requiredTool: ToolType.AXE,
     requiredTier: 1,
-    xpReward: 30,
+    xpReward: 25,
     hasHitbox: true,
     hitboxRadius: 8,
     drops: [
@@ -2355,11 +2355,11 @@ export const NATURE_BLUEPRINTS: Record<NatureNodeType, NatureNodeBlueprint> = {
     type: NatureNodeType.DESERT_CRYSTAL,
     name: 'Drusa de Cristal Solar',
     rarity: RarityTier.RARE,
-    maxHp: 135,
+    maxHp: 130,
     materialKind: 'IRON_MINERAL',
     requiredTool: ToolType.PICKAXE,
     requiredTier: 1,
-    xpReward: 35,
+    xpReward: 25,
     hasHitbox: true,
     hitboxRadius: 8,
     drops: [
@@ -2374,7 +2374,7 @@ export const NATURE_BLUEPRINTS: Record<NatureNodeType, NatureNodeBlueprint> = {
     materialKind: 'ASTRAL_MINERAL',
     requiredTool: ToolType.PICKAXE,
     requiredTier: 2,
-    xpReward: 75,
+    xpReward: 70,
     hasHitbox: true,
     hitboxRadius: 9,
     drops: [
@@ -2386,11 +2386,11 @@ export const NATURE_BLUEPRINTS: Record<NatureNodeType, NatureNodeBlueprint> = {
     type: NatureNodeType.PEARL_CLAM,
     name: 'Ostra Abissal Gigante',
     rarity: RarityTier.VERY_RARE,
-    maxHp: 190,
+    maxHp: 160,
     materialKind: 'ASTRAL_MINERAL',
     requiredTool: ToolType.PICKAXE,
     requiredTier: 2,
-    xpReward: 70,
+    xpReward: 80,
     hasHitbox: true,
     hitboxRadius: 9,
     drops: [
@@ -2401,11 +2401,11 @@ export const NATURE_BLUEPRINTS: Record<NatureNodeType, NatureNodeBlueprint> = {
     type: NatureNodeType.ANCIENT_WORLD_TREE,
     name: 'Árvore-Coração Primordial',
     rarity: RarityTier.VERY_RARE,
-    maxHp: 240,
+    maxHp: 280,
     materialKind: 'PRIMORDIAL_WOOD',
     requiredTool: ToolType.AXE,
     requiredTier: 2,
-    xpReward: 80,
+    xpReward: 140,
     hasHitbox: true,
     hitboxRadius: 10,
     drops: [
@@ -2959,9 +2959,9 @@ export const HAND_AND_TOOL_MATERIAL_STRENGTH: Record<
     toolType: ToolType.NONE,
     toolTier: 0,
     forceByMaterial: {
-      FIBER_FOLIAGE: 9, // Quebra Arbusto (25 HP) em 3 golpes e Cacto (40 HP) em 5 golpes
-      SOFT_WOOD: 7, // Quebra Carvalho (55 HP) em 8 golpes e Palmeira (50 HP) em 8 golpes
-      ROUGH_STONE: 6, // Quebra Rocha Cinzenta (60 HP) em 10 golpes para obter as primeiras pedras
+      FIBER_FOLIAGE: 5, // Quebra Arbusto (25 HP) em 5 golpes e Cacto (50 HP) em 10 golpes
+      SOFT_WOOD: 5, // Quebra Carvalho (70 HP) e Palmeira (70 HP) em 14 golpes
+      ROUGH_STONE: 5, // Quebra Rocha Cinzenta (70 HP) em 14 golpes para obter as primeiras pedras
       HARDWOOD: 0, // Bloqueado (Requer Machado de Pedra Nv.1+)
       IRON_MINERAL: 0, // Bloqueado (Requer Picareta de Pedra Nv.1+)
       PRIMORDIAL_WOOD: 0, // Bloqueado (Requer Machado de Ferro Nv.2+)
@@ -2975,10 +2975,10 @@ export const HAND_AND_TOOL_MATERIAL_STRENGTH: Record<
     toolType: ToolType.AXE,
     toolTier: 1,
     forceByMaterial: {
-      FIBER_FOLIAGE: 22,
-      SOFT_WOOD: 24, // Derruba Carvalho (55 HP) em 3 golpes
-      ROUGH_STONE: 7, // Fraco contra rocha
-      HARDWOOD: 22, // Desbloqueia Árvore Ancestral Dourada (120 HP -> 6 golpes)
+      FIBER_FOLIAGE: 10,
+      SOFT_WOOD: 10, // Poder de coleta 10 (Carvalho/Palmeira 70 HP -> 7 golpes)
+      ROUGH_STONE: 5, // Fraco contra rocha
+      HARDWOOD: 10, // Desbloqueia Árvore Ancestral Dourada (110 HP -> 11 golpes)
       IRON_MINERAL: 0,
       PRIMORDIAL_WOOD: 0,
       ASTRAL_MINERAL: 0,
@@ -2989,12 +2989,12 @@ export const HAND_AND_TOOL_MATERIAL_STRENGTH: Record<
     toolType: ToolType.AXE,
     toolTier: 2,
     forceByMaterial: {
-      FIBER_FOLIAGE: 42,
-      SOFT_WOOD: 46, // Derruba Carvalho em 2 golpes
-      ROUGH_STONE: 12,
-      HARDWOOD: 42, // Derruba Árvore Ancestral em 3 golpes
+      FIBER_FOLIAGE: 20,
+      SOFT_WOOD: 20, // Poder de coleta 20 (Carvalho/Palmeira 70 HP -> 4 golpes)
+      ROUGH_STONE: 8,
+      HARDWOOD: 20, // Poder de coleta 20 (Árvore Ancestral 110 HP -> 6 golpes)
       IRON_MINERAL: 0,
-      PRIMORDIAL_WOOD: 40, // Desbloqueia Árvore-Coração Primordial (240 HP -> 6 golpes)
+      PRIMORDIAL_WOOD: 20, // Desbloqueia Árvore-Coração Primordial (280 HP -> 14 golpes)
       ASTRAL_MINERAL: 0,
     },
   },
@@ -3003,12 +3003,12 @@ export const HAND_AND_TOOL_MATERIAL_STRENGTH: Record<
     toolType: ToolType.AXE,
     toolTier: 3,
     forceByMaterial: {
-      FIBER_FOLIAGE: 85,
-      SOFT_WOOD: 90, // Derruba Carvalho em 1 golpe
-      ROUGH_STONE: 20,
-      HARDWOOD: 85, // Derruba Árvore Ancestral em 2 golpes
+      FIBER_FOLIAGE: 30,
+      SOFT_WOOD: 30, // Poder de coleta 30 (Carvalho/Palmeira 70 HP -> 3 golpes)
+      ROUGH_STONE: 10,
+      HARDWOOD: 30, // Poder de coleta 30 (Árvore Ancestral 110 HP -> 4 golpes)
       IRON_MINERAL: 0,
-      PRIMORDIAL_WOOD: 85, // Derruba Árvore-Coração Primordial em 3 golpes
+      PRIMORDIAL_WOOD: 30, // Poder de coleta 30 (Árvore-Coração Primordial 280 HP -> 10 golpes)
       ASTRAL_MINERAL: 0,
     },
   },
@@ -3019,11 +3019,11 @@ export const HAND_AND_TOOL_MATERIAL_STRENGTH: Record<
     toolType: ToolType.PICKAXE,
     toolTier: 1,
     forceByMaterial: {
-      FIBER_FOLIAGE: 12,
-      SOFT_WOOD: 7, // Fraca contra madeira
-      ROUGH_STONE: 24, // Quebra Rocha Cinzenta (60 HP) em 3 golpes
+      FIBER_FOLIAGE: 5,
+      SOFT_WOOD: 5, // Fraca contra madeira
+      ROUGH_STONE: 10, // Poder de coleta 10 (Rocha Cinzenta 70 HP -> 7 golpes)
       HARDWOOD: 0,
-      IRON_MINERAL: 22, // Desbloqueia Minério de Ferro (110 HP -> 5 golpes) e Cristal Solar (135 HP -> 7 golpes)
+      IRON_MINERAL: 10, // Desbloqueia Minério de Ferro (110 HP -> 11 golpes) e Cristal Solar (130 HP -> 13 golpes)
       PRIMORDIAL_WOOD: 0,
       ASTRAL_MINERAL: 0,
     },
@@ -3033,13 +3033,13 @@ export const HAND_AND_TOOL_MATERIAL_STRENGTH: Record<
     toolType: ToolType.PICKAXE,
     toolTier: 2,
     forceByMaterial: {
-      FIBER_FOLIAGE: 20,
-      SOFT_WOOD: 12,
-      ROUGH_STONE: 46, // Quebra Rocha Cinzenta em 2 golpes
+      FIBER_FOLIAGE: 10,
+      SOFT_WOOD: 8,
+      ROUGH_STONE: 20, // Poder de coleta 20 (Rocha Cinzenta 70 HP -> 4 golpes)
       HARDWOOD: 0,
-      IRON_MINERAL: 44, // Quebra Minério de Ferro em 3 golpes
+      IRON_MINERAL: 20, // Poder de coleta 20 (Minério de Ferro 110 HP -> 6 golpes)
       PRIMORDIAL_WOOD: 0,
-      ASTRAL_MINERAL: 42, // Desbloqueia Obelisco Astral (220 HP -> 6 golpes) e Ostra Abissal (190 HP -> 5 golpes)
+      ASTRAL_MINERAL: 20, // Desbloqueia Obelisco Astral (220 HP -> 11 golpes) e Ostra Abissal (160 HP -> 8 golpes)
     },
   },
   primordial_pickaxe: {
@@ -3047,13 +3047,13 @@ export const HAND_AND_TOOL_MATERIAL_STRENGTH: Record<
     toolType: ToolType.PICKAXE,
     toolTier: 3,
     forceByMaterial: {
-      FIBER_FOLIAGE: 36,
-      SOFT_WOOD: 20,
-      ROUGH_STONE: 90, // Quebra Rocha Cinzenta em 1 golpe
+      FIBER_FOLIAGE: 15,
+      SOFT_WOOD: 10,
+      ROUGH_STONE: 30, // Poder de coleta 30 (Rocha Cinzenta 70 HP -> 3 golpes)
       HARDWOOD: 0,
-      IRON_MINERAL: 86, // Quebra Minério de Ferro em 2 golpes
+      IRON_MINERAL: 30, // Poder de coleta 30 (Minério de Ferro 110 HP -> 4 golpes)
       PRIMORDIAL_WOOD: 0,
-      ASTRAL_MINERAL: 85, // Quebra Obelisco Astral e Ostra Abissal em 3 golpes
+      ASTRAL_MINERAL: 30, // Poder de coleta 30 (Obelisco Astral 220 HP -> 8 golpes; Ostra Abissal 160 HP -> 6 golpes)
     },
   },
 

@@ -1,11 +1,16 @@
 import React, { useEffect, useRef, useState } from 'react';
 import {
+  ChevronDown,
+  ChevronUp,
   ExternalLink,
   Maximize2,
   Minimize2,
   Share2,
+  Skull,
   Smartphone,
   Sparkles,
+  Swords,
+  Wind,
   X,
 } from 'lucide-react';
 import { GameSettings, PlaceableType, WorldSaveData } from './game/core/types';
@@ -32,7 +37,8 @@ type ActiveModal =
   | 'NPC_TRADE'
   | 'CHEST'
   | 'MARKET_STALL'
-  | 'ONLINE_INVITE';
+  | 'ONLINE_INVITE'
+  | 'STATUS_EFFECTS';
 
 function getNativeFullscreenElement(): Element | null {
   if (typeof document === 'undefined') return null;
@@ -97,6 +103,9 @@ export default function App() {
   const [craftInitialTab, setCraftInitialTab] = useState<'craft' | 'inventory'>(
     'craft'
   );
+  const [expandedEffectIds, setExpandedEffectIds] = useState<
+    Record<string, boolean>
+  >({});
   const [isFullscreen, setIsFullscreen] = useState<boolean>(() =>
     Boolean(getNativeFullscreenElement() || isStandalonePwa())
   );
@@ -801,6 +810,7 @@ export default function App() {
               onOpenMap={() => openModal('MAP')}
               onOpenHandCraftAndInventory={openHandCraftModal}
               onOpenCharacter={() => openModal('CHARACTER')}
+              onOpenStatusEffects={() => openModal('STATUS_EFFECTS')}
               onOpenOnlineInvite={() => openModal('ONLINE_INVITE')}
               onOpenPause={() => openModal('PAUSE')}
               onMountSaddlebagToggle={(open) => {
@@ -923,6 +933,182 @@ export default function App() {
                 void handleSaveAndExitToMenu();
               }}
             />
+          )}
+
+          {/* Active Character Status Effects Modal (Paused, segmented into Positive & Negative, with Accordion Descriptions) */}
+          {activeModal === 'STATUS_EFFECTS' && snapshot && (
+            <div className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-3 sm:p-4 select-none">
+              <div className="w-full max-w-md medieval-panel p-4 sm:p-5 flex flex-col gap-3 max-h-[88dvh]">
+                <div className="flex items-center justify-between border-b-2 border-[#4a301e] pb-2">
+                  <div>
+                    <h2 className="font-pixel text-xs sm:text-sm font-bold text-amber-400">
+                      EFEITOS ATIVOS DO PERSONAGEM
+                    </h2>
+                    <p className="text-[10px] text-[#c4ab7d]">
+                      Jogo em pausa · Toque em um efeito para abrir sua descrição
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={closeModal}
+                    className="min-h-[34px] min-w-[34px] medieval-btn-crimson flex items-center justify-center"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+
+                <div className="overflow-y-auto space-y-3 pr-1">
+                  {(() => {
+                    const allEffects = snapshot.player.statusEffects || [];
+                    const positiveEffects = allEffects.filter(
+                      (e) => e.polarity === 'positive'
+                    );
+                    const negativeEffects = allEffects.filter(
+                      (e) => e.polarity === 'negative'
+                    );
+
+                    const renderEffectCard = (
+                      eff: (typeof allEffects)[number]
+                    ) => {
+                      const isExpanded = Boolean(expandedEffectIds[eff.id]);
+                      const isNegative = eff.polarity === 'negative';
+                      const mins = Math.floor(Math.ceil(eff.duration) / 60);
+                      const secs = Math.ceil(eff.duration) % 60;
+                      const formattedTime =
+                        mins > 0
+                          ? `${mins}m ${String(secs).padStart(2, '0')}s`
+                          : `${Math.ceil(eff.duration)}s`;
+
+                      return (
+                        <div
+                          key={eff.id}
+                          className={`medieval-inset border transition-colors ${
+                            isNegative
+                              ? 'border-purple-500/60 bg-[#1a0d1e]/90'
+                              : 'border-emerald-500/60 bg-[#0d1f16]/90'
+                          }`}
+                        >
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setExpandedEffectIds((prev) => ({
+                                ...prev,
+                                [eff.id]: !prev[eff.id],
+                              }))
+                            }
+                            className="w-full px-3 py-2.5 flex items-center justify-between gap-2 text-left"
+                          >
+                            <div className="flex items-center gap-2.5 min-w-0">
+                              <div
+                                className={`w-8 h-8 rounded flex items-center justify-center shrink-0 border ${
+                                  isNegative
+                                    ? 'bg-[#2a1230] border-purple-400/70'
+                                    : 'bg-[#122b1e] border-emerald-400/70'
+                                }`}
+                              >
+                                {eff.id === 'poison_1' ||
+                                eff.id === 'poison_2' ? (
+                                  <div className="flex items-center">
+                                    <Skull className="w-4 h-4 text-purple-400" />
+                                    <span className="text-[8px] font-pixel font-bold text-purple-200 ml-0.5">
+                                      {eff.id === 'poison_2' ? '2' : '1'}
+                                    </span>
+                                  </div>
+                                ) : eff.id === 'strength' ? (
+                                  <Swords className="w-4 h-4 text-amber-400" />
+                                ) : (
+                                  <Wind className="w-4 h-4 text-cyan-300" />
+                                )}
+                              </div>
+                              <div className="min-w-0">
+                                <div className="font-pixel text-xs font-bold text-[#f5e7c6] truncate">
+                                  {eff.name}
+                                </div>
+                                <div className="text-[10px] text-[#c4ab7d]">
+                                  Tempo restante:{' '}
+                                  <span className="font-mono-tabular font-bold text-amber-300">
+                                    {formattedTime}
+                                  </span>
+                                </div>
+                              </div>
+                            </div>
+
+                            <div className="flex items-center gap-1.5 shrink-0">
+                              <span
+                                className={`px-1.5 py-0.5 rounded text-[9px] font-mono-tabular font-bold border ${
+                                  isNegative
+                                    ? 'bg-purple-950/80 border-purple-500/60 text-purple-200'
+                                    : 'bg-emerald-950/80 border-emerald-500/60 text-emerald-200'
+                                }`}
+                              >
+                                {formattedTime}
+                              </span>
+                              {isExpanded ? (
+                                <ChevronUp className="w-4 h-4 text-amber-300" />
+                              ) : (
+                                <ChevronDown className="w-4 h-4 text-[#c4ab7d]" />
+                              )}
+                            </div>
+                          </button>
+
+                          {isExpanded && (
+                            <div className="px-3 pb-2.5 pt-1 border-t border-white/10 text-xs text-[#e5d5b5] leading-relaxed">
+                              {eff.description}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    };
+
+                    return (
+                      <>
+                        {/* Positive Effects Section */}
+                        <div className="space-y-1.5">
+                          <div className="flex items-center justify-between text-[10px] font-pixel font-bold text-emerald-400 uppercase tracking-wider">
+                            <span>✦ Efeitos Positivos</span>
+                            <span>({positiveEffects.length})</span>
+                          </div>
+                          {positiveEffects.length === 0 ? (
+                            <div className="medieval-inset px-3 py-2 text-[11px] text-[#9c8462] italic">
+                              Nenhum efeito positivo ativo no momento.
+                            </div>
+                          ) : (
+                            <div className="space-y-1.5">
+                              {positiveEffects.map(renderEffectCard)}
+                            </div>
+                          )}
+                        </div>
+
+                        {/* Negative Effects Section */}
+                        <div className="space-y-1.5">
+                          <div className="flex items-center justify-between text-[10px] font-pixel font-bold text-purple-300 uppercase tracking-wider">
+                            <span>☠ Efeitos Negativos</span>
+                            <span>({negativeEffects.length})</span>
+                          </div>
+                          {negativeEffects.length === 0 ? (
+                            <div className="medieval-inset px-3 py-2 text-[11px] text-[#9c8462] italic">
+                              Nenhum efeito negativo ativo no momento.
+                            </div>
+                          ) : (
+                            <div className="space-y-1.5">
+                              {negativeEffects.map(renderEffectCard)}
+                            </div>
+                          )}
+                        </div>
+                      </>
+                    );
+                  })()}
+                </div>
+
+                <button
+                  type="button"
+                  onClick={closeModal}
+                  className="w-full min-h-[40px] medieval-btn-gold font-pixel text-xs font-bold"
+                >
+                  FECHAR E RETOMAR JOGO
+                </button>
+              </div>
+            </div>
           )}
 
           {/* Hardcore Game Over Modal */}

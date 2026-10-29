@@ -402,6 +402,10 @@ export interface CreatureEntity {
   fleeTimer?: number;
   combatTargetId?: string | null;
   specialCooldown?: number;
+  dashTimer?: number;
+  dashDirX?: number;
+  dashDirY?: number;
+  seismicChargeTimer?: number;
   // Village NPC Affinity, Role & Trading
   npcRole?: NpcRole;
   npcProfessionLabel?: string;
@@ -552,6 +556,18 @@ export interface FishingState {
   rippleTimer: number;
 }
 
+export type StatusEffectId = 'poison_1' | 'poison_2' | 'strength' | 'speed';
+
+export interface PlayerStatusEffect {
+  id: StatusEffectId;
+  name: string;
+  description: string;
+  polarity: 'positive' | 'negative';
+  duration: number;
+  maxDuration: number;
+  tickAccumulator?: number;
+}
+
 export interface PlayerState {
   persistentPlayerId?: string;
   x: number;
@@ -579,6 +595,7 @@ export interface PlayerState {
   bonusMaxHpFromItems?: number; // Permanent max HP bonus from items (excluded from base status max HP)
   strengthBuffTimer?: number;
   speedBuffTimer?: number;
+  statusEffects?: PlayerStatusEffect[];
   fishingState?: FishingState | null;
   mountedEntityId?: string | null;
   mountedCreatureData?: CreatureEntity | null;
@@ -646,7 +663,7 @@ export interface OnlineActivationStep {
 }
 
 // REGRA PERMANENTE: A cada nova atualização do jogo, incremente a versão para o número seguinte da beta (ex: 0.4.4-beta -> 0.4.5-beta).
-export const GAME_VERSION = '0.5.8-beta';
+export const GAME_VERSION = '0.5.9-beta';
 export const CURRENT_WORLD_GEN_VERSION = 3;
 
 export interface OnlineSessionInfo {

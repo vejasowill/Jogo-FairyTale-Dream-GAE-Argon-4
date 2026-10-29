@@ -16,11 +16,13 @@ import {
   Pause,
   RotateCcw,
   RotateCw,
+  Skull,
   Sun,
   Swords,
   User,
   Users,
   Utensils,
+  Wind,
   X,
 } from 'lucide-react';
 import { ITEMS } from '../game/core/ItemRegistry';
@@ -55,6 +57,7 @@ interface MobileHudProps {
   onOpenMap: () => void;
   onOpenHandCraftAndInventory: () => void;
   onOpenCharacter: () => void;
+  onOpenStatusEffects?: () => void;
   onOpenOnlineInvite?: () => void;
   onOpenPause: () => void;
   onMountSaddlebagToggle?: (open: boolean) => void;
@@ -83,6 +86,7 @@ export const MobileHud: React.FC<MobileHudProps> = ({
   onOpenMap,
   onOpenHandCraftAndInventory,
   onOpenCharacter,
+  onOpenStatusEffects,
   onOpenOnlineInvite,
   onOpenPause,
   onMountSaddlebagToggle,
@@ -342,122 +346,176 @@ export const MobileHud: React.FC<MobileHudProps> = ({
       {/* TOP BAR: Compact Status Plaque (Left) & Icon-Only Quick Bar (Right) */}
       {/* ================================================================= */}
       <div className="flex items-start justify-between gap-1.5 w-full">
-        {/* Top-Left Compact Status Plaque */}
+        {/* Top-Left Compact Status Plaque + Active Status Effects Bar directly below */}
         <div
           style={getControlTransformStyle('statusPlaque', 'top left')}
           onPointerDown={(e) => handleEditPointerDown('statusPlaque', e)}
           onPointerMove={handleEditPointerMove}
           onPointerUp={handleEditPointerUp}
-          className={`pointer-events-auto medieval-panel px-2 py-1.5 flex flex-col gap-1 min-w-[165px] sm:min-w-[195px] max-w-[54vw] ${
-            isEditingHud
-              ? selectedEditKey === 'statusPlaque'
-                ? 'ring-2 ring-amber-400 cursor-move'
-                : 'ring-1 ring-amber-500/40 cursor-move'
-              : ''
-          }`}
+          className="flex flex-col items-start gap-1 max-w-[54vw]"
         >
-          {/* Row 1: Clock, Weather, Gold & Level */}
-          <div className="flex items-center justify-between gap-1.5 border-b border-[#4a301e] pb-1">
-            <div className="flex items-center gap-1">
-              {isNight ? (
-                <Moon className="w-3.5 h-3.5 text-indigo-300 shrink-0" />
-              ) : (
-                <Sun className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+          <div
+            className={`pointer-events-auto medieval-panel px-2 py-1.5 flex flex-col gap-1 min-w-[165px] sm:min-w-[195px] w-full ${
+              isEditingHud
+                ? selectedEditKey === 'statusPlaque'
+                  ? 'ring-2 ring-amber-400 cursor-move'
+                  : 'ring-1 ring-amber-500/40 cursor-move'
+                : ''
+            }`}
+          >
+            {/* Row 1: Clock, Weather, Gold & Level */}
+            <div className="flex items-center justify-between gap-1.5 border-b border-[#4a301e] pb-1">
+              <div className="flex items-center gap-1">
+                {isNight ? (
+                  <Moon className="w-3.5 h-3.5 text-indigo-300 shrink-0" />
+                ) : (
+                  <Sun className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+                )}
+                <span className="font-pixel text-[9px] sm:text-[10px] font-bold text-amber-300">
+                  D{dayCount}
+                </span>
+                <span className="text-[9px] font-mono-tabular text-[#e5d5b5]">
+                  {formatClock(timeOfDay)}
+                </span>
+              </div>
+
+              <div className="flex items-center gap-1">
+                <div className="flex items-center gap-0.5 px-1 py-0.5 bg-[#120b07] border border-amber-500/40 rounded">
+                  <img
+                    src={spriteAtlas.getItemIconUrl('gold_coin')}
+                    alt="Ouro"
+                    className="w-3 h-3 pixelated"
+                  />
+                  <span className="text-[9px] font-mono-tabular font-bold text-amber-300">
+                    {player.goldCoins ?? 0}
+                  </span>
+                </div>
+                <span className="text-[9px] font-pixel text-amber-400 bg-[#120b07] px-1 py-0.5 border border-[#4a301e]">
+                  Nv.{player.level}
+                </span>
+              </div>
+            </div>
+
+            {/* Row 2: HP & Hunger Bars */}
+            <div className="grid grid-cols-2 gap-1.5">
+              <div className="space-y-0.5">
+                <div className="flex items-center justify-between text-[8px] font-bold">
+                  <span className="flex items-center gap-0.5 text-rose-300">
+                    <Heart className="w-2.5 h-2.5 fill-rose-500 text-rose-500" />
+                    HP
+                  </span>
+                  <span className="font-mono-tabular text-white">
+                    {Math.ceil(player.hp)}/{baseStatusMaxHp}
+                    {armorHpBonus > 0 && (
+                      <span className="text-sky-300"> (+{armorHpBonus})</span>
+                    )}
+                  </span>
+                </div>
+                <div className="h-1.5 w-full bg-[#120b07] border border-[#4a301e] overflow-hidden">
+                  <div
+                    className="h-full bg-gradient-to-r from-red-700 to-rose-500 transition-all duration-200"
+                    style={{ width: `${hpPercent}%` }}
+                  />
+                </div>
+              </div>
+
+              <div className="space-y-0.5">
+                <div className="flex items-center justify-between text-[8px] font-bold">
+                  <span className="flex items-center gap-0.5 text-amber-300">
+                    <Utensils className="w-2.5 h-2.5 text-amber-400" />
+                    Fome
+                  </span>
+                  <span className="font-mono-tabular text-white">
+                    {Math.ceil(player.hunger)}
+                  </span>
+                </div>
+                <div className="h-1.5 w-full bg-[#120b07] border border-[#4a301e] overflow-hidden">
+                  <div
+                    className="h-full bg-gradient-to-r from-amber-700 to-yellow-500 transition-all duration-200"
+                    style={{ width: `${hungerPercent}%` }}
+                  />
+                </div>
+              </div>
+            </div>
+
+            {/* Row 3: Mount Stamina Bar */}
+            {activeMount && (
+              <div className="pt-0.5 border-t border-[#3b2516] flex items-center gap-1.5">
+                <span className="text-[8px] font-pixel text-amber-300 truncate max-w-[70px]">
+                  {activeMount.kind === 'BOAT' ? '⛵' : '🐎'} {activeMount.name}
+                </span>
+                <div className="flex-1 h-1.5 bg-[#120b07] border border-[#4a301e] overflow-hidden">
+                  <div
+                    className={`h-full transition-all duration-100 ${
+                      (activeMount.mountStamina ?? 100) <= 5
+                        ? 'bg-rose-600'
+                        : 'bg-gradient-to-r from-sky-600 to-cyan-400'
+                    }`}
+                    style={{
+                      width: `${Math.max(
+                        0,
+                        Math.min(
+                          100,
+                          ((activeMount.mountStamina ?? 100) /
+                            (activeMount.mountMaxStamina || 100)) *
+                            100
+                        )
+                      )}%`,
+                    }}
+                  />
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Character Active Status Effects Bar (Hidden when no effects are active; max 4 icons + '+N' overflow icon) */}
+          {player.statusEffects && player.statusEffects.length > 0 && (
+            <button
+              type="button"
+              onClick={() => {
+                if (!isEditingHud && onOpenStatusEffects) {
+                  onOpenStatusEffects();
+                }
+              }}
+              className="pointer-events-auto medieval-panel px-1.5 py-1 flex items-center gap-1.5 border border-[#5c3c24] hover:border-amber-400 active:scale-95 transition-transform"
+              title="Toque para ver detalhes dos efeitos ativos"
+            >
+              {player.statusEffects.slice(0, 4).map((eff) => {
+                const isNegative = eff.polarity === 'negative';
+                return (
+                  <div
+                    key={eff.id}
+                    className={`relative w-7 h-7 rounded flex flex-col items-center justify-center border ${
+                      isNegative
+                        ? 'bg-[#231026] border-purple-500/80 text-purple-300'
+                        : 'bg-[#102419] border-emerald-500/80 text-emerald-300'
+                    }`}
+                  >
+                    {eff.id === 'poison_1' || eff.id === 'poison_2' ? (
+                      <div className="flex items-center justify-center">
+                        <Skull className="w-3.5 h-3.5 text-purple-400" />
+                        <span className="text-[7px] font-pixel font-bold text-purple-200 ml-0.5">
+                          {eff.id === 'poison_2' ? '2' : '1'}
+                        </span>
+                      </div>
+                    ) : eff.id === 'strength' ? (
+                      <Swords className="w-3.5 h-3.5 text-amber-400" />
+                    ) : (
+                      <Wind className="w-3.5 h-3.5 text-cyan-300" />
+                    )}
+                    <span className="text-[7px] font-mono-tabular leading-none mt-0.5 text-white/90">
+                      {Math.ceil(eff.duration)}s
+                    </span>
+                  </div>
+                );
+              })}
+
+              {player.statusEffects.length > 4 && (
+                <div className="w-7 h-7 rounded bg-[#1a110b] border border-amber-400/80 flex items-center justify-center text-[9px] font-pixel font-bold text-amber-300">
+                  +{player.statusEffects.length - 4}
+                </div>
               )}
-              <span className="font-pixel text-[9px] sm:text-[10px] font-bold text-amber-300">
-                D{dayCount}
-              </span>
-              <span className="text-[9px] font-mono-tabular text-[#e5d5b5]">
-                {formatClock(timeOfDay)}
-              </span>
-            </div>
-
-            <div className="flex items-center gap-1">
-              <div className="flex items-center gap-0.5 px-1 py-0.5 bg-[#120b07] border border-amber-500/40 rounded">
-                <img
-                  src={spriteAtlas.getItemIconUrl('gold_coin')}
-                  alt="Ouro"
-                  className="w-3 h-3 pixelated"
-                />
-                <span className="text-[9px] font-mono-tabular font-bold text-amber-300">
-                  {player.goldCoins ?? 0}
-                </span>
-              </div>
-              <span className="text-[9px] font-pixel text-amber-400 bg-[#120b07] px-1 py-0.5 border border-[#4a301e]">
-                Nv.{player.level}
-              </span>
-            </div>
-          </div>
-
-          {/* Row 2: HP & Hunger Bars */}
-          <div className="grid grid-cols-2 gap-1.5">
-            <div className="space-y-0.5">
-              <div className="flex items-center justify-between text-[8px] font-bold">
-                <span className="flex items-center gap-0.5 text-rose-300">
-                  <Heart className="w-2.5 h-2.5 fill-rose-500 text-rose-500" />
-                  HP
-                </span>
-                <span className="font-mono-tabular text-white">
-                  {Math.ceil(player.hp)}/{baseStatusMaxHp}
-                  {armorHpBonus > 0 && (
-                    <span className="text-sky-300"> (+{armorHpBonus})</span>
-                  )}
-                </span>
-              </div>
-              <div className="h-1.5 w-full bg-[#120b07] border border-[#4a301e] overflow-hidden">
-                <div
-                  className="h-full bg-gradient-to-r from-red-700 to-rose-500 transition-all duration-200"
-                  style={{ width: `${hpPercent}%` }}
-                />
-              </div>
-            </div>
-
-            <div className="space-y-0.5">
-              <div className="flex items-center justify-between text-[8px] font-bold">
-                <span className="flex items-center gap-0.5 text-amber-300">
-                  <Utensils className="w-2.5 h-2.5 text-amber-400" />
-                  Fome
-                </span>
-                <span className="font-mono-tabular text-white">
-                  {Math.ceil(player.hunger)}
-                </span>
-              </div>
-              <div className="h-1.5 w-full bg-[#120b07] border border-[#4a301e] overflow-hidden">
-                <div
-                  className="h-full bg-gradient-to-r from-amber-700 to-yellow-500 transition-all duration-200"
-                  style={{ width: `${hungerPercent}%` }}
-                />
-              </div>
-            </div>
-          </div>
-
-          {/* Row 3: Mount Stamina Bar */}
-          {activeMount && (
-            <div className="pt-0.5 border-t border-[#3b2516] flex items-center gap-1.5">
-              <span className="text-[8px] font-pixel text-amber-300 truncate max-w-[70px]">
-                {activeMount.kind === 'BOAT' ? '⛵' : '🐎'} {activeMount.name}
-              </span>
-              <div className="flex-1 h-1.5 bg-[#120b07] border border-[#4a301e] overflow-hidden">
-                <div
-                  className={`h-full transition-all duration-100 ${
-                    (activeMount.mountStamina ?? 100) <= 5
-                      ? 'bg-rose-600'
-                      : 'bg-gradient-to-r from-sky-600 to-cyan-400'
-                  }`}
-                  style={{
-                    width: `${Math.max(
-                      0,
-                      Math.min(
-                        100,
-                        ((activeMount.mountStamina ?? 100) /
-                          (activeMount.mountMaxStamina || 100)) *
-                          100
-                      )
-                    )}%`,
-                  }}
-                />
-              </div>
-            </div>
+            </button>
           )}
         </div>
 

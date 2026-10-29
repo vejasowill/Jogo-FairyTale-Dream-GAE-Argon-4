@@ -41,7 +41,9 @@ import {
   PlayerAppearance,
   PlayerAttributes,
   PlayerState,
+  PlayerStatusEffect,
   RemotePlayerState,
+  StatusEffectId,
   TOTAL_INVENTORY_SIZE,
   ToolType,
   WorldMetadata,
@@ -581,13 +583,150 @@ export class GameEngine {
     );
   }
 
+  public applyPlayerStatusEffect(
+    id: StatusEffectId,
+    customDuration?: number
+  ): void {
+    if (!this.player.statusEffects) {
+      this.player.statusEffects = [];
+    }
+
+    const definitions: Record<
+      StatusEffectId,
+      {
+        name: string;
+        description: string;
+        polarity: 'positive' | 'negative';
+        defaultDuration: number;
+      }
+    > = {
+      poison_1: {
+        name: 'Veneno 1',
+        description:
+          'Toxina que corrói o organismo continuamente, causando 1 de dano por segundo durante 20 segundos.',
+        polarity: 'negative',
+        defaultDuration: 20,
+      },
+      poison_2: {
+        name: 'Veneno 2',
+        description:
+          'Peçonha letal de predador de elite que corrói severamente o organismo, causando 2 de dano por segundo durante 15 segundos.',
+        polarity: 'negative',
+        defaultDuration: 15,
+      },
+      strength: {
+        name: 'Fúria de Combate',
+        description:
+          'Aumenta o dano de ataque e o poder de coleta do personagem em +35% enquanto estiver ativo.',
+        polarity: 'positive',
+        defaultDuration: 50,
+      },
+      speed: {
+        name: 'Passos de Vento',
+        description:
+          'Aumenta a velocidade de movimento do personagem em +30% enquanto estiver ativo.',
+        polarity: 'positive',
+        defaultDuration: 45,
+      },
+    };
+
+    const def = definitions[id];
+    const maxDur = customDuration ?? def.defaultDuration;
+
+    // Ao ser atingido novamente pelo mesmo efeito, os efeitos não se acumulam, apenas reseta o tempo de ativação
+    const existing = this.player.statusEffects.find((e) => e.id === id);
+    if (existing) {
+      existing.duration = maxDur;
+      existing.maxDuration = maxDur;
+      existing.name = def.name;
+      existing.description = def.description;
+      existing.polarity = def.polarity;
+    } else {
+      const nextEffect: PlayerStatusEffect = {
+        id,
+        name: def.name,
+        description: def.description,
+        polarity: def.polarity,
+        duration: maxDur,
+        maxDuration: maxDur,
+        tickAccumulator: 0,
+      };
+      this.player.statusEffects.push(nextEffect);
+    }
+
+    if (id === 'strength') {
+      this.player.strengthBuffTimer = maxDur;
+    } else if (id === 'speed') {
+      this.player.speedBuffTimer = maxDur;
+    }
+  }
+
+  public clearAllPlayerStatusEffects(): void {
+    this.player.statusEffects = [];
+    this.player.strengthBuffTimer = 0;
+    this.player.speedBuffTimer = 0;
+  }
+
   private updatePlayer(dt: number): void {
-    if (this.player.strengthBuffTimer && this.player.strengthBuffTimer > 0) {
-      this.player.strengthBuffTimer = Math.max(0, this.player.strengthBuffTimer - dt);
+    if (!this.player.statusEffects) {
+      this.player.statusEffects = [];
     }
-    if (this.player.speedBuffTimer && this.player.speedBuffTimer > 0) {
-      this.player.speedBuffTimer = Math.max(0, this.player.speedBuffTimer - dt);
+
+    // Backfill legacy buff timers if loaded from an older save
+    if (
+      this.player.strengthBuffTimer &&
+      this.player.strengthBuffTimer > 0 &&
+      !this.player.statusEffects.some((e) => e.id === 'strength')
+    ) {
+      this.applyPlayerStatusEffect('strength', this.player.strengthBuffTimer);
     }
+    if (
+      this.player.speedBuffTimer &&
+      this.player.speedBuffTimer > 0 &&
+      !this.player.statusEffects.some((e) => e.id === 'speed')
+    ) {
+      this.applyPlayerStatusEffect('speed', this.player.speedBuffTimer);
+    }
+
+    if (this.player.statusEffects.length > 0) {
+      for (const eff of this.player.statusEffects) {
+        eff.duration = Math.max(0, eff.duration - dt);
+        if (eff.id === 'poison_1' || eff.id === 'poison_2') {
+          eff.tickAccumulator = (eff.tickAccumulator || 0) + dt;
+          while (eff.tickAccumulator >= 1.0 && this.player.hp > 0) {
+            eff.tickAccumulator -= 1.0;
+            const poisonDmg = eff.id === 'poison_2' ? 2 : 1;
+            this.player.hp = Math.max(0, this.player.hp - poisonDmg);
+            this.player.hitFlashTimer = Math.max(
+              this.player.hitFlashTimer,
+              0.14
+            );
+            this.addFloatingText(
+              `-${poisonDmg} (${eff.name})`,
+              this.player.x,
+              this.player.y - 18,
+              '#a855f7'
+            );
+            if (this.player.hp <= 0) {
+              this.handlePlayerDeath();
+              return;
+            }
+          }
+        }
+      }
+
+      this.player.statusEffects = this.player.statusEffects.filter(
+        (e) => e.duration > 0
+      );
+    }
+
+    const strengthEff = this.player.statusEffects.find(
+      (e) => e.id === 'strength'
+    );
+    this.player.strengthBuffTimer = strengthEff ? strengthEff.duration : 0;
+
+    const speedEff = this.player.statusEffects.find((e) => e.id === 'speed');
+    this.player.speedBuffTimer = speedEff ? speedEff.duration : 0;
 
     const move = this.input.getMoveVector();
     const hasCamelBuff = this.entities.creatures.some(
@@ -2655,15 +2794,93 @@ export class GameEngine {
           continue;
         }
 
-        // BANDIT emergency self-heal when below 35% HP
+        // STONE_GOLEM active 3s immobile charge for Impacto Sísmico (3x damage in 80px radius)
+        if (
+          cr.kind === CreatureKind.STONE_GOLEM &&
+          cr.seismicChargeTimer !== undefined &&
+          cr.seismicChargeTimer > 0
+        ) {
+          cr.vx = 0;
+          cr.vy = 0;
+          const prevSec = Math.ceil(cr.seismicChargeTimer);
+          cr.seismicChargeTimer = Math.max(0, cr.seismicChargeTimer - dt);
+          const currSec = Math.ceil(cr.seismicChargeTimer);
+          if (currSec < prevSec && currSec > 0) {
+            this.renderer.spawnRipple(cr.x, cr.y, '#38bdf8', 46, 0.42);
+          }
+
+          if (cr.seismicChargeTimer <= 0) {
+            cr.seismicChargeTimer = undefined;
+            cr.attackCooldown = 1.65;
+            cr.attackTimer = 0.35;
+            const seismicDmg = Math.round(cr.attackDamage * 3);
+            const SEISMIC_RADIUS = 80;
+
+            this.addFloatingText(
+              '💥 Impacto Sísmico!',
+              cr.x,
+              cr.y - 24,
+              '#38bdf8'
+            );
+            this.renderer.spawnRipple(
+              cr.x,
+              cr.y,
+              '#38bdf8',
+              SEISMIC_RADIUS,
+              0.55
+            );
+            this.renderer.spawnBurst(cr.x, cr.y, 'SPARK', 16);
+            soundManager.playHitStone();
+
+            if (
+              this.player.hp > 0 &&
+              Math.hypot(this.player.x - cr.x, this.player.y - cr.y) <=
+                SEISMIC_RADIUS
+            ) {
+              this.damagePlayer(seismicDmg, cr.x, cr.y, cr);
+            }
+
+            for (const other of this.entities.creatures) {
+              if (
+                other.id === cr.id ||
+                other.hp <= 0 ||
+                other.isInsideHouse ||
+                EntityManager.isPeacefulAnimalKind(other.kind)
+              ) {
+                continue;
+              }
+              const isRival =
+                other.kind === CreatureKind.VILLAGER ||
+                other.kind === CreatureKind.WANDERER ||
+                (other.tamed && EntityManager.isCombatAllyKind(other.kind)) ||
+                other.retaliateTargetId === cr.id ||
+                cr.retaliateTargetId === other.id;
+              if (
+                isRival &&
+                Math.hypot(other.x - cr.x, other.y - cr.y) <= SEISMIC_RADIUS
+              ) {
+                this.damageCreature(other, seismicDmg, cr.x, cr.y, 1.8, cr);
+              }
+            }
+          }
+          continue;
+        }
+
+        // BANDIT emergency self-heal when below 30% HP (30 HP normal, 60 HP elite, 10s cooldown)
         if (
           cr.kind === CreatureKind.BANDIT &&
-          cr.hp < cr.maxHp * 0.35 &&
+          cr.hp < cr.maxHp * 0.3 &&
           (cr.specialCooldown ?? 0) <= 0
         ) {
-          cr.specialCooldown = 14;
-          cr.hp = Math.min(cr.maxHp, cr.hp + 28);
-          this.addFloatingText('+28 HP Bandagem!', cr.x, cr.y - 20, '#4ade80');
+          const healAmount = cr.isElite ? 60 : 30;
+          cr.specialCooldown = 10;
+          cr.hp = Math.min(cr.maxHp, cr.hp + healAmount);
+          this.addFloatingText(
+            `+${healAmount} HP Bandagem!`,
+            cr.x,
+            cr.y - 20,
+            '#4ade80'
+          );
         }
 
         if (closestEnemyType !== 'none') {
@@ -2681,72 +2898,94 @@ export class GameEngine {
           if (distToTarget > attackReach) {
             let speedMult = 1.0;
 
-            // FOREST_STALKER Ambush Lunge (land only)
+            // FOREST_STALKER Web Leap Dash toward the target (land only)
             if (
               !cr.isSwimming &&
               cr.kind === CreatureKind.FOREST_STALKER &&
-              distToTarget < 125 &&
-              distToTarget > 42 &&
-              (cr.specialCooldown ?? 0) <= 0
+              distToTarget < 130 &&
+              distToTarget > 34 &&
+              (cr.specialCooldown ?? 0) <= 0 &&
+              (!cr.dashTimer || cr.dashTimer <= 0)
             ) {
               cr.specialCooldown = 4.2;
-              speedMult = 2.35;
+              cr.dashTimer = 0.36;
+              cr.dashDirX = (targetX - cr.x) / distToTarget;
+              cr.dashDirY = (targetY - cr.y) / distToTarget;
               this.addFloatingText('Salto de Teia!', cr.x, cr.y - 18, '#a855f7');
+              this.renderer.spawnRipple(cr.x, cr.y, '#a855f7', 16, 0.28);
             }
 
-            // DESERT_SCORPION Imperial Sting Dash (land only)
             if (
-              !cr.isSwimming &&
-              cr.kind === CreatureKind.DESERT_SCORPION &&
-              distToTarget < 105 &&
-              distToTarget > 36 &&
-              (cr.specialCooldown ?? 0) <= 0
+              cr.kind === CreatureKind.FOREST_STALKER &&
+              cr.dashTimer &&
+              cr.dashTimer > 0
             ) {
-              cr.specialCooldown = 4.8;
-              speedMult = 2.15;
-              this.addFloatingText(
-                'Investida de Ferrão!',
-                cr.x,
-                cr.y - 18,
-                '#f59e0b'
+              cr.dashTimer = Math.max(0, cr.dashTimer - dt);
+              const dashSpeed = cr.moveSpeed * 3.2;
+              cr.vx = (cr.dashDirX || 0) * dashSpeed;
+              cr.vy = (cr.dashDirY || 0) * dashSpeed;
+            } else {
+              // DESERT_SCORPION Imperial Sting Dash (land only)
+              if (
+                !cr.isSwimming &&
+                cr.kind === CreatureKind.DESERT_SCORPION &&
+                distToTarget < 105 &&
+                distToTarget > 36 &&
+                (cr.specialCooldown ?? 0) <= 0
+              ) {
+                cr.specialCooldown = 4.8;
+                speedMult = 2.15;
+                this.addFloatingText(
+                  'Investida de Ferrão!',
+                  cr.x,
+                  cr.y - 18,
+                  '#f59e0b'
+                );
+              }
+
+              this.steerCreatureToward(
+                cr,
+                targetX,
+                targetY,
+                cr.moveSpeed * speedMult,
+                dt,
+                cr.kind === CreatureKind.BANDIT
               );
             }
-
-            this.steerCreatureToward(
-              cr,
-              targetX,
-              targetY,
-              cr.moveSpeed * speedMult,
-              dt,
-              cr.kind === CreatureKind.BANDIT
-            );
           } else {
+            cr.dashTimer = 0;
             cr.vx = 0;
             cr.vy = 0;
             if (cr.attackCooldown <= 0) {
+              // STONE_GOLEM: 10% chance when attacking to start 3s immobile charge for Impacto Sísmico (3x damage in 80px radius)
+              if (
+                cr.kind === CreatureKind.STONE_GOLEM &&
+                Math.random() < 0.1
+              ) {
+                cr.seismicChargeTimer = 3.0;
+                cr.vx = 0;
+                cr.vy = 0;
+                this.addFloatingText(
+                  '⚡ Carregando Impacto Sísmico (3s)...',
+                  cr.x,
+                  cr.y - 24,
+                  '#38bdf8'
+                );
+                this.renderer.spawnRipple(cr.x, cr.y, '#38bdf8', 56, 0.5);
+                continue;
+              }
+
               cr.attackCooldown =
-                cr.kind === CreatureKind.OGRE ||
-                cr.kind === CreatureKind.STONE_GOLEM
+                cr.kind === CreatureKind.OGRE
+                  ? 1.5
+                  : cr.kind === CreatureKind.STONE_GOLEM
                   ? 1.65
                   : cr.kind === CreatureKind.FOREST_STALKER
                   ? 0.95
                   : 1.15;
               cr.attackTimer = 0.3;
 
-              let dmg = cr.attackDamage;
-              if (
-                cr.kind === CreatureKind.STONE_GOLEM &&
-                (cr.specialCooldown ?? 0) <= 0
-              ) {
-                cr.specialCooldown = 5.5;
-                dmg = Math.round(cr.attackDamage * 1.25);
-                this.addFloatingText(
-                  '💥 Impacto Sísmico!',
-                  cr.x,
-                  cr.y - 22,
-                  '#38bdf8'
-                );
-              }
+              const dmg = cr.attackDamage;
 
               if (closestEnemyType === 'player') {
                 this.damagePlayer(dmg, cr.x, cr.y, cr);
@@ -2763,6 +3002,7 @@ export class GameEngine {
             }
           }
         } else {
+          cr.dashTimer = 0;
           this.updateWanderAi(cr, dt);
         }
       }
@@ -8097,6 +8337,25 @@ export class GameEngine {
     }
 
     this.addFloatingText(`-${finalDmg}`, this.player.x, this.player.y - 18, '#f87171');
+
+    if (
+      this.player.hp > 0 &&
+      attackerCreature &&
+      (attackerCreature.kind === CreatureKind.FOREST_STALKER ||
+        attackerCreature.kind === CreatureKind.DESERT_SCORPION)
+    ) {
+      const poisonId: StatusEffectId = attackerCreature.isElite
+        ? 'poison_2'
+        : 'poison_1';
+      this.applyPlayerStatusEffect(poisonId);
+      this.addFloatingText(
+        poisonId === 'poison_2' ? '☠️ Veneno 2 (15s)!' : '☠️ Veneno 1 (20s)!',
+        this.player.x,
+        this.player.y - 30,
+        '#a855f7'
+      );
+    }
+
     this.emitUiSnapshot();
 
     if (this.player.hp <= 0) {
@@ -8324,6 +8583,7 @@ export class GameEngine {
     this.player.hp = Math.round(this.player.maxHp * 0.7);
     this.player.hunger = Math.round(this.player.maxHunger * 0.7);
     this.player.stamina = this.player.maxStamina;
+    this.clearAllPlayerStatusEffects();
     const mount = this.getActiveMount();
     if (mount) {
       if (mount.kind === CreatureKind.BOAT) {
@@ -8605,11 +8865,21 @@ export class GameEngine {
       );
     }
 
-    // 4. Timed Combat / Speed Buffs
+    // 4. Status Cleansing Items (Coco Costeiro, Elixir de Ervas & Âmbar, Elixir Tropical de Coco)
+    const isStatusCleanser =
+      item.id === 'coconut' ||
+      item.id === 'healing_salve' ||
+      item.id === 'coconut_elixir';
+    const hadActiveEffects = (this.player.statusEffects?.length || 0) > 0;
+    if (isStatusCleanser) {
+      this.clearAllPlayerStatusEffects();
+    }
+
+    // 5. Timed Combat / Speed Buffs
     if (item.buffType === 'strength' && item.buffDuration) {
-      this.player.strengthBuffTimer = item.buffDuration;
+      this.applyPlayerStatusEffect('strength', item.buffDuration);
     } else if (item.buffType === 'speed' && item.buffDuration) {
-      this.player.speedBuffTimer = item.buffDuration;
+      this.applyPlayerStatusEffect('speed', item.buffDuration);
     }
 
     this.consumeInventoryAt(slotIndex, 1);
@@ -8630,6 +8900,14 @@ export class GameEngine {
         this.player.x,
         this.player.y - 24,
         '#fde047'
+      );
+    } else if (isStatusCleanser && hadActiveEffects) {
+      soundManager.playTameSuccess();
+      this.addFloatingText(
+        `✦ Efeitos Removidos! (+${item.hpRestore || 0} HP / +${item.hungerRestore || 0} Fome)`,
+        this.player.x,
+        this.player.y - 22,
+        '#38bdf8'
       );
     } else {
       soundManager.playPickup();
