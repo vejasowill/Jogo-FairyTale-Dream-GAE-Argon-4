@@ -51,6 +51,10 @@ export type EquipmentSlot = 'head' | 'body' | 'legs' | 'feet';
 
 export type CropType = 'wheat' | 'carrot' | 'medic_herb' | 'solar_bloom' | 'berry';
 
+export type AttackDeliveryType = 'melee' | 'ranged';
+
+export type AttackTargetScope = 'single' | 'area';
+
 export interface ItemDefinition {
   id: string;
   name: string;
@@ -63,6 +67,10 @@ export interface ItemDefinition {
   toolTier?: number; // 1 = Basic (Wood/Stone), 2 = Iron/Rare, 3 = Astral/Primordial
   attackDamage?: number;
   attackRange?: number;
+  attackDelivery?: AttackDeliveryType;
+  attackTargetScope?: AttackTargetScope;
+  attackSpeedMod?: number;
+  coastalSpeedBonus?: number;
   harvestPower?: number;
   lifesteal?: number;
   knockbackMult?: number;

@@ -21,6 +21,7 @@ import {
   CreatureKind,
   DeathBag,
   DroppedItem,
+  EcologicalZone,
   EquipmentSlot,
   FloatingText,
   GAME_VERSION,
@@ -643,13 +644,43 @@ export class GameEngine {
       1 + Math.max(0, this.player.attributes.agility || 0) * 0.06;
     const equipSpeedMult = 1 + this.getTotalEquipmentSpeedBonus();
     const camelMult = hasCamelBuff ? 1.18 : 1.0;
+
+    const heldSlotForSpeed =
+      this.player.inventory[this.player.selectedHotbarIndex];
+    const heldItemForSpeed = heldSlotForSpeed
+      ? ITEMS[heldSlotForSpeed.itemId]
+      : null;
+    let coastalMult = 1.0;
+    if (
+      heldItemForSpeed?.coastalSpeedBonus &&
+      heldItemForSpeed.coastalSpeedBonus > 0
+    ) {
+      const tileBiome = this.world.getTileBiomeFast(pTile.tx, pTile.ty);
+      const isCoastalOrWater =
+        inWater ||
+        tileBiome === BiomeType.ISLAND ||
+        this.world.getEcologicalZoneAtWorld(this.player.x, this.player.y) ===
+          EcologicalZone.COASTAL_TROPICS ||
+        this.world.isTileNearWater(pTile.tx, pTile.ty, 3);
+      if (isCoastalOrWater) {
+        coastalMult = 1 + heldItemForSpeed.coastalSpeedBonus;
+      }
+    }
+
     const playerSwimSpeed =
       (this.player.swimSpeed || 58) *
       agilityMult *
       equipSpeedMult *
+      coastalMult *
       speedBuffMult;
     const normalLandSpeed =
-      96 * agilityMult * equipSpeedMult * camelMult * floorMult * speedBuffMult;
+      96 *
+      agilityMult *
+      equipSpeedMult *
+      camelMult *
+      floorMult *
+      coastalMult *
+      speedBuffMult;
 
     let baseSpeed = inWater ? playerSwimSpeed : normalLandSpeed;
     const isInputMoving = Math.hypot(move.x, move.y) > 0.05;
@@ -2131,7 +2162,7 @@ export class GameEngine {
   private updateCreatures(dt: number): void {
     this.houseSyncTimer -= dt;
     if (this.houseSyncTimer <= 0) {
-      this.houseSyncTimer = 0.65;
+      this.houseSyncTimer = 1.8;
       this.syncVillageHouseAssignments();
     }
     this.updatePlayerStallCustomerTraffic(dt);
@@ -2142,11 +2173,16 @@ export class GameEngine {
       const cr = this.entities.creatures[i];
       if (!cr || cr.hp <= 0) continue;
 
+      const distToPlayer = Math.hypot(
+        this.player.x - cr.x,
+        this.player.y - cr.y
+      );
+
       // If Villager is currently inside their house:
       // - Stay invisible/safe inside until dawn (05:30), or until the player knocks on the door.
-      // - At dawn, automatically step outside to resume daily village life!
+      // - At dawn, automatically step outside to resume daily village life (when within active range of the player)!
       if (cr.isInsideHouse) {
-        if (!isSunsetOrNight) {
+        if (!isSunsetOrNight && distToPlayer <= 820) {
           this.exitVillagerFromHouse(cr, false);
           this.addFloatingText(
             `☀️ ${cr.name} saiu de casa`,
@@ -2186,6 +2222,29 @@ export class GameEngine {
         continue;
       }
 
+      // Skip expensive per-frame raycast steering & world queries for creatures far outside the active simulation radius
+      const isFollowingPet = Boolean(cr.tamed && cr.aiState === 'follow');
+      if (!isFollowingPet && distToPlayer > 780) {
+        cr.vx = 0;
+        cr.vy = 0;
+        cr.animFrame = 0;
+        if (cr.hitFlashTimer > 0) {
+          cr.hitFlashTimer = Math.max(0, cr.hitFlashTimer - dt);
+        }
+        if (
+          isSunsetOrNight &&
+          cr.kind === CreatureKind.VILLAGER &&
+          cr.homeHouseId &&
+          cr.homeX !== undefined &&
+          cr.homeY !== undefined
+        ) {
+          cr.isInsideHouse = true;
+          cr.x = cr.homeX;
+          cr.y = cr.homeY;
+        }
+        continue;
+      }
+
       cr.isSwimming = this.world.isWorldPosInWater(cr.x, cr.y);
 
       if (cr.hitFlashTimer > 0) cr.hitFlashTimer = Math.max(0, cr.hitFlashTimer - dt);
@@ -2221,8 +2280,6 @@ export class GameEngine {
           cr.retaliateTargetId = undefined;
         }
       }
-
-      const distToPlayer = Math.hypot(this.player.x - cr.x, this.player.y - cr.y);
 
       // =====================================================================
       // 1. FACTION: PLAYER_ALLY (Tamed Pets — 3 States: 'stay', 'follow', 'graze')
@@ -2495,8 +2552,15 @@ export class GameEngine {
           if (!isSunsetOrNight && this.updateNpcMarketStallShopping(cr, dt)) {
             // Wanderer is currently inspecting or walking to a Player Market Stall
           } else {
-            // Look for an available non-player Village House (< 2 villagers)
-            const availableHouse = this.findAvailableHouseNear(cr.x, cr.y, 235);
+            // Throttle available-house scans using specialCooldown so Wanderers don't scan 9 chunks 60 times/sec
+            let availableHouse: ReturnType<typeof this.findAvailableHouseNear> =
+              null;
+            if ((cr.specialCooldown ?? 0) <= 0) {
+              availableHouse = this.findAvailableHouseNear(cr.x, cr.y, 235);
+              if (!availableHouse) {
+                cr.specialCooldown = 2.0 + Math.random() * 1.0;
+              }
+            }
             if (availableHouse) {
               if (availableHouse.dist <= 52) {
                 this.settleWandererIntoHouse(cr, availableHouse.house);
@@ -2908,6 +2972,100 @@ export class GameEngine {
             intentionalSpeed < 1.2))
       ) {
         cr.hp = Math.min(cr.maxHp, cr.hp + dt * 1.25);
+      }
+    }
+
+    // Physical overlap resistance between mobs so creatures following/chasing the player push each other apart and never stack
+    this.resolveCreatureOverlapResistance(dt);
+  }
+
+  /**
+   * Resolves overlap between active creatures by applying a mutual push-apart resistance
+   * (analogous to `pushPlayerOutOfHitbox`), preventing mobs that follow or chase the player
+   * from stacking on the same spot while respecting world hitboxes (`canEntityOccupy`).
+   */
+  private resolveCreatureOverlapResistance(dt: number): void {
+    const creatures = this.entities.creatures;
+    const count = creatures.length;
+    if (count < 2) return;
+
+    const isEligible = (c: CreatureEntity): boolean => {
+      if (!c || c.hp <= 0 || c.isInsideHouse || c.kind === CreatureKind.BOAT) {
+        return false;
+      }
+      if (this.player.mountedEntityId === c.id) return false;
+      if (
+        Math.hypot(this.player.x - c.x, this.player.y - c.y) > 780 &&
+        !(c.tamed && c.aiState === 'follow')
+      ) {
+        return false;
+      }
+      return true;
+    };
+
+    const getRadius = (c: CreatureEntity): number => {
+      if (c.kind === CreatureKind.OGRE || c.kind === CreatureKind.STONE_GOLEM) {
+        return 13.5;
+      }
+      if (c.kind === CreatureKind.CAMEL || c.kind === CreatureKind.HORSE) {
+        return 11.5;
+      }
+      return 9.5;
+    };
+
+    const applySafePush = (c: CreatureEntity, pushX: number, pushY: number): void => {
+      const nx = c.x + pushX;
+      const ny = c.y + pushY;
+      if (this.canEntityOccupy(nx, ny)) {
+        c.x = nx;
+        c.y = ny;
+      } else {
+        if (this.canEntityOccupy(nx, c.y)) {
+          c.x = nx;
+        }
+        if (this.canEntityOccupy(c.x, ny)) {
+          c.y = ny;
+        }
+      }
+    };
+
+    for (let i = 0; i < count; i++) {
+      const a = creatures[i];
+      if (!isEligible(a)) continue;
+      const radA = getRadius(a);
+
+      for (let j = i + 1; j < count; j++) {
+        const b = creatures[j];
+        if (!isEligible(b)) continue;
+
+        const minDist = radA + getRadius(b);
+        const dx = a.x - b.x;
+        const dy = a.y - b.y;
+        if (Math.abs(dx) >= minDist || Math.abs(dy) >= minDist) continue;
+
+        const dist = Math.hypot(dx, dy);
+        if (dist >= minDist) continue;
+
+        let ux: number;
+        let uy: number;
+        if (dist > 0.05) {
+          ux = dx / dist;
+          uy = dy / dist;
+        } else {
+          // Deterministic separation angle if two mobs ever land on the exact same pixel
+          const fallbackAng = ((i * 7 + j * 13) % 16) * (Math.PI / 8);
+          ux = Math.cos(fallbackAng);
+          uy = Math.sin(fallbackAng);
+        }
+
+        const overlap = minDist - dist;
+        const pushStep = Math.min(
+          overlap * 0.52,
+          Math.max(1.8, (55 + overlap * 10) * dt)
+        );
+
+        applySafePush(a, ux * pushStep, uy * pushStep);
+        applySafePush(b, -ux * pushStep, -uy * pushStep);
       }
     }
   }
@@ -3532,8 +3690,8 @@ export class GameEngine {
       const dx = cr.x - other.x;
       const dy = cr.y - other.y;
       const d = Math.hypot(dx, dy);
-      if (d > 0.1 && d < 20) {
-        const push = ((20 - d) / 20) * activeSpeed * 0.55;
+      if (d > 0.05 && d < 24) {
+        const push = ((24 - d) / 24) * activeSpeed * 0.78;
         sepX += (dx / d) * push;
         sepY += (dy / d) * push;
       }
@@ -4118,9 +4276,16 @@ export class GameEngine {
     }
   }
 
+  private agricultureUpdateTimer = 0;
+
   private updateWorldObjects(dt: number): void {
-    // Advance moisture evaporation and crop growth stages in loaded chunks
-    this.world.updateAgriculture(dt, false);
+    // Advance moisture evaporation and crop growth stages on a 0.5s tick instead of scanning all chunks every frame
+    this.agricultureUpdateTimer += dt;
+    if (this.agricultureUpdateTimer >= 0.5) {
+      const stepDt = this.agricultureUpdateTimer;
+      this.agricultureUpdateTimer = 0;
+      this.world.updateAgriculture(stepDt, false);
+    }
     // Advance active Campfire & Furnace smelting/cooking queues
     this.updateThermalStations(dt);
 
@@ -4432,7 +4597,21 @@ export class GameEngine {
       }
     }
 
-    const targetsToHit =
+    const sortByLockAndDistance = (a: CreatureEntity, b: CreatureEntity): number => {
+      if (priorityLockTarget) {
+        if (a.id === priorityLockTarget.id) return -1;
+        if (b.id === priorityLockTarget.id) return 1;
+      }
+      const da = Math.hypot(a.x - hitCenterX, a.y - hitCenterY);
+      const db = Math.hypot(b.x - hitCenterX, b.y - hitCenterY);
+      return da - db;
+    };
+
+    hostileTargetsInArc.sort(sortByLockAndDistance);
+    neutralFaunaInArc.sort(sortByLockAndDistance);
+    peacefulNpcsInArc.sort(sortByLockAndDistance);
+
+    const rawTargetsToHit =
       hostileTargetsInArc.length > 0
         ? hostileTargetsInArc
         : neutralFaunaInArc.length > 0
@@ -4440,6 +4619,14 @@ export class GameEngine {
         : this.innocentFireEnabled
         ? peacefulNpcsInArc
         : [];
+
+    // Respect weapon attackTargetScope:
+    // - 'area' (em área): hits all mobs in the aimed area
+    // - 'single' (individual, default): hits only 1 mob
+    const isAreaAttack = heldItem?.attackTargetScope === 'area';
+    const targetsToHit = isAreaAttack
+      ? rawTargetsToHit
+      : rawTargetsToHit.slice(0, 1);
 
     if (targetsToHit.length > 0) {
       this.resetInterruptedBreakingTargets(null);
@@ -4451,18 +4638,18 @@ export class GameEngine {
           this.player.y,
           knockbackMult
         );
-        if (heldItem?.lifesteal && heldItem.lifesteal > 0) {
-          this.player.hp = Math.min(
-            this.player.maxHp,
-            this.player.hp + heldItem.lifesteal
-          );
-          this.addFloatingText(
-            `+${heldItem.lifesteal} HP Dreno`,
-            this.player.x,
-            this.player.y - 24,
-            '#c084fc'
-          );
-        }
+      }
+      if (heldItem?.lifesteal && heldItem.lifesteal > 0) {
+        this.player.hp = Math.min(
+          this.player.maxHp,
+          this.player.hp + heldItem.lifesteal
+        );
+        this.addFloatingText(
+          `+${heldItem.lifesteal} HP Dreno`,
+          this.player.x,
+          this.player.y - 24,
+          '#c084fc'
+        );
       }
       return;
     }
@@ -8486,10 +8673,21 @@ export class GameEngine {
   }
 
   /**
-   * Returns the realistic attack/harvest swing cooldown in seconds (0.42s at Nv. 0, fast enough to chain break hits smoothly).
+   * Returns the realistic attack/harvest swing cooldown in seconds (0.42s at Nv. 0, fast enough to chain break hits smoothly),
+   * adjusted by any held weapon's `attackSpeedMod` (e.g. -1.0 = -100% attack speed -> doubles swing cooldown).
    */
   public getPlayerAttackCooldownSec(): number {
-    return Math.max(0.18, 0.42 / this.getAttackSpeedMultiplier());
+    const heldSlot = this.player.inventory[this.player.selectedHotbarIndex];
+    const heldItem = heldSlot ? ITEMS[heldSlot.itemId] : null;
+    const itemSpeedMod = heldItem?.attackSpeedMod ?? 0;
+
+    let baseCooldown = 0.42 / this.getAttackSpeedMultiplier();
+    if (itemSpeedMod < 0) {
+      baseCooldown *= 1 + Math.abs(itemSpeedMod);
+    } else if (itemSpeedMod > 0) {
+      baseCooldown /= 1 + itemSpeedMod;
+    }
+    return Math.max(0.18, baseCooldown);
   }
 
   /**
@@ -10793,6 +10991,11 @@ export class GameEngine {
       return false;
     }
 
+    if (Math.hypot(this.player.x - cr.x, this.player.y - cr.y) > 750) {
+      cr.stallInspectCooldown = 3.5 + Math.random() * 2.0;
+      return false;
+    }
+
     for (let dy = -2; dy <= 2; dy++) {
       for (let dx = -2; dx <= 2; dx++) {
         const chunk =
@@ -10850,6 +11053,8 @@ export class GameEngine {
       }
     }
 
+    // Throttle next scan when no open player stall is found nearby so NPCs never scan 25 chunks every frame!
+    cr.stallInspectCooldown = 3.0 + Math.random() * 2.0;
     return false;
   }
 

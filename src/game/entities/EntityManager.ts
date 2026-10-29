@@ -1246,6 +1246,8 @@ export class EntityManager {
     }
   }
 
+  private landmarkCheckTimer = 0;
+
   public updateSpawning(
     dt: number,
     world: WorldManager,
@@ -1253,19 +1255,23 @@ export class EntityManager {
     playerY: number,
     isNight: boolean
   ): void {
-    // 1. Despawn untamed non-villager creatures very far from player to keep mobile memory low
+    this.landmarkCheckTimer -= dt;
+    if (this.landmarkCheckTimer <= 0) {
+      this.landmarkCheckTimer = 0.45;
+      // Populate any newly revealed Landmark/Village chunks near the player
+      this.populateNearbyLandmarkChunks(world, playerX, playerY);
+    }
+
+    this.spawnTimer -= dt;
+    if (this.spawnTimer > 0) return;
+    this.spawnTimer = isNight ? 2.8 : 3.5;
+
+    // Despawn untamed non-villager creatures very far from player to keep mobile memory low
     this.creatures = this.creatures.filter((c) => {
       if (c.tamed || c.kind === CreatureKind.VILLAGER || c.kind === CreatureKind.BOAT) return true;
       const dist = Math.hypot(c.x - playerX, c.y - playerY);
       return dist < 1480;
     });
-
-    // 2. Populate any newly revealed Landmark/Village chunks near the player
-    this.populateNearbyLandmarkChunks(world, playerX, playerY);
-
-    this.spawnTimer -= dt;
-    if (this.spawnTimer > 0) return;
-    this.spawnTimer = isNight ? 2.8 : 3.5;
 
     const wildCount = this.creatures.filter(
       (c) => !c.tamed && c.kind !== CreatureKind.VILLAGER && c.kind !== CreatureKind.BOAT

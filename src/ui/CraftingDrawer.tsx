@@ -1199,9 +1199,64 @@ export const CraftingDrawer: React.FC<CraftingDrawerProps> = ({
 
                   {/* Stats Badges */}
                   <div className="flex flex-wrap gap-1.5 text-[9px] font-mono-tabular">
+                    {resultItem.toolTier !== undefined && (
+                      <span className="px-1.5 py-0.5 bg-amber-950/80 border border-amber-500/40 text-amber-200">
+                        ★ Nível: <b>{resultItem.toolTier}</b>
+                      </span>
+                    )}
                     {resultItem.attackDamage && (
                       <span className="px-1.5 py-0.5 bg-rose-950/80 border border-rose-500/40 text-rose-300">
                         ⚔ ATQ: <b>{resultItem.attackDamage}</b>
+                      </span>
+                    )}
+                    {resultItem.attackDamage && (
+                      <span className="px-1.5 py-0.5 bg-slate-900/90 border border-slate-500/40 text-slate-200">
+                        {resultItem.attackDelivery === 'ranged'
+                          ? '🏹 À Distância'
+                          : '🗡 Corpo-a-corpo'}
+                      </span>
+                    )}
+                    {resultItem.attackDamage && (
+                      <span
+                        className={`px-1.5 py-0.5 border ${
+                          resultItem.attackTargetScope === 'area'
+                            ? 'bg-purple-950/80 border-purple-500/50 text-purple-200'
+                            : 'bg-sky-950/80 border-sky-500/40 text-sky-200'
+                        }`}
+                      >
+                        {resultItem.attackTargetScope === 'area'
+                          ? '💥 Em Área'
+                          : '🎯 Individual'}
+                      </span>
+                    )}
+                    {resultItem.attackRange && (
+                      <span className="px-1.5 py-0.5 bg-indigo-950/80 border border-indigo-500/40 text-indigo-200">
+                        📏 Alcance: <b>{resultItem.attackRange} px</b>
+                      </span>
+                    )}
+                    {resultItem.lifesteal && (
+                      <span className="px-1.5 py-0.5 bg-fuchsia-950/80 border border-fuchsia-500/40 text-fuchsia-300">
+                        🩸 Cura/Golpe: <b>+{resultItem.lifesteal} HP</b>
+                      </span>
+                    )}
+                    {resultItem.knockbackMult && resultItem.knockbackMult !== 1 && (
+                      <span className="px-1.5 py-0.5 bg-orange-950/80 border border-orange-500/40 text-orange-300">
+                        💨 Empurrão: <b>{resultItem.knockbackMult}×</b>
+                      </span>
+                    )}
+                    {resultItem.attackSpeedMod !== undefined &&
+                      resultItem.attackSpeedMod !== 0 && (
+                        <span className="px-1.5 py-0.5 bg-red-950/80 border border-red-500/40 text-red-300">
+                          ⏱ Vel. ATK:{' '}
+                          <b>
+                            {resultItem.attackSpeedMod > 0 ? '+' : ''}
+                            {Math.round(resultItem.attackSpeedMod * 100)}%
+                          </b>
+                        </span>
+                      )}
+                    {resultItem.coastalSpeedBonus && (
+                      <span className="px-1.5 py-0.5 bg-cyan-950/80 border border-cyan-500/40 text-cyan-200">
+                        🌊 Bônus na Costa: <b>+{Math.round(resultItem.coastalSpeedBonus * 100)}% Vel.</b>
                       </span>
                     )}
                     {resultItem.harvestPower && (
@@ -1543,6 +1598,75 @@ export const CraftingDrawer: React.FC<CraftingDrawerProps> = ({
                     <p className="text-[10px] text-[#e5d5b5] leading-snug">
                       {selectedSlotItem.description}
                     </p>
+
+                    {(selectedSlotItem.attackDamage ||
+                      selectedSlotItem.defenseBonus ||
+                      selectedSlotItem.hpRestore ||
+                      selectedSlotItem.hungerRestore) && (
+                      <div className="flex flex-wrap gap-1 text-[9px] font-mono-tabular">
+                        {selectedSlotItem.toolTier !== undefined && (
+                          <span className="px-1.5 py-0.5 bg-amber-950/80 border border-amber-500/40 text-amber-200">
+                            ★ Nível: <b>{selectedSlotItem.toolTier}</b>
+                          </span>
+                        )}
+                        {selectedSlotItem.attackDamage && (
+                          <span className="px-1.5 py-0.5 bg-rose-950/80 border border-rose-500/40 text-rose-300">
+                            ⚔ ATQ: <b>{selectedSlotItem.attackDamage}</b>
+                          </span>
+                        )}
+                        {selectedSlotItem.attackDamage && (
+                          <span className="px-1.5 py-0.5 bg-slate-900/90 border border-slate-500/40 text-slate-200">
+                            {selectedSlotItem.attackDelivery === 'ranged'
+                              ? '🏹 À Distância'
+                              : '🗡 Corpo-a-corpo'}
+                          </span>
+                        )}
+                        {selectedSlotItem.attackDamage && (
+                          <span
+                            className={`px-1.5 py-0.5 border ${
+                              selectedSlotItem.attackTargetScope === 'area'
+                                ? 'bg-purple-950/80 border-purple-500/50 text-purple-200'
+                                : 'bg-sky-950/80 border-sky-500/40 text-sky-200'
+                            }`}
+                          >
+                            {selectedSlotItem.attackTargetScope === 'area'
+                              ? '💥 Em Área'
+                              : '🎯 Individual'}
+                          </span>
+                        )}
+                        {selectedSlotItem.attackRange && (
+                          <span className="px-1.5 py-0.5 bg-indigo-950/80 border border-indigo-500/40 text-indigo-200">
+                            📏 Alcance: <b>{selectedSlotItem.attackRange} px</b>
+                          </span>
+                        )}
+                        {selectedSlotItem.lifesteal && (
+                          <span className="px-1.5 py-0.5 bg-fuchsia-950/80 border border-fuchsia-500/40 text-fuchsia-300">
+                            🩸 Cura/Golpe: <b>+{selectedSlotItem.lifesteal} HP</b>
+                          </span>
+                        )}
+                        {selectedSlotItem.knockbackMult &&
+                          selectedSlotItem.knockbackMult !== 1 && (
+                            <span className="px-1.5 py-0.5 bg-orange-950/80 border border-orange-500/40 text-orange-300">
+                              💨 Empurrão: <b>{selectedSlotItem.knockbackMult}×</b>
+                            </span>
+                          )}
+                        {selectedSlotItem.attackSpeedMod !== undefined &&
+                          selectedSlotItem.attackSpeedMod !== 0 && (
+                            <span className="px-1.5 py-0.5 bg-red-950/80 border border-red-500/40 text-red-300">
+                              ⏱ Vel. ATK:{' '}
+                              <b>
+                                {selectedSlotItem.attackSpeedMod > 0 ? '+' : ''}
+                                {Math.round(selectedSlotItem.attackSpeedMod * 100)}%
+                              </b>
+                            </span>
+                          )}
+                        {selectedSlotItem.coastalSpeedBonus && (
+                          <span className="px-1.5 py-0.5 bg-cyan-950/80 border border-cyan-500/40 text-cyan-200">
+                            🌊 Costa: <b>+{Math.round(selectedSlotItem.coastalSpeedBonus * 100)}% Vel.</b>
+                          </span>
+                        )}
+                      </div>
+                    )}
 
                     {FUEL_ITEMS[selectedSlotItem.id] && (
                       <div className="bg-orange-950/60 p-1.5 border border-orange-500/50 text-[10px] text-orange-200 flex items-center justify-between">

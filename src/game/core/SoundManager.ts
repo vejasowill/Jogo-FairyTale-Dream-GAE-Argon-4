@@ -324,7 +324,13 @@ class SoundManager {
     if (this.desiredTrack !== nextTrack) {
       this.desiredTrack = nextTrack;
       this.syncMusicPlayback();
-    } else if (!this.isPausedByGame && !this.musicSource) {
+    } else if (
+      !this.isPausedByGame &&
+      !this.musicSource &&
+      !this.loadingTracks[nextTrack] &&
+      (!this.ctx || this.ctx.state === 'running') &&
+      this.musicVolume > 0.001
+    ) {
       this.syncMusicPlayback();
     }
   }
