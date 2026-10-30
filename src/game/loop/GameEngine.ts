@@ -122,6 +122,7 @@ export class GameEngine {
   public buildOrientation: 'auto' | 'horizontal' | 'vertical' = 'auto';
   public showHitboxPreview = false;
   public innocentFireEnabled = false;
+  public hudAttackButtonHeld = false;
   private preferredTargetCreatureId: string | null = null;
   private activeBreakingTargetId: string | null = null;
 
@@ -382,6 +383,14 @@ export class GameEngine {
     this.syncPauseState();
   }
 
+  public setAttackButtonHeld(held: boolean): void {
+    this.hudAttackButtonHeld = Boolean(held);
+  }
+
+  public isActionButtonHeld(): boolean {
+    return Boolean(this.input.actionHeld || this.hudAttackButtonHeld);
+  }
+
   public syncPauseState(): void {
     const canPauseNow = !this.hasConnectedNetworkPlayers();
     const shouldPause = this.uiPauseRequested && canPauseNow;
@@ -392,6 +401,9 @@ export class GameEngine {
         this.player.vx = 0;
         this.player.vy = 0;
         this.player.isMoving = false;
+        this.hudAttackButtonHeld = false;
+        this.input.actionHeld = false;
+        this.input.actionPressed = false;
       }
       soundManager.setMusicPaused(this.isPauseMenuOpen || this.isGameOver);
       soundManager.setMusicMuffled(
@@ -524,10 +536,12 @@ export class GameEngine {
       }
     }
 
-    // Check Keyboard Action triggers
+    // Check Keyboard & Hold Action triggers
     if (this.input.actionPressed) {
       this.input.actionPressed = false;
-      this.performAttackOrHarvestAction();
+      this.performAttackOrHarvestAction(false);
+    } else if (this.isActionButtonHeld() && this.player.swingTimer <= 0) {
+      this.performAttackOrHarvestAction(true);
     }
     if (this.input.interactPressed) {
       this.input.interactPressed = false;
@@ -1583,18 +1597,13 @@ export class GameEngine {
     st: PlacedStructure,
     precomputedInfo?: ReturnType<GameEngine['getEnclosedBuildingOwnerInfo']>
   ): boolean {
+    // Player cannot claim ownership of a house through its door;
+    // ownership is only claimed by defining/claiming a rest point inside the structure.
     if (
       st.type === PlaceableType.WOOD_DOOR ||
       st.type === PlaceableType.IRON_GATE
     ) {
-      const buildingInfo =
-        precomputedInfo !== undefined
-          ? precomputedInfo
-          : this.getEnclosedBuildingOwnerInfo(st.tileX, st.tileY);
-      if (!buildingInfo || buildingInfo.ownerType !== null) return false;
-      return buildingInfo.interiorRestPoints.some(
-        (rp) => this.getHouseResidents(rp.id).length === 0 || buildingInfo.clearedAfterLoss
-      );
+      return false;
     }
 
     if (!this.isRestPointStructure(st)) return false;
@@ -1648,23 +1657,6 @@ export class GameEngine {
     }
     if (!targetSt || !this.canPlayerClaimRestPoint(targetSt)) {
       return false;
-    }
-
-    // If the player clicked "Tomar Posse" while aiming at the door of an unowned enclosed structure,
-    // resolve the target to a claimable rest point inside that structure!
-    if (
-      targetSt.type === PlaceableType.WOOD_DOOR ||
-      targetSt.type === PlaceableType.IRON_GATE
-    ) {
-      const buildingInfo = this.getEnclosedBuildingOwnerInfo(
-        targetSt.tileX,
-        targetSt.tileY
-      );
-      const claimableRp = buildingInfo?.interiorRestPoints.find(
-        (rp) => this.getHouseResidents(rp.id).length === 0
-      );
-      if (!claimableRp) return false;
-      targetSt = claimableRp;
     }
 
     const ownerName =
@@ -2377,9 +2369,13 @@ export class GameEngine {
           cr.homeX !== undefined &&
           cr.homeY !== undefined
         ) {
+          const wasInside = cr.isInsideHouse;
           cr.isInsideHouse = true;
           cr.x = cr.homeX;
           cr.y = cr.homeY;
+          if (!wasInside) {
+            this.checkAndAutoCloseNpcHouseDoors(cr);
+          }
         }
         continue;
       }
@@ -2407,13 +2403,23 @@ export class GameEngine {
         }
       }
 
-      // Validate retaliateTargetId (clear if target died, entered a house, or moved too far away)
+      // Validate retaliateTargetId (clear if target died, entered a house, moved too far away, or entered a closed structure while attacker is a hostile mob)
       let retaliateTarget: CreatureEntity | null = null;
       if (cr.retaliateTargetId) {
         const found = this.entities.creatures.find(
           (o) => o.id === cr.retaliateTargetId && o.hp > 0 && !o.isInsideHouse
         );
-        if (found && Math.hypot(found.x - cr.x, found.y - cr.y) <= 280) {
+        const isHostileObserver =
+          EntityManager.isMonsterKind(cr.kind) || Boolean(cr.isHostile);
+        const targetHiddenInStructure =
+          found &&
+          isHostileObserver &&
+          this.isTargetHiddenInClosedStructureFrom(found.x, found.y, cr.x, cr.y);
+        if (
+          found &&
+          !targetHiddenInStructure &&
+          Math.hypot(found.x - cr.x, found.y - cr.y) <= 280
+        ) {
           retaliateTarget = found;
         } else {
           cr.retaliateTargetId = undefined;
@@ -2526,9 +2532,14 @@ export class GameEngine {
             } else {
               cr.vx = 0;
               cr.vy = 0;
+              cr.direction = EntityManager.vectorToDirection(
+                dx,
+                dy,
+                cr.direction
+              );
               if (cr.attackCooldown <= 0) {
                 cr.attackCooldown = 1.05;
-                cr.attackTimer = 0.25;
+                cr.attackTimer = 0.34;
                 const allyDamage = Math.max(8, cr.attackDamage || 10);
                 this.damageCreature(
                   enemyTarget,
@@ -2640,9 +2651,14 @@ export class GameEngine {
           } else {
             cr.vx = 0;
             cr.vy = 0;
+            cr.direction = EntityManager.vectorToDirection(
+              dx,
+              dy,
+              cr.direction
+            );
             if (cr.attackCooldown <= 0) {
               cr.attackCooldown = 1.05;
-              cr.attackTimer = 0.28;
+              cr.attackTimer = 0.34;
               this.damageCreature(
                 creatureTarget,
                 cr.attackDamage,
@@ -2653,7 +2669,16 @@ export class GameEngine {
               );
             }
           }
-        } else if (cr.isHostile && distToPlayer < 220) {
+        } else if (
+          cr.isHostile &&
+          distToPlayer < 220 &&
+          !this.isTargetHiddenInClosedStructureFrom(
+            this.player.x,
+            this.player.y,
+            cr.x,
+            cr.y
+          )
+        ) {
           // PRIORITY 2: Only if provoked/attacked by the Player AND no Monster is nearby, retaliate against Player
           // EXCEPT when the player is holding the Peace Item (Tratado da Paz Real) in hand to negotiate forgiveness!
           if (this.isPlayerHoldingPeaceItem()) {
@@ -2679,9 +2704,14 @@ export class GameEngine {
             } else {
               cr.vx = 0;
               cr.vy = 0;
+              cr.direction = EntityManager.vectorToDirection(
+                this.player.x - cr.x,
+                this.player.y - cr.y,
+                cr.direction
+              );
               if (cr.attackCooldown <= 0) {
                 cr.attackCooldown = 1.15;
-                cr.attackTimer = 0.28;
+                cr.attackTimer = 0.34;
                 this.damagePlayer(cr.attackDamage, cr.x, cr.y, cr);
               }
             }
@@ -2738,6 +2768,7 @@ export class GameEngine {
       // =====================================================================
       // 3. FACTION: MONSTER (Zombie, Ogre, Spider, Scorpion, Golem, Bandit)
       //    - Chooses to attack the CLOSEST enemy (Player, Villager, Wanderer, or Pet)!
+      //    - Loses sight of any enemy that is inside an enclosed structure!
       // =====================================================================
       else if (EntityManager.isMonsterKind(cr.kind) || cr.isHostile) {
         const aggroRadius =
@@ -2756,7 +2787,16 @@ export class GameEngine {
         let closestEnemyType: 'none' | 'player' | 'creature' = 'none';
         let closestEnemyCreature: CreatureEntity | null = null;
 
-        if (this.player.hp > 0 && distToPlayer < bestEnemyDist) {
+        if (
+          this.player.hp > 0 &&
+          distToPlayer < bestEnemyDist &&
+          !this.isTargetHiddenInClosedStructureFrom(
+            this.player.x,
+            this.player.y,
+            cr.x,
+            cr.y
+          )
+        ) {
           bestEnemyDist = distToPlayer;
           closestEnemyType = 'player';
         }
@@ -2775,7 +2815,15 @@ export class GameEngine {
 
           if (isRivalCreature) {
             const d = Math.hypot(other.x - cr.x, other.y - cr.y);
-            if (d < bestEnemyDist) {
+            if (
+              d < bestEnemyDist &&
+              !this.isTargetHiddenInClosedStructureFrom(
+                other.x,
+                other.y,
+                cr.x,
+                cr.y
+              )
+            ) {
               bestEnemyDist = d;
               closestEnemyType = 'creature';
               closestEnemyCreature = other;
@@ -2956,6 +3004,11 @@ export class GameEngine {
             cr.dashTimer = 0;
             cr.vx = 0;
             cr.vy = 0;
+            cr.direction = EntityManager.vectorToDirection(
+              targetX - cr.x,
+              targetY - cr.y,
+              cr.direction
+            );
             if (cr.attackCooldown <= 0) {
               // STONE_GOLEM: 10% chance when attacking to start 3s immobile charge for Impacto Sísmico (3x damage in 80px radius)
               if (
@@ -2983,7 +3036,11 @@ export class GameEngine {
                   : cr.kind === CreatureKind.FOREST_STALKER
                   ? 0.95
                   : 1.15;
-              cr.attackTimer = 0.3;
+              cr.attackTimer =
+                cr.kind === CreatureKind.OGRE ||
+                cr.kind === CreatureKind.STONE_GOLEM
+                  ? 0.38
+                  : 0.34;
 
               const dmg = cr.attackDamage;
 
@@ -3104,9 +3161,14 @@ export class GameEngine {
             } else {
               cr.vx = 0;
               cr.vy = 0;
+              cr.direction = EntityManager.vectorToDirection(
+                dx,
+                dy,
+                cr.direction
+              );
               if (cr.attackCooldown <= 0) {
                 cr.attackCooldown = 1.2;
-                cr.attackTimer = 0.25;
+                cr.attackTimer = 0.34;
                 this.damageCreature(
                   retaliateTarget,
                   cr.attackDamage,
@@ -4024,6 +4086,7 @@ export class GameEngine {
         cr.homeY - 20,
         '#fde047'
       );
+      this.checkAndAutoCloseNpcHouseDoors(cr);
       this.emitUiSnapshot();
       return;
     }
@@ -4037,6 +4100,93 @@ export class GameEngine {
       dt,
       true
     );
+  }
+
+  /**
+   * When villagers enter their house to sleep, as soon as ALL residents of that specific house are sleeping,
+   * the door(s) of that house close automatically.
+   * Applies ONLY to NPC-owned houses (`ownerType === 'VILLAGER'`). Player-owned houses (`ownerType === 'PLAYER'`) do not have this.
+   */
+  private checkAndAutoCloseNpcHouseDoors(cr: CreatureEntity): void {
+    if (cr.homeX === undefined || cr.homeY === undefined) return;
+    const homeTile = this.world.worldToTile(cr.homeX, cr.homeY);
+    const ownerInfo = this.getEnclosedBuildingOwnerInfo(homeTile.tx, homeTile.ty);
+    if (!ownerInfo || ownerInfo.ownerType !== 'VILLAGER') return;
+
+    const allResidents: CreatureEntity[] = [];
+    const seenIds = new Set<string>();
+    for (const rp of ownerInfo.interiorRestPoints) {
+      for (const res of this.getHouseResidents(rp.id)) {
+        if (!seenIds.has(res.id)) {
+          seenIds.add(res.id);
+          allResidents.push(res);
+        }
+      }
+    }
+
+    if (allResidents.length === 0) return;
+    const allSleeping = allResidents.every((r) => r.isInsideHouse);
+    if (!allSleeping) return;
+
+    const building = this.renderer.getBuildingAtTile(
+      this.world,
+      homeTile.tx,
+      homeTile.ty
+    );
+    if (!building) return;
+
+    for (const coord of building.footprintSet) {
+      const [txStr, tyStr] = coord.split(',');
+      const tx = Number(txStr);
+      const ty = Number(tyStr);
+      const { cx, cy } = this.world.tileToChunk(tx, ty);
+      const chunk = this.world.chunks[WorldManager.chunkKey(cx, cy)];
+      if (!chunk) continue;
+      for (const st of chunk.structures) {
+        if (
+          st.tileX === tx &&
+          st.tileY === ty &&
+          (st.type === PlaceableType.WOOD_DOOR ||
+            st.type === PlaceableType.IRON_GATE) &&
+          st.isOpen
+        ) {
+          st.isOpen = false;
+          this.renderer.spawnBurst(
+            tx * TILE_SIZE + 16,
+            ty * TILE_SIZE + 16,
+            'WOOD',
+            4
+          );
+          this.syncChunkAtTile(tx, ty);
+        }
+      }
+    }
+  }
+
+  /**
+   * Returns true if the target entity at (targetX, targetY) is inside an enclosed structure
+   * while the hostile mob at (observerX, observerY) is outside that structure.
+   */
+  private isTargetHiddenInClosedStructureFrom(
+    targetX: number,
+    targetY: number,
+    observerX: number,
+    observerY: number
+  ): boolean {
+    const tTile = this.world.worldToTile(targetX, targetY);
+    const building = this.renderer.getBuildingAtTile(
+      this.world,
+      tTile.tx,
+      tTile.ty
+    );
+    if (!building || !building.interiorSet.has(`${tTile.tx},${tTile.ty}`)) {
+      return false;
+    }
+    const oTile = this.world.worldToTile(observerX, observerY);
+    if (building.interiorSet.has(`${oTile.tx},${oTile.ty}`)) {
+      return false;
+    }
+    return true;
   }
 
   /**
@@ -4552,9 +4702,20 @@ export class GameEngine {
           if (node.hitFlashTimer > 0) {
             node.hitFlashTimer = Math.max(0, node.hitFlashTimer - dt);
           }
-          // Minecraft-style continuous breaking: if breaking stops or becomes inactive, regenerate full HP
+          // Minecraft-style continuous breaking: if breaking stops or becomes inactive, regenerate full HP.
+          // While holding the attack/break button on the active breaking target, preserve progress!
           if (node.hp < node.maxHp) {
-            node.breakIdleTimer = (node.breakIdleTimer ?? 0) - dt;
+            if (
+              this.isActionButtonHeld() &&
+              this.activeBreakingTargetId === node.id
+            ) {
+              node.breakIdleTimer = Math.max(
+                node.breakIdleTimer ?? 0,
+                this.getPlayerAttackCooldownSec() + 0.55
+              );
+            } else {
+              node.breakIdleTimer = (node.breakIdleTimer ?? 0) - dt;
+            }
             if (node.breakIdleTimer <= 0) {
               node.hp = node.maxHp;
               node.breakIdleTimer = 0;
@@ -4570,9 +4731,20 @@ export class GameEngine {
           if (st.hitFlashTimer > 0) {
             st.hitFlashTimer = Math.max(0, st.hitFlashTimer - dt);
           }
-          // Minecraft-style continuous breaking: if breaking stops or becomes inactive, regenerate full HP
+          // Minecraft-style continuous breaking: if breaking stops or becomes inactive, regenerate full HP.
+          // While holding the attack/break button on the active breaking target, preserve progress!
           if (st.hp < st.maxHp) {
-            st.breakIdleTimer = (st.breakIdleTimer ?? 0) - dt;
+            if (
+              this.isActionButtonHeld() &&
+              this.activeBreakingTargetId === st.id
+            ) {
+              st.breakIdleTimer = Math.max(
+                st.breakIdleTimer ?? 0,
+                this.getPlayerAttackCooldownSec() + 0.55
+              );
+            } else {
+              st.breakIdleTimer = (st.breakIdleTimer ?? 0) - dt;
+            }
             if (st.breakIdleTimer <= 0) {
               st.hp = st.maxHp;
               st.breakIdleTimer = 0;
@@ -4700,8 +4872,10 @@ export class GameEngine {
 
   /**
    * BUTTON 1: BOTÃO PRINCIPAL — Ataque ou Uso de Ferramenta na Mão
+   * @param isHoldRepeat When true, this call comes from holding the button down.
+   *                     Holding ONLY repeats breaking (NatureNode / PlacedStructure), NEVER combat attacks.
    */
-  public performAttackOrHarvestAction(): void {
+  public performAttackOrHarvestAction(isHoldRepeat = false): void {
     if (this.isPaused || this.isGameOver) return;
     if (this.player.swingTimer > 0) return;
 
@@ -4713,87 +4887,28 @@ export class GameEngine {
       heldItem?.toolType === ToolType.FISHING_ROD ||
       heldItem?.id === 'fishing_rod'
     ) {
-      this.handleFishingRodAction();
+      if (!isHoldRepeat) {
+        this.handleFishingRodAction();
+      }
       return;
     }
 
-    this.player.swingDuration = this.getPlayerAttackCooldownSec();
-    this.player.swingTimer = this.player.swingDuration;
-    this.player.stamina = Math.max(0, this.player.stamina - 3);
-    soundManager.playSwing();
+    let swingTriggered = false;
+    const triggerSwing = () => {
+      if (swingTriggered) return;
+      swingTriggered = true;
+      this.player.swingDuration = this.getPlayerAttackCooldownSec();
+      this.player.swingTimer = this.player.swingDuration;
+      this.player.stamina = Math.max(0, this.player.stamina - 3);
+      soundManager.playSwing();
+    };
+
+    if (!isHoldRepeat) {
+      triggerSwing();
+    }
 
     const reach = heldItem?.attackRange || 46;
     let dirVec = this.getDirectionOffset(this.player.direction);
-
-    // Smart Combat Auto-Aim: If a hostile monster/enemy (or explicitly tapped target) is within melee combat range,
-    // automatically face toward the priority enemy so the player can fight side-by-side with allies effortlessly!
-    let priorityLockTarget: CreatureEntity | null = null;
-    if (this.preferredTargetCreatureId) {
-      const pref = this.entities.creatures.find(
-        (c) =>
-          c.id === this.preferredTargetCreatureId &&
-          c.hp > 0 &&
-          !c.tamed &&
-          !c.isInsideHouse
-      );
-      this.preferredTargetCreatureId = null;
-      if (pref && Math.hypot(pref.x - this.player.x, pref.y - this.player.y) <= reach * 1.35) {
-        const isPeacefulNpc =
-          (pref.kind === CreatureKind.VILLAGER || pref.kind === CreatureKind.WANDERER) &&
-          !pref.isHostile;
-        if (!isPeacefulNpc || this.innocentFireEnabled) {
-          priorityLockTarget = pref;
-        }
-      }
-    }
-
-    if (!priorityLockTarget) {
-      let bestHostileScore = Infinity;
-      for (const cr of this.entities.creatures) {
-        if (cr.hp <= 0 || cr.tamed || cr.isInsideHouse) continue;
-        const isHostileEnemy = EntityManager.isMonsterKind(cr.kind) || cr.isHostile;
-        if (!isHostileEnemy) continue;
-
-        const dx = cr.x - this.player.x;
-        const dy = cr.y - this.player.y;
-        const dist = Math.hypot(dx, dy);
-        if (dist <= reach * 1.25) {
-          // Favor enemies in front of the player, but still catch enemies right next to the player in a brawl
-          const dot =
-            dist > 0.001 ? (dx / dist) * dirVec.x + (dy / dist) * dirVec.y : 1;
-          const anglePenalty = dot >= 0.15 ? 0 : dot >= -0.35 ? 14 : 32;
-          const score = dist + anglePenalty;
-          if (score < bestHostileScore) {
-            bestHostileScore = score;
-            priorityLockTarget = cr;
-          }
-        }
-      }
-    }
-
-    if (priorityLockTarget) {
-      const dx = priorityLockTarget.x - this.player.x;
-      const dy = priorityLockTarget.y - this.player.y;
-      this.player.direction = EntityManager.vectorToDirection(
-        dx,
-        dy,
-        this.player.direction
-      );
-      dirVec = this.getDirectionOffset(this.player.direction);
-    }
-
-    const hitCenterX = priorityLockTarget
-      ? this.player.x +
-        ((priorityLockTarget.x - this.player.x) /
-          Math.max(1, Math.hypot(priorityLockTarget.x - this.player.x, priorityLockTarget.y - this.player.y))) *
-          Math.min(reach * 0.65, Math.hypot(priorityLockTarget.x - this.player.x, priorityLockTarget.y - this.player.y))
-      : this.player.x + dirVec.x * (reach * 0.65);
-    const hitCenterY = priorityLockTarget
-      ? this.player.y +
-        ((priorityLockTarget.y - this.player.y) /
-          Math.max(1, Math.hypot(priorityLockTarget.x - this.player.x, priorityLockTarget.y - this.player.y))) *
-          Math.min(reach * 0.65, Math.hypot(priorityLockTarget.x - this.player.x, priorityLockTarget.y - this.player.y))
-      : this.player.y + dirVec.y * (reach * 0.65);
 
     const strengthBuff =
       this.player.strengthBuffTimer && this.player.strengthBuffTimer > 0
@@ -4803,107 +4918,185 @@ export class GameEngine {
       (1 + Math.max(0, this.player.attributes.strength || 0) * 0.12) *
       strengthBuff;
     const baseAttack = (heldItem?.attackDamage || 4) * strengthMult;
-    const baseHarvest = (heldItem?.harvestPower || 10) * strengthMult;
     const equippedTool = heldItem?.toolType || ToolType.NONE;
     const equippedTier = heldItem?.toolTier || 0;
     const knockbackMult = heldItem?.knockbackMult || 1.0;
 
-    // A. Categorize Creatures in hit arc by strict Combat Priority:
-    //    Tier 1: Hostile Enemies & Monsters (ALWAYS hit first; never hit allies alongside them!)
-    //    Tier 2: Wild Neutral Fauna (Sheep, Boar, Camel)
-    //    Tier 3: Peaceful NPCs (Villager, Wanderer) — ONLY hit if no enemies/fauna in arc AND innocentFireEnabled is ON!
-    const hostileTargetsInArc: CreatureEntity[] = [];
-    const neutralFaunaInArc: CreatureEntity[] = [];
-    const peacefulNpcsInArc: CreatureEntity[] = [];
+    let blockedPeacefulNpc: CreatureEntity | null = null;
 
-    for (let i = this.entities.creatures.length - 1; i >= 0; i--) {
-      const cr = this.entities.creatures[i];
-      if (cr.hp <= 0 || cr.tamed || cr.isInsideHouse) continue;
-      const dist = Math.hypot(cr.x - hitCenterX, cr.y - hitCenterY);
-      const isLockTarget = priorityLockTarget && cr.id === priorityLockTarget.id;
-      if (dist <= reach * 0.85 || isLockTarget) {
-        const isHostileEnemy = EntityManager.isMonsterKind(cr.kind) || cr.isHostile;
-        const isPeacefulNpc =
-          (cr.kind === CreatureKind.VILLAGER || cr.kind === CreatureKind.WANDERER) &&
-          !cr.isHostile;
-
-        if (isHostileEnemy) {
-          hostileTargetsInArc.push(cr);
-        } else if (isPeacefulNpc) {
-          peacefulNpcsInArc.push(cr);
-        } else {
-          neutralFaunaInArc.push(cr);
+    // Combat attacks ONLY happen on initial click (!isHoldRepeat), never while holding the button down,
+    // and never when holding the Shovel (Pá causes 0 damage).
+    if (!isHoldRepeat && equippedTool !== ToolType.SHOVEL) {
+      // Smart Combat Auto-Aim: If a hostile monster/enemy (or explicitly tapped target) is within melee combat range,
+      // automatically face toward the priority enemy so the player can fight side-by-side with allies effortlessly!
+      let priorityLockTarget: CreatureEntity | null = null;
+      if (this.preferredTargetCreatureId) {
+        const pref = this.entities.creatures.find(
+          (c) =>
+            c.id === this.preferredTargetCreatureId &&
+            c.hp > 0 &&
+            !c.tamed &&
+            !c.isInsideHouse
+        );
+        this.preferredTargetCreatureId = null;
+        if (pref && Math.hypot(pref.x - this.player.x, pref.y - this.player.y) <= reach * 1.35) {
+          const isPeacefulNpc =
+            (pref.kind === CreatureKind.VILLAGER || pref.kind === CreatureKind.WANDERER) &&
+            !pref.isHostile;
+          if (!isPeacefulNpc || this.innocentFireEnabled) {
+            priorityLockTarget = pref;
+          }
         }
       }
-    }
 
-    const sortByLockAndDistance = (a: CreatureEntity, b: CreatureEntity): number => {
+      if (!priorityLockTarget) {
+        let bestHostileScore = Infinity;
+        for (const cr of this.entities.creatures) {
+          if (cr.hp <= 0 || cr.tamed || cr.isInsideHouse) continue;
+          const isHostileEnemy = EntityManager.isMonsterKind(cr.kind) || cr.isHostile;
+          if (!isHostileEnemy) continue;
+
+          const dx = cr.x - this.player.x;
+          const dy = cr.y - this.player.y;
+          const dist = Math.hypot(dx, dy);
+          if (dist <= reach * 1.25) {
+            // Favor enemies in front of the player, but still catch enemies right next to the player in a brawl
+            const dot =
+              dist > 0.001 ? (dx / dist) * dirVec.x + (dy / dist) * dirVec.y : 1;
+            const anglePenalty = dot >= 0.15 ? 0 : dot >= -0.35 ? 14 : 32;
+            const score = dist + anglePenalty;
+            if (score < bestHostileScore) {
+              bestHostileScore = score;
+              priorityLockTarget = cr;
+            }
+          }
+        }
+      }
+
       if (priorityLockTarget) {
-        if (a.id === priorityLockTarget.id) return -1;
-        if (b.id === priorityLockTarget.id) return 1;
-      }
-      const da = Math.hypot(a.x - hitCenterX, a.y - hitCenterY);
-      const db = Math.hypot(b.x - hitCenterX, b.y - hitCenterY);
-      return da - db;
-    };
-
-    hostileTargetsInArc.sort(sortByLockAndDistance);
-    neutralFaunaInArc.sort(sortByLockAndDistance);
-    peacefulNpcsInArc.sort(sortByLockAndDistance);
-
-    const rawTargetsToHit =
-      hostileTargetsInArc.length > 0
-        ? hostileTargetsInArc
-        : neutralFaunaInArc.length > 0
-        ? neutralFaunaInArc
-        : this.innocentFireEnabled
-        ? peacefulNpcsInArc
-        : [];
-
-    // Respect weapon attackTargetScope:
-    // - 'area' (em área): hits all mobs in the aimed area
-    // - 'single' (individual, default): hits only 1 mob
-    const isAreaAttack = heldItem?.attackTargetScope === 'area';
-    const targetsToHit = isAreaAttack
-      ? rawTargetsToHit
-      : rawTargetsToHit.slice(0, 1);
-
-    if (targetsToHit.length > 0) {
-      this.resetInterruptedBreakingTargets(null);
-      for (const cr of targetsToHit) {
-        this.damageCreature(
-          cr,
-          Math.round(baseAttack),
-          this.player.x,
-          this.player.y,
-          knockbackMult
+        const dx = priorityLockTarget.x - this.player.x;
+        const dy = priorityLockTarget.y - this.player.y;
+        this.player.direction = EntityManager.vectorToDirection(
+          dx,
+          dy,
+          this.player.direction
         );
+        dirVec = this.getDirectionOffset(this.player.direction);
       }
-      if (heldItem?.lifesteal && heldItem.lifesteal > 0) {
-        this.player.hp = Math.min(
-          this.player.maxHp,
-          this.player.hp + heldItem.lifesteal
-        );
-        this.addFloatingText(
-          `+${heldItem.lifesteal} HP Dreno`,
-          this.player.x,
-          this.player.y - 24,
-          '#c084fc'
-        );
+
+      const hitCenterX = priorityLockTarget
+        ? this.player.x +
+          ((priorityLockTarget.x - this.player.x) /
+            Math.max(1, Math.hypot(priorityLockTarget.x - this.player.x, priorityLockTarget.y - this.player.y))) *
+            Math.min(reach * 0.65, Math.hypot(priorityLockTarget.x - this.player.x, priorityLockTarget.y - this.player.y))
+        : this.player.x + dirVec.x * (reach * 0.65);
+      const hitCenterY = priorityLockTarget
+        ? this.player.y +
+          ((priorityLockTarget.y - this.player.y) /
+            Math.max(1, Math.hypot(priorityLockTarget.x - this.player.x, priorityLockTarget.y - this.player.y))) *
+            Math.min(reach * 0.65, Math.hypot(priorityLockTarget.x - this.player.x, priorityLockTarget.y - this.player.y))
+        : this.player.y + dirVec.y * (reach * 0.65);
+
+      // A. Categorize Creatures in hit arc by strict Combat Priority:
+      //    Tier 1: Hostile Enemies & Monsters (ALWAYS hit first; never hit allies alongside them!)
+      //    Tier 2: Wild Neutral Fauna (Sheep, Boar, Camel)
+      //    Tier 3: Peaceful NPCs (Villager, Wanderer) — ONLY hit if no enemies/fauna in arc AND innocentFireEnabled is ON!
+      const hostileTargetsInArc: CreatureEntity[] = [];
+      const neutralFaunaInArc: CreatureEntity[] = [];
+      const peacefulNpcsInArc: CreatureEntity[] = [];
+
+      for (let i = this.entities.creatures.length - 1; i >= 0; i--) {
+        const cr = this.entities.creatures[i];
+        if (cr.hp <= 0 || cr.tamed || cr.isInsideHouse) continue;
+        const dist = Math.hypot(cr.x - hitCenterX, cr.y - hitCenterY);
+        const isLockTarget = priorityLockTarget && cr.id === priorityLockTarget.id;
+        if (dist <= reach * 0.85 || isLockTarget) {
+          const isHostileEnemy = EntityManager.isMonsterKind(cr.kind) || cr.isHostile;
+          const isPeacefulNpc =
+            (cr.kind === CreatureKind.VILLAGER || cr.kind === CreatureKind.WANDERER) &&
+            !cr.isHostile;
+
+          if (isHostileEnemy) {
+            hostileTargetsInArc.push(cr);
+          } else if (isPeacefulNpc) {
+            peacefulNpcsInArc.push(cr);
+          } else {
+            neutralFaunaInArc.push(cr);
+          }
+        }
       }
-      return;
+
+      const sortByLockAndDistance = (a: CreatureEntity, b: CreatureEntity): number => {
+        if (priorityLockTarget) {
+          if (a.id === priorityLockTarget.id) return -1;
+          if (b.id === priorityLockTarget.id) return 1;
+        }
+        const da = Math.hypot(a.x - hitCenterX, a.y - hitCenterY);
+        const db = Math.hypot(b.x - hitCenterX, b.y - hitCenterY);
+        return da - db;
+      };
+
+      hostileTargetsInArc.sort(sortByLockAndDistance);
+      neutralFaunaInArc.sort(sortByLockAndDistance);
+      peacefulNpcsInArc.sort(sortByLockAndDistance);
+
+      const rawTargetsToHit =
+        hostileTargetsInArc.length > 0
+          ? hostileTargetsInArc
+          : neutralFaunaInArc.length > 0
+          ? neutralFaunaInArc
+          : this.innocentFireEnabled
+          ? peacefulNpcsInArc
+          : [];
+
+      // Respect weapon attackTargetScope:
+      // - 'area' (em área): hits all mobs in the aimed area
+      // - 'single' (individual, default): hits only 1 mob
+      const isAreaAttack = heldItem?.attackTargetScope === 'area';
+      const targetsToHit = isAreaAttack
+        ? rawTargetsToHit
+        : rawTargetsToHit.slice(0, 1);
+
+      if (targetsToHit.length > 0) {
+        this.resetInterruptedBreakingTargets(null);
+        for (const cr of targetsToHit) {
+          this.damageCreature(
+            cr,
+            Math.round(baseAttack),
+            this.player.x,
+            this.player.y,
+            knockbackMult
+          );
+        }
+        if (heldItem?.lifesteal && heldItem.lifesteal > 0) {
+          this.player.hp = Math.min(
+            this.player.maxHp,
+            this.player.hp + heldItem.lifesteal
+          );
+          this.addFloatingText(
+            `+${heldItem.lifesteal} HP Dreno`,
+            this.player.x,
+            this.player.y - 24,
+            '#c084fc'
+          );
+        }
+        return;
+      }
+
+      // If the player swung directly at a peaceful NPC while "Fogo Inocente" is OFF and no enemies were around,
+      // show a protective safety hint if no resource/structure is harvested below.
+      blockedPeacefulNpc =
+        !this.innocentFireEnabled && peacefulNpcsInArc.length > 0
+          ? peacefulNpcsInArc[0]
+          : null;
     }
 
-    // If the player swung directly at a peaceful NPC while "Fogo Inocente" is OFF and no enemies were around,
-    // show a protective safety hint if no resource/structure is harvested below.
-    const blockedPeacefulNpc =
-      !this.innocentFireEnabled && peacefulNpcsInArc.length > 0
-        ? peacefulNpcsInArc[0]
-        : null;
+    const forwardHitX = this.player.x + dirVec.x * (reach * 0.65);
+    const forwardHitY = this.player.y + dirVec.y * (reach * 0.65);
 
-    // B1. Agricultural Tools: Hoe (Tilling) & Watering Can (Refilling / Hydration)
+    // B1. Agricultural Tools: Hoe (Tilling & Flattening Tilled Soil)
     if (equippedTool === ToolType.HOE) {
-      const tile = this.world.worldToTile(hitCenterX, hitCenterY);
+      const tile = this.world.worldToTile(forwardHitX, forwardHitY);
       const { cx, cy } = this.world.tileToChunk(tile.tx, tile.ty);
       const chunk = this.world.chunks[WorldManager.chunkKey(cx, cy)];
       const existingSoil = chunk?.structures.find(
@@ -4916,6 +5109,7 @@ export class GameEngine {
       if (existingSoil && !existingSoil.cropType) {
         const sIdx = chunk!.structures.indexOf(existingSoil);
         if (sIdx !== -1) {
+          triggerSwing();
           chunk!.structures.splice(sIdx, 1);
           soundManager.playHitWood();
           this.renderer.spawnBurst(
@@ -4934,9 +5128,10 @@ export class GameEngine {
           this.emitUiSnapshot();
           return;
         }
-      } else if (this.world.canTillTileAt(tile.tx, tile.ty)) {
+      } else if (!isHoldRepeat && this.world.canTillTileAt(tile.tx, tile.ty)) {
         const soil = this.world.tillSoilAt(tile.tx, tile.ty);
         if (soil) {
+          triggerSwing();
           soundManager.playHitWood();
           this.gainXp(5);
           this.renderer.spawnBurst(
@@ -4965,6 +5160,78 @@ export class GameEngine {
       }
     }
 
+    // B1_SHOVEL. Shovel Tool (Pá): Creates or flattens Beaten Earth / Dirt Paths (Caminho de Solo Batido)
+    if (equippedTool === ToolType.SHOVEL) {
+      const tile = this.world.worldToTile(forwardHitX, forwardHitY);
+      const { cx, cy } = this.world.tileToChunk(tile.tx, tile.ty);
+      const chunk = this.world.chunks[WorldManager.chunkKey(cx, cy)];
+      const existingPath = chunk?.structures.find(
+        (s) =>
+          s.tileX === tile.tx &&
+          s.tileY === tile.ty &&
+          s.type === PlaceableType.DIRT_PATH
+      );
+      const hasUpperBlocking = chunk?.structures.some(
+        (s) =>
+          s.tileX === tile.tx &&
+          s.tileY === tile.ty &&
+          s.type !== PlaceableType.DIRT_PATH
+      );
+
+      if (existingPath && !hasUpperBlocking) {
+        const sIdx = chunk!.structures.indexOf(existingPath);
+        if (sIdx !== -1) {
+          triggerSwing();
+          chunk!.structures.splice(sIdx, 1);
+          soundManager.playHitWood();
+          this.renderer.spawnBurst(
+            tile.tx * TILE_SIZE + 16,
+            tile.ty * TILE_SIZE + 16,
+            'STONE',
+            6
+          );
+          this.addFloatingText(
+            'Solo Batido Desfeito',
+            tile.tx * TILE_SIZE + 16,
+            tile.ty * TILE_SIZE,
+            '#a16207'
+          );
+          this.syncChunkAtTile(tile.tx, tile.ty);
+          this.emitUiSnapshot();
+          return;
+        }
+      } else if (!isHoldRepeat && this.world.canMakeDirtPathAt(tile.tx, tile.ty)) {
+        const pathSt = this.world.makeDirtPathAt(tile.tx, tile.ty);
+        if (pathSt) {
+          triggerSwing();
+          soundManager.playHitWood();
+          this.gainXp(3);
+          this.renderer.spawnBurst(
+            tile.tx * TILE_SIZE + 16,
+            tile.ty * TILE_SIZE + 16,
+            'STONE',
+            8
+          );
+          this.renderer.spawnRipple(
+            tile.tx * TILE_SIZE + 16,
+            tile.ty * TILE_SIZE + 16,
+            '#9b744d',
+            20,
+            0.35
+          );
+          this.addFloatingText(
+            'Caminho de Solo Batido! (+3 XP)',
+            tile.tx * TILE_SIZE + 16,
+            tile.ty * TILE_SIZE,
+            '#d97706'
+          );
+          this.syncChunkAtTile(tile.tx, tile.ty);
+          this.emitUiSnapshot();
+          return;
+        }
+      }
+    }
+
     // Watering can refill & irrigation are triggered via the Interact button (performInteractAction)
     if (
       equippedTool === ToolType.WATERING_CAN ||
@@ -4976,7 +5243,12 @@ export class GameEngine {
 
     // B2. Check Nature Nodes & Dismantling Structures strictly at the visually selected target or forward look tile
     const aimedForBreak = this.getAimedTarget();
-    const forwardLookTile = aimedForBreak
+    const isBreakableAimedTarget =
+      aimedForBreak &&
+      (aimedForBreak.kind === 'node' ||
+        aimedForBreak.kind === 'station' ||
+        aimedForBreak.kind === 'crop');
+    const forwardLookTile = isBreakableAimedTarget
       ? this.world.worldToTile(aimedForBreak.worldX, aimedForBreak.worldY)
       : this.world.worldToTile(
           this.player.x + dirVec.x * 28,
@@ -5000,6 +5272,7 @@ export class GameEngine {
             node.tileX === forwardLookTile.tx &&
             node.tileY === forwardLookTile.ty
           ) {
+            triggerSwing();
             this.harvestNatureNode(
               chunk,
               ni,
@@ -5014,11 +5287,45 @@ export class GameEngine {
 
         for (let si = chunk.structures.length - 1; si >= 0; si--) {
           const st = chunk.structures[si];
-          const matchesAimedStruct = aimedForBreak?.structureId
-            ? st.id === aimedForBreak.structureId
-            : st.tileX === forwardLookTile.tx &&
-              st.tileY === forwardLookTile.ty;
+          const matchesAimedStruct =
+            isBreakableAimedTarget && aimedForBreak?.structureId
+              ? st.id === aimedForBreak.structureId
+              : st.tileX === forwardLookTile.tx &&
+                st.tileY === forwardLookTile.ty;
           if (matchesAimedStruct) {
+            // Tilled soil can ONLY be broken with the Hoe, and Dirt Path can ONLY be undone with the Shovel; neither is treated as an item
+            if (
+              (st.type === PlaceableType.TILLED_SOIL &&
+                equippedTool !== ToolType.HOE) ||
+              (st.type === PlaceableType.DIRT_PATH &&
+                equippedTool !== ToolType.SHOVEL)
+            ) {
+              if (isHoldRepeat) {
+                continue;
+              }
+              const hasOtherStructOnTile = chunk.structures.some(
+                (other) =>
+                  other.id !== st.id &&
+                  other.tileX === st.tileX &&
+                  other.tileY === st.tileY
+              );
+              if (hasOtherStructOnTile) {
+                continue;
+              }
+              this.resetInterruptedBreakingTargets(null);
+              soundManager.playHitStone();
+              this.addFloatingText(
+                st.type === PlaceableType.DIRT_PATH
+                  ? 'Apenas a Pá desfaz o Solo Batido'
+                  : 'Apenas a Enxada quebra a Terra Arada',
+                st.tileX * TILE_SIZE + TILE_SIZE / 2,
+                st.tileY * TILE_SIZE + TILE_SIZE / 2 - 16,
+                '#f43f5e'
+              );
+              return;
+            }
+
+            triggerSwing();
             const sx = st.tileX * TILE_SIZE + TILE_SIZE / 2;
             const sy = st.tileY * TILE_SIZE + TILE_SIZE / 2;
             const isWorldFixedLandmark = Boolean(
@@ -5064,7 +5371,10 @@ export class GameEngine {
             const structDmg = evalBreak.force;
             st.hp -= structDmg;
             st.hitFlashTimer = 0.15;
-            st.breakIdleTimer = 1.15;
+            st.breakIdleTimer = Math.max(
+              1.25,
+              this.player.swingDuration + 0.55
+            );
             if (req.requiredTool === ToolType.PICKAXE) {
               soundManager.playHitStone();
               this.renderer.spawnBurst(sx, sy, 'STONE', st.hp <= 0 ? 14 : 7);
@@ -5165,7 +5475,26 @@ export class GameEngine {
               ) {
                 this.dropThermalStationContents(st, sx, sy, false);
               }
-              this.spawnDrop(st.itemId, 1, sx, sy);
+              if (st.type === PlaceableType.TILLED_SOIL) {
+                if (st.cropType && st.growthStage === 3) {
+                  this.spawnDrop(st.cropType, 2, sx, sy);
+                }
+                this.addFloatingText(
+                  'Solo Aplanado',
+                  sx,
+                  sy - 16,
+                  '#a16207'
+                );
+              } else if (st.type === PlaceableType.DIRT_PATH) {
+                this.addFloatingText(
+                  'Solo Batido Desfeito',
+                  sx,
+                  sy - 16,
+                  '#a16207'
+                );
+              } else {
+                this.spawnDrop(st.itemId, 1, sx, sy);
+              }
               chunk.structures.splice(si, 1);
 
               // If a supporting wall was destroyed, also drop and remove any Torch attached to that wall!
@@ -5189,6 +5518,10 @@ export class GameEngine {
           }
         }
       }
+    }
+
+    if (isHoldRepeat) {
+      return;
     }
 
     // Swung without hitting a breakable node/structure: interrupt any active breaking progress
@@ -7291,6 +7624,7 @@ export class GameEngine {
               worldY: cr.y,
               creatureId: cr.id,
               iconItemId: heldSlot.itemId,
+              isPetFeedTarget: true,
             },
           });
           continue;
@@ -7446,7 +7780,7 @@ export class GameEngine {
     const power = evalBreak.force;
     node.hp -= power;
     node.hitFlashTimer = 0.16;
-    node.breakIdleTimer = 1.15;
+    node.breakIdleTimer = Math.max(1.25, this.player.swingDuration + 0.55);
 
     if (bp.requiredTool === ToolType.PICKAXE) {
       soundManager.playHitStone();
@@ -9302,7 +9636,12 @@ export class GameEngine {
     if (targetIdx === -1) {
       for (let i = chunk.structures.length - 1; i >= 0; i--) {
         const st = chunk.structures[i];
-        if (st.tileX === tx && st.tileY === ty) {
+        if (
+          st.tileX === tx &&
+          st.tileY === ty &&
+          st.type !== PlaceableType.TILLED_SOIL &&
+          st.type !== PlaceableType.DIRT_PATH
+        ) {
           const bp = CONSTRUCTION_BLUEPRINTS[st.type];
           if (bp?.layer !== 'GROUND' && st.type !== PlaceableType.SPIKE_TRAP) {
             targetIdx = i;
@@ -12068,6 +12407,7 @@ export class GameEngine {
     y: number,
     pickupDelay = 0.25
   ): void {
+    if (itemId === 'tilled_soil' || itemId === 'dirt_path') return;
     const drop: DroppedItem = {
       id: `drop_${Date.now()}_${Math.floor(Math.random() * 100000)}`,
       itemId,

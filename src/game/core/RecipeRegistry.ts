@@ -159,6 +159,19 @@ export const RECIPES: CraftingRecipe[] = [
     ],
   },
   {
+    id: 'craft_stone_shovel',
+    resultItemId: 'stone_shovel',
+    resultCount: 1,
+    requiredStation: PlaceableType.WORKBENCH,
+    craftTimeSec: 0,
+    rarity: RarityTier.BASIC,
+    ingredients: [
+      { itemId: 'wood', count: 2 },
+      { itemId: 'stone', count: 2 },
+      { itemId: 'fiber', count: 1 },
+    ],
+  },
+  {
     id: 'craft_watering_can',
     resultItemId: 'watering_can',
     resultCount: 1,
@@ -237,6 +250,19 @@ export const RECIPES: CraftingRecipe[] = [
   {
     id: 'craft_iron_hoe',
     resultItemId: 'iron_hoe',
+    resultCount: 1,
+    requiredStation: PlaceableType.WORKBENCH,
+    craftTimeSec: 0,
+    rarity: RarityTier.RARE,
+    ingredients: [
+      { itemId: 'iron_bar', count: 2 },
+      { itemId: 'hardwood', count: 2 },
+      { itemId: 'fiber', count: 1 },
+    ],
+  },
+  {
+    id: 'craft_iron_shovel',
+    resultItemId: 'iron_shovel',
     resultCount: 1,
     requiredStation: PlaceableType.WORKBENCH,
     craftTimeSec: 0,

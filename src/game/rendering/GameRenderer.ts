@@ -53,6 +53,7 @@ export interface AimedTargetInfo {
   cropType?: string;
   cropStage?: number;
   isWatered?: boolean;
+  isPetFeedTarget?: boolean;
 }
 
 export interface BuildRenderOptions {
@@ -474,7 +475,14 @@ export class GameRenderer {
 
     const tileAnimFrame = Math.floor(globalTime * 2.6) % 4;
     const renderQueue: RenderableItem[] = [];
-    const lightSources: { x: number; y: number; radius: number; color: string }[] = [];
+    const lightSources: {
+      x: number;
+      y: number;
+      radius: number;
+      color: string;
+      strength?: number;
+      yellowTint?: boolean;
+    }[] = [];
 
     // Compute dynamic directional sun/moon shadow offset from timeOfDay
     const sunProgress = Math.max(0, Math.min(1, (timeOfDay - 6) / 12));
@@ -1132,7 +1140,16 @@ export class GameRenderer {
     this.drawActiveParticlesAndBolts(ctx);
 
     // 6. AAA Ambient Biome & Atmospheric Particles (Fireflies, Butterflies, Golden Pollen, Sand Motes)
-    this.drawAmbientWorldParticles(ctx, camera, world, timeOfDay, globalTime, halfW, halfH);
+    this.drawAmbientWorldParticles(
+      ctx,
+      camera,
+      world,
+      timeOfDay,
+      globalTime,
+      halfW,
+      halfH,
+      lightSources
+    );
 
     // 6B. Top-Layer Aimed Target Selector Pointer Arrow & Action Tag (Shows exactly what Interação will act on)
     if (aimedTarget) {
@@ -2144,7 +2161,12 @@ export class GameRenderer {
     }
 
     if (st.type === PlaceableType.TILLED_SOIL) {
-      this.drawTilledSoilAndCrop(ctx, st, sx, sy, tileAnimFrame);
+      this.drawTilledSoilAndCrop(ctx, world, st, sx, sy, tileAnimFrame, mask);
+      return;
+    }
+
+    if (st.type === PlaceableType.DIRT_PATH) {
+      this.drawDirtPath(ctx, world, st, sx, sy, mask);
       return;
     }
 
@@ -2189,53 +2211,397 @@ export class GameRenderer {
     }
   }
 
-  private drawTilledSoilAndCrop(
+  private drawDirtPath(
     ctx: CanvasRenderingContext2D,
+    world: WorldManager,
     st: PlacedStructure,
     sx: number,
     sy: number,
-    tileAnimFrame: number
+    mask: number
+  ): void {
+    // 1. Adaptive 8-neighbor connectivity with surrounding DIRT_PATH, floors, and bridges across any biome
+    const hasN = (mask & 1) !== 0;
+    const hasE = (mask & 2) !== 0;
+    const hasS = (mask & 4) !== 0;
+    const hasW = (mask & 8) !== 0;
+
+    const isPathConnectedAt = (tx: number, ty: number): boolean => {
+      const g = world.getGroundStructureAtTile(tx, ty);
+      if (!g) return false;
+      return (
+        g.type === PlaceableType.DIRT_PATH ||
+        g.type === PlaceableType.WOOD_FLOOR ||
+        g.type === PlaceableType.STONE_FLOOR ||
+        g.type === PlaceableType.BRICK_FLOOR ||
+        g.type === PlaceableType.WOOD_BRIDGE
+      );
+    };
+
+    const hasNW = hasN && hasW && isPathConnectedAt(st.tileX - 1, st.tileY - 1);
+    const hasNE = hasN && hasE && isPathConnectedAt(st.tileX + 1, st.tileY - 1);
+    const hasSW = hasS && hasW && isPathConnectedAt(st.tileX - 1, st.tileY + 1);
+    const hasSE = hasS && hasE && isPathConnectedAt(st.tileX + 1, st.tileY + 1);
+
+    const outerFadeRgb = '138, 102, 66';
+    const baseColor = '#8a6642';
+    const centerColor = '#9b744d';
+    const pebbleDark = '#6e4f30';
+    const pebbleLight = '#b38b62';
+
+    const padOuterN = hasN ? 0 : 1;
+    const padOuterS = hasS ? 0 : 1;
+    const padOuterW = hasW ? 0 : 1;
+    const padOuterE = hasE ? 0 : 1;
+
+    const padMidN = hasN ? 0 : 3;
+    const padMidS = hasS ? 0 : 3;
+    const padMidW = hasW ? 0 : 3;
+    const padMidE = hasE ? 0 : 3;
+
+    const padCoreN = hasN ? 0 : 5;
+    const padCoreS = hasS ? 0 : 5;
+    const padCoreW = hasW ? 0 : 5;
+    const padCoreE = hasE ? 0 : 5;
+
+    const drawAdaptiveRoundedLayer = (
+      pN: number,
+      pS: number,
+      pW: number,
+      pE: number,
+      cornerStep: number,
+      fillStyle: string
+    ) => {
+      const x = sx + pW;
+      const y = sy + pN;
+      const w = TILE_SIZE - pW - pE;
+      const h = TILE_SIZE - pN - pS;
+      if (w <= 0 || h <= 0) return;
+
+      ctx.fillStyle = fillStyle;
+      const cNW = !hasN && !hasW ? cornerStep : 0;
+      const cNE = !hasN && !hasE ? cornerStep : 0;
+      const cSW = !hasS && !hasW ? cornerStep : 0;
+      const cSE = !hasS && !hasE ? cornerStep : 0;
+
+      for (let py = 0; py < h; py++) {
+        let leftCut = 0;
+        let rightCut = 0;
+        if (py < cNW) leftCut = cNW - py;
+        else if (py >= h - cSW) leftCut = py - (h - cSW) + 1;
+
+        if (py < cNE) rightCut = cNE - py;
+        else if (py >= h - cSE) rightCut = py - (h - cSE) + 1;
+
+        const rowW = w - leftCut - rightCut;
+        if (rowW > 0) {
+          ctx.fillRect(x + leftCut, y + py, rowW, 1);
+        }
+      }
+    };
+
+    // Progressive 3-step transition blending smoothly into surrounding biome ground
+    drawAdaptiveRoundedLayer(
+      padOuterN,
+      padOuterS,
+      padOuterW,
+      padOuterE,
+      4,
+      `rgba(${outerFadeRgb}, 0.28)`
+    );
+    drawAdaptiveRoundedLayer(
+      padMidN,
+      padMidS,
+      padMidW,
+      padMidE,
+      3,
+      `rgba(${outerFadeRgb}, 0.58)`
+    );
+    drawAdaptiveRoundedLayer(
+      padCoreN - (hasN ? 0 : 1),
+      padCoreS - (hasS ? 0 : 1),
+      padCoreW - (hasW ? 0 : 1),
+      padCoreE - (hasE ? 0 : 1),
+      2,
+      `rgba(${outerFadeRgb}, 0.88)`
+    );
+    drawAdaptiveRoundedLayer(
+      padCoreN,
+      padCoreS,
+      padCoreW,
+      padCoreE,
+      2,
+      baseColor
+    );
+
+    // Inner compacted beaten earth surface
+    drawAdaptiveRoundedLayer(
+      hasN ? 0 : 7,
+      hasS ? 0 : 7,
+      hasW ? 0 : 7,
+      hasE ? 0 : 7,
+      2,
+      centerColor
+    );
+
+    // Organic earth crumbs & pebbles along unconnected borders
+    const seed = (st.tileX * 41 + st.tileY * 83) & 7;
+    ctx.fillStyle = `rgba(${outerFadeRgb}, 0.48)`;
+    if (!hasN) {
+      ctx.fillRect(sx + 6 + seed, sy + 1, 3, 1);
+      ctx.fillRect(sx + 18 - seed, sy + 2, 4, 1);
+    }
+    if (!hasS) {
+      ctx.fillRect(sx + 7 + seed, sy + TILE_SIZE - 2, 3, 1);
+      ctx.fillRect(sx + 17 - seed, sy + TILE_SIZE - 3, 4, 1);
+    }
+    if (!hasW) {
+      ctx.fillRect(sx + 1, sy + 7 + seed, 1, 3);
+      ctx.fillRect(sx + 2, sy + 18 - seed, 1, 4);
+    }
+    if (!hasE) {
+      ctx.fillRect(sx + TILE_SIZE - 2, sy + 8 + seed, 1, 3);
+      ctx.fillRect(sx + TILE_SIZE - 3, sy + 17 - seed, 1, 4);
+    }
+
+    // Inner concave corner transitions for L-junctions / crossroads
+    ctx.fillStyle = pebbleDark;
+    if (hasN && hasW && !hasNW) {
+      ctx.fillRect(sx, sy, 3, 2);
+      ctx.fillRect(sx, sy, 2, 3);
+    }
+    if (hasN && hasE && !hasNE) {
+      ctx.fillRect(sx + TILE_SIZE - 3, sy, 3, 2);
+      ctx.fillRect(sx + TILE_SIZE - 2, sy, 2, 3);
+    }
+    if (hasS && hasW && !hasSW) {
+      ctx.fillRect(sx, sy + TILE_SIZE - 2, 3, 2);
+      ctx.fillRect(sx, sy + TILE_SIZE - 3, 2, 3);
+    }
+    if (hasS && hasE && !hasSE) {
+      ctx.fillRect(sx + TILE_SIZE - 3, sy + TILE_SIZE - 2, 3, 2);
+      ctx.fillRect(sx + TILE_SIZE - 2, sy + TILE_SIZE - 3, 2, 3);
+    }
+
+    // Subtle compacted pebbles & path texture inside the core
+    ctx.fillStyle = pebbleDark;
+    ctx.fillRect(sx + 9 + (seed & 3), sy + 10 + ((seed >> 1) & 3), 2, 2);
+    ctx.fillRect(sx + 19 - (seed & 3), sy + 18 - ((seed >> 1) & 3), 3, 1);
+    ctx.fillStyle = pebbleLight;
+    ctx.fillRect(sx + 13 + (seed & 3), sy + 14 - (seed & 2), 2, 1);
+    ctx.fillRect(sx + 10, sy + 20 - (seed & 3), 2, 1);
+  }
+
+  private drawTilledSoilAndCrop(
+    ctx: CanvasRenderingContext2D,
+    world: WorldManager,
+    st: PlacedStructure,
+    sx: number,
+    sy: number,
+    tileAnimFrame: number,
+    mask: number
   ): void {
     const isWatered = Boolean(st.isWatered || (st.waterLevel && st.waterLevel > 0));
     const isFertilized = Boolean(st.fertilized);
     const stage = st.growthStage ?? 0;
     const crop = st.cropType;
 
-    // 1. Base Soil Furrows
+    // 1. Adaptive 8-neighbor connectivity with surrounding TILLED_SOIL tiles
+    const hasN = (mask & 1) !== 0;
+    const hasE = (mask & 2) !== 0;
+    const hasS = (mask & 4) !== 0;
+    const hasW = (mask & 8) !== 0;
+
+    const isTilledAt = (tx: number, ty: number): boolean =>
+      world.getGroundStructureAtTile(tx, ty)?.type === PlaceableType.TILLED_SOIL;
+
+    const hasNW = hasN && hasW && isTilledAt(st.tileX - 1, st.tileY - 1);
+    const hasNE = hasN && hasE && isTilledAt(st.tileX + 1, st.tileY - 1);
+    const hasSW = hasS && hasW && isTilledAt(st.tileX - 1, st.tileY + 1);
+    const hasSE = hasS && hasE && isTilledAt(st.tileX + 1, st.tileY + 1);
+
+    const outerFadeRgb = isWatered ? '59, 35, 20' : '104, 68, 40';
     const baseColor = isWatered ? '#3b2314' : '#684428';
     const ridgeColor = isWatered ? '#28170c' : '#54341c';
     const highlightColor = isWatered ? '#4d2d18' : '#785030';
 
-    ctx.fillStyle = baseColor;
-    ctx.fillRect(sx, sy, TILE_SIZE, TILE_SIZE);
+    // Progressive multi-step border insets on unconnected sides (0px on connected sides)
+    const padOuterN = hasN ? 0 : 1;
+    const padOuterS = hasS ? 0 : 1;
+    const padOuterW = hasW ? 0 : 1;
+    const padOuterE = hasE ? 0 : 1;
 
-    // 4 horizontal plowed furrows & ridges
-    for (let r = 2; r < TILE_SIZE - 2; r += 7) {
+    const padMidN = hasN ? 0 : 3;
+    const padMidS = hasS ? 0 : 3;
+    const padMidW = hasW ? 0 : 3;
+    const padMidE = hasE ? 0 : 3;
+
+    const padCoreN = hasN ? 0 : 5;
+    const padCoreS = hasS ? 0 : 5;
+    const padCoreW = hasW ? 0 : 5;
+    const padCoreE = hasE ? 0 : 5;
+
+    const drawAdaptiveRoundedLayer = (
+      pN: number,
+      pS: number,
+      pW: number,
+      pE: number,
+      cornerStep: number,
+      fillStyle: string
+    ) => {
+      const x = sx + pW;
+      const y = sy + pN;
+      const w = TILE_SIZE - pW - pE;
+      const h = TILE_SIZE - pN - pS;
+      if (w <= 0 || h <= 0) return;
+
+      ctx.fillStyle = fillStyle;
+      // Main center cross to leave outer unconnected corners stepped/rounded
+      const cNW = !hasN && !hasW ? cornerStep : 0;
+      const cNE = !hasN && !hasE ? cornerStep : 0;
+      const cSW = !hasS && !hasW ? cornerStep : 0;
+      const cSE = !hasS && !hasE ? cornerStep : 0;
+
+      // Row-by-row progressive scan for clean pixel-art rounded corners without allocations
+      for (let py = 0; py < h; py++) {
+        let leftCut = 0;
+        let rightCut = 0;
+        if (py < cNW) leftCut = cNW - py;
+        else if (py >= h - cSW) leftCut = py - (h - cSW) + 1;
+
+        if (py < cNE) rightCut = cNE - py;
+        else if (py >= h - cSE) rightCut = py - (h - cSE) + 1;
+
+        const rowW = w - leftCut - rightCut;
+        if (rowW > 0) {
+          ctx.fillRect(x + leftCut, y + py, rowW, 1);
+        }
+      }
+    };
+
+    // Step 1: Soft outer soil transition halo (28% opacity) blending into surrounding ground
+    drawAdaptiveRoundedLayer(
+      padOuterN,
+      padOuterS,
+      padOuterW,
+      padOuterE,
+      4,
+      `rgba(${outerFadeRgb}, 0.28)`
+    );
+
+    // Step 2: Mid-tone progressive soil shoulder (58% opacity)
+    drawAdaptiveRoundedLayer(
+      padMidN,
+      padMidS,
+      padMidW,
+      padMidE,
+      3,
+      `rgba(${outerFadeRgb}, 0.58)`
+    );
+
+    // Step 3: Rich inner tilled soil bed (92% opacity) & full core
+    drawAdaptiveRoundedLayer(
+      padCoreN - (hasN ? 0 : 1),
+      padCoreS - (hasS ? 0 : 1),
+      padCoreW - (hasW ? 0 : 1),
+      padCoreE - (hasE ? 0 : 1),
+      2,
+      `rgba(${outerFadeRgb}, 0.86)`
+    );
+    drawAdaptiveRoundedLayer(
+      padCoreN,
+      padCoreS,
+      padCoreW,
+      padCoreE,
+      2,
+      baseColor
+    );
+
+    // Organic soil granules / crumbs along unconnected edges for natural progressive blending
+    const seed = (st.tileX * 37 + st.tileY * 73) & 7;
+    ctx.fillStyle = `rgba(${outerFadeRgb}, 0.45)`;
+    if (!hasN) {
+      ctx.fillRect(sx + 6 + seed, sy + 1, 3, 1);
+      ctx.fillRect(sx + 19 - seed, sy + 2, 4, 1);
+    }
+    if (!hasS) {
+      ctx.fillRect(sx + 7 + seed, sy + TILE_SIZE - 2, 3, 1);
+      ctx.fillRect(sx + 18 - seed, sy + TILE_SIZE - 3, 4, 1);
+    }
+    if (!hasW) {
+      ctx.fillRect(sx + 1, sy + 7 + seed, 1, 3);
+      ctx.fillRect(sx + 2, sy + 19 - seed, 1, 4);
+    }
+    if (!hasE) {
+      ctx.fillRect(sx + TILE_SIZE - 2, sy + 8 + seed, 1, 3);
+      ctx.fillRect(sx + TILE_SIZE - 3, sy + 18 - seed, 1, 4);
+    }
+
+    // Inner concave corner transitions when 2 cardinal sides connect (e.g. L-junction) but diagonal is grass/sand
+    ctx.fillStyle = highlightColor;
+    if (hasN && hasW && !hasNW) {
+      ctx.fillRect(sx, sy, 3, 2);
+      ctx.fillRect(sx, sy, 2, 3);
+    }
+    if (hasN && hasE && !hasNE) {
+      ctx.fillRect(sx + TILE_SIZE - 3, sy, 3, 2);
+      ctx.fillRect(sx + TILE_SIZE - 2, sy, 2, 3);
+    }
+    if (hasS && hasW && !hasSW) {
+      ctx.fillRect(sx, sy + TILE_SIZE - 2, 3, 2);
+      ctx.fillRect(sx, sy + TILE_SIZE - 3, 2, 3);
+    }
+    if (hasS && hasE && !hasSE) {
+      ctx.fillRect(sx + TILE_SIZE - 3, sy + TILE_SIZE - 2, 3, 2);
+      ctx.fillRect(sx + TILE_SIZE - 2, sy + TILE_SIZE - 3, 2, 3);
+    }
+
+    // Continuous horizontal plowed furrows & ridges (connect seamlessly left/right across adjacent tilled tiles)
+    const furrowRows = [3, 10, 17, 24];
+    for (let i = 0; i < furrowRows.length; i++) {
+      const r = furrowRows[i];
+      // Skip the outermost top/bottom furrow if that edge is unconnected so the progressive border breathes
+      if (i === 0 && !hasN) continue;
+      if (i === furrowRows.length - 1 && !hasS) continue;
+
+      const isOuterRow = (i === 1 && !hasN) || (i === furrowRows.length - 2 && !hasS);
+      const fLeft = hasW ? 0 : isOuterRow ? 6 : 5;
+      const fRight = hasE ? 0 : isOuterRow ? 6 : 5;
+      const fWidth = TILE_SIZE - fLeft - fRight;
+      if (fWidth <= 0) continue;
+
       ctx.fillStyle = ridgeColor;
-      ctx.fillRect(sx + 1, sy + r, TILE_SIZE - 2, 4);
+      ctx.fillRect(sx + fLeft, sy + r, fWidth, 4);
+      // Tapered ends on unconnected West/East sides
+      if (!hasW && fWidth > 2) {
+        ctx.fillRect(sx + fLeft - 1, sy + r + 1, 1, 2);
+      }
+      if (!hasE && fWidth > 2) {
+        ctx.fillRect(sx + TILE_SIZE - fRight, sy + r + 1, 1, 2);
+      }
+
       ctx.fillStyle = highlightColor;
-      ctx.fillRect(sx + 1, sy + r, TILE_SIZE - 2, 1);
+      ctx.fillRect(sx + fLeft, sy + r, fWidth, 1);
     }
 
     // Wet moisture glistening effect
     if (isWatered) {
       ctx.fillStyle = 'rgba(96, 165, 250, 0.28)';
-      ctx.fillRect(sx + 5, sy + 6, 2, 1);
+      ctx.fillRect(sx + 7, sy + 11, 2, 1);
       ctx.fillRect(sx + 19, sy + 13, 2, 1);
-      ctx.fillRect(sx + 11, sy + 20, 2, 1);
-      ctx.fillRect(sx + 25, sy + 24, 2, 1);
+      ctx.fillRect(sx + 11, sy + 19, 2, 1);
+      ctx.fillRect(sx + 22, sy + 21, 2, 1);
     }
 
     // Organic Bone Fertilizer Flecks
     if (isFertilized) {
       ctx.fillStyle = '#fef08a';
-      ctx.fillRect(sx + 4, sy + 8, 2, 1);
-      ctx.fillRect(sx + 22, sy + 5, 1, 2);
+      ctx.fillRect(sx + 7, sy + 10, 2, 1);
+      ctx.fillRect(sx + 21, sy + 11, 1, 2);
       ctx.fillRect(sx + 14, sy + 18, 2, 1);
-      ctx.fillRect(sx + 27, sy + 16, 1, 1);
+      ctx.fillRect(sx + 23, sy + 17, 1, 1);
       ctx.fillStyle = '#f8fafc';
-      ctx.fillRect(sx + 8, sy + 12, 1, 1);
-      ctx.fillRect(sx + 18, sy + 25, 2, 1);
+      ctx.fillRect(sx + 9, sy + 14, 1, 1);
+      ctx.fillRect(sx + 18, sy + 21, 2, 1);
     }
 
     // 2. Crop Plant Stages (0..3) with natural height & width variation per tile
@@ -3970,7 +4336,8 @@ export class GameRenderer {
     const sprite = spriteAtlas.getCreatureSprite(
       cr.kind,
       cr.animFrame,
-      cr.attackTimer > 0
+      cr.attackTimer > 0,
+      cr.direction
     );
 
     // Deterministic individual width & height variation from creature ID
@@ -4157,8 +4524,43 @@ export class GameRenderer {
     const srcH = Math.max(1, Math.round(sprite.height * visibleRatio));
     const visibleDrawH = Math.max(1, Math.round(drawH * visibleRatio));
 
+    // Directional body lunge & windup during creature attack
+    let atkLungeX = 0;
+    let atkLungeY = 0;
+    let atkTiltRad = 0;
+    if (cr.attackTimer > 0) {
+      const maxAtkDur =
+        cr.kind === 'OGRE' || cr.kind === 'STONE_GOLEM' ? 0.38 : 0.34;
+      const atkProgress = Math.max(
+        0,
+        Math.min(1, 1 - cr.attackTimer / maxAtkDur)
+      );
+      const thrustCurve = Math.sin(atkProgress * Math.PI);
+      const lungeDist =
+        cr.kind === 'BOAR' || cr.kind === 'FOREST_STALKER'
+          ? 6.5
+          : cr.kind === 'OGRE' || cr.kind === 'STONE_GOLEM'
+          ? 5.5
+          : 4.5;
+      const dirX =
+        cr.direction === 'left' ? -1 : cr.direction === 'right' ? 1 : 0;
+      const dirY = cr.direction === 'up' ? -1 : cr.direction === 'down' ? 1 : 0;
+      atkLungeX = dirX * thrustCurve * lungeDist;
+      atkLungeY =
+        dirY * thrustCurve * lungeDist -
+        (cr.kind === 'OGRE' || cr.kind === 'STONE_GOLEM'
+          ? Math.sin(atkProgress * Math.PI) * 3.2
+          : 0);
+      if (dirX !== 0) {
+        atkTiltRad = dirX * thrustCurve * 0.14;
+      }
+    }
+
     ctx.save();
-    ctx.translate(cr.x, footY - walkBounce);
+    ctx.translate(cr.x + atkLungeX, footY - walkBounce + atkLungeY);
+    if (atkTiltRad !== 0) {
+      ctx.rotate(atkTiltRad);
+    }
     if (cr.hitFlashTimer > 0) {
       ctx.filter = 'brightness(2.0) contrast(1.2)';
     }
@@ -4206,11 +4608,49 @@ export class GameRenderer {
     if (isBoat && cr.passengerPetId && allCreatures) {
       const pet = allCreatures.find((p) => p.id === cr.passengerPetId);
       if (pet) {
-        const petSprite = spriteAtlas.getCreatureSprite(pet.kind, pet.animFrame, false);
+        const petSprite = spriteAtlas.getCreatureSprite(
+          pet.kind,
+          pet.animFrame,
+          false,
+          pet.direction
+        );
         ctx.drawImage(petSprite, -16, -24, 22, 18);
       }
     }
     ctx.restore();
+
+    // Stone Golem 3-second Seismic Charge visual aura
+    if (
+      cr.kind === 'STONE_GOLEM' &&
+      cr.seismicChargeTimer !== undefined &&
+      cr.seismicChargeTimer > 0
+    ) {
+      const chargeProg = 1 - Math.min(1, cr.seismicChargeTimer / 3.0);
+      ctx.save();
+      ctx.strokeStyle = `rgba(56, 189, 248, ${0.45 + chargeProg * 0.45})`;
+      ctx.lineWidth = 2 + chargeProg * 2;
+      ctx.beginPath();
+      ctx.arc(
+        cr.x,
+        footY - 6,
+        18 + Math.sin(globalTime * 14) * 4 + chargeProg * 24,
+        0,
+        Math.PI * 2
+      );
+      ctx.stroke();
+      ctx.restore();
+    }
+
+    // Render specific attack animation for every attacking mob, NPC, and animal
+    if (cr.attackTimer > 0) {
+      this.drawCreatureAttackAnimation(
+        ctx,
+        cr,
+        footY - walkBounce,
+        drawW,
+        drawH
+      );
+    }
 
     if (isSwimming) {
       // Front waterline foam highlight across submerged waist
@@ -4360,6 +4800,318 @@ export class GameRenderer {
         cr.isElite ? '#f59e0b' : cr.isHostile ? '#ef4444' : '#22c55e'
       );
     }
+  }
+
+  /**
+   * Renders a distinct, signature attack animation for each attacking mob, NPC, and animal
+   * oriented along `cr.direction` ('up', 'down', 'left', 'right').
+   */
+  private drawCreatureAttackAnimation(
+    ctx: CanvasRenderingContext2D,
+    cr: CreatureEntity,
+    anchorFootY: number,
+    drawW: number,
+    drawH: number
+  ): void {
+    const maxDur =
+      cr.kind === 'OGRE' || cr.kind === 'STONE_GOLEM' ? 0.38 : 0.34;
+    const p = Math.max(0, Math.min(1, 1 - cr.attackTimer / maxDur));
+    const alpha = Math.max(0.15, Math.sin(p * Math.PI));
+
+    const baseAngle =
+      cr.direction === 'right'
+        ? 0
+        : cr.direction === 'down'
+        ? Math.PI / 2
+        : cr.direction === 'left'
+        ? Math.PI
+        : -Math.PI / 2;
+
+    const centerY = anchorFootY - drawH * 0.45;
+    const reach = Math.max(14, drawW * 0.48);
+
+    ctx.save();
+    ctx.translate(cr.x, centerY);
+    ctx.rotate(baseAngle);
+    ctx.globalAlpha = alpha;
+
+    switch (cr.kind) {
+      case 'ZOMBIE': {
+        // Double necrotic green/violet claw & bite tear arcs
+        const clawX = 8 + p * 12;
+        ctx.strokeStyle = '#84cc16';
+        ctx.lineWidth = 2.4;
+        ctx.beginPath();
+        ctx.arc(clawX - 4, 0, 11, -0.75 + p * 0.3, 0.75 + p * 0.3);
+        ctx.stroke();
+
+        ctx.strokeStyle = '#a855f7';
+        ctx.lineWidth = 2.0;
+        ctx.beginPath();
+        ctx.arc(clawX - 1, -2, 9, -0.65, 0.65);
+        ctx.stroke();
+
+        // Necrotic claw tips
+        ctx.fillStyle = '#bef264';
+        ctx.fillRect(clawX + 4, -6, 3, 2);
+        ctx.fillRect(clawX + 5, -1, 3, 2);
+        ctx.fillRect(clawX + 4, 4, 3, 2);
+        break;
+      }
+
+      case 'OGRE': {
+        // Colossal overhead spiked war-club smash & crimson/amber ground shockwave
+        const swingAng = -1.15 + p * 2.1;
+        ctx.save();
+        ctx.rotate(swingAng);
+        // Heavy wooden club shaft & iron studs
+        ctx.fillStyle = '#451a03';
+        ctx.fillRect(8, -4, 24, 8);
+        ctx.fillStyle = '#78350f';
+        ctx.fillRect(9, -3, 22, 6);
+        ctx.fillStyle = '#e2e8f0';
+        ctx.fillRect(22, -6, 3, 3);
+        ctx.fillRect(27, -6, 3, 3);
+        ctx.fillRect(25, 3, 3, 3);
+        ctx.restore();
+
+        // Heavy smash arc & ground impact ring
+        ctx.strokeStyle = '#ef4444';
+        ctx.lineWidth = 3.5;
+        ctx.beginPath();
+        ctx.arc(4, 0, reach + 8, -1.0, -1.0 + p * 2.0);
+        ctx.stroke();
+
+        if (p > 0.45) {
+          ctx.strokeStyle = '#fbbf24';
+          ctx.lineWidth = 2.0;
+          ctx.beginPath();
+          ctx.arc(reach + 6, 0, (p - 0.4) * 18, 0, Math.PI * 2);
+          ctx.stroke();
+        }
+        break;
+      }
+
+      case 'FOREST_STALKER': {
+        // Venomous spider chelicerae pincer snap + neon green venom & web strands
+        const snapClose = (1 - p) * 0.55 + 0.12;
+        const fangReach = reach + p * 8;
+        ctx.strokeStyle = '#4ade80';
+        ctx.lineWidth = 2.5;
+        // Upper fang arc snapping inward
+        ctx.beginPath();
+        ctx.moveTo(6, -8);
+        ctx.quadraticCurveTo(fangReach * 0.7, -11, fangReach, -snapClose * 8);
+        ctx.stroke();
+        // Lower fang arc snapping inward
+        ctx.beginPath();
+        ctx.moveTo(6, 8);
+        ctx.quadraticCurveTo(fangReach * 0.7, 11, fangReach, snapClose * 8);
+        ctx.stroke();
+
+        // Violet venom spark & web cross-threads at bite point
+        ctx.strokeStyle = 'rgba(226, 232, 240, 0.85)';
+        ctx.lineWidth = 1.2;
+        ctx.beginPath();
+        ctx.moveTo(4, -4);
+        ctx.lineTo(fangReach - 2, 4);
+        ctx.moveTo(4, 4);
+        ctx.lineTo(fangReach - 2, -4);
+        ctx.stroke();
+
+        ctx.fillStyle = '#a855f7';
+        ctx.beginPath();
+        ctx.arc(fangReach, 0, 3.2, 0, Math.PI * 2);
+        ctx.fill();
+        break;
+      }
+
+      case 'DESERT_SCORPION': {
+        // Overhead whipped tail stinger strike + snapping golden pincers
+        const stingDist = 6 + Math.sin(p * Math.PI) * (reach + 7);
+        // Golden pincer snap arcs
+        ctx.strokeStyle = '#fbbf24';
+        ctx.lineWidth = 2.4;
+        ctx.beginPath();
+        ctx.arc(6, -6, 10, -0.7, 0.35);
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.arc(6, 6, 10, -0.35, 0.7);
+        ctx.stroke();
+
+        // Whipped overhead segmented stinger line & glowing purple/gold venom barb
+        ctx.strokeStyle = '#d97706';
+        ctx.lineWidth = 3.0;
+        ctx.beginPath();
+        ctx.moveTo(-4, -8);
+        ctx.quadraticCurveTo(stingDist * 0.5, -14, stingDist, 0);
+        ctx.stroke();
+
+        ctx.fillStyle = '#a855f7';
+        ctx.beginPath();
+        ctx.arc(stingDist, 0, 4.2, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillStyle = '#fde047';
+        ctx.beginPath();
+        ctx.arc(stingDist + 1, 0, 2.0, 0, Math.PI * 2);
+        ctx.fill();
+        break;
+      }
+
+      case 'STONE_GOLEM': {
+        // Dual-fist tectonic monolith slam with cyan/gold runic shockwave
+        const slamDist = 8 + p * (reach + 6);
+        // Stone boulder fist impact blocks
+        ctx.fillStyle = '#64748b';
+        ctx.fillRect(slamDist - 6, -9, 9, 7);
+        ctx.fillRect(slamDist - 6, 2, 9, 7);
+        ctx.fillStyle = '#38bdf8';
+        ctx.fillRect(slamDist - 3, -7, 4, 3);
+        ctx.fillRect(slamDist - 3, 4, 4, 3);
+
+        // Expanding runic shockwave ring
+        ctx.strokeStyle = '#38bdf8';
+        ctx.lineWidth = 3.0;
+        ctx.beginPath();
+        ctx.arc(slamDist - 2, 0, 6 + p * 16, -1.2, 1.2);
+        ctx.stroke();
+
+        ctx.strokeStyle = '#fde047';
+        ctx.lineWidth = 1.6;
+        ctx.beginPath();
+        ctx.arc(slamDist - 2, 0, 3 + p * 11, -0.9, 0.9);
+        ctx.stroke();
+        break;
+      }
+
+      case 'BANDIT': {
+        // Swift curved steel cutlass & crimson cross-slash
+        const slashAng = -1.2 + p * 2.4;
+        ctx.strokeStyle = '#f8fafc';
+        ctx.lineWidth = 2.8;
+        ctx.beginPath();
+        ctx.arc(4, 0, reach + 3, slashAng - 0.7, slashAng + 0.25);
+        ctx.stroke();
+
+        ctx.strokeStyle = '#ef4444';
+        ctx.lineWidth = 1.8;
+        ctx.beginPath();
+        ctx.arc(3, 0, reach, slashAng - 0.85, slashAng + 0.1);
+        ctx.stroke();
+
+        // Cutlass blade gleam
+        ctx.save();
+        ctx.rotate(slashAng);
+        ctx.fillStyle = '#e2e8f0';
+        ctx.fillRect(7, -1.5, reach, 3);
+        ctx.fillStyle = '#fbbf24';
+        ctx.fillRect(6, -3, 2, 6);
+        ctx.restore();
+        break;
+      }
+
+      case 'VILLAGER': {
+        // Village Guard / Defender spear-blade thrust & emerald-gold sweep
+        const thrustX = 6 + Math.sin(p * Math.PI) * (reach + 5);
+        ctx.strokeStyle = '#10b981';
+        ctx.lineWidth = 2.4;
+        ctx.beginPath();
+        ctx.arc(4, 0, reach + 2, -0.75 + p * 0.4, 0.75 - p * 0.4);
+        ctx.stroke();
+
+        // Steel spear/blade thrust
+        ctx.fillStyle = '#92400e';
+        ctx.fillRect(4, -1.5, thrustX - 4, 3);
+        ctx.fillStyle = '#f8fafc';
+        ctx.beginPath();
+        ctx.moveTo(thrustX + 6, 0);
+        ctx.lineTo(thrustX - 2, -4);
+        ctx.lineTo(thrustX - 2, 4);
+        ctx.closePath();
+        ctx.fill();
+        ctx.fillStyle = '#fde047';
+        ctx.fillRect(thrustX - 3, -3, 2, 6);
+        break;
+      }
+
+      case 'WANDERER': {
+        // Wayfarer lantern-staff & traveler blade golden-azure arc
+        const sweepAng = -1.0 + p * 2.0;
+        ctx.strokeStyle = '#38bdf8';
+        ctx.lineWidth = 2.6;
+        ctx.beginPath();
+        ctx.arc(4, 0, reach + 3, sweepAng - 0.65, sweepAng + 0.35);
+        ctx.stroke();
+
+        ctx.strokeStyle = '#fbbf24';
+        ctx.lineWidth = 1.8;
+        ctx.beginPath();
+        ctx.arc(4, 0, reach, sweepAng - 0.5, sweepAng + 0.25);
+        ctx.stroke();
+
+        // Glowing lantern spark at staff tip
+        const tipX = 4 + Math.cos(sweepAng) * (reach + 2);
+        const tipY = Math.sin(sweepAng) * (reach + 2);
+        ctx.fillStyle = '#fde047';
+        ctx.beginPath();
+        ctx.arc(tipX, tipY, 3.2, 0, Math.PI * 2);
+        ctx.fill();
+        break;
+      }
+
+      case 'BOAR': {
+        // Ferocious ivory tusk upward gore charge ("Investida de Presas")
+        const goreX = 6 + p * (reach + 4);
+        ctx.strokeStyle = '#fef08a';
+        ctx.lineWidth = 2.8;
+        // Twin curved ivory tusk arcs
+        ctx.beginPath();
+        ctx.moveTo(4, -3);
+        ctx.quadraticCurveTo(goreX * 0.7, -9, goreX + 4, -5);
+        ctx.stroke();
+
+        ctx.beginPath();
+        ctx.moveTo(4, 3);
+        ctx.quadraticCurveTo(goreX * 0.7, 9, goreX + 4, 5);
+        ctx.stroke();
+
+        // Crimson/amber impact burst at tusk tips
+        ctx.strokeStyle = '#f97316';
+        ctx.lineWidth = 1.8;
+        ctx.beginPath();
+        ctx.arc(goreX, 0, 8, -0.7, 0.7);
+        ctx.stroke();
+        break;
+      }
+
+      case 'CAMEL': {
+        // Desert Camel forward hoof kick + pressurized sand/water spit burst
+        const jetDist = 8 + p * (reach + 8);
+        // Hoof kick arc
+        ctx.strokeStyle = '#f59e0b';
+        ctx.lineWidth = 2.5;
+        ctx.beginPath();
+        ctx.arc(6, 2, 12, -0.6, 0.6);
+        ctx.stroke();
+
+        // Pressurized desert spit / sand-water droplets
+        ctx.fillStyle = '#38bdf8';
+        ctx.beginPath();
+        ctx.arc(jetDist, -3, 3.0, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillStyle = '#fbbf24';
+        ctx.beginPath();
+        ctx.arc(jetDist - 4, 2, 2.4, 0, Math.PI * 2);
+        ctx.arc(jetDist + 3, 1, 2.0, 0, Math.PI * 2);
+        ctx.fill();
+        break;
+      }
+
+      default:
+        break;
+    }
+
+    ctx.restore();
   }
 
   private drawPlayer(
@@ -5067,9 +5819,18 @@ export class GameRenderer {
     timeOfDay: number,
     globalTime: number,
     halfW: number,
-    halfH: number
+    halfH: number,
+    lightSources: {
+      x: number;
+      y: number;
+      radius: number;
+      color: string;
+      strength?: number;
+      yellowTint?: boolean;
+    }[]
   ): void {
     const isNight = timeOfDay >= 19.5 || timeOfDay < 5.5;
+    const isDarkening = timeOfDay >= 17.5 || timeOfDay < 7.5;
     const cellSize = 88;
     const minGx = Math.floor((camera.x - halfW) / cellSize);
     const maxGx = Math.floor((camera.x + halfW) / cellSize);
@@ -5089,14 +5850,10 @@ export class GameRenderer {
         const py = baseY + Math.cos(phase * 0.85) * 12;
         const biome = world.getBiomeAtWorld(px, py);
 
-        if (biome === BiomeType.PLAINS) {
-          if (isNight) {
-            // Glowing Bioluminescent Firefly at Night
-            const alpha = 0.35 + Math.abs(Math.sin(phase * 1.5)) * 0.65;
-            ctx.fillStyle = `rgba(190, 242, 100, ${(alpha * 0.28).toFixed(2)})`;
-            ctx.fillRect(px - 3, py - 3, 7, 7);
-            ctx.fillStyle = `rgba(254, 240, 138, ${alpha.toFixed(2)})`;
-            ctx.fillRect(px - 1, py - 1, 2, 2);
+        if (biome === BiomeType.PLAINS || biome === BiomeType.ISLAND) {
+          if (isNight || isDarkening) {
+            // Night fireflies are rendered in the dedicated low-density wandering pass below
+            continue;
           } else if (seedHash < 0.16) {
             // Daytime Fluttering Pixel Butterfly
             const wingSpan = Math.abs(Math.sin(globalTime * 14 + seedHash * 40)) > 0.45 ? 2 : 1;
@@ -5134,6 +5891,90 @@ export class GameRenderer {
         }
       }
     }
+
+    // Dedicated Night Fireflies Pass:
+    // - Very low density (large 260px cells + low spawn probability)
+    // - Spawn for a few seconds (~6.5s) and then disappear
+    // - Wander slowly across the world instead of staying in one place
+    // - Twinkle/blink with light strength varying slowly between ON (up to 80%) and OFF (0%)
+    if (isNight || isDarkening) {
+      const fireflyCell = 260;
+      const fMinGx = Math.floor((camera.x - halfW) / fireflyCell) - 1;
+      const fMaxGx = Math.floor((camera.x + halfW) / fireflyCell) + 1;
+      const fMinGy = Math.floor((camera.y - halfH) / fireflyCell) - 1;
+      const fMaxGy = Math.floor((camera.y + halfH) / fireflyCell) + 1;
+
+      for (let fgy = fMinGy; fgy <= fMaxGy; fgy++) {
+        for (let fgx = fMinGx; fgx <= fMaxGx; fgx++) {
+          const seedHash = world.getTileDetailHash(fgx, fgy, 1777);
+          // Very low density: only ~22% of large 260x260 cells can host a firefly
+          if (seedHash > 0.22) continue;
+
+          // Finite spawn/despawn cycle: spawns for ~6.5 seconds, then disappears for several seconds
+          const cyclePeriod = 14.0 + ((seedHash * 97) % 7.0); // 14s to 21s total cycle
+          const activeDuration = 6.5; // stays alive for 6.5 seconds then vanishes
+          const timeOffset = seedHash * 313.7;
+          const cycleTime = (globalTime + timeOffset) % cyclePeriod;
+          if (cycleTime > activeDuration) continue;
+
+          const cycleIndex = Math.floor((globalTime + timeOffset) / cyclePeriod);
+          const spawnHashX = world.getTileDetailHash(fgx + cycleIndex * 7, fgy, 3301);
+          const spawnHashY = world.getTileDetailHash(fgx, fgy + cycleIndex * 11, 4409);
+
+          const startX = (fgx + 0.15 + spawnHashX * 0.7) * fireflyCell;
+          const startY = (fgy + 0.15 + spawnHashY * 0.7) * fireflyCell;
+
+          // Low-speed wandering trajectory (~15 px/s with gentle organic curve)
+          const dirAngle = (spawnHashX * 17 + spawnHashY * 31) * Math.PI * 2;
+          const wanderSpeed = 14 + (seedHash * 40) % 5; // 14..19 px/s
+          const age = cycleTime;
+          const perpAngle = dirAngle + Math.PI * 0.5;
+          const curveOffset = Math.sin(age * 1.15 + seedHash * 23) * 9;
+
+          const fx =
+            startX +
+            Math.cos(dirAngle) * age * wanderSpeed +
+            Math.cos(perpAngle) * curveOffset;
+          const fy =
+            startY +
+            Math.sin(dirAngle) * age * wanderSpeed +
+            Math.sin(perpAngle) * curveOffset;
+
+          const biome = world.getBiomeAtWorld(fx, fy);
+          if (biome !== BiomeType.PLAINS && biome !== BiomeType.ISLAND) continue;
+
+          // Life envelope (smooth fade in at spawn and fade out before disappearing)
+          const lifeEnvelope = Math.sin((age / activeDuration) * Math.PI);
+          // Slow real-life firefly twinkle: smoothly varies between completely OFF (0) and ON (1)
+          const slowPulse = Math.max(
+            0,
+            Math.sin(age * 1.85 + spawnHashX * Math.PI * 2)
+          );
+          const blinkFactor = lifeEnvelope * slowPulse;
+
+          if (blinkFactor <= 0.02) {
+            // Firefly is currently in its dark ("apagado") phase: tiny faint silhouette only, zero light
+            ctx.fillStyle = 'rgba(161, 161, 170, 0.18)';
+            ctx.fillRect(fx, fy, 1, 1);
+            continue;
+          }
+
+          ctx.fillStyle = `rgba(250, 204, 21, ${(blinkFactor * 0.36).toFixed(2)})`;
+          ctx.fillRect(fx - 2, fy - 2, 5, 5);
+          ctx.fillStyle = `rgba(254, 240, 138, ${(blinkFactor * 0.95).toFixed(2)})`;
+          ctx.fillRect(fx - 1, fy - 1, 2, 2);
+
+          lightSources.push({
+            x: fx,
+            y: fy,
+            radius: 10 + 12 * blinkFactor,
+            color: '250, 204, 21',
+            strength: 0.8 * blinkFactor,
+            yellowTint: true,
+          });
+        }
+      }
+    }
   }
 
   private drawMiniBar(
@@ -5159,7 +6000,14 @@ export class GameRenderer {
     camera: Camera,
     timeOfDay: number,
     globalTime: number,
-    lights: { x: number; y: number; radius: number; color: string }[],
+    lights: {
+      x: number;
+      y: number;
+      radius: number;
+      color: string;
+      strength?: number;
+      yellowTint?: boolean;
+    }[],
     playerHpRatio = 1.0
   ): void {
     const w = ctx.canvas.width;
@@ -5201,7 +6049,7 @@ export class GameRenderer {
       lCtx.fillRect(0, 0, w, h);
 
       // Carve out darkness using a pure progressive luminosity mask:
-      // 100% light (0% darkness) at the exact point of light (r = 0),
+      // 100% light (or custom strength, e.g. 80% for fireflies) at the exact point of light (r = 0),
       // progressively fading out to 0% light (100% ambient darkness) at r.
       lCtx.globalCompositeOperation = 'destination-out';
       for (let i = 0; i < lights.length; i++) {
@@ -5211,12 +6059,13 @@ export class GameRenderer {
         const r = light.radius * camera.zoom * flicker;
         if (sx + r < 0 || sx - r > w || sy + r < 0 || sy - r > h) continue;
 
+        const strength = Math.max(0, Math.min(1, light.strength ?? 1.0));
         const grad = lCtx.createRadialGradient(sx, sy, 0, sx, sy, r);
-        grad.addColorStop(0.0, 'rgba(0, 0, 0, 1.0)');
-        grad.addColorStop(0.15, 'rgba(0, 0, 0, 0.92)');
-        grad.addColorStop(0.35, 'rgba(0, 0, 0, 0.72)');
-        grad.addColorStop(0.6, 'rgba(0, 0, 0, 0.42)');
-        grad.addColorStop(0.82, 'rgba(0, 0, 0, 0.14)');
+        grad.addColorStop(0.0, `rgba(0, 0, 0, ${(1.0 * strength).toFixed(3)})`);
+        grad.addColorStop(0.15, `rgba(0, 0, 0, ${(0.92 * strength).toFixed(3)})`);
+        grad.addColorStop(0.35, `rgba(0, 0, 0, ${(0.72 * strength).toFixed(3)})`);
+        grad.addColorStop(0.6, `rgba(0, 0, 0, ${(0.42 * strength).toFixed(3)})`);
+        grad.addColorStop(0.82, `rgba(0, 0, 0, ${(0.14 * strength).toFixed(3)})`);
         grad.addColorStop(1.0, 'rgba(0, 0, 0, 0.0)');
 
         lCtx.fillStyle = grad;
@@ -5225,6 +6074,32 @@ export class GameRenderer {
         lCtx.fill();
       }
       lCtx.globalCompositeOperation = 'source-over';
+
+      // Apply yellowish effect ("efeito amarelado") for night fireflies inside the existing light overlay
+      const darknessRatio = Math.min(1, darkness / 0.78);
+      for (let i = 0; i < lights.length; i++) {
+        const light = lights[i];
+        if (!light.yellowTint) continue;
+        const flicker = 1 + Math.sin(globalTime * 7.5 + i * 1.9) * 0.02;
+        const { sx, sy } = camera.worldToScreen(light.x, light.y);
+        const r = light.radius * camera.zoom * flicker;
+        if (sx + r < 0 || sx - r > w || sy + r < 0 || sy - r > h) continue;
+
+        const yellowScale =
+          darknessRatio * Math.min(1, Math.max(0, (light.strength ?? 0.8) / 0.8));
+        if (yellowScale <= 0.01) continue;
+
+        const yGrad = lCtx.createRadialGradient(sx, sy, 0, sx, sy, r);
+        yGrad.addColorStop(0.0, `rgba(250, 204, 21, ${(0.34 * yellowScale).toFixed(3)})`);
+        yGrad.addColorStop(0.45, `rgba(250, 204, 21, ${(0.18 * yellowScale).toFixed(3)})`);
+        yGrad.addColorStop(0.8, `rgba(250, 204, 21, ${(0.06 * yellowScale).toFixed(3)})`);
+        yGrad.addColorStop(1.0, 'rgba(250, 204, 21, 0.0)');
+
+        lCtx.fillStyle = yGrad;
+        lCtx.beginPath();
+        lCtx.arc(sx, sy, r, 0, Math.PI * 2);
+        lCtx.fill();
+      }
 
       ctx.drawImage(this.lightCanvas, 0, 0);
     }

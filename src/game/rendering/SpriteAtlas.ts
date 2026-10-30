@@ -167,11 +167,27 @@ class SpriteAtlasManager {
   public getCreatureSprite(
     kind: CreatureKind,
     frame: number,
-    isAttacking: boolean
+    isAttacking: boolean,
+    dir: Direction = 'down'
   ): HTMLCanvasElement {
     this.ensureInitialized();
-    const key = `${kind}_${isAttacking ? 'atk' : frame % 4}`;
-    return this.creatureSprites.get(key) || this.creatureSprites.get(`${kind}_0`)!;
+    const perspective =
+      dir === 'up'
+        ? 'up'
+        : dir === 'left' || dir === 'right'
+        ? 'side'
+        : 'down';
+    const suffix = isAttacking ? 'atk' : `${frame % 4}`;
+    const dirKey = `${kind}_${perspective}_${suffix}`;
+    if (this.creatureSprites.has(dirKey)) {
+      return this.creatureSprites.get(dirKey)!;
+    }
+    const key = `${kind}_${suffix}`;
+    return (
+      this.creatureSprites.get(key) ||
+      this.creatureSprites.get(`${kind}_down_0`) ||
+      this.creatureSprites.get(`${kind}_0`)!
+    );
   }
 
   private buildTiles(): void {
@@ -2240,6 +2256,78 @@ class SpriteAtlasManager {
         '................',
       ],
       { i: '#0f172a', w: '#cbd5e1', d: '#451a03', b: '#92400e' }
+    );
+
+    // Stone Shovel Icon (Pá de Pedra)
+    registerItem(
+      'stone_shovel',
+      [
+        '.........ssss...',
+        '........sdddds..',
+        '.......sddlllds.',
+        '.......sdddddds.',
+        '........ssddss..',
+        '........wbss....',
+        '.......wb.......',
+        '......wb........',
+        '.....wb.........',
+        '....wb..........',
+        '...wb...........',
+        '..wwb...........',
+        '.wbb............',
+        '................',
+        '................',
+        '................',
+      ],
+      { s: '#1e293b', d: '#64748b', l: '#cbd5e1', w: '#451a03', b: '#b45309' }
+    );
+
+    // Iron Shovel Icon (Pá de Ferro Forjado)
+    registerItem(
+      'iron_shovel',
+      [
+        '.........iiii...',
+        '........immmmi..',
+        '.......imwwwwmi.',
+        '.......immmmmmi.',
+        '........iimmii..',
+        '........dbii....',
+        '.......db.......',
+        '......db........',
+        '.....db.........',
+        '....db..........',
+        '...db...........',
+        '..ddb...........',
+        '.dbb............',
+        '................',
+        '................',
+        '................',
+      ],
+      { i: '#0f172a', m: '#94a3b8', w: '#f8fafc', d: '#451a03', b: '#d97706' }
+    );
+
+    // Dirt Path Icon (Caminho de Solo Batido)
+    registerItem(
+      'dirt_path',
+      [
+        '................',
+        '..dddddddddddd..',
+        '.dmmmmmmmmmmmmd.',
+        '.dmmllmmmmppmmd.',
+        '.dmmmmmmmmmmmmd.',
+        '.dmmpplllmmmmmd.',
+        '.dmmmmmmmmmmmmd.',
+        '..dddddddddddd..',
+        '................',
+        '................',
+        '................',
+        '................',
+        '................',
+        '................',
+        '................',
+        '................',
+      ],
+      { d: '#5c4028', m: '#9a714c', l: '#b88c62', p: '#785538' }
     );
 
     // Watering Can (Empty)
@@ -4579,6 +4667,22 @@ class SpriteAtlasManager {
       })
     );
 
+    // DIRT PATH — Beaten earth road tile preview sprite
+    this.structureSprites.set(
+      PlaceableType.DIRT_PATH,
+      createFrames(24, 24, (ctx) => {
+        ctx.fillStyle = '#6b4c30';
+        ctx.fillRect(0, 0, 24, 24);
+        ctx.fillStyle = '#8c6642';
+        ctx.fillRect(2, 2, 20, 20);
+        ctx.fillStyle = '#a87e53';
+        ctx.fillRect(4, 4, 16, 16);
+        ctx.fillStyle = '#735336';
+        ctx.fillRect(5, 6, 3, 2);
+        ctx.fillRect(15, 14, 4, 2);
+      })
+    );
+
     // OAK_SAPLING default preview sprite
     this.structureSprites.set(
       PlaceableType.OAK_SAPLING,
@@ -5285,36 +5389,48 @@ class SpriteAtlasManager {
     });
 
     // CAMEL (36x36 — Tall, long-legged desert dromedary towering slightly above the player's head)
-    buildCreature(CreatureKind.CAMEL, 36, 36, (ctx, f) => {
+    buildCreature(CreatureKind.CAMEL, 36, 36, (ctx, f, isAtk) => {
       const leg = f % 2;
+      const neckLunge = isAtk ? 3 : 0;
       ctx.fillStyle = 'rgba(0,0,0,0.32)';
       ctx.fillRect(5, 31, 25, 3);
       // Dark outline
       ctx.fillStyle = '#2a1205';
       ctx.fillRect(6, 12, 20, 12);
       ctx.fillRect(10, 6, 11, 7);
-      ctx.fillRect(24, 4, 8, 15);
-      // Long Slender Camel Legs
+      ctx.fillRect(24 + neckLunge, 4, 8, 15);
+      // Long Slender Camel Legs (front kick when attacking)
       ctx.fillStyle = '#78350f';
       ctx.fillRect(8, 23 + leg, 3, 9);
       ctx.fillRect(13, 24 - leg, 2, 8);
       ctx.fillRect(19, 23 + leg, 2, 8);
-      ctx.fillRect(22, 24 - leg, 3, 9);
+      if (isAtk) {
+        ctx.fillRect(24, 21, 5, 4);
+      } else {
+        ctx.fillRect(22, 24 - leg, 3, 9);
+      }
       // Golden Dromedary Coat, Hump & Curved Neck
       ctx.fillStyle = '#d97706';
       ctx.fillRect(7, 13, 18, 10);
       ctx.fillRect(11, 7, 9, 7);
-      ctx.fillRect(25, 5, 6, 13);
-      ctx.fillRect(28, 5, 4, 5);
+      ctx.fillRect(25 + neckLunge, 5, 6, 13);
+      ctx.fillRect(28 + neckLunge, 5, 4, 5);
       ctx.fillStyle = '#fbbf24';
       ctx.fillRect(12, 7, 7, 4);
-      ctx.fillRect(26, 5, 4, 4);
+      ctx.fillRect(26 + neckLunge, 5, 4, 4);
+      if (isAtk) {
+        // Open jaw & desert spit droplet
+        ctx.fillStyle = '#78350f';
+        ctx.fillRect(29 + neckLunge, 9, 4, 2);
+        ctx.fillStyle = '#38bdf8';
+        ctx.fillRect(33, 7, 2, 2);
+      }
       // Natural furry hump shading (saddle is drawn dynamically when cr.hasSaddle is true)
       ctx.fillStyle = '#b45309';
       ctx.fillRect(11, 12, 9, 3);
       // Eye
-      ctx.fillStyle = '#0f172a';
-      ctx.fillRect(29, 6, 1, 2);
+      ctx.fillStyle = isAtk ? '#ef4444' : '#0f172a';
+      ctx.fillRect(29 + neckLunge, 6, 1, 2);
     });
 
     // HORSE (36x32 — Sleek Plains Horse with flowing mane, tail, and muscular stride)
@@ -5388,338 +5504,865 @@ class SpriteAtlasManager {
       ctx.fillRect(19 + oarShift, 16, 2, 6);
     });
 
-    // ZOMBIE (22x26 — Humanoid undead night walker matching player height)
-    buildCreature(CreatureKind.ZOMBIE, 22, 26, (ctx, f, isAtk) => {
-      const step = f % 2;
-      ctx.fillStyle = 'rgba(0,0,0,0.35)';
-      ctx.fillRect(5, 22, 12, 2);
-      ctx.fillStyle = '#0f172a';
-      ctx.fillRect(6, 2, 10, 8);
-      ctx.fillRect(5, 10, 12, 8);
-      // Head
-      ctx.fillStyle = '#4d7c0f';
-      ctx.fillRect(7, 3, 8, 6);
-      ctx.fillStyle = '#84cc16';
-      ctx.fillRect(8, 3, 6, 2);
-      // Glowing red eyes
-      ctx.fillStyle = '#ef4444';
-      ctx.fillRect(8, 5, 2, 2);
-      ctx.fillRect(12, 5, 2, 2);
-      // Tattered tunic
-      ctx.fillStyle = '#4c1d95';
-      ctx.fillRect(7, 10, 8, 7);
-      ctx.fillStyle = '#7e22ce';
-      ctx.fillRect(8, 10, 6, 4);
-      // Outstretched claws
-      ctx.fillStyle = '#65a30d';
-      ctx.fillRect(2, isAtk ? 8 : 10, 5, 3);
-      ctx.fillRect(15, isAtk ? 8 : 10, 5, 3);
-      // Legs
-      ctx.fillStyle = '#1e293b';
-      ctx.fillRect(7, 17 + step, 3, 5);
-      ctx.fillRect(12, 18 - step, 3, 5);
-    });
-
-    // OGRE (42x46 — Towering Colossal Brute almost 2x the player's bulk & height with horned brow & war club)
-    buildCreature(CreatureKind.OGRE, 42, 46, (ctx, f, isAtk) => {
-      const step = f % 2;
-      ctx.fillStyle = 'rgba(0,0,0,0.44)';
-      ctx.fillRect(5, 39, 32, 5);
-      // Dark outline
-      ctx.fillStyle = '#0f172a';
-      ctx.fillRect(7, 11, 26, 22);
-      ctx.fillRect(12, 2, 16, 11);
-      // Massive Muscular Green-Olive Torso & Broad Shoulders
-      ctx.fillStyle = '#365314';
-      ctx.fillRect(8, 12, 24, 19);
-      ctx.fillStyle = '#4d7c0f';
-      ctx.fillRect(10, 12, 20, 15);
-      ctx.fillStyle = '#65a30d';
-      ctx.fillRect(12, 13, 16, 8);
-      // Crimson War-Paint across chest & brow
-      ctx.fillStyle = '#b91c1c';
-      ctx.fillRect(13, 15, 5, 2);
-      ctx.fillRect(22, 15, 5, 2);
-      // Head, Curved Bull Horns & Lower Ivory Tusks
-      ctx.fillStyle = '#4d7c0f';
-      ctx.fillRect(13, 3, 14, 9);
-      ctx.fillStyle = '#e2e8f0';
-      ctx.fillRect(9, 1, 4, 5);
-      ctx.fillRect(27, 1, 4, 5);
-      ctx.fillStyle = '#ef4444';
-      ctx.fillRect(15, 6, 3, 2);
-      ctx.fillRect(22, 6, 3, 2);
-      ctx.fillStyle = '#fef08a';
-      ctx.fillRect(14, 10, 3, 3);
-      ctx.fillRect(23, 10, 3, 3);
-      // Heavy Fur Loincloth & Skull Belt Buckle
-      ctx.fillStyle = '#78350f';
-      ctx.fillRect(9, 27, 22, 6);
-      ctx.fillStyle = '#fbbf24';
-      ctx.fillRect(17, 27, 6, 4);
-      // Colossal Iron-Studded War Club
-      ctx.fillStyle = '#2a1205';
-      if (isAtk) {
-        ctx.fillRect(28, 15, 13, 9);
-        ctx.fillStyle = '#78350f';
-        ctx.fillRect(29, 16, 11, 7);
-        ctx.fillStyle = '#cbd5e1';
-        ctx.fillRect(36, 13, 3, 3);
-        ctx.fillRect(36, 23, 3, 3);
-      } else {
-        ctx.fillRect(31, 3, 9, 24);
-        ctx.fillStyle = '#78350f';
-        ctx.fillRect(32, 4, 7, 22);
-        ctx.fillStyle = '#cbd5e1';
-        ctx.fillRect(30, 6, 3, 3);
-        ctx.fillRect(38, 11, 3, 3);
-        ctx.fillRect(30, 16, 3, 3);
+    const buildDirectionalCreature = (
+      kind: CreatureKind,
+      w: number,
+      h: number,
+      drawer: (
+        ctx: CanvasRenderingContext2D,
+        frame: number,
+        isAtk: boolean,
+        perspective: 'down' | 'up' | 'side'
+      ) => void
+    ) => {
+      const perspectives: Array<'down' | 'up' | 'side'> = [
+        'down',
+        'up',
+        'side',
+      ];
+      for (const p of perspectives) {
+        for (let f = 0; f < 4; f++) {
+          const c = createPixelCanvas(w, h);
+          drawer(c.getContext('2d')!, f, false, p);
+          this.creatureSprites.set(`${kind}_${p}_${f}`, c);
+          if (p === 'down') {
+            this.creatureSprites.set(`${kind}_${f}`, c);
+          }
+        }
+        const atkC = createPixelCanvas(w, h);
+        drawer(atkC.getContext('2d')!, 1, true, p);
+        this.creatureSprites.set(`${kind}_${p}_atk`, atkC);
+        if (p === 'down') {
+          this.creatureSprites.set(`${kind}_atk`, atkC);
+        }
       }
-      // Trunk-like Legs
-      ctx.fillStyle = '#1e293b';
-      ctx.fillRect(11, 32 + step, 6, 8);
-      ctx.fillRect(23, 33 - step, 6, 8);
-    });
+    };
 
-    // FOREST_STALKER (36x24 — Wide, low-slung giant woodland spider with 8 articulated legs)
-    buildCreature(CreatureKind.FOREST_STALKER, 36, 24, (ctx, f, isAtk) => {
-      const legShift = f % 2 === 0 ? 1 : -1;
-      ctx.fillStyle = 'rgba(0,0,0,0.36)';
-      ctx.fillRect(5, 19, 26, 3);
-      // 8 wide-splayed articulated arachnid legs
-      ctx.fillStyle = '#0f172a';
-      for (let i = 0; i < 4; i++) {
-        const ly = 6 + i * 4 + (i % 2 === 0 ? legShift : -legShift);
-        ctx.fillRect(1, ly, 10, 2);
-        ctx.fillRect(1, ly + 1, 3, 3);
-        ctx.fillRect(25, ly, 10, 2);
-        ctx.fillRect(32, ly + 1, 3, 3);
+    // ZOMBIE (22x26 — Humanoid undead night walker with 'down', 'up', and 'side' perspectives)
+    buildDirectionalCreature(
+      CreatureKind.ZOMBIE,
+      22,
+      26,
+      (ctx, f, isAtk, p) => {
+        const step = f % 2;
+        ctx.fillStyle = 'rgba(0,0,0,0.35)';
+        ctx.fillRect(5, 22, 12, 2);
+
+        if (p === 'up') {
+          // Back view (Cima): back of necrotic skull, exposed spine ribs on purple tunic, arms raised forward
+          ctx.fillStyle = '#0f172a';
+          ctx.fillRect(6, 2, 10, 8);
+          ctx.fillRect(5, 10, 12, 8);
+          ctx.fillStyle = '#365314';
+          ctx.fillRect(7, 3, 8, 6);
+          ctx.fillStyle = '#4d7c0f';
+          ctx.fillRect(8, 3, 6, 3);
+          // Back of tattered tunic & exposed spine vertebrae
+          ctx.fillStyle = '#4c1d95';
+          ctx.fillRect(7, 10, 8, 7);
+          ctx.fillStyle = '#d9f99d';
+          ctx.fillRect(10, 11, 2, 5);
+          // Arms reaching up/north when attacking
+          ctx.fillStyle = '#65a30d';
+          ctx.fillRect(3, isAtk ? 5 : 9, 4, 4);
+          ctx.fillRect(15, isAtk ? 5 : 9, 4, 4);
+          // Legs
+          ctx.fillStyle = '#1e293b';
+          ctx.fillRect(7, 17 + step, 3, 5);
+          ctx.fillRect(12, 18 - step, 3, 5);
+        } else if (p === 'side') {
+          // Side profile (Lados - facing right): hunched undead profile, outstretched Zombie arms to the right
+          ctx.fillStyle = '#0f172a';
+          ctx.fillRect(6, 2, 9, 8);
+          ctx.fillRect(5, 10, 10, 8);
+          // Side head & jaw
+          ctx.fillStyle = '#4d7c0f';
+          ctx.fillRect(7, 3, 7, 6);
+          ctx.fillStyle = '#84cc16';
+          ctx.fillRect(8, 3, 5, 2);
+          // Single glowing red eye on side profile
+          ctx.fillStyle = '#ef4444';
+          ctx.fillRect(12, 5, 2, 2);
+          // Side tattered purple tunic
+          ctx.fillStyle = '#4c1d95';
+          ctx.fillRect(6, 10, 8, 7);
+          ctx.fillStyle = '#7e22ce';
+          ctx.fillRect(7, 11, 6, 4);
+          // Both undead arms reaching forward to the right (lunging further on attack)
+          ctx.fillStyle = '#4d7c0f';
+          ctx.fillRect(12, isAtk ? 8 : 9, isAtk ? 9 : 7, 2);
+          ctx.fillStyle = '#84cc16';
+          ctx.fillRect(13, isAtk ? 11 : 11, isAtk ? 8 : 6, 3);
+          if (isAtk) {
+            ctx.fillStyle = '#a3e635';
+            ctx.fillRect(19, 7, 2, 6);
+          }
+          // Striding profile legs
+          ctx.fillStyle = '#1e293b';
+          ctx.fillRect(7 - step, 17, 3, 5);
+          ctx.fillRect(11 + step, 17, 3, 5);
+        } else {
+          // Front view (Baixo)
+          ctx.fillStyle = '#0f172a';
+          ctx.fillRect(6, 2, 10, 8);
+          ctx.fillRect(5, 10, 12, 8);
+          ctx.fillStyle = '#4d7c0f';
+          ctx.fillRect(7, 3, 8, 6);
+          ctx.fillStyle = '#84cc16';
+          ctx.fillRect(8, 3, 6, 2);
+          ctx.fillStyle = '#ef4444';
+          ctx.fillRect(8, 5, 2, 2);
+          ctx.fillRect(12, 5, 2, 2);
+          ctx.fillStyle = '#4c1d95';
+          ctx.fillRect(7, 10, 8, 7);
+          ctx.fillStyle = '#7e22ce';
+          ctx.fillRect(8, 10, 6, 4);
+          ctx.fillStyle = '#65a30d';
+          ctx.fillRect(2, isAtk ? 12 : 10, 5, isAtk ? 5 : 3);
+          ctx.fillRect(15, isAtk ? 12 : 10, 5, isAtk ? 5 : 3);
+          ctx.fillStyle = '#1e293b';
+          ctx.fillRect(7, 17 + step, 3, 5);
+          ctx.fillRect(12, 18 - step, 3, 5);
+        }
       }
-      // Bulbous Abdomen & Cephalothorax
-      ctx.fillStyle = '#1e1b4b';
-      ctx.fillRect(10, 3, 16, 15);
-      ctx.fillStyle = '#312e81';
-      ctx.fillRect(11, 4, 14, 12);
-      // Venomous Violet/Emerald Hourglass Marking
-      ctx.fillStyle = '#a855f7';
-      ctx.fillRect(14, 5, 8, 5);
-      ctx.fillStyle = '#4ade80';
-      ctx.fillRect(16, 6, 4, 3);
-      // Multi-Eye Cluster & Dripping Chelicerae Fangs
-      ctx.fillStyle = '#ef4444';
-      ctx.fillRect(13, 13, 3, 2);
-      ctx.fillRect(20, 13, 3, 2);
-      ctx.fillStyle = isAtk ? '#4ade80' : '#e2e8f0';
-      ctx.fillRect(14, isAtk ? 17 : 16, 2, 4);
-      ctx.fillRect(20, isAtk ? 17 : 16, 2, 4);
-    });
+    );
 
-    // DESERT_SCORPION (36x30 — Wide armored golden emperor scorpion with heavy pincers & arched stinger tail)
-    buildCreature(CreatureKind.DESERT_SCORPION, 36, 30, (ctx, f, isAtk) => {
-      const step = f % 2;
-      ctx.fillStyle = 'rgba(0,0,0,0.36)';
-      ctx.fillRect(4, 24, 28, 3);
-      // Wide Segmented Chitin Carapace
-      ctx.fillStyle = '#451a03';
-      ctx.fillRect(9, 12, 18, 10);
-      ctx.fillStyle = '#b45309';
-      ctx.fillRect(10, 13, 16, 8);
-      ctx.fillStyle = '#f59e0b';
-      ctx.fillRect(12, 13, 12, 4);
-      // Outstretched Heavy Pincers (Claws)
-      ctx.fillStyle = '#78350f';
-      ctx.fillRect(1, isAtk ? 11 : 14, 8, 6);
-      ctx.fillRect(27, isAtk ? 11 : 14, 8, 6);
-      ctx.fillStyle = '#fbbf24';
-      ctx.fillRect(2, isAtk ? 11 : 14, 6, 4);
-      ctx.fillRect(28, isAtk ? 11 : 14, 6, 4);
-      // Arched Segmented Stinger Tail overhead
-      const tailY = isAtk ? 4 : 2 + step;
-      ctx.fillStyle = '#78350f';
-      ctx.fillRect(14, tailY, 8, 10);
-      ctx.fillStyle = '#fbbf24';
-      ctx.fillRect(15, tailY + 1, 6, 8);
-      // Glowing Venomous Stinger Barb
-      ctx.fillStyle = '#a855f7';
-      ctx.fillRect(16, tailY - 1, 4, 4);
-      ctx.fillStyle = '#fde047';
-      ctx.fillRect(17, tailY, 2, 2);
-      // Chitin Legs
-      ctx.fillStyle = '#451a03';
-      ctx.fillRect(7, 21 + step, 3, 5);
-      ctx.fillRect(13, 22 - step, 3, 5);
-      ctx.fillRect(20, 21 + step, 3, 5);
-      ctx.fillRect(26, 22 - step, 3, 5);
-    });
+    // OGRE (42x46 — Towering Colossal Brute with 'down', 'up', and 'side' perspectives)
+    buildDirectionalCreature(
+      CreatureKind.OGRE,
+      42,
+      46,
+      (ctx, f, isAtk, p) => {
+        const step = f % 2;
+        ctx.fillStyle = 'rgba(0,0,0,0.44)';
+        ctx.fillRect(5, 39, 32, 5);
 
-    // STONE_GOLEM (44x48 — Colossal ancient runic monolith guardian with massive boulder shoulders & fists)
-    buildCreature(CreatureKind.STONE_GOLEM, 44, 48, (ctx, f, isAtk) => {
-      const step = f % 2;
-      ctx.fillStyle = 'rgba(0,0,0,0.46)';
-      ctx.fillRect(4, 41, 36, 5);
-      // Dark monolith silhouette
-      ctx.fillStyle = '#0f172a';
-      ctx.fillRect(6, 5, 32, 30);
-      // Craggy Granite Torso & Stepped Shoulder Pauldrons
-      ctx.fillStyle = '#475569';
-      ctx.fillRect(7, 6, 30, 27);
-      ctx.fillStyle = '#64748b';
-      ctx.fillRect(9, 7, 26, 21);
-      ctx.fillStyle = '#94a3b8';
-      ctx.fillRect(10, 7, 24, 8);
-      // Moss patches on ancient shoulders
-      ctx.fillStyle = '#15803d';
-      ctx.fillRect(8, 6, 6, 3);
-      ctx.fillRect(30, 6, 6, 3);
-      // Glowing Astral Runic Core & Piercing Golden Eyes
-      ctx.fillStyle = '#0284c7';
-      ctx.fillRect(16, 16, 12, 11);
-      ctx.fillStyle = f % 2 === 0 ? '#e0f2fe' : '#38bdf8';
-      ctx.fillRect(18, 18, 8, 7);
-      ctx.fillStyle = '#fde047';
-      ctx.fillRect(14, 10, 4, 3);
-      ctx.fillRect(26, 10, 4, 3);
-      // Massive Articulated Stone Pillar Fists
-      ctx.fillStyle = '#334155';
-      ctx.fillRect(1, isAtk ? 20 : 12 + step, 7, 17);
-      ctx.fillRect(36, isAtk ? 20 : 12 - step, 7, 17);
-      ctx.fillStyle = '#94a3b8';
-      ctx.fillRect(2, isAtk ? 21 : 13 + step, 5, 9);
-      ctx.fillRect(37, isAtk ? 21 : 13 - step, 5, 9);
-      // Heavy Monolith Legs
-      ctx.fillStyle = '#1e293b';
-      ctx.fillRect(10, 34 + step, 9, 8);
-      ctx.fillRect(25, 35 - step, 9, 8);
-    });
-
-    // BANDIT (22x26 — Humanoid highway raider matching player proportions)
-    buildCreature(CreatureKind.BANDIT, 22, 26, (ctx, f, isAtk) => {
-      const step = f % 2;
-      ctx.fillStyle = 'rgba(0,0,0,0.35)';
-      ctx.fillRect(5, 22, 12, 2);
-      // Outline
-      ctx.fillStyle = '#0f172a';
-      ctx.fillRect(6, 2, 10, 8);
-      ctx.fillRect(4, 10, 14, 8);
-      // Hood & Bandit Mask
-      ctx.fillStyle = '#1e293b';
-      ctx.fillRect(7, 3, 8, 6);
-      ctx.fillStyle = '#991b1b';
-      ctx.fillRect(7, 6, 8, 3);
-      // Piercing eyes
-      ctx.fillStyle = '#fde047';
-      ctx.fillRect(8, 5, 2, 1);
-      ctx.fillRect(12, 5, 2, 1);
-      // Brigandine Vest & Gold Buckle
-      ctx.fillStyle = '#334155';
-      ctx.fillRect(6, 10, 10, 7);
-      ctx.fillStyle = '#dc2626';
-      ctx.fillRect(7, 10, 8, 4);
-      ctx.fillStyle = '#fbbf24';
-      ctx.fillRect(10, 15, 2, 2);
-      // Steel Cutlass / Blade
-      ctx.fillStyle = '#e2e8f0';
-      if (isAtk) {
-        ctx.fillRect(16, 8, 6, 3);
-      } else {
-        ctx.fillRect(16, 6, 3, 8);
+        if (p === 'up') {
+          // Back view (Cima): massive muscular back, rear of bull horns, fur pelt across shoulders, club raised/slammed
+          ctx.fillStyle = '#0f172a';
+          ctx.fillRect(7, 11, 26, 22);
+          ctx.fillRect(12, 2, 16, 11);
+          ctx.fillStyle = '#365314';
+          ctx.fillRect(8, 12, 24, 19);
+          ctx.fillStyle = '#4d7c0f';
+          ctx.fillRect(10, 12, 20, 14);
+          // Back of head & curved horns
+          ctx.fillStyle = '#365314';
+          ctx.fillRect(13, 3, 14, 9);
+          ctx.fillStyle = '#e2e8f0';
+          ctx.fillRect(9, 1, 4, 5);
+          ctx.fillRect(27, 1, 4, 5);
+          // Rear fur belt & crossed hide strap
+          ctx.fillStyle = '#78350f';
+          ctx.fillRect(9, 26, 22, 7);
+          ctx.fillRect(11, 13, 18, 4);
+          // Colossal War Club on right side
+          ctx.fillStyle = '#2a1205';
+          const clubY = isAtk ? 1 : 5;
+          ctx.fillRect(31, clubY, 9, 22);
+          ctx.fillStyle = '#78350f';
+          ctx.fillRect(32, clubY + 1, 7, 20);
+          ctx.fillStyle = '#cbd5e1';
+          ctx.fillRect(30, clubY + 3, 3, 3);
+          ctx.fillRect(38, clubY + 8, 3, 3);
+          // Legs
+          ctx.fillStyle = '#1e293b';
+          ctx.fillRect(11, 32 + step, 6, 8);
+          ctx.fillRect(23, 33 - step, 6, 8);
+        } else if (p === 'side') {
+          // Side profile (Lados - facing right): hulking brute side profile, forward horn & tusk, club swinging right
+          ctx.fillStyle = '#0f172a';
+          ctx.fillRect(9, 11, 20, 22);
+          ctx.fillRect(13, 2, 14, 11);
+          // Muscular side torso & shoulder
+          ctx.fillStyle = '#365314';
+          ctx.fillRect(10, 12, 18, 19);
+          ctx.fillStyle = '#4d7c0f';
+          ctx.fillRect(12, 12, 15, 15);
+          ctx.fillStyle = '#b91c1c';
+          ctx.fillRect(15, 15, 8, 2);
+          // Side head, forward horn, red eye & jutting ivory tusk
+          ctx.fillStyle = '#4d7c0f';
+          ctx.fillRect(14, 3, 12, 9);
+          ctx.fillStyle = '#e2e8f0';
+          ctx.fillRect(22, 1, 5, 4);
+          ctx.fillStyle = '#ef4444';
+          ctx.fillRect(23, 6, 3, 2);
+          ctx.fillStyle = '#fef08a';
+          ctx.fillRect(25, 9, 3, 3);
+          // Fur loincloth
+          ctx.fillStyle = '#78350f';
+          ctx.fillRect(10, 27, 18, 6);
+          ctx.fillStyle = '#fbbf24';
+          ctx.fillRect(24, 27, 4, 4);
+          // Spiked War Club (slammed horizontally forward when attacking, held upright otherwise)
+          ctx.fillStyle = '#2a1205';
+          if (isAtk) {
+            ctx.fillRect(24, 16, 17, 9);
+            ctx.fillStyle = '#78350f';
+            ctx.fillRect(25, 17, 15, 7);
+            ctx.fillStyle = '#cbd5e1';
+            ctx.fillRect(34, 14, 3, 3);
+            ctx.fillRect(37, 24, 3, 3);
+          } else {
+            ctx.fillRect(28, 4, 9, 23);
+            ctx.fillStyle = '#78350f';
+            ctx.fillRect(29, 5, 7, 21);
+            ctx.fillStyle = '#cbd5e1';
+            ctx.fillRect(35, 8, 3, 3);
+            ctx.fillRect(35, 14, 3, 3);
+          }
+          // Striding trunk legs
+          ctx.fillStyle = '#1e293b';
+          ctx.fillRect(12 - step * 2, 32, 6, 8);
+          ctx.fillRect(20 + step * 2, 32, 6, 8);
+        } else {
+          // Front view (Baixo)
+          ctx.fillStyle = '#0f172a';
+          ctx.fillRect(7, 11, 26, 22);
+          ctx.fillRect(12, 2, 16, 11);
+          ctx.fillStyle = '#365314';
+          ctx.fillRect(8, 12, 24, 19);
+          ctx.fillStyle = '#4d7c0f';
+          ctx.fillRect(10, 12, 20, 15);
+          ctx.fillStyle = '#65a30d';
+          ctx.fillRect(12, 13, 16, 8);
+          ctx.fillStyle = '#b91c1c';
+          ctx.fillRect(13, 15, 5, 2);
+          ctx.fillRect(22, 15, 5, 2);
+          ctx.fillStyle = '#4d7c0f';
+          ctx.fillRect(13, 3, 14, 9);
+          ctx.fillStyle = '#e2e8f0';
+          ctx.fillRect(9, 1, 4, 5);
+          ctx.fillRect(27, 1, 4, 5);
+          ctx.fillStyle = '#ef4444';
+          ctx.fillRect(15, 6, 3, 2);
+          ctx.fillRect(22, 6, 3, 2);
+          ctx.fillStyle = '#fef08a';
+          ctx.fillRect(14, 10, 3, 3);
+          ctx.fillRect(23, 10, 3, 3);
+          ctx.fillStyle = '#78350f';
+          ctx.fillRect(9, 27, 22, 6);
+          ctx.fillStyle = '#fbbf24';
+          ctx.fillRect(17, 27, 6, 4);
+          ctx.fillStyle = '#2a1205';
+          if (isAtk) {
+            ctx.fillRect(27, 18, 14, 10);
+            ctx.fillStyle = '#78350f';
+            ctx.fillRect(28, 19, 12, 8);
+            ctx.fillStyle = '#cbd5e1';
+            ctx.fillRect(36, 16, 3, 3);
+            ctx.fillRect(36, 27, 3, 3);
+          } else {
+            ctx.fillRect(31, 3, 9, 24);
+            ctx.fillStyle = '#78350f';
+            ctx.fillRect(32, 4, 7, 22);
+            ctx.fillStyle = '#cbd5e1';
+            ctx.fillRect(30, 6, 3, 3);
+            ctx.fillRect(38, 11, 3, 3);
+            ctx.fillRect(30, 16, 3, 3);
+          }
+          ctx.fillStyle = '#1e293b';
+          ctx.fillRect(11, 32 + step, 6, 8);
+          ctx.fillRect(23, 33 - step, 6, 8);
+        }
       }
-      // Boots
-      ctx.fillStyle = '#1e293b';
-      ctx.fillRect(7, 17 + step, 3, 5);
-      ctx.fillRect(12, 18 - step, 3, 5);
-    });
+    );
 
-    // VILLAGER (22x26 — Friendly medieval townsperson/merchant/smith matching player proportions)
-    buildCreature(CreatureKind.VILLAGER, 22, 26, (ctx, f, isAtk) => {
-      const step = f % 2;
-      ctx.fillStyle = 'rgba(0,0,0,0.34)';
-      ctx.fillRect(5, 22, 12, 2);
-      // Dark outline
-      ctx.fillStyle = '#0f172a';
-      ctx.fillRect(6, 2, 10, 8);
-      ctx.fillRect(4, 10, 14, 8);
-      // Hair / Merchant Cap & Warm Face
-      ctx.fillStyle = '#065f46';
-      ctx.fillRect(6, 3, 10, 3);
-      ctx.fillStyle = '#fbbf24';
-      ctx.fillRect(7, 4, 8, 1);
-      ctx.fillStyle = '#fdba74';
-      ctx.fillRect(7, 5, 8, 4);
-      // Expressive eyes
-      ctx.fillStyle = isAtk ? '#ef4444' : '#0f172a';
-      ctx.fillRect(8, 6, 2, 2);
-      ctx.fillRect(12, 6, 2, 2);
-      // Emerald & Gold Merchant/Guild Tunic
-      ctx.fillStyle = '#047857';
-      ctx.fillRect(6, 10, 10, 7);
-      ctx.fillStyle = '#10b981';
-      ctx.fillRect(7, 10, 8, 4);
-      ctx.fillStyle = '#fde047';
-      ctx.fillRect(9, 10, 4, 6);
-      // Guard blade when provoked, or warm lantern/ledger
-      if (isAtk) {
-        ctx.fillStyle = '#f8fafc';
-        ctx.fillRect(16, 6, 5, 4);
-      } else {
-        ctx.fillStyle = '#fde047';
-        ctx.fillRect(15, 11, 3, 4);
-      }
-      // Boots
-      ctx.fillStyle = '#451a03';
-      ctx.fillRect(7, 17 + step, 3, 5);
-      ctx.fillRect(12, 18 - step, 3, 5);
-    });
+    // FOREST_STALKER (36x24 — Giant woodland spider with 'down', 'up', and 'side' perspectives)
+    buildDirectionalCreature(
+      CreatureKind.FOREST_STALKER,
+      36,
+      24,
+      (ctx, f, isAtk, p) => {
+        const legShift = f % 2 === 0 ? 1 : -1;
+        ctx.fillStyle = 'rgba(0,0,0,0.36)';
+        ctx.fillRect(5, 19, 26, 3);
 
-    // WANDERER (22x26 — Nomadic frontier traveler matching player proportions with hat, backpack & staff)
-    buildCreature(CreatureKind.WANDERER, 22, 26, (ctx, f, isAtk) => {
-      const step = f % 2;
-      ctx.fillStyle = 'rgba(0,0,0,0.34)';
-      ctx.fillRect(5, 22, 12, 2);
-      // Dark outline
-      ctx.fillStyle = '#0f172a';
-      ctx.fillRect(5, 2, 12, 8);
-      ctx.fillRect(4, 10, 14, 8);
-      // Traveler's Backpack & Bedroll
-      ctx.fillStyle = '#78350f';
-      ctx.fillRect(2, 9, 4, 7);
-      ctx.fillStyle = '#d97706';
-      ctx.fillRect(2, 10, 3, 5);
-      // Wide-brimmed Explorer Hat
-      ctx.fillStyle = '#1e3a8a';
-      ctx.fillRect(4, 2, 14, 3);
-      ctx.fillStyle = '#3b82f6';
-      ctx.fillRect(7, 2, 8, 2);
-      ctx.fillStyle = '#fbbf24';
-      ctx.fillRect(6, 4, 10, 1);
-      // Warm Face & Eyes
-      ctx.fillStyle = '#fdba74';
-      ctx.fillRect(7, 5, 8, 4);
-      ctx.fillStyle = isAtk ? '#ef4444' : '#0f172a';
-      ctx.fillRect(8, 6, 2, 2);
-      ctx.fillRect(12, 6, 2, 2);
-      // Indigo & Amber Wayfarer Cloak
-      ctx.fillStyle = '#1d4ed8';
-      ctx.fillRect(6, 10, 10, 7);
-      ctx.fillStyle = '#38bdf8';
-      ctx.fillRect(7, 10, 8, 4);
-      ctx.fillStyle = '#f59e0b';
-      ctx.fillRect(9, 10, 4, 6);
-      // Walking Staff with Lantern (or Defensive Blade when attacking)
-      if (isAtk) {
-        ctx.fillStyle = '#f8fafc';
-        ctx.fillRect(16, 7, 5, 3);
-      } else {
-        ctx.fillStyle = '#92400e';
-        ctx.fillRect(16, 4, 2, 16);
-        ctx.fillStyle = '#fde047';
-        ctx.fillRect(15, 4, 3, 3);
+        if (p === 'up') {
+          // Back view (Cima): fangs pointing UP (north), large abdomen in the foreground (south) with hourglass & spinnerets
+          ctx.fillStyle = '#0f172a';
+          for (let i = 0; i < 4; i++) {
+            const ly = 6 + i * 4 + (i % 2 === 0 ? legShift : -legShift);
+            ctx.fillRect(1, ly, 10, 2);
+            ctx.fillRect(1, ly + 1, 3, 3);
+            ctx.fillRect(25, ly, 10, 2);
+            ctx.fillRect(32, ly + 1, 3, 3);
+          }
+          // Fangs reaching north
+          ctx.fillStyle = isAtk ? '#4ade80' : '#e2e8f0';
+          ctx.fillRect(14, isAtk ? 1 : 2, 2, 4);
+          ctx.fillRect(20, isAtk ? 1 : 2, 2, 4);
+          // Front cephalothorax (north) & bulbous abdomen (south)
+          ctx.fillStyle = '#1e1b4b';
+          ctx.fillRect(12, 4, 12, 6);
+          ctx.fillRect(9, 8, 18, 11);
+          ctx.fillStyle = '#312e81';
+          ctx.fillRect(10, 9, 16, 9);
+          // Dorsal hourglass & silk spinnerets at the rear
+          ctx.fillStyle = '#a855f7';
+          ctx.fillRect(14, 11, 8, 5);
+          ctx.fillStyle = '#4ade80';
+          ctx.fillRect(16, 12, 4, 3);
+          ctx.fillStyle = '#cbd5e1';
+          ctx.fillRect(16, 18, 4, 2);
+        } else if (p === 'side') {
+          // Side profile (Lados - facing right): raised abdomen on left, cephalothorax & venomous fangs lunging right
+          ctx.fillStyle = '#1e1b4b';
+          ctx.fillRect(4, 4, 15, 12); // Rear abdomen
+          ctx.fillRect(17, 7, 11, 10); // Front cephalothorax
+          ctx.fillStyle = '#312e81';
+          ctx.fillRect(5, 5, 13, 10);
+          ctx.fillRect(18, 8, 9, 8);
+          // Side violet/emerald marking on abdomen
+          ctx.fillStyle = '#a855f7';
+          ctx.fillRect(8, 7, 7, 5);
+          ctx.fillStyle = '#4ade80';
+          ctx.fillRect(10, 8, 3, 3);
+          // Side red eye cluster & forward fangs on the right
+          ctx.fillStyle = '#ef4444';
+          ctx.fillRect(24, 9, 3, 3);
+          ctx.fillStyle = isAtk ? '#4ade80' : '#e2e8f0';
+          ctx.fillRect(27, isAtk ? 10 : 12, isAtk ? 6 : 4, 2);
+          ctx.fillRect(27, isAtk ? 14 : 15, isAtk ? 6 : 4, 2);
+          // Articulated side legs striding along bottom
+          ctx.fillStyle = '#0f172a';
+          for (let i = 0; i < 4; i++) {
+            const lx = 7 + i * 5 + (i % 2 === 0 ? legShift : -legShift);
+            ctx.fillRect(lx, 14, 3, 5);
+            ctx.fillRect(lx - 1, 18, 3, 3);
+          }
+        } else {
+          // Front view (Baixo)
+          ctx.fillStyle = '#0f172a';
+          for (let i = 0; i < 4; i++) {
+            const ly = 6 + i * 4 + (i % 2 === 0 ? legShift : -legShift);
+            ctx.fillRect(1, ly, 10, 2);
+            ctx.fillRect(1, ly + 1, 3, 3);
+            ctx.fillRect(25, ly, 10, 2);
+            ctx.fillRect(32, ly + 1, 3, 3);
+          }
+          ctx.fillStyle = '#1e1b4b';
+          ctx.fillRect(10, 3, 16, 15);
+          ctx.fillStyle = '#312e81';
+          ctx.fillRect(11, 4, 14, 12);
+          ctx.fillStyle = '#a855f7';
+          ctx.fillRect(14, 5, 8, 5);
+          ctx.fillStyle = '#4ade80';
+          ctx.fillRect(16, 6, 4, 3);
+          ctx.fillStyle = '#ef4444';
+          ctx.fillRect(13, 13, 3, 2);
+          ctx.fillRect(20, 13, 3, 2);
+          ctx.fillStyle = isAtk ? '#4ade80' : '#e2e8f0';
+          ctx.fillRect(13, isAtk ? 17 : 16, 3, isAtk ? 5 : 4);
+          ctx.fillRect(20, isAtk ? 17 : 16, 3, isAtk ? 5 : 4);
+        }
       }
-      // Trail Boots
-      ctx.fillStyle = '#451a03';
-      ctx.fillRect(7, 17 + step, 3, 5);
-      ctx.fillRect(12, 18 - step, 3, 5);
-    });
+    );
+
+    // DESERT_SCORPION (36x30 — Golden emperor scorpion with 'down', 'up', and 'side' perspectives)
+    buildDirectionalCreature(
+      CreatureKind.DESERT_SCORPION,
+      36,
+      30,
+      (ctx, f, isAtk, p) => {
+        const step = f % 2;
+        ctx.fillStyle = 'rgba(0,0,0,0.36)';
+        ctx.fillRect(4, 24, 28, 3);
+
+        if (p === 'up') {
+          // Back view (Cima): pincers reaching UP (north), segmented tail curving from rear (south) up overhead
+          ctx.fillStyle = '#78350f';
+          ctx.fillRect(2, isAtk ? 2 : 5, 8, 6);
+          ctx.fillRect(26, isAtk ? 2 : 5, 8, 6);
+          ctx.fillStyle = '#fbbf24';
+          ctx.fillRect(3, isAtk ? 2 : 5, 6, 4);
+          ctx.fillRect(27, isAtk ? 2 : 5, 6, 4);
+          // Carapace
+          ctx.fillStyle = '#451a03';
+          ctx.fillRect(9, 9, 18, 11);
+          ctx.fillStyle = '#b45309';
+          ctx.fillRect(10, 10, 16, 9);
+          ctx.fillStyle = '#f59e0b';
+          ctx.fillRect(12, 11, 12, 6);
+          // Rear-mounted segmented tail whipping forward/upward
+          const tailY = isAtk ? 2 : 6 + step;
+          ctx.fillStyle = '#78350f';
+          ctx.fillRect(14, tailY, 8, 14);
+          ctx.fillStyle = '#fbbf24';
+          ctx.fillRect(15, tailY + 2, 6, 11);
+          ctx.fillStyle = '#a855f7';
+          ctx.fillRect(16, tailY - 1, 4, 4);
+          // Legs
+          ctx.fillStyle = '#451a03';
+          ctx.fillRect(7, 20 + step, 3, 5);
+          ctx.fillRect(26, 21 - step, 3, 5);
+        } else if (p === 'side') {
+          // Side profile (Lados - facing right): tail arched on left curving overhead to right, pincers snapping right
+          // Segmented carapace
+          ctx.fillStyle = '#451a03';
+          ctx.fillRect(9, 13, 17, 9);
+          ctx.fillStyle = '#b45309';
+          ctx.fillRect(10, 14, 15, 7);
+          ctx.fillStyle = '#f59e0b';
+          ctx.fillRect(12, 14, 12, 4);
+          // Arched scorpion tail rising from left rear (x=4..12) and whipping right (x=12..25)
+          ctx.fillStyle = '#78350f';
+          ctx.fillRect(4, 6, 6, 10);
+          ctx.fillRect(8, 2 + step, isAtk ? 18 : 13, 5);
+          ctx.fillStyle = '#fbbf24';
+          ctx.fillRect(5, 7, 4, 8);
+          ctx.fillRect(9, 3 + step, isAtk ? 16 : 11, 3);
+          // Glowing purple/gold venom stinger tip pointing right
+          const stingX = isAtk ? 25 : 20;
+          ctx.fillStyle = '#a855f7';
+          ctx.fillRect(stingX, isAtk ? 5 : 2 + step, 4, 4);
+          ctx.fillStyle = '#fde047';
+          ctx.fillRect(stingX + 1, isAtk ? 6 : 3 + step, 2, 2);
+          // Heavy Pincers reaching right
+          ctx.fillStyle = '#78350f';
+          ctx.fillRect(24, isAtk ? 10 : 12, isAtk ? 11 : 9, 7);
+          ctx.fillStyle = '#fbbf24';
+          ctx.fillRect(25, isAtk ? 11 : 13, isAtk ? 9 : 7, 2);
+          ctx.fillRect(25, isAtk ? 15 : 16, isAtk ? 9 : 7, 2);
+          // Side legs
+          ctx.fillStyle = '#451a03';
+          for (let i = 0; i < 4; i++) {
+            ctx.fillRect(10 + i * 4, 21 + ((i + step) % 2), 3, 5);
+          }
+        } else {
+          // Front view (Baixo)
+          ctx.fillStyle = '#451a03';
+          ctx.fillRect(9, 12, 18, 10);
+          ctx.fillStyle = '#b45309';
+          ctx.fillRect(10, 13, 16, 8);
+          ctx.fillStyle = '#f59e0b';
+          ctx.fillRect(12, 13, 12, 4);
+          ctx.fillStyle = '#78350f';
+          ctx.fillRect(1, isAtk ? 16 : 14, 8, 6);
+          ctx.fillRect(27, isAtk ? 16 : 14, 8, 6);
+          ctx.fillStyle = '#fbbf24';
+          ctx.fillRect(2, isAtk ? 16 : 14, 6, 4);
+          ctx.fillRect(28, isAtk ? 16 : 14, 6, 4);
+          const tailY = isAtk ? 6 : 2 + step;
+          ctx.fillStyle = '#78350f';
+          ctx.fillRect(14, tailY, 8, 10);
+          ctx.fillStyle = '#fbbf24';
+          ctx.fillRect(15, tailY + 1, 6, 8);
+          ctx.fillStyle = '#a855f7';
+          ctx.fillRect(16, isAtk ? tailY + 7 : tailY - 1, 4, 4);
+          ctx.fillStyle = '#fde047';
+          ctx.fillRect(17, isAtk ? tailY + 8 : tailY, 2, 2);
+          ctx.fillStyle = '#451a03';
+          ctx.fillRect(7, 21 + step, 3, 5);
+          ctx.fillRect(13, 22 - step, 3, 5);
+          ctx.fillRect(20, 21 + step, 3, 5);
+          ctx.fillRect(26, 22 - step, 3, 5);
+        }
+      }
+    );
+
+    // STONE_GOLEM (44x48 — Colossal ancient runic monolith guardian with 'down', 'up', and 'side' perspectives)
+    buildDirectionalCreature(
+      CreatureKind.STONE_GOLEM,
+      44,
+      48,
+      (ctx, f, isAtk, p) => {
+        const step = f % 2;
+        ctx.fillStyle = 'rgba(0,0,0,0.46)';
+        ctx.fillRect(4, 41, 36, 5);
+
+        if (p === 'up') {
+          // Back view (Cima): ancient carved granite back, dorsal runic spine, mossy shoulders
+          ctx.fillStyle = '#0f172a';
+          ctx.fillRect(6, 5, 32, 30);
+          ctx.fillStyle = '#475569';
+          ctx.fillRect(7, 6, 30, 27);
+          ctx.fillStyle = '#64748b';
+          ctx.fillRect(9, 7, 26, 21);
+          // Mossy shoulders
+          ctx.fillStyle = '#15803d';
+          ctx.fillRect(8, 6, 8, 4);
+          ctx.fillRect(28, 6, 8, 4);
+          // Glowing dorsal rune spine
+          ctx.fillStyle = '#0284c7';
+          ctx.fillRect(19, 10, 6, 18);
+          ctx.fillStyle = '#38bdf8';
+          ctx.fillRect(20, 12, 4, 14);
+          // Stone Pillar Fists
+          ctx.fillStyle = '#334155';
+          ctx.fillRect(1, isAtk ? 6 : 12 + step, 7, 17);
+          ctx.fillRect(36, isAtk ? 6 : 12 - step, 7, 17);
+          ctx.fillStyle = '#1e293b';
+          ctx.fillRect(10, 34 + step, 9, 8);
+          ctx.fillRect(25, 35 - step, 9, 8);
+        } else if (p === 'side') {
+          // Side profile (Lados - facing right): thick granite monolith profile, side core & golden eye, massive fist slamming right
+          ctx.fillStyle = '#0f172a';
+          ctx.fillRect(10, 5, 22, 30);
+          ctx.fillStyle = '#475569';
+          ctx.fillRect(11, 6, 20, 27);
+          ctx.fillStyle = '#64748b';
+          ctx.fillRect(13, 7, 17, 21);
+          // Moss on top shoulder
+          ctx.fillStyle = '#15803d';
+          ctx.fillRect(12, 6, 10, 3);
+          // Side Golden Eye & Glowing Cyan Runic Chest Core on the right face
+          ctx.fillStyle = '#fde047';
+          ctx.fillRect(26, 10, 4, 3);
+          ctx.fillStyle = '#0284c7';
+          ctx.fillRect(23, 16, 8, 10);
+          ctx.fillStyle = f % 2 === 0 ? '#e0f2fe' : '#38bdf8';
+          ctx.fillRect(25, 18, 6, 6);
+          // Massive Articulated Stone Fist swinging forward to the right
+          ctx.fillStyle = '#334155';
+          if (isAtk) {
+            ctx.fillRect(25, 18, 17, 12);
+            ctx.fillStyle = '#94a3b8';
+            ctx.fillRect(27, 19, 14, 7);
+            ctx.fillStyle = '#38bdf8';
+            ctx.fillRect(36, 21, 4, 4);
+          } else {
+            ctx.fillRect(18, 13 + step, 10, 17);
+            ctx.fillStyle = '#94a3b8';
+            ctx.fillRect(19, 14 + step, 8, 9);
+          }
+          // Striding monolith legs
+          ctx.fillStyle = '#1e293b';
+          ctx.fillRect(12 - step * 2, 34, 8, 8);
+          ctx.fillRect(21 + step * 2, 34, 8, 8);
+        } else {
+          // Front view (Baixo)
+          ctx.fillStyle = '#0f172a';
+          ctx.fillRect(6, 5, 32, 30);
+          ctx.fillStyle = '#475569';
+          ctx.fillRect(7, 6, 30, 27);
+          ctx.fillStyle = '#64748b';
+          ctx.fillRect(9, 7, 26, 21);
+          ctx.fillStyle = '#94a3b8';
+          ctx.fillRect(10, 7, 24, 8);
+          ctx.fillStyle = '#15803d';
+          ctx.fillRect(8, 6, 6, 3);
+          ctx.fillRect(30, 6, 6, 3);
+          ctx.fillStyle = '#0284c7';
+          ctx.fillRect(16, 16, 12, 11);
+          ctx.fillStyle = f % 2 === 0 ? '#e0f2fe' : '#38bdf8';
+          ctx.fillRect(18, 18, 8, 7);
+          ctx.fillStyle = '#fde047';
+          ctx.fillRect(14, 10, 4, 3);
+          ctx.fillRect(26, 10, 4, 3);
+          ctx.fillStyle = '#334155';
+          ctx.fillRect(1, isAtk ? 22 : 12 + step, 7, 17);
+          ctx.fillRect(36, isAtk ? 22 : 12 - step, 7, 17);
+          ctx.fillStyle = '#94a3b8';
+          ctx.fillRect(2, isAtk ? 23 : 13 + step, 5, 9);
+          ctx.fillRect(37, isAtk ? 23 : 13 - step, 5, 9);
+          ctx.fillStyle = '#1e293b';
+          ctx.fillRect(10, 34 + step, 9, 8);
+          ctx.fillRect(25, 35 - step, 9, 8);
+        }
+      }
+    );
+
+    // BANDIT (22x26 — Humanoid highway raider with 'down', 'up', and 'side' perspectives)
+    buildDirectionalCreature(
+      CreatureKind.BANDIT,
+      22,
+      26,
+      (ctx, f, isAtk, p) => {
+        const step = f % 2;
+        ctx.fillStyle = 'rgba(0,0,0,0.35)';
+        ctx.fillRect(5, 22, 12, 2);
+
+        if (p === 'up') {
+          // Back view (Cima): dark hood & crimson cape back, crossed scabbard strap
+          ctx.fillStyle = '#0f172a';
+          ctx.fillRect(6, 2, 10, 8);
+          ctx.fillRect(4, 10, 14, 8);
+          ctx.fillStyle = '#1e293b';
+          ctx.fillRect(7, 3, 8, 6);
+          ctx.fillStyle = '#7f1d1d';
+          ctx.fillRect(6, 10, 10, 7);
+          ctx.fillStyle = '#991b1b';
+          ctx.fillRect(7, 10, 8, 5);
+          ctx.fillStyle = '#fbbf24';
+          ctx.fillRect(8, 11, 6, 1);
+          // Cutlass raised north
+          ctx.fillStyle = '#e2e8f0';
+          ctx.fillRect(16, isAtk ? 1 : 5, 3, 8);
+          ctx.fillStyle = '#1e293b';
+          ctx.fillRect(7, 17 + step, 3, 5);
+          ctx.fillRect(12, 18 - step, 3, 5);
+        } else if (p === 'side') {
+          // Side profile (Lados - facing right): hooded highwayman profile, red mask on right, cutlass thrusting right
+          ctx.fillStyle = '#0f172a';
+          ctx.fillRect(6, 2, 9, 8);
+          ctx.fillRect(5, 10, 10, 8);
+          ctx.fillStyle = '#1e293b';
+          ctx.fillRect(7, 3, 7, 6);
+          ctx.fillStyle = '#991b1b';
+          ctx.fillRect(9, 6, 6, 3);
+          ctx.fillStyle = '#fde047';
+          ctx.fillRect(12, 5, 2, 1);
+          // Side brigandine vest
+          ctx.fillStyle = '#334155';
+          ctx.fillRect(6, 10, 8, 7);
+          ctx.fillStyle = '#dc2626';
+          ctx.fillRect(7, 10, 6, 4);
+          ctx.fillStyle = '#fbbf24';
+          ctx.fillRect(12, 15, 2, 2);
+          // Steel Cutlass slashing forward to the right
+          ctx.fillStyle = '#e2e8f0';
+          if (isAtk) {
+            ctx.fillRect(14, 9, 8, 3);
+            ctx.fillStyle = '#fbbf24';
+            ctx.fillRect(13, 8, 2, 5);
+          } else {
+            ctx.fillRect(15, 5, 3, 8);
+          }
+          ctx.fillStyle = '#1e293b';
+          ctx.fillRect(7 - step, 17, 3, 5);
+          ctx.fillRect(11 + step, 17, 3, 5);
+        } else {
+          // Front view (Baixo)
+          ctx.fillStyle = '#0f172a';
+          ctx.fillRect(6, 2, 10, 8);
+          ctx.fillRect(4, 10, 14, 8);
+          ctx.fillStyle = '#1e293b';
+          ctx.fillRect(7, 3, 8, 6);
+          ctx.fillStyle = '#991b1b';
+          ctx.fillRect(7, 6, 8, 3);
+          ctx.fillStyle = '#fde047';
+          ctx.fillRect(8, 5, 2, 1);
+          ctx.fillRect(12, 5, 2, 1);
+          ctx.fillStyle = '#334155';
+          ctx.fillRect(6, 10, 10, 7);
+          ctx.fillStyle = '#dc2626';
+          ctx.fillRect(7, 10, 8, 4);
+          ctx.fillStyle = '#fbbf24';
+          ctx.fillRect(10, 15, 2, 2);
+          ctx.fillStyle = '#e2e8f0';
+          if (isAtk) {
+            ctx.fillRect(15, 11, 7, 3);
+          } else {
+            ctx.fillRect(16, 6, 3, 8);
+          }
+          ctx.fillStyle = '#1e293b';
+          ctx.fillRect(7, 17 + step, 3, 5);
+          ctx.fillRect(12, 18 - step, 3, 5);
+        }
+      }
+    );
+
+    // VILLAGER (22x26 — Village NPC with 'down', 'up', and 'side' perspectives)
+    buildDirectionalCreature(
+      CreatureKind.VILLAGER,
+      22,
+      26,
+      (ctx, f, isAtk, p) => {
+        const step = f % 2;
+        ctx.fillStyle = 'rgba(0,0,0,0.34)';
+        ctx.fillRect(5, 22, 12, 2);
+
+        if (p === 'up') {
+          // Back view (Cima): emerald cap & hair back, guild cloak back with gold trim
+          ctx.fillStyle = '#0f172a';
+          ctx.fillRect(6, 2, 10, 8);
+          ctx.fillRect(4, 10, 14, 8);
+          ctx.fillStyle = '#065f46';
+          ctx.fillRect(6, 3, 10, 4);
+          ctx.fillStyle = '#78350f';
+          ctx.fillRect(7, 6, 8, 3);
+          ctx.fillStyle = '#047857';
+          ctx.fillRect(6, 10, 10, 7);
+          ctx.fillStyle = '#10b981';
+          ctx.fillRect(7, 10, 8, 5);
+          ctx.fillStyle = '#fde047';
+          ctx.fillRect(8, 15, 6, 2);
+          if (isAtk) {
+            ctx.fillStyle = '#f8fafc';
+            ctx.fillRect(16, 2, 3, 8);
+          }
+          ctx.fillStyle = '#451a03';
+          ctx.fillRect(7, 17 + step, 3, 5);
+          ctx.fillRect(12, 18 - step, 3, 5);
+        } else if (p === 'side') {
+          // Side profile (Lados - facing right): merchant cap in profile, side face & eye, lantern or guard spear/blade pointing right
+          ctx.fillStyle = '#0f172a';
+          ctx.fillRect(6, 2, 9, 8);
+          ctx.fillRect(5, 10, 10, 8);
+          ctx.fillStyle = '#065f46';
+          ctx.fillRect(6, 3, 9, 3);
+          ctx.fillStyle = '#fbbf24';
+          ctx.fillRect(7, 4, 7, 1);
+          ctx.fillStyle = '#fdba74';
+          ctx.fillRect(8, 5, 6, 4);
+          ctx.fillStyle = isAtk ? '#ef4444' : '#0f172a';
+          ctx.fillRect(12, 6, 2, 2);
+          // Side guild tunic
+          ctx.fillStyle = '#047857';
+          ctx.fillRect(6, 10, 8, 7);
+          ctx.fillStyle = '#10b981';
+          ctx.fillRect(7, 10, 6, 4);
+          ctx.fillStyle = '#fde047';
+          ctx.fillRect(10, 10, 3, 6);
+          if (isAtk) {
+            ctx.fillStyle = '#f8fafc';
+            ctx.fillRect(14, 9, 7, 3);
+          } else {
+            ctx.fillStyle = '#fde047';
+            ctx.fillRect(14, 11, 3, 4);
+          }
+          ctx.fillStyle = '#451a03';
+          ctx.fillRect(7 - step, 17, 3, 5);
+          ctx.fillRect(11 + step, 17, 3, 5);
+        } else {
+          // Front view (Baixo)
+          ctx.fillStyle = '#0f172a';
+          ctx.fillRect(6, 2, 10, 8);
+          ctx.fillRect(4, 10, 14, 8);
+          ctx.fillStyle = '#065f46';
+          ctx.fillRect(6, 3, 10, 3);
+          ctx.fillStyle = '#fbbf24';
+          ctx.fillRect(7, 4, 8, 1);
+          ctx.fillStyle = '#fdba74';
+          ctx.fillRect(7, 5, 8, 4);
+          ctx.fillStyle = isAtk ? '#ef4444' : '#0f172a';
+          ctx.fillRect(8, 6, 2, 2);
+          ctx.fillRect(12, 6, 2, 2);
+          ctx.fillStyle = '#047857';
+          ctx.fillRect(6, 10, 10, 7);
+          ctx.fillStyle = '#10b981';
+          ctx.fillRect(7, 10, 8, 4);
+          ctx.fillStyle = '#fde047';
+          ctx.fillRect(9, 10, 4, 6);
+          if (isAtk) {
+            ctx.fillStyle = '#f8fafc';
+            ctx.fillRect(15, 10, 6, 3);
+          } else {
+            ctx.fillStyle = '#fde047';
+            ctx.fillRect(15, 11, 3, 4);
+          }
+          ctx.fillStyle = '#451a03';
+          ctx.fillRect(7, 17 + step, 3, 5);
+          ctx.fillRect(12, 18 - step, 3, 5);
+        }
+      }
+    );
+
+    // WANDERER (22x26 — Nomadic frontier traveler with 'down', 'up', and 'side' perspectives)
+    buildDirectionalCreature(
+      CreatureKind.WANDERER,
+      22,
+      26,
+      (ctx, f, isAtk, p) => {
+        const step = f % 2;
+        ctx.fillStyle = 'rgba(0,0,0,0.34)';
+        ctx.fillRect(5, 22, 12, 2);
+
+        if (p === 'up') {
+          // Back view (Cima): wide explorer hat from behind, full leather backpack & bedroll centered on back
+          ctx.fillStyle = '#0f172a';
+          ctx.fillRect(5, 2, 12, 8);
+          ctx.fillRect(4, 10, 14, 8);
+          ctx.fillStyle = '#1e3a8a';
+          ctx.fillRect(4, 2, 14, 4);
+          ctx.fillStyle = '#3b82f6';
+          ctx.fillRect(6, 2, 10, 2);
+          ctx.fillStyle = '#1d4ed8';
+          ctx.fillRect(6, 10, 10, 7);
+          // Prominent traveler backpack & rolled bedroll on the back
+          ctx.fillStyle = '#78350f';
+          ctx.fillRect(6, 9, 9, 8);
+          ctx.fillStyle = '#d97706';
+          ctx.fillRect(7, 10, 7, 5);
+          ctx.fillStyle = '#fbbf24';
+          ctx.fillRect(8, 12, 5, 1);
+          // Staff on right
+          ctx.fillStyle = '#92400e';
+          ctx.fillRect(16, isAtk ? 2 : 4, 2, 15);
+          ctx.fillStyle = '#fde047';
+          ctx.fillRect(15, isAtk ? 2 : 4, 3, 3);
+          ctx.fillStyle = '#451a03';
+          ctx.fillRect(7, 17 + step, 3, 5);
+          ctx.fillRect(12, 18 - step, 3, 5);
+        } else if (p === 'side') {
+          // Side profile (Lados - facing right): backpack strapped on left back, explorer hat profile, staff held in front on right
+          ctx.fillStyle = '#0f172a';
+          ctx.fillRect(5, 2, 11, 8);
+          ctx.fillRect(4, 10, 11, 8);
+          // Backpack on left side of torso
+          ctx.fillStyle = '#78350f';
+          ctx.fillRect(2, 9, 5, 8);
+          ctx.fillStyle = '#d97706';
+          ctx.fillRect(3, 10, 3, 6);
+          // Explorer hat & side face
+          ctx.fillStyle = '#1e3a8a';
+          ctx.fillRect(4, 2, 13, 3);
+          ctx.fillStyle = '#fbbf24';
+          ctx.fillRect(6, 4, 9, 1);
+          ctx.fillStyle = '#fdba74';
+          ctx.fillRect(8, 5, 6, 4);
+          ctx.fillStyle = isAtk ? '#ef4444' : '#0f172a';
+          ctx.fillRect(12, 6, 2, 2);
+          // Indigo cloak in side profile
+          ctx.fillStyle = '#1d4ed8';
+          ctx.fillRect(6, 10, 8, 7);
+          ctx.fillStyle = '#38bdf8';
+          ctx.fillRect(8, 10, 5, 4);
+          if (isAtk) {
+            ctx.fillStyle = '#f8fafc';
+            ctx.fillRect(14, 9, 7, 3);
+          } else {
+            ctx.fillStyle = '#92400e';
+            ctx.fillRect(16, 4, 2, 16);
+            ctx.fillStyle = '#fde047';
+            ctx.fillRect(15, 4, 3, 3);
+          }
+          ctx.fillStyle = '#451a03';
+          ctx.fillRect(7 - step, 17, 3, 5);
+          ctx.fillRect(11 + step, 17, 3, 5);
+        } else {
+          // Front view (Baixo)
+          ctx.fillStyle = '#0f172a';
+          ctx.fillRect(5, 2, 12, 8);
+          ctx.fillRect(4, 10, 14, 8);
+          ctx.fillStyle = '#78350f';
+          ctx.fillRect(2, 9, 4, 7);
+          ctx.fillStyle = '#d97706';
+          ctx.fillRect(2, 10, 3, 5);
+          ctx.fillStyle = '#1e3a8a';
+          ctx.fillRect(4, 2, 14, 3);
+          ctx.fillStyle = '#3b82f6';
+          ctx.fillRect(7, 2, 8, 2);
+          ctx.fillStyle = '#fbbf24';
+          ctx.fillRect(6, 4, 10, 1);
+          ctx.fillStyle = '#fdba74';
+          ctx.fillRect(7, 5, 8, 4);
+          ctx.fillStyle = isAtk ? '#ef4444' : '#0f172a';
+          ctx.fillRect(8, 6, 2, 2);
+          ctx.fillRect(12, 6, 2, 2);
+          ctx.fillStyle = '#1d4ed8';
+          ctx.fillRect(6, 10, 10, 7);
+          ctx.fillStyle = '#38bdf8';
+          ctx.fillRect(7, 10, 8, 4);
+          ctx.fillStyle = '#f59e0b';
+          ctx.fillRect(9, 10, 4, 6);
+          if (isAtk) {
+            ctx.fillStyle = '#f8fafc';
+            ctx.fillRect(15, 10, 6, 3);
+          } else {
+            ctx.fillStyle = '#92400e';
+            ctx.fillRect(16, 4, 2, 16);
+            ctx.fillStyle = '#fde047';
+            ctx.fillRect(15, 4, 3, 3);
+          }
+          ctx.fillStyle = '#451a03';
+          ctx.fillRect(7, 17 + step, 3, 5);
+          ctx.fillRect(12, 18 - step, 3, 5);
+        }
+      }
+    );
   }
 }
 

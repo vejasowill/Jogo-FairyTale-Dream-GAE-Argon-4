@@ -1105,9 +1105,11 @@ export const MobileHud: React.FC<MobileHudProps> = ({
               >
                 <Hand className="w-4 h-4" />
                 <span className="text-[7px] font-pixel font-bold mt-0.5">
-                  {(selectedItem?.id === 'watering_can' ||
-                    selectedItem?.id === 'watering_can_full') &&
-                  snapshot.aimedTarget
+                  {snapshot.aimedTarget?.isPetFeedTarget
+                    ? 'Alimentar'
+                    : (selectedItem?.id === 'watering_can' ||
+                        selectedItem?.id === 'watering_can_full') &&
+                      snapshot.aimedTarget
                     ? snapshot.aimedTarget.kind === 'water_source' ||
                       snapshot.aimedTarget.stationType ===
                         PlaceableType.VILLAGE_WELL ||
@@ -1132,10 +1134,38 @@ export const MobileHud: React.FC<MobileHudProps> = ({
                   return;
                 }
                 e.stopPropagation();
-                engine.performAttackOrHarvestAction();
+                try {
+                  e.currentTarget.setPointerCapture(e.pointerId);
+                } catch {
+                  // Ignore if pointer capture is unavailable
+                }
+                engine.setAttackButtonHeld(true);
+                engine.performAttackOrHarvestAction(false);
               }}
               onPointerMove={handleEditPointerMove}
-              onPointerUp={handleEditPointerUp}
+              onPointerUp={(e) => {
+                if (isEditingHud) {
+                  handleEditPointerUp();
+                  return;
+                }
+                try {
+                  if (e.currentTarget.hasPointerCapture(e.pointerId)) {
+                    e.currentTarget.releasePointerCapture(e.pointerId);
+                  }
+                } catch {
+                  // Ignore
+                }
+                engine.setAttackButtonHeld(false);
+              }}
+              onPointerCancel={() => {
+                if (isEditingHud) {
+                  handleEditPointerUp();
+                }
+                engine.setAttackButtonHeld(false);
+              }}
+              onLostPointerCapture={() => {
+                engine.setAttackButtonHeld(false);
+              }}
               className={`w-15 h-15 sm:w-18 sm:h-18 rounded-full medieval-btn-crimson flex flex-col items-center justify-center active:scale-90 shadow-[0_6px_18px_rgba(0,0,0,0.85)] ${
                 isEditingHud
                   ? selectedEditKey === 'attackBtn'

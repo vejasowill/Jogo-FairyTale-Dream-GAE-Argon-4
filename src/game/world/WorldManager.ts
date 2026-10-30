@@ -1522,26 +1522,99 @@ export class WorldManager {
    * Generates realistic procedural World Structures & Landmarks (Camps, Watchtower Ruins,
    * Solar Shrines, Caravan Oases, Coastal Piers, Primordial Sanctuaries) in qualifying v2 chunks.
    */
+  /**
+   * Deterministic rare village layout resolver using 8x8 chunk super-regions (64 chunks per region).
+   * Supports two distinct village generation modes:
+   * 1. Vila Independente (single standalone rare village)
+   * 2. Vilas Vizinhas (2 neighboring villages generated in adjacent chunks and connected plaza-to-plaza by a Dirt Path)
+   */
+  private getRareVillageRoleForChunk(
+    cx: number,
+    cy: number
+  ): {
+    isVillage: boolean;
+    isNeighborPair: boolean;
+    roadDir: 'none' | 'east' | 'west' | 'south' | 'north';
+  } {
+    const REGION_SIZE = 8;
+    const regX = Math.floor(cx / REGION_SIZE);
+    const regY = Math.floor(cy / REGION_SIZE);
+
+    // Villages are rare: only ~34% of 8x8 chunk super-regions contain a village
+    const regionRoll = hash2D(regX, regY, this.seed + 18433);
+    if (regionRoll >= 0.34) {
+      return { isVillage: false, isNeighborPair: false, roadDir: 'none' };
+    }
+
+    // Pick a primary anchor chunk inside the inner [2..4, 2..4] area of the 8x8 region
+    // so villages from different super-regions are always at least 5–8 chunks apart
+    const localX = 2 + Math.floor(hash2D(regX, regY, this.seed + 19501) * 3);
+    const localY = 2 + Math.floor(hash2D(regX, regY, this.seed + 20719) * 3);
+    const anchorCx = regX * REGION_SIZE + localX;
+    const anchorCy = regY * REGION_SIZE + localY;
+
+    // Never spawn a village on or immediately adjacent to the origin chunk (0,0)
+    if (Math.hypot(anchorCx, anchorCy) < 1.9) {
+      return { isVillage: false, isNeighborPair: false, roadDir: 'none' };
+    }
+
+    if (!this.isChunkAllLand(anchorCx, anchorCy)) {
+      return { isVillage: false, isNeighborPair: false, roadDir: 'none' };
+    }
+
+    // Decide between:
+    // - Vila Independente (~62% of village regions)
+    // - Vilas Vizinhas (~38% of village regions: 2 adjacent villages linked by a Dirt Path)
+    const pairRoll = hash2D(regX, regY, this.seed + 22193);
+    if (pairRoll < 0.38) {
+      const isHorizontal = hash2D(regX, regY, this.seed + 23917) < 0.5;
+      const secondCx = isHorizontal ? anchorCx + 1 : anchorCx;
+      const secondCy = isHorizontal ? anchorCy : anchorCy + 1;
+
+      if (
+        Math.hypot(secondCx, secondCy) >= 1.9 &&
+        this.isChunkAllLand(secondCx, secondCy)
+      ) {
+        if (cx === anchorCx && cy === anchorCy) {
+          return {
+            isVillage: true,
+            isNeighborPair: true,
+            roadDir: isHorizontal ? 'east' : 'south',
+          };
+        }
+        if (cx === secondCx && cy === secondCy) {
+          return {
+            isVillage: true,
+            isNeighborPair: true,
+            roadDir: isHorizontal ? 'west' : 'north',
+          };
+        }
+        return { isVillage: false, isNeighborPair: false, roadDir: 'none' };
+      }
+    }
+
+    if (cx === anchorCx && cy === anchorCy) {
+      return { isVillage: true, isNeighborPair: false, roadDir: 'none' };
+    }
+    return { isVillage: false, isNeighborPair: false, roadDir: 'none' };
+  }
+
   private tryGenerateChunkLandmark(chunk: ChunkData): void {
     const { cx, cy } = chunk;
     // Never place landmarks on the origin chunk (0,0) so the player's own base spot stays clean
     if (cx === 0 && cy === 0) return;
 
-    const isGuaranteedVillageChunk =
-      (cx === 1 && cy === 0) ||
-      (cx === -1 && cy === 0) ||
-      (cx === 0 && cy === 1);
-
+    const villageRole = this.getRareVillageRoleForChunk(cx, cy);
     const landmarkRoll = hash2D(cx, cy, this.seed + 9421);
-    // ~24% of chunks are eligible (or guaranteed frontier village candidate)
-    if (!isGuaranteedVillageChunk && landmarkRoll > 0.24) return;
+    // ~24% of chunks are eligible for minor landmarks (or rare village chunk)
+    if (!villageRole.isVillage && landmarkRoll > 0.24) return;
 
     const neighborHasLandmark =
       hash2D(cx + 1, cy, this.seed + 9421) <= 0.21 ||
       hash2D(cx - 1, cy, this.seed + 9421) <= 0.21 ||
       hash2D(cx, cy + 1, this.seed + 9421) <= 0.21 ||
       hash2D(cx, cy - 1, this.seed + 9421) <= 0.21;
-    if (!isGuaranteedVillageChunk && neighborHasLandmark && landmarkRoll > 0.11) return;
+    if (!villageRole.isVillage && neighborHasLandmark && landmarkRoll > 0.11) return;
 
     const baseTx = cx * CHUNK_SIZE;
     const baseTy = cy * CHUNK_SIZE;
@@ -1688,21 +1761,9 @@ export class WorldManager {
       return createdStruct;
     };
 
-    // 0. FRONTIER VILLAGE / DESERT OASIS VILLAGE (Vilarejo da Fronteira / Vila Mercante do Oásis)
+    // 0. FRONTIER VILLAGE / DESERT OASIS VILLAGE (Rare Independent Village or Neighboring Villages linked by Dirt Path)
     const shouldGenerateVillage =
-      (cx === 1 && cy === 0 && isBoxAllLand(4, 4, 12, 12)) ||
-      (cx === -1 &&
-        cy === 0 &&
-        !this.isChunkAllLand(1, 0) &&
-        isBoxAllLand(4, 4, 12, 12)) ||
-      (cx === 0 &&
-        cy === 1 &&
-        !this.isChunkAllLand(1, 0) &&
-        !this.isChunkAllLand(-1, 0) &&
-        isBoxAllLand(4, 4, 12, 12)) ||
-      (chunkDist >= 1.8 &&
-        landmarkRoll < 0.058 &&
-        isBoxAllLand(4, 4, 12, 12));
+      villageRole.isVillage && isBoxAllLand(4, 4, 12, 12);
 
     if (shouldGenerateVillage && centerBiome !== BiomeType.OCEAN) {
       // Ensure the full 1..14 village square is dry land and clear of trees/rocks
@@ -1720,7 +1781,11 @@ export class WorldManager {
       const isDesertVillage = centerBiome === BiomeType.DESERT;
       chunk.villageId = villageId;
       chunk.landmarkName = isDesertVillage
-        ? 'Vila Mercante do Oásis'
+        ? villageRole.isNeighborPair
+          ? 'Vilas Gêmeas do Oásis'
+          : 'Vila Mercante do Oásis'
+        : villageRole.isNeighborPair
+        ? 'Vilarejos Vizinhos da Fronteira'
         : 'Vilarejo de Carvalho';
 
       const roleNamePools: Record<NpcRole, string[]> = {
@@ -2148,10 +2213,53 @@ export class WorldManager {
       addStruct(9, 6, PlaceableType.IRON_LANTERN, 'iron_lantern', undefined, undefined, villageId);
       addStruct(6, 9, PlaceableType.IRON_LANTERN, 'iron_lantern', undefined, undefined, villageId);
       addStruct(9, 9, PlaceableType.IRON_LANTERN, 'iron_lantern', undefined, undefined, villageId);
+
+      // If this village is part of a "Vilas Vizinhas" pair, connect the two neighboring villages' central plazas
+      // with a 2-tile-wide beaten earth road (PlaceableType.DIRT_PATH) across the shared chunk border!
+      if (villageRole.isNeighborPair && villageRole.roadDir !== 'none') {
+        const placeRoadTile = (rx: number, ry: number) => {
+          const rIdx = ry * CHUNK_SIZE + rx;
+          if (chunk.tiles[rIdx] === BiomeType.OCEAN) {
+            chunk.tiles[rIdx] = centerBiome;
+          }
+          clearNodesInBox(rx, ry, rx, ry);
+          addStruct(
+            rx,
+            ry,
+            PlaceableType.DIRT_PATH,
+            'dirt_path',
+            undefined,
+            undefined,
+            villageId
+          );
+        };
+
+        if (villageRole.roadDir === 'east') {
+          for (let lx = 10; lx <= 15; lx++) {
+            placeRoadTile(lx, 7);
+            placeRoadTile(lx, 8);
+          }
+        } else if (villageRole.roadDir === 'west') {
+          for (let lx = 0; lx <= 5; lx++) {
+            placeRoadTile(lx, 7);
+            placeRoadTile(lx, 8);
+          }
+        } else if (villageRole.roadDir === 'south') {
+          for (let ly = 10; ly <= 15; ly++) {
+            placeRoadTile(7, ly);
+            placeRoadTile(8, ly);
+          }
+        } else if (villageRole.roadDir === 'north') {
+          for (let ly = 0; ly <= 5; ly++) {
+            placeRoadTile(7, ly);
+            placeRoadTile(8, ly);
+          }
+        }
+      }
       return;
     }
 
-    if (isGuaranteedVillageChunk && landmarkRoll > 0.21) return;
+    if (villageRole.isVillage && landmarkRoll > 0.21) return;
 
     // 1. COASTAL PIER (Píer dos Navegadores) — If chunk has a horizontal transition from Land to Ocean
     if (centerBiome !== BiomeType.OCEAN) {
@@ -3417,7 +3525,12 @@ export class WorldManager {
         );
       });
       if (existingFloorIdx !== -1) {
-        replacedItemId = chunk.structures[existingFloorIdx].itemId;
+        if (
+          chunk.structures[existingFloorIdx].type !== PlaceableType.TILLED_SOIL &&
+          chunk.structures[existingFloorIdx].type !== PlaceableType.DIRT_PATH
+        ) {
+          replacedItemId = chunk.structures[existingFloorIdx].itemId;
+        }
         chunk.structures.splice(existingFloorIdx, 1);
       }
     } else if (bp.layer === 'WALL') {
@@ -3657,6 +3770,86 @@ export class WorldManager {
     };
 
     chunk.structures.push(structure);
+    return structure;
+  }
+
+  /**
+   * Checks whether a tile can be compacted into a Beaten Earth Path (PlaceableType.DIRT_PATH) using a Shovel.
+   */
+  public canMakeDirtPathAt(tx: number, ty: number): boolean {
+    if (this.getTileBiomeFast(tx, ty) === BiomeType.OCEAN) {
+      return false;
+    }
+
+    const { cx, cy } = this.tileToChunk(tx, ty);
+    const chunk = this.chunks[WorldManager.chunkKey(cx, cy)];
+    if (!chunk) return true;
+
+    // Solid nature nodes prevent making a path (passable berry bushes are cleared automatically)
+    const node = chunk.nodes.find((n) => n.tileX === tx && n.tileY === ty);
+    if (node && node.type !== NatureNodeType.BERRY_BUSH) {
+      return false;
+    }
+
+    for (const st of chunk.structures) {
+      if (st.tileX === tx && st.tileY === ty) {
+        if (
+          st.type === PlaceableType.DIRT_PATH ||
+          st.type === PlaceableType.TILLED_SOIL ||
+          WorldManager.isSaplingStructure(st.type)
+        ) {
+          return false;
+        }
+        const bp = CONSTRUCTION_BLUEPRINTS[st.type];
+        if (bp?.hasHitbox || bp?.layer === 'GROUND' || bp?.layer === 'WALL') {
+          return false;
+        }
+      }
+    }
+
+    return true;
+  }
+
+  /**
+   * Compacts the ground at (tx, ty) with a Shovel, creating a PlaceableType.DIRT_PATH structure (+18% walk speed).
+   */
+  public makeDirtPathAt(tx: number, ty: number): PlacedStructure | null {
+    if (!this.canMakeDirtPathAt(tx, ty)) {
+      return null;
+    }
+
+    const { cx, cy } = this.tileToChunk(tx, ty);
+    const chunk = this.getOrCreateChunk(cx, cy);
+
+    // Clear any passable berry bush on the tile
+    const bushIdx = chunk.nodes.findIndex(
+      (n) => n.tileX === tx && n.tileY === ty && n.type === NatureNodeType.BERRY_BUSH
+    );
+    if (bushIdx !== -1) {
+      chunk.nodes.splice(bushIdx, 1);
+    }
+
+    const structure: PlacedStructure = {
+      id: `dirt_path_${tx}_${ty}_${Date.now()}_${Math.floor(Math.random() * 999)}`,
+      type: PlaceableType.DIRT_PATH,
+      itemId: 'dirt_path',
+      tileX: tx,
+      tileY: ty,
+      hp: 40,
+      maxHp: 40,
+      solid: false,
+      isOpen: false,
+      hitFlashTimer: 0,
+    };
+
+    chunk.structures.push(structure);
+    if (!chunk.preserved) {
+      WorldManager.lockChunkTerrainSnapshot(
+        chunk,
+        chunk.genVersion ?? this.worldGenVersion,
+        chunk.generatedGameVersion ?? GAME_VERSION
+      );
+    }
     return structure;
   }
 

@@ -41,6 +41,7 @@ export enum ToolType {
   PICKAXE = 'PICKAXE',
   SWORD = 'SWORD',
   HOE = 'HOE',
+  SHOVEL = 'SHOVEL',
   WATERING_CAN = 'WATERING_CAN',
   FISHING_ROD = 'FISHING_ROD',
 }
@@ -129,6 +130,8 @@ export type ConnectionGroup =
   | 'carpet'
   | 'bridge'
   | 'chest'
+  | 'tilled_soil'
+  | 'dirt_path'
   | 'none';
 
 export interface ConstructionBlueprint {
@@ -201,6 +204,7 @@ export enum PlaceableType {
   VILLAGE_WELL = 'VILLAGE_WELL',
   ROYAL_BANNER = 'ROYAL_BANNER',
   TILLED_SOIL = 'TILLED_SOIL',
+  DIRT_PATH = 'DIRT_PATH',
   OAK_SAPLING = 'OAK_SAPLING',
   PALM_SAPLING = 'PALM_SAPLING',
   BED = 'BED',
@@ -663,7 +667,7 @@ export interface OnlineActivationStep {
 }
 
 // REGRA PERMANENTE: A cada nova atualização do jogo, incremente a versão para o número seguinte da beta (ex: 0.4.4-beta -> 0.4.5-beta).
-export const GAME_VERSION = '0.5.9-beta';
+export const GAME_VERSION = '0.6.0-beta';
 export const CURRENT_WORLD_GEN_VERSION = 3;
 
 export interface OnlineSessionInfo {

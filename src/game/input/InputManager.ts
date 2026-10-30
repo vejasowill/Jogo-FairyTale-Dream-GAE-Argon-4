@@ -2,11 +2,13 @@ export class InputManager {
   private keys: Set<string> = new Set();
   public joystickVector: { x: number; y: number } = { x: 0, y: 0 };
   public actionPressed = false;
+  public actionHeld = false;
   public interactPressed = false;
   public placeOrUsePressed = false;
   public hotbarKeyPressed: number | null = null;
   private keyDownHandler: (e: KeyboardEvent) => void;
   private keyUpHandler: (e: KeyboardEvent) => void;
+  private blurHandler: () => void;
 
   constructor() {
     this.keyDownHandler = (e: KeyboardEvent) => {
@@ -15,8 +17,12 @@ export class InputManager {
       if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space'].includes(e.code)) {
         e.preventDefault();
       }
+      if (e.repeat) return;
       this.keys.add(e.code);
-      if (e.code === 'Space') this.actionPressed = true;
+      if (e.code === 'Space') {
+        this.actionPressed = true;
+        this.actionHeld = true;
+      }
       if (e.code === 'KeyE' || e.code === 'KeyF') this.interactPressed = true;
       if (e.code === 'KeyR' || e.code === 'KeyQ') this.placeOrUsePressed = true;
 
@@ -30,9 +36,20 @@ export class InputManager {
 
     this.keyUpHandler = (e: KeyboardEvent) => {
       this.keys.delete(e.code);
-      if (e.code === 'Space') this.actionPressed = false;
+      if (e.code === 'Space') {
+        this.actionPressed = false;
+        this.actionHeld = false;
+      }
       if (e.code === 'KeyE' || e.code === 'KeyF') this.interactPressed = false;
       if (e.code === 'KeyR' || e.code === 'KeyQ') this.placeOrUsePressed = false;
+    };
+
+    this.blurHandler = () => {
+      this.keys.clear();
+      this.actionPressed = false;
+      this.actionHeld = false;
+      this.interactPressed = false;
+      this.placeOrUsePressed = false;
     };
   }
 
@@ -40,12 +57,14 @@ export class InputManager {
     if (typeof window === 'undefined') return;
     window.addEventListener('keydown', this.keyDownHandler);
     window.addEventListener('keyup', this.keyUpHandler);
+    window.addEventListener('blur', this.blurHandler);
   }
 
   public detach(): void {
     if (typeof window === 'undefined') return;
     window.removeEventListener('keydown', this.keyDownHandler);
     window.removeEventListener('keyup', this.keyUpHandler);
+    window.removeEventListener('blur', this.blurHandler);
   }
 
   public setJoystick(x: number, y: number): void {

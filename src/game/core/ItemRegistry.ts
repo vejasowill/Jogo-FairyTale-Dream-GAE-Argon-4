@@ -520,6 +520,50 @@ export const ITEMS: Record<string, ItemDefinition> = {
     maxStack: 99,
     placeableType: PlaceableType.TILLED_SOIL,
   },
+  stone_shovel: {
+    id: 'stone_shovel',
+    name: 'Pá de Pedra',
+    description:
+      'Ferramenta de terraplenagem que compacta o solo em Caminho de Solo Batido (+18% de Velocidade de Movimento, com bordas adaptativas e conectivas entre biomas). Não causa dano de combate.',
+    purposeSummary:
+      'Ferramenta de Caminho Nv.1 (0 de Dano): Cria ou desfaz Caminho de Solo Batido (+18% Velocidade) em qualquer bioma terrestre.',
+    category: ItemCategory.TOOL,
+    rarity: RarityTier.BASIC,
+    maxStack: 1,
+    toolType: ToolType.SHOVEL,
+    toolTier: 1,
+    attackDamage: 0,
+    attackRange: 46,
+    harvestPower: 0,
+  },
+  iron_shovel: {
+    id: 'iron_shovel',
+    name: 'Pá de Ferro Forjado',
+    description:
+      'Pá reforçada de ferro forjado com alcance ampliado para abrir ou desfazer estradas e Caminhos de Solo Batido (+18% de Velocidade de Movimento) entre vilas e biomas. Não causa dano de combate.',
+    purposeSummary:
+      'Ferramenta de Caminho Nv.2 (0 de Dano): Cria ou desfaz Caminho de Solo Batido (+18% Velocidade) com maior alcance.',
+    category: ItemCategory.TOOL,
+    rarity: RarityTier.RARE,
+    maxStack: 1,
+    toolType: ToolType.SHOVEL,
+    toolTier: 2,
+    attackDamage: 0,
+    attackRange: 52,
+    harvestPower: 0,
+  },
+  dirt_path: {
+    id: 'dirt_path',
+    name: 'Caminho de Solo Batido',
+    description:
+      'Trilha de terra compactada feita com a Pá. Possui bordas adaptativas e conectivas (inclusive entre biomas) e aumenta a velocidade de locomoção em +18%, sem propriedades de plantio.',
+    purposeSummary:
+      'Caminho Adaptativo (Sem Hitbox · +18% Velocidade): Criado e removido apenas com a Pá.',
+    category: ItemCategory.PLACEABLE,
+    rarity: RarityTier.BASIC,
+    maxStack: 99,
+    placeableType: PlaceableType.DIRT_PATH,
+  },
 
   // === FISHING SYSTEM: ROD & FISH (FEW CURATED SPECIES) ===
   fishing_rod: {
@@ -1748,7 +1792,7 @@ export const CONSTRUCTION_BLUEPRINTS: Record<PlaceableType, ConstructionBlueprin
     continuityMode: 'BRIDGE_AUTO',
     continuityLabel: 'Guarda-Corpos Adaptativos N/S/L/O',
     connectionGroup: 'bridge',
-    connectsToGroups: ['bridge', 'wood_floor', 'stone_floor', 'brick_floor'],
+    connectsToGroups: ['bridge', 'wood_floor', 'stone_floor', 'brick_floor', 'dirt_path'],
     maxHp: 110,
     lightRadius: 0,
     speedMultiplier: 1.12,
@@ -2158,12 +2202,30 @@ export const CONSTRUCTION_BLUEPRINTS: Record<PlaceableType, ConstructionBlueprin
     hitboxBehavior: 'NONE',
     hitboxLabel: 'Passagem Livre',
     continuityMode: 'FLOOR_BORDER',
-    continuityLabel: 'Borda Furrow Agrícola Automática',
-    connectionGroup: 'wood_floor',
-    connectsToGroups: [],
-    maxHp: 80,
+    continuityLabel: 'Bordas Progressivas & União Adaptativa de Terra Arada',
+    connectionGroup: 'tilled_soil',
+    connectsToGroups: ['tilled_soil'],
+    maxHp: 40,
     lightRadius: 0,
     isInteractive: true,
+  },
+  [PlaceableType.DIRT_PATH]: {
+    type: PlaceableType.DIRT_PATH,
+    role: 'CHAO',
+    roleLabel: 'Caminho de Solo Batido',
+    layer: 'GROUND',
+    layerLabel: 'Camada de Chão / Estrada (Aceita Estruturas Acima)',
+    hasHitbox: false,
+    hitboxBehavior: 'NONE',
+    hitboxLabel: 'Sem Hitbox (Livre Passagem)',
+    continuityMode: 'FLOOR_BORDER',
+    continuityLabel: 'Bordas Progressivas Adaptativas & União Entre Biomas',
+    connectionGroup: 'dirt_path',
+    connectsToGroups: ['dirt_path', 'wood_floor', 'stone_floor', 'brick_floor', 'bridge'],
+    maxHp: 40,
+    lightRadius: 0,
+    speedMultiplier: 1.18,
+    isInteractive: false,
   },
   [PlaceableType.OAK_SAPLING]: {
     type: PlaceableType.OAK_SAPLING,
@@ -2478,9 +2540,10 @@ export const ITEM_BASE_PRICES: Record<string, number> = {
   vegetable_stew: 26,
   fish_golden: 65,
 
-  // Ferramentas & Armas Nv.1
+    // Ferramentas & Armas Nv.1
   fishing_rod: 10,
   stone_hoe: 12,
+  stone_shovel: 12,
   watering_can: 12,
   watering_can_full: 14,
   stone_axe: 15,
@@ -2535,6 +2598,7 @@ export const ITEM_BASE_PRICES: Record<string, number> = {
 
   // Ferramentas & Armas Nv.2 (Ferro Forjado & Monstros)
   iron_hoe: 160,
+  iron_shovel: 155,
   iron_axe: 220,
   iron_pickaxe: 275,
   ogre_club: 290,
@@ -2753,8 +2817,14 @@ export const STRUCTURE_MATERIAL_REQUIREMENTS: Record<
   [PlaceableType.TILLED_SOIL]: {
     materialKind: 'FIBER_FOLIAGE',
     requiredTool: ToolType.HOE,
-    requiredTier: 0,
-    requirementLabel: 'Mão Livre ou Enxada',
+    requiredTier: 1,
+    requirementLabel: 'Apenas Enxada quebra a Terra Arada',
+  },
+  [PlaceableType.DIRT_PATH]: {
+    materialKind: 'FIBER_FOLIAGE',
+    requiredTool: ToolType.SHOVEL,
+    requiredTier: 1,
+    requirementLabel: 'Apenas a Pá desfaz o Solo Batido',
   },
   [PlaceableType.OAK_SAPLING]: {
     materialKind: 'FIBER_FOLIAGE',
@@ -3086,6 +3156,34 @@ export const HAND_AND_TOOL_MATERIAL_STRENGTH: Record<
       ASTRAL_MINERAL: 0,
     },
   },
+  stone_shovel: {
+    label: 'Pá de Pedra (Nv.1)',
+    toolType: ToolType.SHOVEL,
+    toolTier: 1,
+    forceByMaterial: {
+      FIBER_FOLIAGE: 40,
+      SOFT_WOOD: 0,
+      ROUGH_STONE: 0,
+      HARDWOOD: 0,
+      IRON_MINERAL: 0,
+      PRIMORDIAL_WOOD: 0,
+      ASTRAL_MINERAL: 0,
+    },
+  },
+  iron_shovel: {
+    label: 'Pá de Ferro Forjado (Nv.2)',
+    toolType: ToolType.SHOVEL,
+    toolTier: 2,
+    forceByMaterial: {
+      FIBER_FOLIAGE: 40,
+      SOFT_WOOD: 0,
+      ROUGH_STONE: 0,
+      HARDWOOD: 0,
+      IRON_MINERAL: 0,
+      PRIMORDIAL_WOOD: 0,
+      ASTRAL_MINERAL: 0,
+    },
+  },
 
   // === ARMAS DE COMBATE (Cortam Folhagem rapidamente e causam dano moderado em Madeira/Estruturas básicas) ===
   wood_sword: {
@@ -3258,6 +3356,8 @@ export function getStructureBreakRequirement(
       ? 'Machado'
       : req.requiredTool === ToolType.HOE
       ? 'Enxada'
+      : req.requiredTool === ToolType.SHOVEL
+      ? 'Pá'
       : 'Mão Livre';
 
   return {
@@ -3309,6 +3409,10 @@ export function evaluateMaterialBreak(
           ? 'Picareta'
           : requiredTool === ToolType.AXE
           ? 'Machado'
+          : requiredTool === ToolType.HOE
+          ? 'Enxada'
+          : requiredTool === ToolType.SHOVEL
+          ? 'Pá'
           : 'Ferramenta';
       const tierName =
         requiredTier >= 3
