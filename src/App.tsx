@@ -1111,6 +1111,39 @@ export default function App() {
             </div>
           )}
 
+          {/* Sleep Countdown & Multiplayer Sync Overlay */}
+          {snapshot?.player.isSleeping && engineRef.current && (() => {
+            const sleepStatus = engineRef.current.getSleepStatus();
+            return (
+              <div className="fixed inset-0 z-[85] bg-black/85 backdrop-blur-sm flex items-center justify-center p-4 select-none">
+                <div className="w-full max-w-sm medieval-panel p-6 text-center space-y-5 border-2 border-amber-500/70 shadow-[0_0_32px_rgba(0,0,0,0.9)]">
+                  <div className="text-3xl">🌙</div>
+                  <div className="space-y-2">
+                    <h2 className="font-pixel text-base sm:text-lg font-bold text-amber-300 tracking-wide">
+                      {sleepStatus.allSleeping
+                        ? `Dormindo... (${sleepStatus.countdownSec})`
+                        : `Jogadores na cama (${sleepStatus.sleepingCount}/${sleepStatus.totalPlayers})`}
+                    </h2>
+                    <p className="text-xs text-[#e5d5b5]">
+                      {sleepStatus.allSleeping
+                        ? 'Aguarde a contagem terminar para concluir o sono e avançar para o amanhecer.'
+                        : 'Aguardando todos os jogadores conectados deitarem na cama para o dia passar...'}
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      engineRef.current?.cancelSleep('Você levantou da cama.');
+                    }}
+                    className="w-full min-h-[42px] medieval-btn-crimson font-pixel text-xs font-bold tracking-wider"
+                  >
+                    LEVANTAR
+                  </button>
+                </div>
+              </div>
+            );
+          })()}
+
           {/* Hardcore Game Over Modal */}
           {snapshot?.isGameOver && engineRef.current && (
             <div className="fixed inset-0 z-50 bg-black/85 flex items-center justify-center p-4">

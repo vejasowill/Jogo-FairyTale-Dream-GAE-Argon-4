@@ -17,11 +17,13 @@ import {
   CreatureKind,
   Direction,
   EquipmentSlot,
+  EyeStyleId,
   HairStyleId,
   ItemCategory,
   PlayerAttributes,
   PlayerGender,
   PlayerState,
+  SkinMarkId,
 } from '../game/core/types';
 import { GameEngine } from '../game/loop/GameEngine';
 import {
@@ -53,13 +55,13 @@ const SLOT_META: {
     slot: 'body',
     label: 'Superior',
     shortLabel: 'Superior',
-    emptyHint: 'Túnica / Peitoral',
+    emptyHint: 'Túnica / Regata',
   },
   {
     slot: 'legs',
     label: 'Inferior',
     shortLabel: 'Inferior',
-    emptyHint: 'Calça / Grevas',
+    emptyHint: 'Calça / Bermuda',
   },
   {
     slot: 'feet',
@@ -74,19 +76,39 @@ const GENDERS: { id: PlayerGender; label: string; symbol: string }[] = [
   { id: 'feminino', label: 'Feminino', symbol: '♀' },
 ];
 
-const SKIN_TONES = [
-  { label: 'Porcelana', color: '#ffedd5' },
-  { label: 'Claro Rosado', color: '#fde68a' },
-  { label: 'Pêssego Suave', color: '#fed7aa' },
-  { label: 'Trigo Solar', color: '#fdba74' },
-  { label: 'Amêndoa', color: '#e0ac69' },
-  { label: 'Bronze Dourado', color: '#d97706' },
-  { label: 'Canela', color: '#b45309' },
-  { label: 'Castanho Médio', color: '#a16207' },
-  { label: 'Cacau', color: '#78350f' },
-  { label: 'Ébano Profundo', color: '#5c2d16' },
-  { label: 'Cinza Élfico', color: '#94a3b8' },
-  { label: 'Brisa Lunar', color: '#cbd5e1' },
+const SKIN_MARKS: { id: SkinMarkId; label: string; desc: string }[] = [
+  { id: 'none', label: 'Sem Marcas', desc: 'Pele natural sem marcas' },
+  { id: 'freckles', label: 'Sardas', desc: 'Sardas suaves nas bochechas e nariz' },
+  { id: 'eye_scar', label: 'Cicatriz', desc: 'Cicatriz de batalha sobre o olho' },
+  {
+    id: 'freckles_and_scar',
+    label: 'Ambos',
+    desc: 'Sardas nas bochechas + Cicatriz no olho',
+  },
+];
+
+const SKIN_TONES: {
+  label: string;
+  group: string;
+  color: string;
+  subTone: string;
+}[] = [
+  { label: 'Alabastro', group: 'Claríssima', color: '#fff1e6', subTone: '#f3d5c0' },
+  { label: 'Porcelana', group: 'Clara Fria', color: '#ffedd5', subTone: '#e8c4a2' },
+  { label: 'Marfim Rosado', group: 'Clara Rosada', color: '#fde2d2', subTone: '#e2b59e' },
+  { label: 'Claro Solar', group: 'Clara Dourada', color: '#fde68a', subTone: '#dfc05c' },
+  { label: 'Pêssego Suave', group: 'Média Clara', color: '#fed7aa', subTone: '#dfa974' },
+  { label: 'Trigo Solar', group: 'Média Quente', color: '#fdba74', subTone: '#d98f48' },
+  { label: 'Areia Dourada', group: 'Média Oliva', color: '#eab676', subTone: '#c48d4c' },
+  { label: 'Amêndoa', group: 'Média Neutra', color: '#e0ac69', subTone: '#b88242' },
+  { label: 'Mel Tostado', group: 'Bronze Clara', color: '#d49454', subTone: '#aa6c2f' },
+  { label: 'Bronze Dourado', group: 'Bronze Quente', color: '#d97706', subTone: '#a85703' },
+  { label: 'Canela', group: 'Morena Quente', color: '#b45309', subTone: '#873b05' },
+  { label: 'Castanho Médio', group: 'Morena Dourada', color: '#a16207', subTone: '#754604' },
+  { label: 'Terra Queimada', group: 'Morena Escura', color: '#8c4318', subTone: '#612b0c' },
+  { label: 'Cacau', group: 'Escura Quente', color: '#78350f', subTone: '#522207' },
+  { label: 'Mogno', group: 'Escura Profunda', color: '#5c2d16', subTone: '#3d1b0b' },
+  { label: 'Ébano Noturno', group: 'Escura Fria', color: '#3f2014', subTone: '#261109' },
 ];
 
 const HAIR_STYLES: { id: HairStyleId; label: string }[] = [
@@ -102,63 +124,77 @@ const HAIR_STYLES: { id: HairStyleId; label: string }[] = [
   { id: 'valkyrie_bangs', label: 'Valquíria' },
 ];
 
-const HAIR_COLORS = [
-  { label: 'Castanho', color: '#451a03' },
-  { label: 'Chocolate', color: '#78350f' },
-  { label: 'Preto Corvo', color: '#0f172a' },
-  { label: 'Loiro Solar', color: '#facc15' },
-  { label: 'Loiro Platinado', color: '#fef08a' },
-  { label: 'Ruivo Brasa', color: '#c2410c' },
-  { label: 'Ruivo Carmim', color: '#991b1b' },
-  { label: 'Prata Ancestral', color: '#e2e8f0' },
-  { label: 'Cinza Lobo', color: '#64748b' },
-  { label: 'Azul Astral', color: '#0284c7' },
-  { label: 'Turquesa', color: '#0d9488' },
-  { label: 'Verde Bosque', color: '#15803d' },
-  { label: 'Violeta Místico', color: '#7e22ce' },
-  { label: 'Rosa Sakura', color: '#db2777' },
+const HAIR_COLORS: {
+  label: string;
+  group: string;
+  color: string;
+  subTone: string;
+}[] = [
+  // Pretos & Escuros
+  { label: 'Preto Corvo', group: 'Preto', color: '#0f172a', subTone: '#020617' },
+  { label: 'Ébano Azulado', group: 'Preto Frio', color: '#1e293b', subTone: '#0f172a' },
+  // Castanhos
+  { label: 'Castanho Escuro', group: 'Castanho', color: '#451a03', subTone: '#290f02' },
+  { label: 'Chocolate', group: 'Castanho Médio', color: '#78350f', subTone: '#451a03' },
+  { label: 'Avelã', group: 'Castanho Claro', color: '#92400e', subTone: '#6b2e08' },
+  { label: 'Caramelo Tostado', group: 'Castanho Dourado', color: '#b45309', subTone: '#7c3705' },
+  // Loiros
+  { label: 'Loiro Mel', group: 'Loiro Escuro', color: '#ca8a04', subTone: '#966502' },
+  { label: 'Loiro Solar', group: 'Loiro Dourado', color: '#facc15', subTone: '#ca8a04' },
+  { label: 'Loiro Trigo', group: 'Loiro Claro', color: '#fde047', subTone: '#d4b116' },
+  { label: 'Loiro Platinado', group: 'Loiro Frio', color: '#fef08a', subTone: '#d6c45c' },
+  // Ruivos
+  { label: 'Ruivo Cobre', group: 'Ruivo Claro', color: '#ea580c', subTone: '#b03e06' },
+  { label: 'Ruivo Brasa', group: 'Ruivo Intenso', color: '#c2410c', subTone: '#8a2b06' },
+  { label: 'Ruivo Carmim', group: 'Ruivo Escuro', color: '#991b1b', subTone: '#630f0f' },
+  { label: 'Vinho Borgonha', group: 'Ruivo Rubi', color: '#7f1d1d', subTone: '#4c0d0d' },
+  // Grisalhos & Prata
+  { label: 'Cinza Lobo', group: 'Grisalho', color: '#64748b', subTone: '#334155' },
+  { label: 'Prata Ancestral', group: 'Prateado', color: '#e2e8f0', subTone: '#94a3b8' },
+  // Fantasia / Místicos
+  { label: 'Azul Astral', group: 'Safira', color: '#0284c7', subTone: '#03537d' },
+  { label: 'Turquesa Abissal', group: 'Turquesa', color: '#0d9488', subTone: '#085e56' },
+  { label: 'Verde Bosque', group: 'Esmeralda', color: '#15803d', subTone: '#0c4f24' },
+  { label: 'Violeta Místico', group: 'Ametista', color: '#7e22ce', subTone: '#4f1285' },
+  { label: 'Rosa Sakura', group: 'Quartzo', color: '#db2777', subTone: '#991550' },
 ];
 
-const EYE_COLORS = [
-  { label: 'Ônix', color: '#0f172a' },
-  { label: 'Castanho Mel', color: '#78350f' },
-  { label: 'Safira', color: '#0284c7' },
-  { label: 'Gelo Celeste', color: '#38bdf8' },
-  { label: 'Esmeralda', color: '#10b981' },
-  { label: 'Jade', color: '#15803d' },
-  { label: 'Âmbar', color: '#d97706' },
-  { label: 'Ouro Solar', color: '#facc15' },
-  { label: 'Ametista', color: '#9333ea' },
-  { label: 'Rubi', color: '#e11d48' },
+const EYE_STYLES: { id: EyeStyleId; label: string; desc: string }[] = [
+  { id: 'classic', label: 'Clássico', desc: 'Olhar equilibrado e expressivo' },
+  { id: 'sharp', label: 'Afiado', desc: 'Olhar estreito e focado de caçador' },
+  { id: 'large', label: 'Grande', desc: 'Olhos amplos com duplo brilho estelar' },
+  { id: 'calm', label: 'Sereno', desc: 'Pálpebras suaves e expressão tranquila' },
+  { id: 'fierce', label: 'Feroz', desc: 'Sobrancelha angulada e olhar determinado' },
+  { id: 'mystic', label: 'Místico', desc: 'Pupila luminosa de brilho ancestral' },
 ];
 
-const SHIRT_COLORS = [
-  { label: 'Azul Real', color: '#2563eb' },
-  { label: 'Celeste', color: '#0284c7' },
-  { label: 'Turquesa', color: '#0d9488' },
-  { label: 'Verde Caçador', color: '#15803d' },
-  { label: 'Verde Musgo', color: '#4d7c0f' },
-  { label: 'Carmesim', color: '#b91c1c' },
-  { label: 'Coral Brasa', color: '#ea580c' },
-  { label: 'Ocre Couro', color: '#a16207' },
-  { label: 'Dourado Nobre', color: '#ca8a04' },
-  { label: 'Roxo Sombrio', color: '#6b21a8' },
-  { label: 'Rosa Real', color: '#be185d' },
-  { label: 'Carvão', color: '#334155' },
-  { label: 'Marfim', color: '#e2e8f0' },
-];
-
-const PANTS_COLORS = [
-  { label: 'Ardósia', color: '#334155' },
-  { label: 'Noite Escura', color: '#0f172a' },
-  { label: 'Marrom Terra', color: '#5c3416' },
-  { label: 'Couro Curtido', color: '#78350f' },
-  { label: 'Areia Escura', color: '#854d0e' },
-  { label: 'Azul Noite', color: '#1e3a8a' },
-  { label: 'Verde Musgo', color: '#14532d' },
-  { label: 'Vinho Escuro', color: '#7f1d1d' },
-  { label: 'Roxo Umbral', color: '#4c1d95' },
-  { label: 'Cinza Pedra', color: '#57534e' },
+const EYE_COLORS: {
+  label: string;
+  group: string;
+  color: string;
+  subTone: string;
+}[] = [
+  // Escuros & Castanhos
+  { label: 'Ônix Profundo', group: 'Preto', color: '#0f172a', subTone: '#334155' },
+  { label: 'Café Escuro', group: 'Castanho Escuro', color: '#451a03', subTone: '#78350f' },
+  { label: 'Castanho Mel', group: 'Castanho Claro', color: '#78350f', subTone: '#b45309' },
+  { label: 'Avelã Dourado', group: 'Avelã', color: '#a16207', subTone: '#eab308' },
+  // Âmbar & Ouro
+  { label: 'Âmbar Quente', group: 'Âmbar', color: '#d97706', subTone: '#fbbf24' },
+  { label: 'Ouro Solar', group: 'Dourado', color: '#facc15', subTone: '#fef08a' },
+  // Verdes
+  { label: 'Verde Musgo', group: 'Verde Escuro', color: '#15803d', subTone: '#22c55e' },
+  { label: 'Esmeralda Viva', group: 'Esmeralda', color: '#10b981', subTone: '#6ee7b7' },
+  { label: 'Jade Místico', group: 'Verde Água', color: '#0d9488', subTone: '#5eead4' },
+  // Azuis
+  { label: 'Azul Oceano', group: 'Azul Escuro', color: '#1d4ed8', subTone: '#60a5fa' },
+  { label: 'Safira Real', group: 'Safira', color: '#0284c7', subTone: '#38bdf8' },
+  { label: 'Gelo Celeste', group: 'Azul Claro', color: '#38bdf8', subTone: '#bae6fd' },
+  // Violetas, Rubi & Prata
+  { label: 'Ametista', group: 'Violeta', color: '#9333ea', subTone: '#d8b4fe' },
+  { label: 'Lilás Lunar', group: 'Lavanda', color: '#a855f7', subTone: '#f3e8ff' },
+  { label: 'Rubi Carmesim', group: 'Rubi', color: '#e11d48', subTone: '#fda4af' },
+  { label: 'Prata Cinzento', group: 'Cinza', color: '#64748b', subTone: '#cbd5e1' },
 ];
 
 export const CharacterPetsModal: React.FC<CharacterPetsModalProps> = ({
@@ -169,6 +205,9 @@ export const CharacterPetsModal: React.FC<CharacterPetsModalProps> = ({
 }) => {
   const [activeTab, setActiveTab] = useState<'custom' | 'stats' | 'pets'>(
     'custom'
+  );
+  const [appearanceCat, setAppearanceCat] = useState<'skin' | 'hair' | 'eyes'>(
+    'skin'
   );
   const [previewDir, setPreviewDir] = useState<Direction>('down');
   const [selectedSlotFilter, setSelectedSlotFilter] = useState<
@@ -557,11 +596,11 @@ export const CharacterPetsModal: React.FC<CharacterPetsModalProps> = ({
               </div>
             </div>
 
-            {/* RIGHT COLUMN (6 cols): Appearance */}
-            <div className="sm:col-span-6 medieval-inset p-2.5 space-y-2.5">
+            {/* RIGHT COLUMN (6 cols): Inventory-Style Appearance Window by Category */}
+            <div className="sm:col-span-6 medieval-inset p-2.5 flex flex-col gap-2">
               <div className="flex items-center justify-between border-b border-[#3d281a] pb-1.5">
                 <h3 className="font-pixel text-[10px] font-bold text-amber-400">
-                  APARÊNCIA
+                  APARÊNCIA DO PERSONAGEM
                 </h3>
                 <button
                   onClick={() =>
@@ -569,181 +608,444 @@ export const CharacterPetsModal: React.FC<CharacterPetsModalProps> = ({
                   }
                   className="text-[9px] text-[#c4ab7d] hover:text-amber-300 underline"
                 >
-                  Padrão
+                  Restaurar Padrão
                 </button>
               </div>
 
-              <div className="space-y-1">
-                <span className="text-[10px] text-[#e5d5b5] font-bold block">
-                  Gênero:
-                </span>
-                <div className="grid grid-cols-2 gap-1.5">
-                  {GENDERS.map((g) => {
-                    const isSelected = (app.gender ?? 'masculino') === g.id;
-                    return (
-                      <button
-                        key={g.id}
-                        onClick={() =>
-                          engine.updatePlayerAppearance({ gender: g.id })
-                        }
-                        className={`py-1 px-2 text-[10px] font-bold flex items-center justify-center gap-1.5 ${
-                          isSelected
-                            ? 'medieval-btn-gold'
-                            : 'medieval-btn-wood'
-                        }`}
-                      >
-                        <span>{g.symbol}</span>
-                        <span>{g.label}</span>
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-
-              <div className="space-y-1">
-                <span className="text-[10px] text-[#e5d5b5] font-bold block">
-                  Cabelo ({HAIR_STYLES.length} estilos):
-                </span>
-                <div className="grid grid-cols-5 gap-1">
-                  {HAIR_STYLES.map((st) => (
+              {/* Gender Toggle Row */}
+              <div className="grid grid-cols-2 gap-1.5">
+                {GENDERS.map((g) => {
+                  const isSelected = (app.gender ?? 'masculino') === g.id;
+                  return (
                     <button
-                      key={st.id}
+                      key={g.id}
                       onClick={() =>
-                        engine.updatePlayerAppearance({ hairStyle: st.id })
+                        engine.updatePlayerAppearance({ gender: g.id })
                       }
-                      className={`py-1 px-1 text-[9px] font-bold truncate ${
-                        app.hairStyle === st.id
-                          ? 'medieval-btn-gold'
-                          : 'medieval-btn-wood'
+                      className={`py-1 px-2 text-[10px] font-bold flex items-center justify-center gap-1.5 ${
+                        isSelected ? 'medieval-btn-gold' : 'medieval-btn-wood'
                       }`}
                     >
-                      {st.label}
+                      <span>{g.symbol}</span>
+                      <span>{g.label}</span>
                     </button>
-                  ))}
-                </div>
+                  );
+                })}
               </div>
 
-              <div className="space-y-1">
-                <span className="text-[10px] text-[#e5d5b5] font-bold block">
-                  Pele:
-                </span>
-                <div className="flex flex-wrap gap-1.5">
-                  {SKIN_TONES.map((tone) => (
-                    <button
-                      key={tone.color}
-                      onClick={() =>
-                        engine.updatePlayerAppearance({ skinColor: tone.color })
-                      }
-                      title={tone.label}
-                      className={`w-6 h-6 rounded border-2 ${
-                        app.skinColor === tone.color
-                          ? 'border-amber-400 scale-110'
-                          : 'border-[#4a301e]'
-                      }`}
-                      style={{ backgroundColor: tone.color }}
-                    />
-                  ))}
-                </div>
+              {/* Category Tabs: Pele | Cabelos | Olhos */}
+              <div className="grid grid-cols-3 gap-1.5 bg-[#120b07] p-1 border border-[#4a301e]">
+                <button
+                  onClick={() => setAppearanceCat('skin')}
+                  className={`py-1.5 px-2 text-[10px] font-pixel font-bold transition-colors ${
+                    appearanceCat === 'skin'
+                      ? 'medieval-btn-gold'
+                      : 'medieval-btn-wood'
+                  }`}
+                >
+                  Pele
+                </button>
+                <button
+                  onClick={() => setAppearanceCat('hair')}
+                  className={`py-1.5 px-2 text-[10px] font-pixel font-bold transition-colors ${
+                    appearanceCat === 'hair'
+                      ? 'medieval-btn-gold'
+                      : 'medieval-btn-wood'
+                  }`}
+                >
+                  Cabelos
+                </button>
+                <button
+                  onClick={() => setAppearanceCat('eyes')}
+                  className={`py-1.5 px-2 text-[10px] font-pixel font-bold transition-colors ${
+                    appearanceCat === 'eyes'
+                      ? 'medieval-btn-gold'
+                      : 'medieval-btn-wood'
+                  }`}
+                >
+                  Olhos
+                </button>
               </div>
 
-              <div className="grid grid-cols-2 gap-2">
-                <div className="space-y-1">
-                  <span className="text-[10px] text-[#e5d5b5] font-bold block">
-                    Cor Cabelo:
-                  </span>
-                  <div className="flex flex-wrap gap-1.5">
-                    {HAIR_COLORS.map((hc) => (
-                      <button
-                        key={hc.color}
-                        onClick={() =>
-                          engine.updatePlayerAppearance({ hairColor: hc.color })
-                        }
-                        title={hc.label}
-                        className={`w-6 h-6 rounded border-2 ${
-                          app.hairColor === hc.color
-                            ? 'border-amber-400 scale-110'
-                            : 'border-[#4a301e]'
-                        }`}
-                        style={{ backgroundColor: hc.color }}
-                      />
-                    ))}
-                  </div>
-                </div>
+              {/* Inventory Container for Selected Category (Vertical Scroll) */}
+              <div className="max-h-[305px] overflow-y-auto pr-1 space-y-2.5">
+                {appearanceCat === 'skin' && (
+                  <>
+                    {/* Top Inventory Section: Marcas de Pele (1 selectable) */}
+                    <div className="bg-[#120b07] p-2 border border-[#4a301e] space-y-1.5">
+                      <div className="flex items-center justify-between">
+                        <span className="font-pixel text-[9px] text-amber-400 uppercase">
+                          Marcas de Pele (1 ativa)
+                        </span>
+                        <span className="text-[9px] text-[#c4ab7d]">
+                          {SKIN_MARKS.find(
+                            (m) => m.id === (app.skinMark || 'none')
+                          )?.label || 'Sem Marcas'}
+                        </span>
+                      </div>
+                      <div className="grid grid-cols-4 gap-1.5">
+                        {SKIN_MARKS.map((mark) => {
+                          const isSelected =
+                            (app.skinMark || 'none') === mark.id;
+                          return (
+                            <button
+                              key={mark.id}
+                              onClick={() =>
+                                engine.updatePlayerAppearance({
+                                  skinMark: mark.id,
+                                })
+                              }
+                              title={`${mark.label} — ${mark.desc}`}
+                              className={`mc-slot p-1.5 flex flex-col items-center justify-center gap-1 transition-transform ${
+                                isSelected
+                                  ? 'mc-slot-active ring-1 ring-amber-400'
+                                  : 'hover:border-[#8c6d46]'
+                              }`}
+                            >
+                              <img
+                                src={spriteAtlas.getSkinMarkPreviewUrl(
+                                  mark.id,
+                                  app.skinColor
+                                )}
+                                alt={mark.label}
+                                className="w-7 h-7 pixelated"
+                              />
+                              <span className="text-[8px] font-bold text-[#e5d5b5] truncate w-full text-center">
+                                {mark.label}
+                              </span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
 
-                <div className="space-y-1">
-                  <span className="text-[10px] text-[#e5d5b5] font-bold block">
-                    Olhos:
-                  </span>
-                  <div className="flex flex-wrap gap-1.5">
-                    {EYE_COLORS.map((ec) => (
-                      <button
-                        key={ec.color}
-                        onClick={() =>
-                          engine.updatePlayerAppearance({ eyeColor: ec.color })
-                        }
-                        title={ec.label}
-                        className={`w-6 h-6 rounded border-2 ${
-                          app.eyeColor === ec.color
-                            ? 'border-amber-400 scale-110'
-                            : 'border-[#4a301e]'
-                        }`}
-                        style={{ backgroundColor: ec.color }}
-                      />
-                    ))}
-                  </div>
-                </div>
-              </div>
+                    {/* Bottom Inventory Section: Tonalidades de Pele (1 selectable) */}
+                    <div className="bg-[#120b07] p-2 border border-[#4a301e] space-y-1.5">
+                      <div className="flex items-center justify-between">
+                        <span className="font-pixel text-[9px] text-amber-400 uppercase">
+                          Cor & Sub-tonalidades ({SKIN_TONES.length})
+                        </span>
+                        <span className="text-[9px] text-[#c4ab7d]">
+                          {SKIN_TONES.find((t) => t.color === app.skinColor)
+                            ?.label || 'Personalizada'}
+                        </span>
+                      </div>
+                      <div className="grid grid-cols-4 gap-1.5">
+                        {SKIN_TONES.map((tone) => {
+                          const isSelected = app.skinColor === tone.color;
+                          return (
+                            <button
+                              key={tone.color}
+                              onClick={() =>
+                                engine.updatePlayerAppearance({
+                                  skinColor: tone.color,
+                                })
+                              }
+                              title={`${tone.label} (${tone.group})`}
+                              className={`mc-slot p-1.5 flex flex-col items-center justify-center gap-1 ${
+                                isSelected
+                                  ? 'mc-slot-active ring-1 ring-amber-400'
+                                  : 'hover:border-[#8c6d46]'
+                              }`}
+                            >
+                              <svg
+                                viewBox="0 0 16 16"
+                                className="w-6 h-6 pixelated shrink-0"
+                              >
+                                <rect
+                                  x="1"
+                                  y="1"
+                                  width="14"
+                                  height="14"
+                                  fill="#0f172a"
+                                />
+                                <rect
+                                  x="2"
+                                  y="2"
+                                  width="12"
+                                  height="12"
+                                  fill={tone.color}
+                                />
+                                <rect
+                                  x="2"
+                                  y="9"
+                                  width="12"
+                                  height="5"
+                                  fill={tone.subTone}
+                                />
+                                <rect
+                                  x="3"
+                                  y="3"
+                                  width="5"
+                                  height="2"
+                                  fill="#ffffff"
+                                  fillOpacity="0.35"
+                                />
+                              </svg>
+                              <span className="text-[8px] font-bold text-[#e5d5b5] truncate w-full text-center">
+                                {tone.label}
+                              </span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  </>
+                )}
 
-              <div className="grid grid-cols-2 gap-2 pt-1 border-t border-[#3d281a]">
-                <div className="space-y-1">
-                  <span className="text-[10px] text-[#e5d5b5] font-bold block">
-                    Camisa:
-                  </span>
-                  <div className="flex flex-wrap gap-1.5">
-                    {SHIRT_COLORS.map((sc) => (
-                      <button
-                        key={sc.color}
-                        onClick={() =>
-                          engine.updatePlayerAppearance({
-                            shirtColor: sc.color,
-                          })
-                        }
-                        title={sc.label}
-                        className={`w-6 h-6 rounded border-2 ${
-                          app.shirtColor === sc.color
-                            ? 'border-amber-400 scale-110'
-                            : 'border-[#4a301e]'
-                        }`}
-                        style={{ backgroundColor: sc.color }}
-                      />
-                    ))}
-                  </div>
-                </div>
+                {appearanceCat === 'hair' && (
+                  <>
+                    {/* Top Inventory Section: Tipos de Cabelo (1 selectable) */}
+                    <div className="bg-[#120b07] p-2 border border-[#4a301e] space-y-1.5">
+                      <div className="flex items-center justify-between">
+                        <span className="font-pixel text-[9px] text-amber-400 uppercase">
+                          Tipos de Cabelo ({HAIR_STYLES.length})
+                        </span>
+                        <span className="text-[9px] text-[#c4ab7d]">
+                          {HAIR_STYLES.find((h) => h.id === app.hairStyle)
+                            ?.label || 'Aventureiro'}
+                        </span>
+                      </div>
+                      <div className="grid grid-cols-5 gap-1.5">
+                        {HAIR_STYLES.map((st) => {
+                          const isSelected = app.hairStyle === st.id;
+                          return (
+                            <button
+                              key={st.id}
+                              onClick={() =>
+                                engine.updatePlayerAppearance({
+                                  hairStyle: st.id,
+                                })
+                              }
+                              title={st.label}
+                              className={`mc-slot p-1 flex flex-col items-center justify-center gap-0.5 ${
+                                isSelected
+                                  ? 'mc-slot-active ring-1 ring-amber-400'
+                                  : 'hover:border-[#8c6d46]'
+                              }`}
+                            >
+                              <img
+                                src={spriteAtlas.getHairStylePreviewUrl(
+                                  st.id,
+                                  app.hairColor,
+                                  app.skinColor
+                                )}
+                                alt={st.label}
+                                className="w-7 h-7 pixelated"
+                              />
+                              <span className="text-[8px] font-bold text-[#e5d5b5] truncate w-full text-center">
+                                {st.label}
+                              </span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
 
-                <div className="space-y-1">
-                  <span className="text-[10px] text-[#e5d5b5] font-bold block">
-                    Calça:
-                  </span>
-                  <div className="flex flex-wrap gap-1.5">
-                    {PANTS_COLORS.map((pc) => (
-                      <button
-                        key={pc.color}
-                        onClick={() =>
-                          engine.updatePlayerAppearance({
-                            pantsColor: pc.color,
-                          })
-                        }
-                        title={pc.label}
-                        className={`w-6 h-6 rounded border-2 ${
-                          app.pantsColor === pc.color
-                            ? 'border-amber-400 scale-110'
-                            : 'border-[#4a301e]'
-                        }`}
-                        style={{ backgroundColor: pc.color }}
-                      />
-                    ))}
-                  </div>
-                </div>
+                    {/* Bottom Inventory Section: Cores & Sub-tonalidades de Cabelo */}
+                    <div className="bg-[#120b07] p-2 border border-[#4a301e] space-y-1.5">
+                      <div className="flex items-center justify-between">
+                        <span className="font-pixel text-[9px] text-amber-400 uppercase">
+                          Cores & Sub-tonalidades ({HAIR_COLORS.length})
+                        </span>
+                        <span className="text-[9px] text-[#c4ab7d]">
+                          {HAIR_COLORS.find((hc) => hc.color === app.hairColor)
+                            ?.label || 'Personalizada'}
+                        </span>
+                      </div>
+                      <div className="grid grid-cols-5 gap-1.5">
+                        {HAIR_COLORS.map((hc) => {
+                          const isSelected = app.hairColor === hc.color;
+                          return (
+                            <button
+                              key={hc.color}
+                              onClick={() =>
+                                engine.updatePlayerAppearance({
+                                  hairColor: hc.color,
+                                })
+                              }
+                              title={`${hc.label} (${hc.group})`}
+                              className={`mc-slot p-1 flex flex-col items-center justify-center gap-0.5 ${
+                                isSelected
+                                  ? 'mc-slot-active ring-1 ring-amber-400'
+                                  : 'hover:border-[#8c6d46]'
+                              }`}
+                            >
+                              <svg
+                                viewBox="0 0 16 16"
+                                className="w-6 h-6 pixelated shrink-0"
+                              >
+                                <rect
+                                  x="1"
+                                  y="1"
+                                  width="14"
+                                  height="14"
+                                  fill="#0f172a"
+                                />
+                                <rect
+                                  x="2"
+                                  y="2"
+                                  width="12"
+                                  height="12"
+                                  fill={hc.color}
+                                />
+                                <rect
+                                  x="2"
+                                  y="9"
+                                  width="12"
+                                  height="5"
+                                  fill={hc.subTone}
+                                />
+                                <rect
+                                  x="3"
+                                  y="3"
+                                  width="8"
+                                  height="2"
+                                  fill="#ffffff"
+                                  fillOpacity="0.28"
+                                />
+                              </svg>
+                              <span className="text-[8px] font-bold text-[#e5d5b5] truncate w-full text-center">
+                                {hc.label}
+                              </span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  </>
+                )}
+
+                {appearanceCat === 'eyes' && (
+                  <>
+                    {/* Top Inventory Section: Tipos de Olhos (6 Variantes) */}
+                    <div className="bg-[#120b07] p-2 border border-[#4a301e] space-y-1.5">
+                      <div className="flex items-center justify-between">
+                        <span className="font-pixel text-[9px] text-amber-400 uppercase">
+                          Formatos de Olhos (6 Variantes)
+                        </span>
+                        <span className="text-[9px] text-[#c4ab7d]">
+                          {EYE_STYLES.find(
+                            (es) => es.id === (app.eyeStyle || 'classic')
+                          )?.label || 'Clássico'}
+                        </span>
+                      </div>
+                      <div className="grid grid-cols-3 sm:grid-cols-6 gap-1.5">
+                        {EYE_STYLES.map((es) => {
+                          const isSelected =
+                            (app.eyeStyle || 'classic') === es.id;
+                          return (
+                            <button
+                              key={es.id}
+                              onClick={() =>
+                                engine.updatePlayerAppearance({
+                                  eyeStyle: es.id,
+                                })
+                              }
+                              title={`${es.label} — ${es.desc}`}
+                              className={`mc-slot p-1.5 flex flex-col items-center justify-center gap-1 ${
+                                isSelected
+                                  ? 'mc-slot-active ring-1 ring-amber-400'
+                                  : 'hover:border-[#8c6d46]'
+                              }`}
+                            >
+                              <img
+                                src={spriteAtlas.getEyeStylePreviewUrl(
+                                  es.id,
+                                  app.eyeColor,
+                                  app.skinColor
+                                )}
+                                alt={es.label}
+                                className="w-7 h-7 pixelated"
+                              />
+                              <span className="text-[8px] font-bold text-[#e5d5b5] truncate w-full text-center">
+                                {es.label}
+                              </span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+
+                    {/* Bottom Inventory Section: Cores & Sub-tonalidades dos Olhos */}
+                    <div className="bg-[#120b07] p-2 border border-[#4a301e] space-y-1.5">
+                      <div className="flex items-center justify-between">
+                        <span className="font-pixel text-[9px] text-amber-400 uppercase">
+                          Cores & Sub-tonalidades ({EYE_COLORS.length})
+                        </span>
+                        <span className="text-[9px] text-[#c4ab7d]">
+                          {EYE_COLORS.find((ec) => ec.color === app.eyeColor)
+                            ?.label || 'Personalizada'}
+                        </span>
+                      </div>
+                      <div className="grid grid-cols-4 gap-1.5">
+                        {EYE_COLORS.map((ec) => {
+                          const isSelected = app.eyeColor === ec.color;
+                          return (
+                            <button
+                              key={ec.color}
+                              onClick={() =>
+                                engine.updatePlayerAppearance({
+                                  eyeColor: ec.color,
+                                })
+                              }
+                              title={`${ec.label} (${ec.group})`}
+                              className={`mc-slot p-1.5 flex flex-col items-center justify-center gap-1 ${
+                                isSelected
+                                  ? 'mc-slot-active ring-1 ring-amber-400'
+                                  : 'hover:border-[#8c6d46]'
+                              }`}
+                            >
+                              <svg
+                                viewBox="0 0 16 16"
+                                className="w-6 h-6 pixelated shrink-0"
+                              >
+                                <rect
+                                  x="1"
+                                  y="1"
+                                  width="14"
+                                  height="14"
+                                  fill="#0f172a"
+                                />
+                                <rect
+                                  x="2"
+                                  y="2"
+                                  width="12"
+                                  height="12"
+                                  fill={ec.color}
+                                />
+                                <rect
+                                  x="4"
+                                  y="8"
+                                  width="8"
+                                  height="5"
+                                  fill={ec.subTone}
+                                />
+                                <rect
+                                  x="5"
+                                  y="5"
+                                  width="4"
+                                  height="4"
+                                  fill="#020617"
+                                />
+                                <rect
+                                  x="3"
+                                  y="3"
+                                  width="3"
+                                  height="3"
+                                  fill="#ffffff"
+                                />
+                              </svg>
+                              <span className="text-[8px] font-bold text-[#e5d5b5] truncate w-full text-center">
+                                {ec.label}
+                              </span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  </>
+                )}
               </div>
             </div>
           </div>

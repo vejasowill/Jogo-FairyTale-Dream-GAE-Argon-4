@@ -4,6 +4,7 @@ import {
   evaluateStallPriceDeal,
   FUEL_ITEM_ORDER,
   FUEL_ITEMS,
+  getDyedGarmentItemId,
   getFuelBurnTimeSec,
   getItemBasePrice,
   getNatureBreakRequirement,
@@ -17,6 +18,7 @@ import { soundManager } from '../core/SoundManager';
 import {
   BiomeType,
   CHEST_STORAGE_SIZE,
+  ClothingColorId,
   CreatureEntity,
   CreatureKind,
   DeathBag,
@@ -247,6 +249,8 @@ export class GameEngine {
     // Ensure the player never spawns trapped inside a newly built structure or solid hitbox
     this.pushPlayerOutOfHitbox(0, true);
     this.entities = new EntityManager(saveData.creatures);
+    this.entities.isPositionIlluminatedCheck = (wx, wy) =>
+      this.isWorldPositionIlluminated(wx, wy);
     this.droppedItems = saveData.droppedItems || [];
     this.deathBags = Array.isArray(saveData.deathBags) ? saveData.deathBags : [];
     this.waypoints = saveData.waypoints || [];
@@ -429,6 +433,7 @@ export class GameEngine {
     } else if (this.isPaused && !this.isGameOver) {
       // Keep Campfire & Furnace thermal stations smelting/cooking AND Market Stall NPC visitors shopping in real time while the player watches the station/stall HUD!
       this.globalTime += dt;
+      soundManager.setListenerPosition(this.player.x, this.player.y);
       if (this.campfireRestCooldown > 0) {
         this.campfireRestCooldown = Math.max(0, this.campfireRestCooldown - dt);
       }
@@ -457,12 +462,14 @@ export class GameEngine {
   // 2. UPDATE
   public update(dt: number): void {
     this.globalTime += dt;
+    soundManager.setListenerPosition(this.player.x, this.player.y);
     if (this.campfireRestCooldown > 0) {
       this.campfireRestCooldown = Math.max(0, this.campfireRestCooldown - dt);
     }
 
-    // Advance Day & Night cycle
-    this.metadata.timeOfDay += dt * 0.1;
+    // Advance Day & Night cycle: 20 minutes total (1200s) -> 10 min Day (600s) and 10 min Night (600s)
+    // 24 hours / 1200 seconds = 0.02 hours per second
+    this.metadata.timeOfDay += dt * 0.02;
     if (this.metadata.timeOfDay >= 24) {
       this.metadata.timeOfDay -= 24;
       this.metadata.dayCount += 1;
@@ -486,9 +493,9 @@ export class GameEngine {
       );
     }
 
-    const isNight = this.metadata.timeOfDay >= 20 || this.metadata.timeOfDay < 5.5;
+    const isNight = this.metadata.timeOfDay >= 18 || this.metadata.timeOfDay < 6;
     const isNightMusic =
-      this.metadata.timeOfDay >= 19.5 || this.metadata.timeOfDay < 5.5;
+      this.metadata.timeOfDay >= 18 || this.metadata.timeOfDay < 6;
     soundManager.updateAmbientMusic(isNightMusic);
 
     // Hotbar number keys 1..8
@@ -896,20 +903,23 @@ export class GameEngine {
           )
         : { vx: 0, vy: 0, kind: 'none' as const };
 
+    // Handle active sleeping state (5s countdown + multiplayer all-players-in-bed sync + auto-wake at dawn)
+    if (this.player.isSleeping) {
+      this.updateSleepingState(dt);
+    }
+
     // If the local player is a 2nd-seat passenger on a Boat driven by another online player, follow the boat
-    const isLocalPassenger =
-      activeMount?.passengerPlayerId === 'LOCAL' ||
-      activeMount?.passengerPlayerId === this.multiplayer.peerId;
-    const isLocalPrimaryRider =
-      activeMount?.riderPlayerId === 'LOCAL' ||
-      activeMount?.riderPlayerId === this.multiplayer.peerId;
     const isBoatPassengerOnly =
       isBoatMount &&
-      isLocalPassenger &&
-      Boolean(activeMount!.riderPlayerId) &&
-      !isLocalPrimaryRider;
+      activeMount !== null &&
+      this.isLocalPlayerBoatPassenger(activeMount);
 
-    if (isBoatPassengerOnly && activeMount) {
+    if (this.player.isSleeping) {
+      this.player.vx = 0;
+      this.player.vy = 0;
+      this.player.isMoving = false;
+      this.player.animFrame = 0;
+    } else if (isBoatPassengerOnly && activeMount) {
       this.player.x = activeMount.x;
       this.player.y = activeMount.y;
       this.player.vx = activeMount.vx;
@@ -1080,13 +1090,6 @@ export class GameEngine {
       );
     }
 
-    const nearWarmth = this.isPlayerNearStructure([
-      PlaceableType.CAMPFIRE,
-      PlaceableType.GUARDIAN_TOTEM,
-    ]);
-    const nearFountain = this.isPlayerNearStructure([
-      PlaceableType.HEALING_FOUNTAIN,
-    ]);
     const nearSheep = this.entities.creatures.some(
       (c) =>
         c.tamed &&
@@ -1095,24 +1098,9 @@ export class GameEngine {
         Math.hypot(c.x - this.player.x, c.y - this.player.y) < 150
     );
 
-    if (nearFountain) {
-      for (const pet of this.entities.creatures) {
-        if (pet.tamed && pet.hp < pet.maxHp) {
-          pet.hp = Math.min(pet.maxHp, pet.hp + dt * 6);
-        }
-      }
-    }
-
-    if (this.player.hunger > 65 || nearWarmth || nearFountain || nearSheep) {
-      this.hungerDamageTimer = 0;
-      const regenRate =
-        (nearWarmth ? 2.5 : 0.6) +
-        (nearFountain ? 5.0 : 0) +
-        (nearSheep ? 1.0 : 0);
-      this.player.hp = Math.min(this.player.maxHp, this.player.hp + dt * regenRate);
-    } else if (this.player.hunger <= 0) {
-      // Hunger drains HP down to 10% of the character's pure status Max HP (ignoring any item or armor effects)
-      const minStarveHp = Math.ceil(this.getPlayerStatusMaxHp() * 0.1);
+    if (this.player.hunger <= 0) {
+      // Enquanto a fome estiver zero, a penalidade por fome é sempre aplicada quando a vida estiver acima de 10%
+      const minStarveHp = Math.ceil(this.player.maxHp * 0.1);
       if (this.player.hp > minStarveHp) {
         this.hungerDamageTimer += dt;
         if (this.hungerDamageTimer >= 3.0) {
@@ -1137,6 +1125,11 @@ export class GameEngine {
       }
     } else {
       this.hungerDamageTimer = 0;
+      // O personagem só recupera vida progressivamente sozinho se a fome estiver acima de 80
+      const regenRate = (this.player.hunger > 80 ? 0.6 : 0) + (nearSheep ? 1.0 : 0);
+      if (regenRate > 0 && this.player.hp < this.player.maxHp) {
+        this.player.hp = Math.min(this.player.maxHp, this.player.hp + dt * regenRate);
+      }
     }
   }
 
@@ -1220,16 +1213,94 @@ export class GameEngine {
   }
 
   /**
+   * Returns true if the given coordinate `(wx, wy)` in the world is currently illuminated
+   * by any active light source (Structures, Active Furnaces, Nature Nodes, Players, or Death Bags).
+   * Used to prevent natural mob spawning in lit areas.
+   */
+  public isWorldPositionIlluminated(wx: number, wy: number): boolean {
+    // 1. Check Local Player light
+    const heldSlot = this.player.inventory[this.player.selectedHotbarIndex];
+    const pSpec = GameRenderer.getPlayerLightSpec(
+      heldSlot?.itemId || null,
+      this.player.equippedBySlot,
+      this.player.equippedArmorId
+    );
+    if (
+      pSpec.radius > 0 &&
+      pSpec.strength > 0 &&
+      Math.hypot(wx - this.player.x, wy - this.player.y) <= pSpec.radius
+    ) {
+      return true;
+    }
+
+    // 2. Check Remote Players light
+    for (const rp of this.remotePlayersList) {
+      if (rp.hp <= 0) continue;
+      const rpSpec = GameRenderer.getPlayerLightSpec(
+        rp.heldItemId,
+        rp.equippedBySlot,
+        rp.equippedArmorId
+      );
+      if (
+        rpSpec.radius > 0 &&
+        rpSpec.strength > 0 &&
+        Math.hypot(wx - rp.x, wy - rp.y) <= rpSpec.radius
+      ) {
+        return true;
+      }
+    }
+
+    // 3. Check Death Bags (alcance: 100 px; força: 100%)
+    for (const bag of this.deathBags) {
+      if (Math.hypot(wx - bag.x, wy - bag.y) <= 100) {
+        return true;
+      }
+    }
+
+    // 4. Check Structures and Nature Nodes in surrounding 3x3 chunks
+    const { tx, ty } = this.world.worldToTile(wx, wy);
+    const { cx, cy } = this.world.tileToChunk(tx, ty);
+    for (let dy = -1; dy <= 1; dy++) {
+      for (let dx = -1; dx <= 1; dx++) {
+        const chunk = this.world.chunks[WorldManager.chunkKey(cx + dx, cy + dy)];
+        if (!chunk) continue;
+
+        for (const st of chunk.structures) {
+          const sSpec = GameRenderer.getStructureLightSpec(st);
+          if (sSpec && sSpec.radius > 0 && sSpec.strength > 0) {
+            const sx = st.tileX * TILE_SIZE + TILE_SIZE / 2;
+            const sy = st.tileY * TILE_SIZE + TILE_SIZE / 2;
+            if (Math.hypot(wx - sx, wy - sy) <= sSpec.radius) {
+              return true;
+            }
+          }
+        }
+
+        for (const node of chunk.nodes) {
+          const nSpec = GameRenderer.getNatureNodeLightSpec(node.type);
+          if (nSpec && nSpec.radius > 0 && nSpec.strength > 0) {
+            const nx = node.tileX * TILE_SIZE + TILE_SIZE / 2;
+            const ny = node.tileY * TILE_SIZE + TILE_SIZE / 2;
+            if (Math.hypot(wx - nx, wy - ny) <= nSpec.radius) {
+              return true;
+            }
+          }
+        }
+      }
+    }
+
+    return false;
+  }
+
+  /**
    * Returns true if the given structure is a Rest Point ("Ponto de Descanso"):
    * - Bed (`PlaceableType.BED`)
    * - Explorer Tent (`PlaceableType.EXPLORER_TENT`)
-   * - Legacy Village House (`PlaceableType.VILLAGE_HOUSE`)
    */
   public isRestPointStructure(st: PlacedStructure): boolean {
     return (
       st.type === PlaceableType.BED ||
-      st.type === PlaceableType.EXPLORER_TENT ||
-      st.type === PlaceableType.VILLAGE_HOUSE
+      st.type === PlaceableType.EXPLORER_TENT
     );
   }
 
@@ -1905,7 +1976,9 @@ export class GameEngine {
             const hasGoods =
               Array.isArray(st.stallSlots) &&
               st.stallSlots.some((s) => s !== null && s.count > 0);
-            if (!hasGoods) {
+            const needsDailyRefresh =
+              st.stallLastRefreshDay !== this.metadata.dayCount;
+            if (!hasGoods || needsDailyRefresh) {
               this.populateVillagerStallMerchandise(st);
             }
             st.ownerSleeping = this.isVillagerStallOwnerSleeping(st);
@@ -1972,6 +2045,7 @@ export class GameEngine {
 
   /**
    * Populates a Villager-owned Market Stall (`stall.ownerType === 'VILLAGER'`) with the villager's showcase merchandise.
+   * Every new day (`this.metadata.dayCount`), the NPC stall rotates its sold items (`stallLastRefreshDay`).
    */
   public populateVillagerStallMerchandise(stall: PlacedStructure): void {
     if (stall.ownerType !== 'VILLAGER') return;
@@ -1980,7 +2054,7 @@ export class GameEngine {
       MARKET_STALL_SIZE
     ).fill(null);
 
-    const showcaseList: Array<{ itemId: string; count: number }> = [];
+    const candidatePool: Array<{ itemId: string; count: number }> = [];
     const seenIds = new Set<string>();
 
     if (ownerNpc && Array.isArray(ownerNpc.trades)) {
@@ -1992,7 +2066,7 @@ export class GameEngine {
           !seenIds.has(tr.receiveItemId)
         ) {
           seenIds.add(tr.receiveItemId);
-          showcaseList.push({
+          candidatePool.push({
             itemId: tr.receiveItemId,
             count: Math.max(2, tr.receiveCount * 2),
           });
@@ -2000,37 +2074,80 @@ export class GameEngine {
       }
     }
 
-    const fallbackGoods: Array<{ itemId: string; count: number }> = [
+    const dailyRotatingCatalog: Array<{ itemId: string; count: number }> = [
       { itemId: 'healing_salve', count: 3 },
+      { itemId: 'herbal_poultice', count: 2 },
+      { itemId: 'wool_bandage', count: 3 },
       { itemId: 'rope', count: 4 },
       { itemId: 'apple', count: 6 },
+      { itemId: 'carrot', count: 5 },
+      { itemId: 'coconut', count: 5 },
+      { itemId: 'fresh_bread', count: 4 },
+      { itemId: 'cooked_fish', count: 3 },
+      { itemId: 'cooked_lamb', count: 3 },
+      { itemId: 'cooked_pork', count: 3 },
+      { itemId: 'vegetable_stew', count: 2 },
+      { itemId: 'taming_treat', count: 3 },
+      { itemId: 'farm_feed', count: 4 },
       { itemId: 'saddle', count: 1 },
       { itemId: 'iron_bar', count: 3 },
+      { itemId: 'charcoal', count: 6 },
+      { itemId: 'sand', count: 8 },
+      { itemId: 'glass', count: 4 },
       { itemId: 'torch', count: 5 },
+      { itemId: 'iron_lantern', count: 2 },
+      { itemId: 'wheat_seeds', count: 6 },
+      { itemId: 'carrot_seeds', count: 5 },
+      { itemId: 'herb_seeds', count: 4 },
+      { itemId: 'berry_seeds', count: 5 },
+      { itemId: 'bone_fertilizer', count: 4 },
+      { itemId: 'wood_window', count: 2 },
+      { itemId: 'stone_window', count: 2 },
+      { itemId: 'royal_carpet', count: 2 },
+      { itemId: 'fishing_rod', count: 1 },
     ];
-    for (const fg of fallbackGoods) {
-      if (showcaseList.length >= 6) break;
+
+    for (const fg of dailyRotatingCatalog) {
       if (!seenIds.has(fg.itemId) && ITEMS[fg.itemId]) {
         seenIds.add(fg.itemId);
-        showcaseList.push(fg);
+        candidatePool.push(fg);
       }
+    }
+
+    // Deterministic daily shuffle per stall so every day the NPC stall changes its items
+    const daySeed = Math.max(1, this.metadata.dayCount || 1);
+    const stallHash =
+      ((stall.tileX * 73856093) ^
+        (stall.tileY * 19349663) ^
+        (daySeed * 83492791)) >>>
+      0;
+    const rotatedPool = [...candidatePool];
+    let rngState = (stallHash + 0x9e3779b9) >>> 0;
+    for (let i = rotatedPool.length - 1; i > 0; i--) {
+      rngState = (Math.imul(rngState, 1664525) + 1013904223) >>> 0;
+      const j = rngState % (i + 1);
+      const tmp = rotatedPool[i];
+      rotatedPool[i] = rotatedPool[j];
+      rotatedPool[j] = tmp;
     }
 
     for (
       let i = 0;
-      i < Math.min(showcaseList.length, MARKET_STALL_SIZE);
+      i < Math.min(rotatedPool.length, MARKET_STALL_SIZE);
       i++
     ) {
-      const entry = showcaseList[i];
+      const entry = rotatedPool[i];
+      const countVar = ((rngState + i * 17) % 3) - 1; // -1, 0, or +1 variation
       nextSlots[i] = {
         itemId: entry.itemId,
-        count: entry.count,
+        count: Math.max(1, entry.count + (entry.count > 1 ? countVar : 0)),
         unitPrice: Math.max(1, getItemBasePrice(entry.itemId)),
         enabled: true,
       };
     }
 
     stall.stallSlots = nextSlots;
+    stall.stallLastRefreshDay = this.metadata.dayCount;
     stall.ownerSleeping = this.isVillagerStallOwnerSleeping(stall);
     stall.stallOpen = !stall.ownerSleeping;
   }
@@ -2560,17 +2677,23 @@ export class GameEngine {
               ownerTarget.x - cr.x,
               ownerTarget.y - cr.y
             );
-            // If pet got stranded very far away (e.g. across water/cliffs), bring it to a clear spot near its owner
-            if (distToOwner > 440) {
-              const telePos = this.findClearSpotNear(
-                ownerTarget.x,
-                ownerTarget.y,
-                36
-              );
-              cr.x = telePos.x;
-              cr.y = telePos.y;
+            // Se um pet estiver seguindo o jogador e o jogador se distanciar mais rápido e ficar longe dele (> 260px),
+            // o pet deixa de seguir e fica pastando automaticamente.
+            if (distToOwner > 260) {
+              cr.aiState = 'graze';
+              cr.combatTargetId = null;
+              cr.retaliateTargetId = undefined;
               cr.vx = 0;
               cr.vy = 0;
+              if (this.isCreatureOwnedByLocalPlayer(cr)) {
+                this.addFloatingText(
+                  `🐾 ${cr.name} ficou para trás e passou a pastar`,
+                  cr.x,
+                  cr.y - 20,
+                  '#fde047'
+                );
+                this.emitUiSnapshot();
+              }
             } else if (distToOwner > 54) {
               // Smooth arrival speed as the pet gets close to its owner
               const arrivalFactor = Math.min(
@@ -2878,7 +3001,7 @@ export class GameEngine {
               0.55
             );
             this.renderer.spawnBurst(cr.x, cr.y, 'SPARK', 16);
-            soundManager.playHitStone();
+            soundManager.playHitStone(cr.x, cr.y);
 
             if (
               this.player.hp > 0 &&
@@ -4589,9 +4712,22 @@ export class GameEngine {
         this.droppedItems.splice(i, 1);
         continue;
       }
+
+      // Itens dropados permanecem no chão por 2 min (120s), para evitar que acumule no mundo
+      drop.expiresTimer = (drop.expiresTimer ?? 120) - dt;
+      if (drop.expiresTimer <= 0) {
+        this.droppedItems.splice(i, 1);
+        continue;
+      }
+
       drop.bobTimer += dt;
       if (drop.pickupDelay > 0) {
         drop.pickupDelay -= dt;
+        continue;
+      }
+
+      // Se o inventário do jogador estiver cheio, ele não coleta (nem puxa) o item
+      if (!this.canFitItemInInventory(drop.itemId, drop.count)) {
         continue;
       }
 
@@ -4602,11 +4738,6 @@ export class GameEngine {
       }
 
       if (dist < 18) {
-        // Check if inventory has room BEFORE claiming
-        if (!this.canFitItemInInventory(drop.itemId, drop.count)) {
-          continue;
-        }
-
         // In online Guest mode, request authoritative atomic claim from Host to prevent 2 players picking up the same item
         if (this.multiplayer.isOnline && this.multiplayer.role === 'GUEST') {
           if (!this.pendingDropClaimTimers.has(drop.id)) {
@@ -5328,21 +5459,6 @@ export class GameEngine {
             triggerSwing();
             const sx = st.tileX * TILE_SIZE + TILE_SIZE / 2;
             const sy = st.tileY * TILE_SIZE + TILE_SIZE / 2;
-            const isWorldFixedLandmark = Boolean(
-              (st.villageId || st.id.startsWith('world_struct_')) &&
-                st.type === PlaceableType.HEALING_FOUNTAIN
-            );
-            if (isWorldFixedLandmark) {
-              this.resetInterruptedBreakingTargets(null);
-              soundManager.playHitStone();
-              this.addFloatingText(
-                'Estrutura ancestral fixa do mundo',
-                sx,
-                sy - 16,
-                '#f43f5e'
-              );
-              return;
-            }
 
             const req = getStructureBreakRequirement(st.type);
             const evalBreak = evaluateMaterialBreak(
@@ -5471,7 +5587,8 @@ export class GameEngine {
                 );
               } else if (
                 st.type === PlaceableType.CAMPFIRE ||
-                st.type === PlaceableType.FURNACE
+                st.type === PlaceableType.FURNACE ||
+                st.type === PlaceableType.WEAVING_TABLE
               ) {
                 this.dropThermalStationContents(st, sx, sy, false);
               }
@@ -5491,6 +5608,19 @@ export class GameEngine {
                   sx,
                   sy - 16,
                   '#a16207'
+                );
+              } else if (
+                st.type === PlaceableType.HEALING_FOUNTAIN ||
+                st.type === PlaceableType.VILLAGE_WELL
+              ) {
+                // Fonte de Cura e Poço: se quebrados, não são coletáveis — são destruídos!
+                this.addFloatingText(
+                  st.type === PlaceableType.HEALING_FOUNTAIN
+                    ? '💥 Fonte de Cura destruída!'
+                    : '💥 Poço destruído!',
+                  sx,
+                  sy - 18,
+                  '#f43f5e'
                 );
               } else {
                 this.spawnDrop(st.itemId, 1, sx, sy);
@@ -5917,7 +6047,8 @@ export class GameEngine {
       if (
         target.stationType === PlaceableType.WORKBENCH ||
         target.stationType === PlaceableType.FURNACE ||
-        target.stationType === PlaceableType.SOLAR_ALTAR
+        target.stationType === PlaceableType.SOLAR_ALTAR ||
+        target.stationType === PlaceableType.WEAVING_TABLE
       ) {
         const { tx, ty } = this.world.worldToTile(target.worldX, target.worldY);
         const stAtTile = this.world.getStructureAtTile(tx, ty);
@@ -5939,15 +6070,46 @@ export class GameEngine {
       }
 
       if (target.stationType === PlaceableType.VILLAGE_WELL) {
+        if (this.player.lastWellUseDay === this.metadata.dayCount) {
+          soundManager.playHitStone(target.worldX, target.worldY);
+          this.renderer.spawnRipple(
+            target.worldX,
+            target.worldY,
+            '#94a3b8',
+            22,
+            0.4
+          );
+          this.addFloatingText(
+            '⏳ Poço já usado hoje! (Disponível 1x por dia)',
+            this.player.x,
+            this.player.y - 22,
+            '#fbbf24'
+          );
+          this.emitUiSnapshot();
+          return;
+        }
+        this.player.lastWellUseDay = this.metadata.dayCount;
         this.player.hp = Math.min(this.player.maxHp, this.player.hp + 20);
-        this.player.hunger = Math.min(this.player.maxHunger, this.player.hunger + 20);
-        this.player.stamina = Math.min(this.player.maxStamina, this.player.stamina + 55);
-        soundManager.playTameSuccess();
+        this.player.hunger = Math.min(
+          this.player.maxHunger,
+          this.player.hunger + 20
+        );
+        this.player.stamina = Math.min(
+          this.player.maxStamina,
+          this.player.stamina + 55
+        );
+        soundManager.playTameSuccess(target.worldX, target.worldY);
         this.renderer.spawnBurst(target.worldX, target.worldY - 4, 'WATER', 12);
         this.renderer.spawnBurst(this.player.x, this.player.y, 'HEAL', 10);
-        this.renderer.spawnRipple(target.worldX, target.worldY, '#38bdf8', 28, 0.55);
+        this.renderer.spawnRipple(
+          target.worldX,
+          target.worldY,
+          '#38bdf8',
+          28,
+          0.55
+        );
         this.addFloatingText(
-          'Água Fresca do Poço (+20 HP / +20 Fome / +55 Energia)',
+          'Água Fresca do Poço (+20 HP / +20 Fome / +55 Energia · 1x/dia)',
           this.player.x,
           this.player.y - 22,
           '#38bdf8'
@@ -5957,22 +6119,11 @@ export class GameEngine {
       }
 
       if (target.stationType === PlaceableType.CAMPFIRE) {
+        // Fogueira de Acampamento: Não concede nenhum efeito ao jogador (apenas abre a estação de preparo)
         const { tx, ty } = this.world.worldToTile(target.worldX, target.worldY);
         const stAtTile = this.world.getStructureAtTile(tx, ty);
         if (stAtTile) {
           this.activeStationStructureId = stAtTile.id;
-        }
-        this.setPlayerRespawnPoint(
-          target.worldX,
-          target.worldY,
-          'Fogueira de Acampamento'
-        );
-        if (this.campfireRestCooldown <= 0) {
-          this.campfireRestCooldown = 8;
-          this.player.hp = Math.min(this.player.maxHp, this.player.hp + 18);
-          this.player.stamina = this.player.maxStamina;
-          this.renderer.spawnBurst(target.worldX, target.worldY - 4, 'SPARK', 10);
-          this.renderer.spawnBurst(this.player.x, this.player.y, 'HEAL', 8);
         }
         soundManager.playPickup();
         this.renderer.spawnRipple(target.worldX, target.worldY, '#fb923c', 24, 0.45);
@@ -5985,8 +6136,7 @@ export class GameEngine {
 
       if (
         target.stationType === PlaceableType.BED ||
-        target.stationType === PlaceableType.EXPLORER_TENT ||
-        target.stationType === PlaceableType.VILLAGE_HOUSE
+        target.stationType === PlaceableType.EXPLORER_TENT
       ) {
         const { tx, ty } = this.world.worldToTile(target.worldX, target.worldY);
         const houseSt = this.world.getStructureAtTile(tx, ty);
@@ -5999,7 +6149,7 @@ export class GameEngine {
             return;
           }
 
-          // If this bed/house belongs to living Villagers, the player cannot sleep in their bed
+          // If this bed belongs to living Villagers, the player cannot sleep in their bed
           if (houseSt.ownerType !== 'PLAYER' && allResidents.length > 0) {
             soundManager.playHitWood();
             this.renderer.spawnRipple(
@@ -6027,77 +6177,67 @@ export class GameEngine {
           }
         }
 
-        const restLabel =
-          target.stationType === PlaceableType.BED
-            ? 'Cama de Madeira'
-            : target.stationType === PlaceableType.VILLAGE_HOUSE
-            ? 'Cabana Medieval'
-            : 'Tenda de Explorador';
-        this.setPlayerRespawnPoint(target.worldX, target.worldY, restLabel);
-
-        const isNightOrDusk =
-          this.metadata.timeOfDay >= 18 || this.metadata.timeOfDay < 5.5;
-        this.player.hp = this.player.maxHp;
-        this.player.stamina = this.player.maxStamina;
-        this.renderer.spawnBurst(this.player.x, this.player.y, 'HEAL', 14);
-        this.renderer.spawnRipple(this.player.x, this.player.y, '#4ade80', 30, 0.6);
-        if (isNightOrDusk) {
-          if (this.metadata.timeOfDay >= 18) {
-            this.metadata.dayCount += 1;
-          }
-          this.metadata.timeOfDay = 6.5;
-          // Any villager who slept in their house resets their daily purchase & inspection limits at dawn!
-          for (const cr of this.entities.creatures) {
-            if (
-              cr.kind === CreatureKind.VILLAGER &&
-              (cr.isInsideHouse || cr.homeHouseId)
-            ) {
-              cr.hasBoughtToday = false;
-              cr.attractedStallId = undefined;
-              cr.stallInspectionsToday = {};
-            } else if (cr.kind === CreatureKind.WANDERER) {
-              cr.hasBoughtToday = false;
-              cr.attractedStallId = undefined;
-              cr.stallInspectionsToday = {};
-            }
-          }
-          soundManager.playLevelUp();
-          this.addFloatingText(
-            `Dormiu até o Amanhecer (Dia ${this.metadata.dayCount}) · Ponto de Renascimento salvo!`,
-            this.player.x,
-            this.player.y - 24,
-            '#fde047'
+        // Só é permitido dormir à noite (18h às 6h)
+        const isNightTime =
+          this.metadata.timeOfDay >= 18 || this.metadata.timeOfDay < 6;
+        if (!isNightTime) {
+          soundManager.playHitWood();
+          this.renderer.spawnRipple(
+            target.worldX,
+            target.worldY,
+            '#fbbf24',
+            20,
+            0.35
           );
-          this.multiplayer.sendTimeSync(
-            this.metadata.timeOfDay,
-            this.metadata.dayCount
-          );
-          this.saveGame(true);
-        } else {
-          soundManager.playTameSuccess();
           this.addFloatingText(
-            `Descansou em ${restLabel} (100% Vida & Ponto de Renascimento salvo!)`,
+            '☀️ Só é permitido dormir à noite!',
             this.player.x,
             this.player.y - 22,
-            '#4ade80'
+            '#fde047'
           );
+          this.emitUiSnapshot();
+          return;
         }
-        this.emitUiSnapshot();
+
+        this.startSleepingAtStructure(
+          houseSt || null,
+          target.stationType,
+          target.worldX,
+          target.worldY
+        );
         return;
       }
 
       if (target.stationType === PlaceableType.HEALING_FOUNTAIN) {
-        this.player.hp = this.player.maxHp;
-        this.player.stamina = this.player.maxStamina;
+        // Fonte de Cura: recupera 100% de HP dos animais domesticados;
+        // para o jogador, recupera 100% de HP, Energia e Fome disponível apenas 1 vez por dia!
         for (const pet of this.entities.creatures) {
           if (pet.tamed) pet.hp = pet.maxHp;
         }
+
+        if (this.player.lastFountainUseDay === this.metadata.dayCount) {
+          soundManager.playHitStone();
+          this.renderer.spawnRipple(target.worldX, target.worldY, '#38bdf8', 24, 0.45);
+          this.addFloatingText(
+            '⏳ Fonte de Cura já usada hoje! (1x por dia · Pets curados)',
+            this.player.x,
+            this.player.y - 24,
+            '#38bdf8'
+          );
+          this.emitUiSnapshot();
+          return;
+        }
+
+        this.player.lastFountainUseDay = this.metadata.dayCount;
+        this.player.hp = this.player.maxHp;
+        this.player.stamina = this.player.maxStamina;
+        this.player.hunger = this.player.maxHunger;
         soundManager.playTameSuccess();
         this.renderer.spawnBurst(target.worldX, target.worldY - 6, 'WATER', 14);
         this.renderer.spawnBurst(this.player.x, this.player.y, 'HEAL', 16);
         this.renderer.spawnRipple(target.worldX, target.worldY, '#38bdf8', 34, 0.65);
         this.addFloatingText(
-          'Bênção das Águas Abissais (Herói & Pets 100% Curados!)',
+          'Bênção das Águas Abissais (100% HP, Energia, Fome & Pets!)',
           this.player.x,
           this.player.y - 24,
           '#38bdf8'
@@ -6374,15 +6514,18 @@ export class GameEngine {
       }
 
       // 3E. Unsaddled Horse/Camel or Sheep/Boar: Cycle through 3 Pet States ('follow' -> 'stay' -> 'graze')
+      const prevState = tamed.aiState;
       this.toggleTamedAnimalState(tamed.id);
-      soundManager.playPickup();
-      const stateLabel =
-        tamed.aiState === 'stay'
-          ? 'Estado: Base (Parado)'
-          : tamed.aiState === 'graze'
-          ? 'Estado: Pastar (Livre)'
-          : 'Estado: Seguindo (Aliado)';
-      this.addFloatingText(stateLabel, tamed.x, tamed.y - 20, '#fde047');
+      if (tamed.aiState !== prevState) {
+        soundManager.playPickup(tamed.x, tamed.y);
+        const stateLabel =
+          tamed.aiState === 'stay'
+            ? 'Estado: Base (Parado)'
+            : tamed.aiState === 'graze'
+            ? 'Estado: Pastar (Livre)'
+            : 'Estado: Seguindo (Aliado)';
+        this.addFloatingText(stateLabel, tamed.x, tamed.y - 20, '#fde047');
+      }
       return;
     }
 
@@ -6649,7 +6792,6 @@ export class GameEngine {
           placedSt &&
           (placedSt.type === PlaceableType.BED ||
             placedSt.type === PlaceableType.EXPLORER_TENT ||
-            placedSt.type === PlaceableType.VILLAGE_HOUSE ||
             placedSt.type === PlaceableType.MARKET_STALL)
         ) {
           placedSt.ownerType = 'PLAYER';
@@ -7141,15 +7283,11 @@ export class GameEngine {
     for (const bag of this.deathBags) {
       const d = Math.hypot(bag.x - this.player.x, bag.y - this.player.y);
       if (d <= 76) {
-        const remSec = Math.max(0, Math.ceil(bag.expiresTimer));
-        const mm = String(Math.floor(remSec / 60)).padStart(2, '0');
-        const ss = String(remSec % 60).padStart(2, '0');
-        const totalStacks = bag.items.length + (bag.goldCoins > 0 ? 1 : 0);
         candidates.push({
           score: computeDirectionalScore(bag.x, bag.y, -18),
           info: {
             kind: 'death_bag',
-            label: `Bolsinha de Espólios (${totalStacks} itens · ${mm}:${ss})`,
+            label: 'Bolsinha de Espólios',
             actionHint: 'Recuperar Todos os Itens 🎒',
             worldX: bag.x,
             worldY: bag.y,
@@ -7178,9 +7316,7 @@ export class GameEngine {
             score: computeDirectionalScore(cr.x, cr.y, -4),
             info: {
               kind: 'villager',
-              label: isWanderer
-                ? `${cr.name} · Andarilho`
-                : `${cr.name} · ${cr.npcProfessionLabel || 'Aldeão'}`,
+              label: cr.name,
               actionHint: cr.isHostile
                 ? holdingPeace
                   ? `🕊️ Pagar Dívida (${debtCoins} Moedas)`
@@ -7265,7 +7401,7 @@ export class GameEngine {
                     score: computeDirectionalScore(sx, sy, -3),
                     info: {
                       kind: 'crop',
-                      label: `${cropName} (Maduro!)`,
+                      label: cropName,
                       actionHint: 'Colher Planta 🌾',
                       worldX: sx,
                       worldY: sy,
@@ -7277,8 +7413,6 @@ export class GameEngine {
                     },
                   });
                 } else {
-                  const stageNum = (st.growthStage || 0) + 1;
-                  const pct = Math.round((st.growthProgress || 0) * 100);
                   const hint = isHoldingWateringCan
                     ? wateringEmpty
                       ? 'Regador Vazio! Encha na água 💧'
@@ -7292,7 +7426,7 @@ export class GameEngine {
                     score: computeDirectionalScore(sx, sy, wateringBias),
                     info: {
                       kind: 'crop',
-                      label: `${cropName} (${stageNum}/4 · ${pct}%)`,
+                      label: cropName,
                       actionHint: hint,
                       worldX: sx,
                       worldY: sy,
@@ -7315,9 +7449,7 @@ export class GameEngine {
                   ),
                   info: {
                     kind: 'crop',
-                    label: st.isWatered
-                      ? 'Terra Arada (Irrigada)'
-                      : 'Terra Arada (Seca)',
+                    label: 'Terra Arada',
                     actionHint: isHoldingWateringCan
                       ? wateringEmpty
                         ? 'Regador Vazio! Encha na água 💧'
@@ -7347,11 +7479,11 @@ export class GameEngine {
               const stageLabel =
                 stageIdx === 0
                   ? isPalm
-                    ? 'Muda de Palmeira (1/3 · Muda)'
-                    : 'Muda de Árvore (1/3 · Muda)'
+                    ? 'Muda de Palmeira'
+                    : 'Muda de Árvore'
                   : isPalm
-                  ? 'Palmeira Pequena (2/3)'
-                  : 'Árvore Pequena (2/3)';
+                  ? 'Palmeira Pequena'
+                  : 'Árvore Pequena';
               const hint = st.fertilized
                 ? `Adubada ✦ (${pct}%)`
                 : `Crescendo (${pct}%) · Aceita Adubo 🌱`;
@@ -7374,6 +7506,7 @@ export class GameEngine {
 
           if (
             st.type !== PlaceableType.WORKBENCH &&
+            st.type !== PlaceableType.WEAVING_TABLE &&
             st.type !== PlaceableType.FURNACE &&
             st.type !== PlaceableType.SOLAR_ALTAR &&
             st.type !== PlaceableType.CAMPFIRE &&
@@ -7383,7 +7516,6 @@ export class GameEngine {
             st.type !== PlaceableType.CHEST &&
             st.type !== PlaceableType.VILLAGE_WELL &&
             st.type !== PlaceableType.MARKET_STALL &&
-            st.type !== PlaceableType.VILLAGE_HOUSE &&
             st.type !== PlaceableType.WOOD_DOOR &&
             st.type !== PlaceableType.IRON_GATE
           ) {
@@ -7443,7 +7575,6 @@ export class GameEngine {
                 ? 'Encher Regador (12/12) 💧'
                 : insideResidents.length > 0 &&
                   (st.type === PlaceableType.BED ||
-                    st.type === PlaceableType.VILLAGE_HOUSE ||
                     st.type === PlaceableType.EXPLORER_TENT ||
                     st.type === PlaceableType.WOOD_DOOR ||
                     st.type === PlaceableType.IRON_GATE)
@@ -7464,7 +7595,9 @@ export class GameEngine {
                   ? `Abrir Baú (${occupiedChestSlots}/${CHEST_STORAGE_SIZE}) 📦`
                   : 'Abrir Baú 📦'
                 : st.type === PlaceableType.VILLAGE_WELL
-                ? 'Beber Água (+HP/Energia)'
+                ? this.player.lastWellUseDay === this.metadata.dayCount
+                  ? 'Poço da Vila (Já usado hoje · 1x/dia)'
+                  : 'Beber Água (+HP/Energia · 1x/dia)'
                 : st.type === PlaceableType.MARKET_STALL
                 ? st.ownerType === 'PLAYER'
                   ? `Gerenciar Tenda${
@@ -7478,13 +7611,12 @@ export class GameEngine {
                     : `Tenda de ${st.ownerName || 'Mercador'} 🏪`
                   : 'Tenda sem Dono · Tomar Posse 🏪'
                 : st.type === PlaceableType.BED ||
-                  st.type === PlaceableType.VILLAGE_HOUSE ||
                   st.type === PlaceableType.EXPLORER_TENT
                 ? st.ownerType === 'PLAYER' && effectiveOwnerType === 'PLAYER'
-                  ? `Descansar (Dono: ${st.ownerName || 'Você'}) 🛏️`
+                  ? `Dormir (Dono: ${st.ownerName || 'Você'}) 🛏️`
                   : houseResidents > 0
                   ? `Cama de ${st.ownerName || 'Aldeão'} 🛏️`
-                  : 'Sem Dono · Tomar Posse & Descansar 🛏️'
+                  : 'Sem Dono · Tomar Posse & Dormir 🛏️'
                 : st.type === PlaceableType.CAMPFIRE
                 ? st.outputCount && st.outputCount > 0
                   ? `Pronto: ${st.outputCount}x ${
@@ -7494,9 +7626,19 @@ export class GameEngine {
                   ? 'Cozinhando na Fogueira... 🔥'
                   : 'Abrir Fogueira 🔥'
                 : st.type === PlaceableType.HEALING_FOUNTAIN
-                ? 'Bênção de Cura'
+                ? this.player.lastFountainUseDay === this.metadata.dayCount
+                  ? 'Fonte de Cura (Já usada hoje · 1x/dia)'
+                  : 'Bênção de Cura (1x por dia)'
                 : st.type === PlaceableType.WORKBENCH
                 ? 'Abrir Bancada 🔨'
+                : st.type === PlaceableType.WEAVING_TABLE
+                ? st.outputCount && st.outputCount > 0
+                  ? `Pronto: ${st.outputCount}x ${
+                      ITEMS[st.outputItemId || '']?.name || 'Roupa'
+                    } 🧵`
+                  : st.cookingInputCount && st.cookingInputCount > 0
+                  ? 'Confeccionando na Mesa de Tecelagem... 🧵'
+                  : 'Abrir Mesa de Tecelagem 🧵'
                 : st.type === PlaceableType.FURNACE
                 ? st.outputCount && st.outputCount > 0
                   ? `Pronto: ${st.outputCount}x ${
@@ -7511,18 +7653,11 @@ export class GameEngine {
               score: computeDirectionalScore(sx, sy, -5),
               info: {
                 kind: 'station',
-                label: `${
+                label:
                   st.customName ||
                   st.landmarkName ||
                   itemDef?.name ||
-                  'Estação'
-                }${
-                  st.type === PlaceableType.BED ||
-                  st.type === PlaceableType.VILLAGE_HOUSE ||
-                  st.type === PlaceableType.EXPLORER_TENT
-                    ? houseOwnerBadge
-                    : ''
-                }`,
+                  'Estação',
                 actionHint,
                 worldX: sx,
                 worldY: sy,
@@ -7573,12 +7708,36 @@ export class GameEngine {
           cr.kind === CreatureKind.HORSE || cr.kind === CreatureKind.CAMEL;
 
         if (cr.kind === CreatureKind.BOAT) {
+          const hasDriver =
+            Boolean(cr.riderPlayerId) &&
+            (this.isIdMatchingLocalPlayer(cr.riderPlayerId) ||
+              this.remotePlayersList.some(
+                (rp) =>
+                  rp.mountedEntityId === cr.id &&
+                  (cr.riderPlayerId === rp.peerId ||
+                    cr.riderPlayerId === rp.persistentPlayerId)
+              ));
+          const hasPassenger =
+            Boolean(cr.passengerPlayerId) &&
+            (this.isIdMatchingLocalPlayer(cr.passengerPlayerId) ||
+              this.remotePlayersList.some(
+                (rp) =>
+                  rp.mountedEntityId === cr.id &&
+                  (cr.passengerPlayerId === rp.peerId ||
+                    cr.passengerPlayerId === rp.persistentPlayerId)
+              ));
+          const occCount = (hasDriver ? 1 : 0) + (hasPassenger ? 1 : 0);
           candidates.push({
             score: computeDirectionalScore(cr.x, cr.y, -3),
             info: {
               kind: 'tamed_animal',
-              label: `${cr.name} (2 Assentos)`,
-              actionHint: 'Embarcar no Bote ⛵',
+              label: cr.name,
+              actionHint:
+                occCount >= 2
+                  ? '🔒 Bote Lotado (2/2 Assentos)'
+                  : hasDriver
+                  ? 'Embarcar no 2º Assento (Passageiro) ⛵'
+                  : 'Embarcar no Leme (Direção) ⛵',
               worldX: cr.x,
               worldY: cr.y,
               creatureId: cr.id,
@@ -7590,14 +7749,13 @@ export class GameEngine {
 
         const isOwnedByLocal = this.isCreatureOwnedByLocalPlayer(cr);
         const isOccupiedByOther = this.isMountOccupiedByOtherPlayer(cr);
-        const ownerBadge = cr.ownerName ? ` · Dono: ${cr.ownerName}` : '';
 
         if (!isOwnedByLocal) {
           candidates.push({
             score: computeDirectionalScore(cr.x, cr.y, 4),
             info: {
               kind: 'tamed_animal',
-              label: `${cr.name} (Dono: ${cr.ownerName || 'Outro'})`,
+              label: cr.name,
               actionHint: isOccupiedByOther
                 ? '🔒 Assento ocupado'
                 : `🔒 Pet de ${cr.ownerName || 'outro jogador'}`,
@@ -7615,7 +7773,7 @@ export class GameEngine {
             score: computeDirectionalScore(cr.x, cr.y, -5),
             info: {
               kind: 'tamed_animal',
-              label: `${cr.name} (${Math.round(cr.hp)}/${cr.maxHp} HP)`,
+              label: cr.name,
               actionHint:
                 cr.hp < cr.maxHp
                   ? `Curar Pet ♥ (${ITEMS[heldSlot.itemId]?.name || 'Comida'})`
@@ -7635,7 +7793,7 @@ export class GameEngine {
             score: computeDirectionalScore(cr.x, cr.y, -5),
             info: {
               kind: 'tamed_animal',
-              label: `${cr.name} (Sem Alforje)`,
+              label: cr.name,
               actionHint: 'Equipar Alforje/Sela 鞍',
               worldX: cr.x,
               worldY: cr.y,
@@ -7651,7 +7809,7 @@ export class GameEngine {
             score: computeDirectionalScore(cr.x, cr.y, -4),
             info: {
               kind: 'tamed_animal',
-              label: `${cr.name} [Alforje${ownerBadge}]`,
+              label: cr.name,
               actionHint: isOccupiedByOther
                 ? '🔒 Assento ocupado!'
                 : 'Retirar Alforje 鞍 (Use Cavalgar p/ montar)',
@@ -7664,17 +7822,11 @@ export class GameEngine {
           continue;
         }
 
-        const stateBadge =
-          cr.aiState === 'stay'
-            ? 'Base'
-            : cr.aiState === 'graze'
-            ? 'Pastar'
-            : 'Seguindo';
         candidates.push({
           score: computeDirectionalScore(cr.x, cr.y, -2),
           info: {
             kind: 'tamed_animal',
-            label: `${cr.name} [${stateBadge}]`,
+            label: cr.name,
             actionHint: 'Alternar (Seguindo / Base / Pastar)',
             worldX: cr.x,
             worldY: cr.y,
@@ -7723,7 +7875,7 @@ export class GameEngine {
         score: computeDirectionalScore(nx, ny, 6),
         info: {
           kind: 'node',
-          label: `${bp.name} (${Math.ceil(node.hp)}/${bp.maxHp} HP)`,
+          label: bp.name,
           actionHint: forceHint,
           worldX: nx,
           worldY: ny,
@@ -7990,7 +8142,7 @@ export class GameEngine {
 
     cr.hp -= amount;
     cr.hitFlashTimer = 0.18;
-    soundManager.playHitEnemy();
+    soundManager.playHitEnemy(cr.x, cr.y);
     if (
       !fromNetwork &&
       !this.isApplyingNetworkEvent &&
@@ -8277,13 +8429,16 @@ export class GameEngine {
         this.spawnDrop('raw_lamb', 1, cr.x + 6, cr.y);
         grantPlayerXp(15);
       } else if (cr.kind === CreatureKind.BOAR) {
-        // Javali (1 a 2 carnes suínas)
+        // Javali (1 a 2 carnes suínas + 15% de chance de dropar 1 couro)
         this.spawnDrop(
           'raw_pork',
           1 + Math.floor(Math.random() * 2),
           cr.x,
           cr.y
         );
+        if (Math.random() < 0.15) {
+          this.spawnDrop('leather', 1, cr.x + 6, cr.y);
+        }
         grantPlayerXp(20);
       } else if (cr.kind === CreatureKind.CAMEL) {
         // Camelo (nada)
@@ -8954,6 +9109,23 @@ export class GameEngine {
         this.isCreatureOwnedByLocalPlayer(c)
     );
     if (!cr) return;
+
+    // O jogador só pode definir que um pet o siga se estiverem no raio de proximidade suficiente (<= 260px)
+    if (state === 'follow') {
+      const distToPet = Math.hypot(cr.x - this.player.x, cr.y - this.player.y);
+      if (distToPet > 260) {
+        soundManager.playHitWood(this.player.x, this.player.y);
+        this.addFloatingText(
+          `🐾 Muito longe de ${cr.name}! Aproxime-se para ele seguir você.`,
+          this.player.x,
+          this.player.y - 22,
+          '#fbbf24'
+        );
+        this.emitUiSnapshot();
+        return;
+      }
+    }
+
     cr.aiState = state;
     if (state !== 'follow') {
       cr.combatTargetId = null;
@@ -8998,9 +9170,22 @@ export class GameEngine {
   }
 
   public setAllTamedAnimalsState(state: 'follow' | 'stay' | 'graze'): void {
+    let skippedTooFar = 0;
+    let updatedCount = 0;
     for (const cr of this.entities.creatures) {
       if (cr.tamed && this.isCreatureOwnedByLocalPlayer(cr)) {
+        if (state === 'follow') {
+          const distToPet = Math.hypot(
+            cr.x - this.player.x,
+            cr.y - this.player.y
+          );
+          if (distToPet > 260) {
+            skippedTooFar++;
+            continue;
+          }
+        }
         cr.aiState = state;
+        updatedCount++;
         if (state !== 'follow') {
           cr.combatTargetId = null;
           cr.retaliateTargetId = undefined;
@@ -9023,10 +9208,20 @@ export class GameEngine {
         }
       }
     }
+    if (skippedTooFar > 0) {
+      this.addFloatingText(
+        updatedCount > 0
+          ? `🐾 ${skippedTooFar} pet(s) distante(s) demais para seguir`
+          : '🐾 Nenhum pet próximo o suficiente para seguir!',
+        this.player.x,
+        this.player.y - 22,
+        '#fbbf24'
+      );
+    }
     if (this.multiplayer.isOnline && this.multiplayer.role === 'HOST') {
       this.multiplayer.sendCreaturesSync(this.entities.creatures);
     }
-    soundManager.playPickup();
+    soundManager.playPickup(this.player.x, this.player.y);
     this.emitUiSnapshot();
   }
 
@@ -9405,6 +9600,36 @@ export class GameEngine {
     }
 
     const targetSlot: EquipmentSlot = item.equipSlot || 'body';
+
+    // Exclusão mútua entre roupas Superiores que se estendem para o Inferior (Vestido Curto / Vestido Longo)
+    // e roupas Inferiores que se estendem para o Superior (Macacão): não podem ser equipadas ao mesmo tempo!
+    if (item.extendsToLegs) {
+      const currentLegsId = this.player.equippedBySlot.legs;
+      if (currentLegsId && ITEMS[currentLegsId]?.extendsToBody) {
+        this.addFloatingText(
+          'Macacão desequipado (conflita com Vestido)',
+          this.player.x,
+          this.player.y - 32,
+          '#f59e0b'
+        );
+        this.player.equippedBySlot.legs = null;
+        this.addItemOrDropOnGround(currentLegsId, 1);
+      }
+    } else if (item.extendsToBody) {
+      const currentBodyId = this.player.equippedBySlot.body;
+      if (currentBodyId && ITEMS[currentBodyId]?.extendsToLegs) {
+        this.addFloatingText(
+          'Vestido desequipado (conflita com Macacão)',
+          this.player.x,
+          this.player.y - 32,
+          '#f59e0b'
+        );
+        this.player.equippedBySlot.body = null;
+        this.player.equippedArmorId = null;
+        this.addItemOrDropOnGround(currentBodyId, 1);
+      }
+    }
+
     const previousItemId = this.player.equippedBySlot[targetSlot];
 
     this.player.equippedBySlot[targetSlot] = item.id;
@@ -9412,10 +9637,7 @@ export class GameEngine {
     this.consumeInventoryAt(slotIndex, 1);
 
     if (previousItemId) {
-      const added = this.addItemToInventory(previousItemId, 1);
-      if (!added) {
-        this.spawnDrop(previousItemId, 1, this.player.x, this.player.y);
-      }
+      this.addItemOrDropOnGround(previousItemId, 1);
     }
 
     // Recalculate Max HP appendix from armor without healing current HP
@@ -9444,21 +9666,12 @@ export class GameEngine {
     const itemId = this.player.equippedBySlot[equipSlot];
     if (!itemId) return;
 
-    const added = this.addItemToInventory(itemId, 1);
-    if (added) {
-      this.player.equippedBySlot[equipSlot] = null;
-      this.player.equippedArmorId = this.player.equippedBySlot.body;
-      this.recalculatePlayerMaxHp();
-      soundManager.playPickup();
-      this.emitUiSnapshot();
-    } else {
-      this.addFloatingText(
-        'Mochila cheia para desequipar!',
-        this.player.x,
-        this.player.y - 20,
-        '#f43f5e'
-      );
-    }
+    this.player.equippedBySlot[equipSlot] = null;
+    this.player.equippedArmorId = this.player.equippedBySlot.body;
+    this.recalculatePlayerMaxHp();
+    this.addItemOrDropOnGround(itemId, 1);
+    soundManager.playPickup();
+    this.emitUiSnapshot();
   }
 
   public unequipArmor(): void {
@@ -9476,11 +9689,11 @@ export class GameEngine {
       ...(this.player.appearance || {
         gender: 'masculino',
         skinColor: '#fdba74',
+        skinMark: 'none',
         hairColor: '#451a03',
         hairStyle: 'adventurer',
+        eyeStyle: 'classic',
         eyeColor: '#0f172a',
-        shirtColor: '#2563eb',
-        pantsColor: '#334155',
       }),
       ...partial,
     };
@@ -9554,12 +9767,13 @@ export class GameEngine {
     if (!slot) return;
     const amount = dropAll ? slot.count : 1;
     const dirVec = this.getDirectionOffset(this.player.direction);
+    // Se um jogador soltar um item, tem um intervalo de 6 segundos até ele ficar habilitado para coletar o item que soltou
     this.spawnDrop(
       slot.itemId,
       amount,
       this.player.x + dirVec.x * 26,
       this.player.y + dirVec.y * 26,
-      1.4
+      6.0
     );
     this.consumeInventoryAt(index, amount);
     soundManager.playSwing();
@@ -9694,13 +9908,13 @@ export class GameEngine {
       return false;
     }
 
-    const isWorldFixedLandmark = Boolean(
-      (st.villageId || st.id.startsWith('world_struct_')) &&
-        st.type === PlaceableType.HEALING_FOUNTAIN
-    );
-    if (isWorldFixedLandmark) {
+    if (
+      st.type === PlaceableType.HEALING_FOUNTAIN ||
+      st.type === PlaceableType.VILLAGE_WELL
+    ) {
+      soundManager.playHitStone();
       this.addFloatingText(
-        'Estrutura ancestral fixa do mundo',
+        'Não é coletável! Só pode ser destruído atacando com picareta.',
         tx * TILE_SIZE + 16,
         ty * TILE_SIZE,
         '#f43f5e'
@@ -9718,7 +9932,6 @@ export class GameEngine {
         Boolean(st.villageId || st.ownerType === 'VILLAGER') &&
         (st.type === PlaceableType.VILLAGE_HOUSE ||
           st.type === PlaceableType.BED ||
-          st.type === PlaceableType.VILLAGE_WELL ||
           st.type === PlaceableType.MARKET_STALL ||
           st.type === PlaceableType.CHEST));
 
@@ -9749,7 +9962,8 @@ export class GameEngine {
       );
     } else if (
       st.type === PlaceableType.CAMPFIRE ||
-      st.type === PlaceableType.FURNACE
+      st.type === PlaceableType.FURNACE ||
+      st.type === PlaceableType.WEAVING_TABLE
     ) {
       this.dropThermalStationContents(
         st,
@@ -10030,16 +10244,6 @@ export class GameEngine {
       Math.min(cSlot.count, typeof count === 'number' ? count : cSlot.count)
     );
 
-    if (!this.canFitItemInInventory(cSlot.itemId, 1)) {
-      this.addFloatingText(
-        'Mochila cheia!',
-        this.player.x,
-        this.player.y - 20,
-        '#f43f5e'
-      );
-      return false;
-    }
-
     // In Guest multiplayer mode, route chest withdrawal through Host atomic lock to prevent 2 players taking the same item
     if (this.multiplayer.isOnline && this.multiplayer.role === 'GUEST') {
       const withdrawKey = `chest:${chestId}:${chestSlotIdx}`;
@@ -10110,18 +10314,17 @@ export class GameEngine {
       }
     }
 
-    const moved = amountToMove - remaining;
-    if (moved <= 0) {
-      this.addFloatingText(
-        'Mochila cheia!',
+    // Se o inventário estiver cheio ao colocar para coletar, o restante cai no chão
+    if (remaining > 0) {
+      this.spawnDrop(
+        cSlot.itemId,
+        remaining,
         this.player.x,
-        this.player.y - 20,
-        '#f43f5e'
+        this.player.y + 12
       );
-      return false;
     }
 
-    cSlot.count -= moved;
+    cSlot.count -= amountToMove;
     if (cSlot.count <= 0) {
       slots[chestSlotIdx] = null;
     }
@@ -10531,10 +10734,15 @@ export class GameEngine {
       stall.stallSlots = next;
     }
 
-    // When a villager owns the stall, always ensure their merchandise is stocked on display (and update sleeping state)
+    // When a villager owns the stall, always ensure their merchandise is stocked on display (and rotated daily)
     if (stall.ownerType === 'VILLAGER') {
       const hasGoods = stall.stallSlots.some((s) => s !== null && s.count > 0);
-      if (!hasGoods && this.isVillagerStallOwnerAlive(stall)) {
+      const needsDailyRefresh =
+        stall.stallLastRefreshDay !== this.metadata.dayCount;
+      if (
+        (!hasGoods || needsDailyRefresh) &&
+        this.isVillagerStallOwnerAlive(stall)
+      ) {
         this.populateVillagerStallMerchandise(stall);
       } else {
         stall.ownerSleeping = this.isVillagerStallOwnerSleeping(stall);
@@ -10787,13 +10995,8 @@ export class GameEngine {
       };
     }
 
-    if (!this.canFitItemInInventory(slot.itemId, 1)) {
-      soundManager.playHitWood();
-      return { ok: false, message: 'Mochila cheia!' };
-    }
-
     this.removeItemFromInventory('gold_coin', price);
-    this.addItemToInventory(slot.itemId, 1);
+    this.addItemOrDropOnGround(slot.itemId, 1);
 
     const ownerNpc = this.getVillagerStallOwnerEntity(stall);
     if (ownerNpc) {
@@ -10940,16 +11143,6 @@ export class GameEngine {
       Math.min(sSlot.count, typeof count === 'number' ? count : sSlot.count)
     );
 
-    if (!this.canFitItemInInventory(sSlot.itemId, amountToMove)) {
-      this.addFloatingText(
-        'Mochila cheia!',
-        this.player.x,
-        this.player.y - 20,
-        '#f43f5e'
-      );
-      return false;
-    }
-
     if (this.multiplayer.isOnline && this.multiplayer.role === 'GUEST') {
       const withdrawKey = `stall:${stallId}:${stallSlotIdx}`;
       if (this.pendingContainerWithdraws.has(withdrawKey)) return false;
@@ -10964,16 +11157,7 @@ export class GameEngine {
       return true;
     }
 
-    const added = this.addItemToInventory(sSlot.itemId, amountToMove);
-    if (!added) {
-      this.addFloatingText(
-        'Mochila cheia!',
-        this.player.x,
-        this.player.y - 20,
-        '#f43f5e'
-      );
-      return false;
-    }
+    this.addItemOrDropOnGround(sSlot.itemId, amountToMove);
 
     sSlot.count -= amountToMove;
     if (sSlot.count <= 0) {
@@ -11737,15 +11921,12 @@ export class GameEngine {
     }
 
     const totalOut = recipe.resultCount * actualTimes;
-    const added = this.addItemToInventory(recipe.resultItemId, totalOut);
-    if (!added) {
-      this.spawnDrop(
-        recipe.resultItemId,
-        totalOut,
-        this.player.x,
-        this.player.y + 12
-      );
-    }
+    this.addItemOrDropOnGround(
+      recipe.resultItemId,
+      totalOut,
+      this.player.x,
+      this.player.y + 12
+    );
 
     soundManager.playCraft();
     this.gainXp(20 * actualTimes);
@@ -12044,9 +12225,12 @@ export class GameEngine {
     st.outputItemId = null;
     st.outputCount = 0;
 
-    if (!this.addItemToInventory(itemId, count)) {
-      this.spawnDrop(itemId, count, this.player.x, this.player.y + 10);
-    }
+    this.addItemOrDropOnGround(
+      itemId,
+      count,
+      this.player.x,
+      this.player.y + 10
+    );
 
     soundManager.playCraft();
     const outDef = ITEMS[itemId];
@@ -12062,36 +12246,10 @@ export class GameEngine {
   }
 
   public restAtCampfireStation(): { ok: boolean; message: string } {
-    const st = this.getActiveThermalStation(PlaceableType.CAMPFIRE);
-    const wx = st.tileX * TILE_SIZE + TILE_SIZE / 2;
-    const wy = st.tileY * TILE_SIZE + TILE_SIZE / 2;
-    this.setPlayerRespawnPoint(wx, wy, 'Fogueira de Acampamento');
-
-    if (this.campfireRestCooldown > 0) {
-      this.emitUiSnapshot();
-      return {
-        ok: true,
-        message: `⛺ Ponto de Renascimento salvo! Aguarde ${Math.ceil(this.campfireRestCooldown)}s para aquecer novamente.`,
-      };
-    }
-
-    this.campfireRestCooldown = 8;
-    this.player.hp = Math.min(this.player.maxHp, this.player.hp + 18);
-    this.player.stamina = this.player.maxStamina;
-    soundManager.playTameSuccess();
-    this.renderer.spawnBurst(wx, wy - 4, 'SPARK', 12);
-    this.renderer.spawnBurst(this.player.x, this.player.y, 'HEAL', 10);
-    this.addFloatingText(
-      'Aquecido na Fogueira (+18 HP / Energia Cheia) · Renascimento salvo!',
-      this.player.x,
-      this.player.y - 22,
-      '#fde047'
-    );
-    this.emitUiSnapshot();
+    // Fogueira de Acampamento não concede nenhum efeito ao jogador
     return {
-      ok: true,
-      message:
-        '🔥 Você se aqueceu na Fogueira (+18 HP, 100% Energia e Ponto de Renascimento salvo)!',
+      ok: false,
+      message: '',
     };
   }
 
@@ -12137,19 +12295,288 @@ export class GameEngine {
     }
   }
 
+  public getActiveWeavingStation(): PlacedStructure {
+    if (this.activeStationStructureId) {
+      for (const chunk of Object.values(this.world.chunks)) {
+        if (!chunk || !Array.isArray(chunk.structures)) continue;
+        const found = chunk.structures.find(
+          (s) =>
+            s.id === this.activeStationStructureId &&
+            s.type === PlaceableType.WEAVING_TABLE
+        );
+        if (found) {
+          return this.ensureThermalStationInitialized(found);
+        }
+      }
+    }
+
+    const pTile = this.world.worldToTile(this.player.x, this.player.y);
+    const pChunk = this.world.tileToChunk(pTile.tx, pTile.ty);
+    let best: PlacedStructure | null = null;
+    let bestDist = Infinity;
+
+    for (let dy = -1; dy <= 1; dy++) {
+      for (let dx = -1; dx <= 1; dx++) {
+        const chunk =
+          this.world.chunks[
+            WorldManager.chunkKey(pChunk.cx + dx, pChunk.cy + dy)
+          ];
+        if (!chunk) continue;
+        for (const st of chunk.structures) {
+          if (st.type === PlaceableType.WEAVING_TABLE) {
+            const sx = st.tileX * TILE_SIZE + TILE_SIZE / 2;
+            const sy = st.tileY * TILE_SIZE + TILE_SIZE / 2;
+            const d = Math.hypot(sx - this.player.x, sy - this.player.y);
+            if (d < bestDist) {
+              bestDist = d;
+              best = st;
+            }
+          }
+        }
+      }
+    }
+
+    if (best) {
+      this.activeStationStructureId = best.id;
+      return this.ensureThermalStationInitialized(best);
+    }
+
+    if (!this.fallbackThermalStations[PlaceableType.WEAVING_TABLE]) {
+      this.fallbackThermalStations[PlaceableType.WEAVING_TABLE] = {
+        id: 'fallback_WEAVING_TABLE',
+        type: PlaceableType.WEAVING_TABLE,
+        itemId: 'weaving_table',
+        tileX: pTile.tx,
+        tileY: pTile.ty,
+        hp: 110,
+        maxHp: 110,
+        solid: true,
+        hitFlashTimer: 0,
+      };
+    }
+    return this.ensureThermalStationInitialized(
+      this.fallbackThermalStations[PlaceableType.WEAVING_TABLE]
+    );
+  }
+
+  public startWeavingTableCraft(
+    recipeId: string,
+    colorId?: ClothingColorId
+  ): { ok: boolean; message: string } {
+    const recipe = RECIPES.find((r) => r.id === recipeId);
+    if (!recipe || recipe.requiredStation !== PlaceableType.WEAVING_TABLE) {
+      return { ok: false, message: 'Receita inválida para a Mesa de Tecelagem.' };
+    }
+
+    const st = this.getActiveWeavingStation();
+    if ((st.cookingInputCount || 0) > 0 && st.cookingRecipeId) {
+      return {
+        ok: false,
+        message: 'A Mesa de Tecelagem já está confeccionando uma peça!',
+      };
+    }
+
+    if (this.getMaxCraftableCount(recipe) <= 0) {
+      return {
+        ok: false,
+        message: 'Materiais insuficientes para confeccionar esta peça.',
+      };
+    }
+
+    const baseItem = ITEMS[recipe.resultItemId];
+    let targetItemId = recipe.resultItemId;
+    if (baseItem?.canBeDyed && colorId) {
+      targetItemId = getDyedGarmentItemId(recipe.resultItemId, colorId);
+    }
+
+    // If the output slot holds a DIFFERENT finished item, auto-collect it to the player first
+    if (
+      st.outputItemId &&
+      st.outputItemId !== targetItemId &&
+      (st.outputCount || 0) > 0
+    ) {
+      this.collectWeavingStationOutput();
+    }
+
+    for (const ing of recipe.ingredients) {
+      this.removeItemFromInventory(ing.itemId, ing.count);
+    }
+
+    st.cookingRecipeId = recipe.id;
+    st.weavingTargetItemId = targetItemId;
+    st.cookingInputCount = 1;
+    st.cookingDuration = Math.max(1, recipe.craftTimeSec || 120);
+    st.cookingProgress = 0;
+
+    soundManager.playCraft();
+    this.syncChunkAtTile(st.tileX, st.tileY);
+    this.emitUiSnapshot();
+    const outName = ITEMS[targetItemId]?.name || baseItem?.name || targetItemId;
+    return {
+      ok: true,
+      message: `Iniciada confecção de ${outName}!`,
+    };
+  }
+
+  public cancelWeavingStationQueue(): boolean {
+    const st = this.getActiveWeavingStation();
+    if (
+      !st.cookingRecipeId ||
+      !st.cookingInputCount ||
+      st.cookingInputCount <= 0
+    ) {
+      return false;
+    }
+
+    const recipe = RECIPES.find((r) => r.id === st.cookingRecipeId);
+    const batches = st.cookingInputCount;
+    st.cookingRecipeId = null;
+    st.weavingTargetItemId = null;
+    st.cookingInputCount = 0;
+    st.cookingProgress = 0;
+
+    if (recipe) {
+      for (const ing of recipe.ingredients) {
+        const refundCount = ing.count * batches;
+        this.addItemOrDropOnGround(ing.itemId, refundCount);
+      }
+    }
+
+    soundManager.playPickup();
+    this.syncChunkAtTile(st.tileX, st.tileY);
+    this.emitUiSnapshot();
+    return true;
+  }
+
+  public collectWeavingStationOutput(): boolean {
+    const st = this.getActiveWeavingStation();
+    if (!st.outputItemId || !st.outputCount || st.outputCount <= 0) {
+      return false;
+    }
+
+    const itemId = st.outputItemId;
+    const count = st.outputCount;
+    st.outputItemId = null;
+    st.outputCount = 0;
+
+    this.addItemOrDropOnGround(
+      itemId,
+      count,
+      this.player.x,
+      this.player.y + 10
+    );
+
+    soundManager.playCraft();
+    const outDef = ITEMS[itemId];
+    this.addFloatingText(
+      `+${count}x ${outDef?.name || itemId}`,
+      this.player.x,
+      this.player.y - 20,
+      '#4ade80'
+    );
+    this.syncChunkAtTile(st.tileX, st.tileY);
+    this.emitUiSnapshot();
+    return true;
+  }
+
+  public dyeClothingItem(
+    source:
+      | { kind: 'inventory'; slotIndex: number }
+      | { kind: 'equipped'; equipSlot: EquipmentSlot },
+    targetColorId: ClothingColorId
+  ): { ok: boolean; message: string } {
+    if (source.kind === 'inventory') {
+      const slot = this.player.inventory[source.slotIndex];
+      if (!slot || slot.count <= 0) {
+        return { ok: false, message: 'Selecione uma peça válida na mochila.' };
+      }
+      const itemDef = ITEMS[slot.itemId];
+      if (!itemDef || !itemDef.isClothing || !itemDef.canBeDyed) {
+        return {
+          ok: false,
+          message: 'Esta peça não é de costura/couro e não pode ser tingida.',
+        };
+      }
+      const dyedId = getDyedGarmentItemId(slot.itemId, targetColorId);
+      const dyedDef = ITEMS[dyedId];
+      if (!dyedDef) {
+        return { ok: false, message: 'Cor de tingimento inválida.' };
+      }
+      if (dyedId === slot.itemId) {
+        return { ok: false, message: 'A peça já está nesta cor.' };
+      }
+
+      if (slot.count === 1) {
+        slot.itemId = dyedId;
+      } else {
+        slot.count -= 1;
+        this.addItemOrDropOnGround(dyedId, 1);
+      }
+
+      soundManager.playCraft();
+      this.renderer.spawnBurst(this.player.x, this.player.y, 'SPARK', 8);
+      this.addFloatingText(
+        `Tingido: ${dyedDef.name}!`,
+        this.player.x,
+        this.player.y - 20,
+        dyedDef.garmentColorHex || '#38bdf8'
+      );
+      this.emitUiSnapshot();
+      return { ok: true, message: `Peça tingida para ${dyedDef.name}!` };
+    } else {
+      if (!this.player.equippedBySlot) {
+        return { ok: false, message: 'Nenhuma peça equipada neste slot.' };
+      }
+      const currentId = this.player.equippedBySlot[source.equipSlot];
+      if (!currentId) {
+        return { ok: false, message: 'Nenhuma peça equipada neste slot.' };
+      }
+      const itemDef = ITEMS[currentId];
+      if (!itemDef || !itemDef.isClothing || !itemDef.canBeDyed) {
+        return {
+          ok: false,
+          message: 'Esta peça não é de costura/couro e não pode ser tingida.',
+        };
+      }
+      const dyedId = getDyedGarmentItemId(currentId, targetColorId);
+      const dyedDef = ITEMS[dyedId];
+      if (!dyedDef) {
+        return { ok: false, message: 'Cor de tingimento inválida.' };
+      }
+      if (dyedId === currentId) {
+        return { ok: false, message: 'A peça já está nesta cor.' };
+      }
+
+      this.player.equippedBySlot[source.equipSlot] = dyedId;
+      this.player.equippedArmorId = this.player.equippedBySlot.body;
+      soundManager.playCraft();
+      this.renderer.spawnBurst(this.player.x, this.player.y, 'SPARK', 8);
+      this.addFloatingText(
+        `Tingido: ${dyedDef.name}!`,
+        this.player.x,
+        this.player.y - 20,
+        dyedDef.garmentColorHex || '#38bdf8'
+      );
+      this.emitUiSnapshot();
+      return { ok: true, message: `Peça tingida para ${dyedDef.name}!` };
+    }
+  }
+
   private tickSingleThermalStation(st: PlacedStructure, dt: number): boolean {
     let changed = false;
+    const isWeaving = st.type === PlaceableType.WEAVING_TABLE;
     const hasQueue =
       Boolean(st.cookingRecipeId) && (st.cookingInputCount || 0) > 0;
 
-    // 1. Decay active fuel burn timer
-    if ((st.fuelBurnRemaining || 0) > 0) {
+    // 1. Decay active fuel burn timer (only for thermal stations)
+    if (!isWeaving && (st.fuelBurnRemaining || 0) > 0) {
       st.fuelBurnRemaining = Math.max(0, (st.fuelBurnRemaining || 0) - dt);
       changed = true;
     }
 
     // 2. If fuel flame ran out and we still have batches queued, consume 1 fuel item from the fuel slot
     if (
+      !isWeaving &&
       (st.fuelBurnRemaining || 0) <= 0 &&
       hasQueue &&
       st.fuelItemId &&
@@ -12168,11 +12595,12 @@ export class GameEngine {
       }
     }
 
-    // 3. Advance cooking / smelting progress if burning and queued
-    if (hasQueue && (st.fuelBurnRemaining || 0) > 0) {
+    // 3. Advance cooking / smelting / weaving progress
+    if (hasQueue && (isWeaving || (st.fuelBurnRemaining || 0) > 0)) {
       const recipe = RECIPES.find((r) => r.id === st.cookingRecipeId);
       if (!recipe) {
         st.cookingRecipeId = null;
+        st.weavingTargetItemId = null;
         st.cookingInputCount = 0;
         st.cookingProgress = 0;
         return true;
@@ -12186,9 +12614,14 @@ export class GameEngine {
         st.cookingProgress -= duration;
         st.cookingInputCount = Math.max(0, (st.cookingInputCount || 0) - 1);
 
+        const targetOutId =
+          isWeaving && st.weavingTargetItemId
+            ? st.weavingTargetItemId
+            : recipe.resultItemId;
+
         if (
           st.outputItemId &&
-          st.outputItemId !== recipe.resultItemId &&
+          st.outputItemId !== targetOutId &&
           (st.outputCount || 0) > 0
         ) {
           this.spawnDrop(
@@ -12200,11 +12633,12 @@ export class GameEngine {
           st.outputCount = 0;
         }
 
-        st.outputItemId = recipe.resultItemId;
+        st.outputItemId = targetOutId;
         st.outputCount = (st.outputCount || 0) + recipe.resultCount;
 
         if (st.cookingInputCount <= 0) {
           st.cookingRecipeId = null;
+          st.weavingTargetItemId = null;
           st.cookingInputCount = 0;
           st.cookingProgress = 0;
         }
@@ -12214,9 +12648,9 @@ export class GameEngine {
         if (Math.hypot(sx - this.player.x, sy - this.player.y) <= 260) {
           soundManager.playCraft();
           this.renderer.spawnBurst(sx, sy - 6, 'SPARK', 8);
-          const outName = ITEMS[recipe.resultItemId]?.name || recipe.resultItemId;
+          const outName = ITEMS[targetOutId]?.name || targetOutId;
           this.addFloatingText(
-            `🔥 Pronto: +${recipe.resultCount}x ${outName}`,
+            `${isWeaving ? '🧵' : '🔥'} Pronto: +${recipe.resultCount}x ${outName}`,
             sx,
             sy - 20,
             '#fde047'
@@ -12224,7 +12658,7 @@ export class GameEngine {
         }
         this.gainXp(18);
       }
-    } else if (hasQueue && (st.fuelBurnRemaining || 0) <= 0) {
+    } else if (!isWeaving && hasQueue && (st.fuelBurnRemaining || 0) <= 0) {
       // Without fire, progress cools down gently
       if ((st.cookingProgress || 0) > 0) {
         st.cookingProgress = Math.max(0, (st.cookingProgress || 0) - dt * 0.5);
@@ -12242,7 +12676,8 @@ export class GameEngine {
       for (const st of chunk.structures) {
         if (
           st.type === PlaceableType.CAMPFIRE ||
-          st.type === PlaceableType.FURNACE
+          st.type === PlaceableType.FURNACE ||
+          st.type === PlaceableType.WEAVING_TABLE
         ) {
           if (
             (st.fuelBurnRemaining || 0) > 0 ||
@@ -12305,6 +12740,45 @@ export class GameEngine {
     }
 
     return remaining === 0;
+  }
+
+  /**
+   * Adds as many items as can fit into the player's inventory and drops any excess onto the ground (`spawnDrop`).
+   */
+  public addItemOrDropOnGround(
+    itemId: string,
+    count: number,
+    wx = this.player.x,
+    wy = this.player.y + 12
+  ): number {
+    const def = ITEMS[itemId];
+    if (!def || count <= 0) return 0;
+    if (itemId === 'gold_coin') {
+      this.addItemToInventory('gold_coin', count);
+      return count;
+    }
+
+    let remaining = count;
+    for (let i = 0; i < this.player.inventory.length && remaining > 0; i++) {
+      const slot = this.player.inventory[i];
+      if (slot && slot.itemId === itemId && slot.count < def.maxStack) {
+        const take = Math.min(def.maxStack - slot.count, remaining);
+        slot.count += take;
+        remaining -= take;
+      }
+    }
+    for (let i = 0; i < this.player.inventory.length && remaining > 0; i++) {
+      if (this.player.inventory[i] === null) {
+        const take = Math.min(def.maxStack, remaining);
+        this.player.inventory[i] = { itemId, count: take };
+        remaining -= take;
+      }
+    }
+
+    if (remaining > 0) {
+      this.spawnDrop(itemId, remaining, wx, wy);
+    }
+    return count - remaining;
   }
 
   public removeItemFromInventory(itemId: string, count: number): void {
@@ -12416,6 +12890,7 @@ export class GameEngine {
       y,
       bobTimer: Math.random() * 5,
       pickupDelay,
+      expiresTimer: 120,
     };
     this.droppedItems.push(drop);
     if (!this.isApplyingNetworkEvent) {
@@ -12539,6 +13014,237 @@ export class GameEngine {
       this.player.persistentPlayerId = getOrCreatePersistentPlayerUid();
     }
     return this.player.persistentPlayerId;
+  }
+
+  public isIdMatchingLocalPlayer(id: string | null | undefined): boolean {
+    if (!id) return false;
+    return (
+      id === 'LOCAL' ||
+      id === this.multiplayer.peerId ||
+      id === this.getLocalOwnerId()
+    );
+  }
+
+  /**
+   * Returns true if the local player is seated in Seat 1 (Leme / Driver) of the given Boat and has steering control.
+   */
+  public isLocalPlayerBoatDriver(boat: CreatureEntity): boolean {
+    if (boat.kind !== CreatureKind.BOAT || this.player.mountedEntityId !== boat.id) {
+      return false;
+    }
+    if (this.isIdMatchingLocalPlayer(boat.riderPlayerId)) {
+      return true;
+    }
+    if (!boat.riderPlayerId && !this.isIdMatchingLocalPlayer(boat.passengerPlayerId)) {
+      return true;
+    }
+    return false;
+  }
+
+  /**
+   * Returns true if the local player is seated in Seat 2 (Passenger) of the given Boat while another player steers.
+   */
+  public isLocalPlayerBoatPassenger(boat: CreatureEntity): boolean {
+    if (boat.kind !== CreatureKind.BOAT || this.player.mountedEntityId !== boat.id) {
+      return false;
+    }
+    return (
+      this.isIdMatchingLocalPlayer(boat.passengerPlayerId) &&
+      !this.isIdMatchingLocalPlayer(boat.riderPlayerId) &&
+      Boolean(boat.riderPlayerId)
+    );
+  }
+
+  // =========================================================================
+  // SLEEPING SYSTEM (5s COUNTDOWN + "LEVANTAR" + ONLINE MULTIPLAYER SYNC)
+  // =========================================================================
+
+  public startSleepingAtStructure(
+    houseSt: PlacedStructure | null,
+    stationType: PlaceableType,
+    worldX: number,
+    worldY: number
+  ): void {
+    if (this.player.mountedEntityId) {
+      this.dismountCreature();
+    }
+    this.player.isSleeping = true;
+    this.player.sleepTimer = 5.0;
+    this.player.sleepingStructureId = houseSt?.id || null;
+    this.player.sleepingStructureType = stationType;
+    this.player.sleepingTargetX = worldX;
+    this.player.sleepingTargetY = worldY;
+    this.player.vx = 0;
+    this.player.vy = 0;
+    this.player.isMoving = false;
+    soundManager.playPickup();
+    if (this.multiplayer.isOnline) {
+      this.multiplayer.sendPlayerState(this.player);
+    }
+    this.emitUiSnapshot();
+  }
+
+  public cancelSleep(reason?: string): void {
+    if (!this.player.isSleeping) return;
+    this.player.isSleeping = false;
+    this.player.sleepTimer = 0;
+    this.player.sleepingStructureId = null;
+    this.player.sleepingStructureType = null;
+    this.player.sleepingTargetX = undefined;
+    this.player.sleepingTargetY = undefined;
+    if (reason) {
+      this.addFloatingText(
+        reason,
+        this.player.x,
+        this.player.y - 22,
+        '#fde047'
+      );
+    }
+    if (this.multiplayer.isOnline) {
+      this.multiplayer.sendPlayerState(this.player);
+    }
+    this.emitUiSnapshot();
+  }
+
+  public getSleepStatus(): {
+    isSleeping: boolean;
+    sleepingCount: number;
+    totalPlayers: number;
+    allSleeping: boolean;
+    countdownSec: number;
+  } {
+    const isSleeping = Boolean(this.player.isSleeping);
+    const activeRemotes = this.remotePlayersList;
+    const totalPlayers = this.multiplayer.isOnline
+      ? 1 + activeRemotes.length
+      : 1;
+    const remoteSleepingCount = this.multiplayer.isOnline
+      ? activeRemotes.filter((rp) => rp.isSleeping).length
+      : 0;
+    const sleepingCount = (isSleeping ? 1 : 0) + remoteSleepingCount;
+    const allSleeping = isSleeping && sleepingCount >= totalPlayers;
+    const countdownSec = Math.max(
+      1,
+      Math.min(5, Math.ceil(this.player.sleepTimer ?? 5))
+    );
+    return {
+      isSleeping,
+      sleepingCount,
+      totalPlayers,
+      allSleeping,
+      countdownSec,
+    };
+  }
+
+  private updateSleepingState(dt: number): void {
+    if (!this.player.isSleeping) return;
+
+    // Caso amanheça enquanto um jogador está deitado na cama esperando o outro dormir,
+    // ele automaticamente levanta da cama e para de tentar dormir.
+    const isDaytime =
+      this.metadata.timeOfDay >= 6 && this.metadata.timeOfDay < 18;
+    if (isDaytime) {
+      this.cancelSleep('☀️ Amanheceu! Você levantou da cama.');
+      return;
+    }
+
+    const status = this.getSleepStatus();
+    if (!status.allSleeping) {
+      // Enquanto aguarda outros jogadores conectados deitarem na cama, mantém o contador em 5s
+      this.player.sleepTimer = 5.0;
+      return;
+    }
+
+    this.player.sleepTimer = Math.max(
+      0,
+      (this.player.sleepTimer ?? 5.0) - dt
+    );
+    if (this.player.sleepTimer <= 0) {
+      if (this.multiplayer.isOnline && this.multiplayer.role === 'GUEST') {
+        // Request Host to finalize sleep if Host hasn't broadcasted sleep_completed yet
+        this.multiplayer.sendWorldInteractRequest({
+          action: 'complete_sleep_request',
+        });
+        this.completeSleepLocal(false);
+      } else {
+        this.completeSleepLocal(true);
+      }
+    }
+  }
+
+  private completeSleepLocal(advanceWorldClock: boolean): void {
+    if (!this.player.isSleeping && !advanceWorldClock) return;
+
+    const sleepType = this.player.sleepingStructureType || PlaceableType.BED;
+    const targetX = this.player.sleepingTargetX ?? this.player.x;
+    const targetY = this.player.sleepingTargetY ?? this.player.y;
+    const restLabel =
+      sleepType === PlaceableType.EXPLORER_TENT
+        ? 'Tenda de Explorador'
+        : 'Cama de Madeira';
+
+    // Salva ponto de renascimento ao concluir o sono
+    this.setPlayerRespawnPoint(targetX, targetY, restLabel);
+
+    // Ao concluir o sono, tanto a Tenda de Explorador quanto a Cama recuperam apenas 100% de Energia (Stamina), sem recuperar HP.
+    this.player.stamina = this.player.maxStamina;
+
+    this.player.isSleeping = false;
+    this.player.sleepTimer = 0;
+    this.player.sleepingStructureId = null;
+    this.player.sleepingStructureType = null;
+    this.player.sleepingTargetX = undefined;
+    this.player.sleepingTargetY = undefined;
+
+    if (advanceWorldClock) {
+      if (this.metadata.timeOfDay >= 18) {
+        this.metadata.dayCount += 1;
+      }
+      this.metadata.timeOfDay = 6.5;
+
+      for (const cr of this.entities.creatures) {
+        if (
+          cr.kind === CreatureKind.VILLAGER &&
+          (cr.isInsideHouse || cr.homeHouseId)
+        ) {
+          cr.hasBoughtToday = false;
+          cr.attractedStallId = undefined;
+          cr.stallInspectionsToday = {};
+        } else if (cr.kind === CreatureKind.WANDERER) {
+          cr.hasBoughtToday = false;
+          cr.attractedStallId = undefined;
+          cr.stallInspectionsToday = {};
+        }
+      }
+
+      if (this.multiplayer.isOnline && this.multiplayer.role === 'HOST') {
+        this.multiplayer.sendTimeSync(
+          this.metadata.timeOfDay,
+          this.metadata.dayCount
+        );
+        this.multiplayer.sendWorldInteractResolved({
+          action: 'sleep_completed',
+          timeOfDay: this.metadata.timeOfDay,
+          dayCount: this.metadata.dayCount,
+        });
+      }
+      void this.saveGame(true);
+    }
+
+    soundManager.playLevelUp();
+    this.renderer.spawnBurst(this.player.x, this.player.y, 'HEAL', 14);
+    this.renderer.spawnRipple(this.player.x, this.player.y, '#4ade80', 30, 0.6);
+    this.addFloatingText(
+      `☀️ Amanheceu (Dia ${this.metadata.dayCount}) · 100% Energia + Renascimento salvo!`,
+      this.player.x,
+      this.player.y - 24,
+      '#fde047'
+    );
+
+    if (this.multiplayer.isOnline) {
+      this.multiplayer.sendPlayerState(this.player);
+    }
+    this.emitUiSnapshot();
   }
 
   /**
@@ -12790,26 +13496,40 @@ export class GameEngine {
     }
     const mount = this.getActiveMount();
     if (!mount) return;
+    const localRiderId = this.getLocalRiderId();
+    const isBoat = mount.kind === CreatureKind.BOAT;
+    const isBoatPassenger = isBoat && this.isLocalPlayerBoatPassenger(mount);
+
+    const resolvedRiderId = isBoat
+      ? isBoatPassenger
+        ? mount.riderPlayerId || null
+        : localRiderId
+      : mount.riderPlayerId === 'LOCAL'
+      ? localRiderId
+      : mount.riderPlayerId || localRiderId;
+
+    const resolvedPassengerId = isBoat
+      ? isBoatPassenger
+        ? localRiderId
+        : mount.passengerPlayerId === 'LOCAL'
+        ? localRiderId
+        : mount.passengerPlayerId || null
+      : null;
+
     this.player.mountedCreatureData = {
       ...mount,
       x: this.player.x,
       y: this.player.y,
       direction: this.player.direction,
-      ownerId:
-        mount.kind === CreatureKind.BOAT
-          ? null
-          : mount.ownerId || this.getLocalOwnerId(),
-      ownerName:
-        mount.kind === CreatureKind.BOAT
-          ? null
-          : mount.ownerName ||
-            this.multiplayer.localPlayerName ||
-            this.settings.playerName ||
-            'Aventureiro',
-      riderPlayerId:
-        mount.riderPlayerId === 'LOCAL'
-          ? this.getLocalRiderId()
-          : mount.riderPlayerId || this.getLocalRiderId(),
+      ownerId: isBoat ? null : mount.ownerId || this.getLocalOwnerId(),
+      ownerName: isBoat
+        ? null
+        : mount.ownerName ||
+          this.multiplayer.localPlayerName ||
+          this.settings.playerName ||
+          'Aventureiro',
+      riderPlayerId: resolvedRiderId,
+      passengerPlayerId: resolvedPassengerId,
       mountInventory: Array.isArray(mount.mountInventory)
         ? mount.mountInventory.map((s) => (s ? { ...s } : null))
         : undefined,
@@ -12818,7 +13538,7 @@ export class GameEngine {
 
   /**
    * Ensures that any remote player who is mounted has their mount entity present and synchronized
-   * in `this.entities.creatures` (so when a Guest reconnects mounted, the mount returns with them).
+   * in `this.entities.creatures`, and accurately distinguishes Boat Seat 1 (Driver/Helm) vs Seat 2 (Passenger).
    */
   private reconcileRemotePlayerMounts(): void {
     for (const rp of this.multiplayer.remotePlayers.values()) {
@@ -12826,7 +13546,12 @@ export class GameEngine {
         let mount = this.entities.creatures.find(
           (c) => c.id === rp.mountedEntityId
         );
+        const rpClaimsPassenger =
+          rp.mountedCreatureData.passengerPlayerId === rp.peerId ||
+          rp.mountedCreatureData.passengerPlayerId === rp.persistentPlayerId;
+
         if (!mount) {
+          const isBoat = rp.mountedCreatureData.kind === CreatureKind.BOAT;
           const spawned: CreatureEntity = {
             ...JSON.parse(JSON.stringify(rp.mountedCreatureData)),
             id: rp.mountedEntityId,
@@ -12840,17 +13565,18 @@ export class GameEngine {
               rp.mountedCreatureData.hp || rp.mountedCreatureData.maxHp || 100
             ),
             tamed: true,
-            ownerId:
-              rp.mountedCreatureData.kind === CreatureKind.BOAT
-                ? null
-                : rp.mountedCreatureData.ownerId ||
-                  rp.persistentPlayerId ||
-                  rp.peerId,
-            ownerName:
-              rp.mountedCreatureData.kind === CreatureKind.BOAT
-                ? null
-                : rp.mountedCreatureData.ownerName || rp.name,
-            riderPlayerId: rp.peerId,
+            ownerId: isBoat
+              ? null
+              : rp.mountedCreatureData.ownerId ||
+                rp.persistentPlayerId ||
+                rp.peerId,
+            ownerName: isBoat
+              ? null
+              : rp.mountedCreatureData.ownerName || rp.name,
+            riderPlayerId:
+              isBoat && rpClaimsPassenger ? null : rp.peerId,
+            passengerPlayerId:
+              isBoat && rpClaimsPassenger ? rp.peerId : null,
           };
           if (
             spawned.kind === CreatureKind.HORSE ||
@@ -12870,6 +13596,33 @@ export class GameEngine {
           ) {
             continue;
           }
+
+          if (mount.kind === CreatureKind.BOAT) {
+            const localIsDriver = this.isLocalPlayerBoatDriver(mount);
+            const rpIsPassenger =
+              rpClaimsPassenger ||
+              mount.passengerPlayerId === rp.peerId ||
+              (localIsDriver && mount.riderPlayerId !== rp.peerId);
+
+            if (rpIsPassenger) {
+              mount.passengerPlayerId = rp.peerId;
+              if (localIsDriver) {
+                mount.riderPlayerId = this.getLocalRiderId();
+              }
+            } else {
+              // Remote player is in Seat 1 (Driver / Helm) -> controls Boat position & direction!
+              mount.riderPlayerId = rp.peerId;
+              mount.x = rp.x;
+              mount.y = rp.y;
+              mount.vx = rp.vx;
+              mount.vy = rp.vy;
+              mount.direction = rp.direction;
+              mount.animFrame = rp.animFrame;
+            }
+            mount.tamed = true;
+            continue;
+          }
+
           mount.x = rp.x;
           mount.y = rp.y;
           mount.vx = rp.vx;
@@ -12877,7 +13630,7 @@ export class GameEngine {
           mount.direction = rp.direction;
           mount.animFrame = rp.animFrame;
           mount.tamed = true;
-          if (mount.kind !== CreatureKind.BOAT && !mount.ownerId) {
+          if (!mount.ownerId) {
             mount.ownerId =
               rp.mountedCreatureData.ownerId ||
               rp.persistentPlayerId ||
@@ -12907,6 +13660,10 @@ export class GameEngine {
         for (const cr of this.entities.creatures) {
           if (cr.riderPlayerId === rp.peerId && rp.mountedEntityId !== cr.id) {
             cr.riderPlayerId = null;
+            if (cr.kind === CreatureKind.BOAT && cr.passengerPlayerId) {
+              cr.riderPlayerId = cr.passengerPlayerId;
+              cr.passengerPlayerId = null;
+            }
           }
           if (
             cr.passengerPlayerId === rp.peerId &&
@@ -13103,13 +13860,31 @@ export class GameEngine {
             }
             cr.riderPlayerId = peerId;
           } else {
-            if (event.isPassenger) {
+            // Boat 2-seat allocation on Host:
+            // Seat 1 (riderPlayerId = Driver/Helm), Seat 2 (passengerPlayerId = Passenger)
+            const hostIsDriver = this.isLocalPlayerBoatDriver(cr);
+            const otherDriverActive =
+              hostIsDriver ||
+              Boolean(
+                cr.riderPlayerId &&
+                  cr.riderPlayerId !== peerId &&
+                  this.remotePlayersList.some(
+                    (rp) =>
+                      rp.peerId === cr!.riderPlayerId &&
+                      rp.mountedEntityId === cr!.id
+                  )
+              );
+            if (event.isPassenger || otherDriverActive) {
               cr.passengerPlayerId = peerId;
+              cr.passengerPetId = null;
             } else {
               cr.riderPlayerId = peerId;
-            }
-            if (event.passengerPetId !== undefined) {
-              cr.passengerPetId = event.passengerPetId;
+              if (cr.passengerPlayerId === peerId) {
+                cr.passengerPlayerId = null;
+              }
+              if (event.passengerPetId !== undefined) {
+                cr.passengerPetId = event.passengerPetId;
+              }
             }
           }
         }
@@ -13120,12 +13895,21 @@ export class GameEngine {
           (c) => c.id === event.creatureId
         );
         if (cr) {
-          if (cr.riderPlayerId === peerId) cr.riderPlayerId = null;
+          if (cr.riderPlayerId === peerId) {
+            cr.riderPlayerId = null;
+            // Promote 2nd-seat passenger to driver if Seat 1 vacated on a Boat!
+            if (cr.kind === CreatureKind.BOAT && cr.passengerPlayerId) {
+              cr.riderPlayerId = cr.passengerPlayerId;
+              cr.passengerPlayerId = null;
+            }
+          }
           if (cr.passengerPlayerId === peerId) cr.passengerPlayerId = null;
-          if (typeof event.x === 'number') cr.x = event.x;
-          if (typeof event.y === 'number') cr.y = event.y;
-          cr.vx = 0;
-          cr.vy = 0;
+          if (!cr.riderPlayerId) {
+            if (typeof event.x === 'number') cr.x = event.x;
+            if (typeof event.y === 'number') cr.y = event.y;
+            cr.vx = 0;
+            cr.vy = 0;
+          }
         }
         break;
       }
@@ -13308,48 +14092,8 @@ export class GameEngine {
       }
     }
 
-    // Simulate inventory capacity to ensure the saddle + any saddlebag items all fit in the player's inventory
-    const simInv: (InventorySlot | null)[] = this.player.inventory.map((s) =>
-      s ? { ...s } : null
-    );
-    const tryFitInSim = (itemId: string, count: number): boolean => {
-      if (itemId === 'gold_coin') return true;
-      const def = ITEMS[itemId];
-      if (!def) return false;
-      let rem = count;
-      for (let i = 0; i < simInv.length && rem > 0; i++) {
-        const s = simInv[i];
-        if (s && s.itemId === itemId && s.count < def.maxStack) {
-          const add = Math.min(rem, def.maxStack - s.count);
-          s.count += add;
-          rem -= add;
-        }
-      }
-      for (let i = 0; i < simInv.length && rem > 0; i++) {
-        if (simInv[i] === null) {
-          const add = Math.min(rem, def.maxStack);
-          simInv[i] = { itemId, count: add };
-          rem -= add;
-        }
-      }
-      return rem <= 0;
-    };
-
     for (const entry of itemsToCollect) {
-      if (!tryFitInSim(entry.itemId, entry.count)) {
-        soundManager.playHitWood();
-        this.addFloatingText(
-          'Mochila sem espaço para recolher o alforje!',
-          cr.x,
-          cr.y - 20,
-          '#f43f5e'
-        );
-        return false;
-      }
-    }
-
-    for (const entry of itemsToCollect) {
-      this.addItemToInventory(entry.itemId, entry.count);
+      this.addItemOrDropOnGround(entry.itemId, entry.count, cr.x, cr.y + 10);
     }
     cr.hasSaddle = false;
     cr.mountInventory = new Array(MOUNT_STORAGE_SIZE).fill(null);
@@ -13387,23 +14131,23 @@ export class GameEngine {
       if (this.player.mountedEntityId) {
         this.dismountCreature();
       }
-      // Check Boat 2-seat capacity
-      const hasPrimaryRider =
-        Boolean(
-          cr.riderPlayerId &&
-            cr.riderPlayerId !== 'LOCAL' &&
-            cr.riderPlayerId !== localRiderId
-        ) &&
-        this.remotePlayersList.some((rp) => rp.mountedEntityId === cr.id);
-      const hasSecondPlayer =
-        Boolean(
-          cr.passengerPlayerId &&
-            cr.passengerPlayerId !== 'LOCAL' &&
-            cr.passengerPlayerId !== localRiderId
-        ) &&
-        this.remotePlayersList.some((rp) => rp.mountedEntityId === cr.id);
+      // Check Boat 2-seat capacity: Seat 1 = riderPlayerId (Leme/Direção), Seat 2 = passengerPlayerId (Passageiro)
+      const driverRemote = this.remotePlayersList.find(
+        (rp) =>
+          rp.mountedEntityId === cr.id &&
+          (cr.riderPlayerId === rp.peerId ||
+            cr.riderPlayerId === rp.persistentPlayerId ||
+            (!cr.riderPlayerId && cr.passengerPlayerId !== rp.peerId))
+      );
+      const passengerRemote = this.remotePlayersList.find(
+        (rp) =>
+          rp.mountedEntityId === cr.id &&
+          rp !== driverRemote &&
+          (cr.passengerPlayerId === rp.peerId ||
+            cr.passengerPlayerId === rp.persistentPlayerId)
+      );
 
-      if (hasPrimaryRider && hasSecondPlayer) {
+      if (driverRemote && passengerRemote) {
         this.addFloatingText(
           '⛵ O Bote já está com os 2 assentos ocupados!',
           cr.x,
@@ -13413,9 +14157,12 @@ export class GameEngine {
         return false;
       }
 
-      const isPassenger = hasPrimaryRider;
-      if (!hasPrimaryRider) {
+      const isPassenger = Boolean(driverRemote);
+      if (!isPassenger) {
         cr.riderPlayerId = localRiderId;
+        if (this.isIdMatchingLocalPlayer(cr.passengerPlayerId)) {
+          cr.passengerPlayerId = null;
+        }
       } else {
         // Board 2nd seat as passenger! (Displace pet if one was in 2nd seat)
         cr.passengerPetId = null;
@@ -13466,9 +14213,11 @@ export class GameEngine {
       soundManager.playPickup();
       this.renderer.spawnRipple(cr.x, cr.y, '#38bdf8', 24, 0.4);
       this.addFloatingText(
-        cr.passengerPetId
-          ? '⛵ Embarcou no Bote com seu Pet! (2/2 Assentos)'
-          : '⛵ Embarcou no Bote!',
+        isPassenger
+          ? '⛵ Embarcou no 2º Assento (Passageiro)!'
+          : cr.passengerPetId
+          ? '⛵ Embarcou no Leme com seu Pet! (2/2 Assentos)'
+          : '⛵ Embarcou no Leme do Bote! (1º Assento · Direção)',
         cr.x,
         cr.y - 20,
         '#38bdf8'
@@ -13575,16 +14324,14 @@ export class GameEngine {
       return;
     }
 
-    if (
-      mount.riderPlayerId === 'LOCAL' ||
-      mount.riderPlayerId === localRiderId
-    ) {
+    if (this.isIdMatchingLocalPlayer(mount.riderPlayerId)) {
       mount.riderPlayerId = null;
+      if (mount.kind === CreatureKind.BOAT && mount.passengerPlayerId) {
+        mount.riderPlayerId = mount.passengerPlayerId;
+        mount.passengerPlayerId = null;
+      }
     }
-    if (
-      mount.passengerPlayerId === 'LOCAL' ||
-      mount.passengerPlayerId === localRiderId
-    ) {
+    if (this.isIdMatchingLocalPlayer(mount.passengerPlayerId)) {
       mount.passengerPlayerId = null;
     }
 
@@ -13741,35 +14488,23 @@ export class GameEngine {
     if (!slot || slot.count <= 0) return;
 
     const amountToMove = moveAll ? slot.count : 1;
-    let movedCount = 0;
-    for (let i = 0; i < amountToMove; i++) {
-      if (this.addItemToInventory(slot.itemId, 1)) {
-        movedCount++;
-      } else {
-        break;
-      }
+    this.addItemOrDropOnGround(slot.itemId, amountToMove);
+    slot.count -= amountToMove;
+    if (slot.count <= 0) {
+      cr.mountInventory![mountSlotIndex] = null;
     }
-
-    if (movedCount > 0) {
-      slot.count -= movedCount;
-      if (slot.count <= 0) {
-        cr.mountInventory![mountSlotIndex] = null;
-      }
-      this.syncPlayerMountedCreatureData();
-      if (this.multiplayer.isOnline && this.multiplayer.role === 'GUEST') {
-        this.multiplayer.sendGuestMountEvent({
-          action: 'mount_inventory',
-          creatureId: cr.id,
-          ownerId: this.getLocalOwnerId(),
-          mountInventory: cr.mountInventory,
-        });
-      }
-      void this.saveGame(true);
-      soundManager.playPickup();
-      this.emitUiSnapshot();
-    } else {
-      this.addFloatingText('Mochila cheia!', this.player.x, this.player.y - 20, '#f43f5e');
+    this.syncPlayerMountedCreatureData();
+    if (this.multiplayer.isOnline && this.multiplayer.role === 'GUEST') {
+      this.multiplayer.sendGuestMountEvent({
+        action: 'mount_inventory',
+        creatureId: cr.id,
+        ownerId: this.getLocalOwnerId(),
+        mountInventory: cr.mountInventory,
+      });
     }
+    void this.saveGame(true);
+    soundManager.playPickup();
+    this.emitUiSnapshot();
   }
 
   public transferInventorySlotToMount(
@@ -14457,6 +15192,16 @@ export class GameEngine {
         }
         break;
       }
+
+      case 'complete_sleep_request': {
+        if (this.multiplayer.role === 'HOST') {
+          const status = this.getSleepStatus();
+          if (status.allSleeping) {
+            this.completeSleepLocal(true);
+          }
+        }
+        break;
+      }
     }
   }
 
@@ -14616,6 +15361,19 @@ export class GameEngine {
         }
         break;
       }
+
+      case 'sleep_completed': {
+        if (typeof result.timeOfDay === 'number') {
+          this.metadata.timeOfDay = result.timeOfDay;
+        }
+        if (typeof result.dayCount === 'number') {
+          this.metadata.dayCount = result.dayCount;
+        }
+        if (this.player.isSleeping) {
+          this.completeSleepLocal(false);
+        }
+        break;
+      }
     }
   }
 
@@ -14751,13 +15509,29 @@ export class GameEngine {
               : getDefaultFavFoods(inc.kind);
 
           // If this creature is the local player's active mount, keep local player's position & stamina authoritative
+          // EXCEPT when the local player is a 2nd-seat passenger on a Boat driven by another player!
           if (this.player.mountedEntityId === inc.id) {
+            const isPassengerOnBoat =
+              inc.kind === CreatureKind.BOAT &&
+              this.isIdMatchingLocalPlayer(
+                inc.passengerPlayerId || prev?.passengerPlayerId
+              ) &&
+              !this.isIdMatchingLocalPlayer(inc.riderPlayerId);
+
+            if (isPassengerOnBoat) {
+              this.player.x = inc.x;
+              this.player.y = inc.y;
+              this.player.direction = inc.direction || this.player.direction;
+            }
+
             merged.push({
               ...(prev || inc),
               ...inc,
-              x: this.player.x,
-              y: this.player.y,
-              direction: this.player.direction,
+              x: isPassengerOnBoat ? inc.x : this.player.x,
+              y: isPassengerOnBoat ? inc.y : this.player.y,
+              direction: isPassengerOnBoat
+                ? inc.direction
+                : this.player.direction,
               ownerId: inc.ownerId || prev?.ownerId || null,
               ownerName: inc.ownerName || prev?.ownerName || null,
               mountStamina:
@@ -14775,6 +15549,9 @@ export class GameEngine {
           }
 
           if (prev) {
+            if (inc.hp < prev.hp - 0.5) {
+              soundManager.playHitEnemy(inc.x, inc.y);
+            }
             const dist = Math.hypot(inc.x - prev.x, inc.y - prev.y);
             const smoothX =
               dist > 64 || dist < 1 ? inc.x : prev.x + (inc.x - prev.x) * 0.45;

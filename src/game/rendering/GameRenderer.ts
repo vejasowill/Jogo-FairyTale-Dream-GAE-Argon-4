@@ -559,6 +559,11 @@ export class GameRenderer {
             const isWallTorch =
               st.type === PlaceableType.TORCH &&
               (st.attachedToWall || world.hasWallStructureAtTile(st.tileX, st.tileY));
+            const isAimedStructure =
+              Boolean(aimedTarget) &&
+              (aimedTarget!.structureId === st.id ||
+                (Math.floor(aimedTarget!.worldX / TILE_SIZE) === st.tileX &&
+                  Math.floor(aimedTarget!.worldY / TILE_SIZE) === st.tileY));
             renderQueue.push({
               ySort: isWallTorch
                 ? st.tileY * TILE_SIZE + TILE_SIZE * 0.89
@@ -571,24 +576,20 @@ export class GameRenderer {
                   globalTime,
                   shadowDx,
                   player,
-                  creatures
+                  creatures,
+                  isAimedStructure
                 ),
             });
           }
 
-          if (st.lightRadius && st.lightRadius > 0) {
+          const stLight = GameRenderer.getStructureLightSpec(st);
+          if (stLight) {
             lightSources.push({
               x: st.tileX * TILE_SIZE + TILE_SIZE / 2,
               y: st.tileY * TILE_SIZE + TILE_SIZE / 2,
-              radius: st.lightRadius,
-              color:
-                st.type === PlaceableType.HEALING_FOUNTAIN
-                  ? '70, 205, 255'
-                  : st.type === PlaceableType.GUARDIAN_TOTEM ||
-                    st.type === PlaceableType.SOLAR_ALTAR ||
-                    st.type === PlaceableType.IRON_LANTERN
-                  ? '255, 220, 85'
-                  : '255, 165, 65',
+              radius: stLight.radius,
+              color: stLight.color,
+              strength: stLight.strength,
             });
           }
         }
@@ -606,33 +607,33 @@ export class GameRenderer {
             continue;
           }
 
-          // Luminous rare/sacred nature nodes also emit soft night light
-          if (
-            node.type === NatureNodeType.ANCIENT_WORLD_TREE ||
-            node.type === NatureNodeType.SUNSTONE_OBELISK ||
-            node.type === NatureNodeType.DESERT_CRYSTAL ||
-            node.type === NatureNodeType.PEARL_CLAM
-          ) {
+          // Natural Elements Light Sources (only Árvore-Coração Primordial and Drusa de Cristal Solar)
+          const nodeLight = GameRenderer.getNatureNodeLightSpec(node.type);
+          if (nodeLight) {
             lightSources.push({
               x: wx + TILE_SIZE / 2,
               y: wy + TILE_SIZE / 2,
-              radius:
-                node.type === NatureNodeType.ANCIENT_WORLD_TREE ||
-                node.type === NatureNodeType.SUNSTONE_OBELISK
-                  ? 125
-                  : 75,
-              color:
-                node.type === NatureNodeType.ANCIENT_WORLD_TREE
-                  ? '60, 225, 160'
-                  : node.type === NatureNodeType.DESERT_CRYSTAL
-                  ? '255, 200, 65'
-                  : '80, 205, 255',
+              radius: nodeLight.radius,
+              color: nodeLight.color,
+              strength: nodeLight.strength,
             });
           }
 
+          const isAimedNode =
+            Boolean(aimedTarget) &&
+            Math.floor(aimedTarget!.worldX / TILE_SIZE) === node.tileX &&
+            Math.floor(aimedTarget!.worldY / TILE_SIZE) === node.tileY;
           renderQueue.push({
             ySort: wy + TILE_SIZE * 0.9,
-            draw: (c) => this.drawNatureNode(c, node, globalTime, shadowDx, player),
+            draw: (c) =>
+              this.drawNatureNode(
+                c,
+                node,
+                globalTime,
+                shadowDx,
+                player,
+                isAimedNode
+              ),
           });
         }
       }
@@ -688,27 +689,10 @@ export class GameRenderer {
       ctx.restore();
     }
 
-    // 2B. Player Directional Pointer ("Apontador de Interação") & Aimed Target Ground Reticle
-    {
-      const dirDx =
-        player.direction === 'left'
-          ? -1
-          : player.direction === 'right'
-          ? 1
-          : 0;
-      const dirDy =
-        player.direction === 'up'
-          ? -1
-          : player.direction === 'down'
-          ? 1
-          : 0;
-      const pointerDist = 24;
-      const px = player.x + dirDx * pointerDist;
-      const py = player.y + 4 + dirDy * pointerDist;
-      const angle = Math.atan2(dirDy, dirDx);
-
-      const reticleColor = aimedTarget
-        ? aimedTarget.kind === 'crop'
+    // 2B. Aimed Target Ground Selector (Visual aid for selection and aiming without vector arrow)
+    if (aimedTarget) {
+      const reticleColor =
+        aimedTarget.kind === 'crop'
           ? aimedTarget.cropStage === 3
             ? '#fde047'
             : '#22c55e'
@@ -720,101 +704,69 @@ export class GameRenderer {
           ? '#f43f5e'
           : aimedTarget.kind === 'death_bag'
           ? '#facc15'
-          : '#38bdf8'
-        : '#fbbf24';
+          : '#38bdf8';
 
-      // Draw directional pointer chevron in front of the player so they always see where they are aiming
+      const pulse = Math.sin(globalTime * 8) * 1.6;
+      const rx = aimedTarget.worldX - 16 - pulse;
+      const ry = aimedTarget.worldY - 16 - pulse;
+      const rw = 32 + pulse * 2;
+      const rh = 32 + pulse * 2;
+
       ctx.save();
-      ctx.translate(px, py);
-      ctx.rotate(angle);
-      ctx.globalAlpha = aimedTarget ? 0.92 : 0.62;
+      // Ground lock-on halo
       ctx.fillStyle = reticleColor;
-      ctx.strokeStyle = '#120b07';
-      ctx.lineWidth = 1.25;
+      ctx.globalAlpha = 0.14;
       ctx.beginPath();
-      ctx.moveTo(5, 0);
-      ctx.lineTo(-4, -4.5);
-      ctx.lineTo(-2, 0);
-      ctx.lineTo(-4, 4.5);
-      ctx.closePath();
+      ctx.ellipse(
+        aimedTarget.worldX,
+        aimedTarget.worldY + 9,
+        15 + pulse,
+        7 + pulse * 0.4,
+        0,
+        0,
+        Math.PI * 2
+      );
       ctx.fill();
+
+      ctx.strokeStyle = reticleColor;
+      ctx.globalAlpha = 0.72;
+      ctx.lineWidth = 1.4;
+      ctx.beginPath();
+      ctx.ellipse(
+        aimedTarget.worldX,
+        aimedTarget.worldY + 9,
+        15 + pulse,
+        7 + pulse * 0.4,
+        0,
+        0,
+        Math.PI * 2
+      );
       ctx.stroke();
+
+      // High-contrast corner brackets with dark outline
+      ctx.globalAlpha = 0.98;
+      const cLen = 7;
+      const drawBrackets = (stroke: string, width: number) => {
+        ctx.strokeStyle = stroke;
+        ctx.lineWidth = width;
+        ctx.beginPath();
+        ctx.moveTo(rx, ry + cLen);
+        ctx.lineTo(rx, ry);
+        ctx.lineTo(rx + cLen, ry);
+        ctx.moveTo(rx + rw - cLen, ry);
+        ctx.lineTo(rx + rw, ry);
+        ctx.lineTo(rx + rw, ry + cLen);
+        ctx.moveTo(rx, ry + rh - cLen);
+        ctx.lineTo(rx, ry + rh);
+        ctx.lineTo(rx + cLen, ry + rh);
+        ctx.moveTo(rx + rw - cLen, ry + rh);
+        ctx.lineTo(rx + rw, ry + rh);
+        ctx.lineTo(rx + rw, ry + rh - cLen);
+        ctx.stroke();
+      };
+      drawBrackets('#120b07', 3.2);
+      drawBrackets(reticleColor, 1.8);
       ctx.restore();
-
-      if (aimedTarget) {
-        const pulse = Math.sin(globalTime * 8) * 1.6;
-        const rx = aimedTarget.worldX - 16 - pulse;
-        const ry = aimedTarget.worldY - 16 - pulse;
-        const rw = 32 + pulse * 2;
-        const rh = 32 + pulse * 2;
-
-        ctx.save();
-        // Dashed directional link from player pointer to aimedTarget
-        ctx.strokeStyle = reticleColor;
-        ctx.globalAlpha = 0.55;
-        ctx.lineWidth = 1.25;
-        ctx.setLineDash([3, 3]);
-        ctx.beginPath();
-        ctx.moveTo(px, py);
-        ctx.lineTo(aimedTarget.worldX, aimedTarget.worldY + 4);
-        ctx.stroke();
-        ctx.setLineDash([]);
-
-        // Ground lock-on halo
-        ctx.fillStyle = reticleColor;
-        ctx.globalAlpha = 0.14;
-        ctx.beginPath();
-        ctx.ellipse(
-          aimedTarget.worldX,
-          aimedTarget.worldY + 9,
-          15 + pulse,
-          7 + pulse * 0.4,
-          0,
-          0,
-          Math.PI * 2
-        );
-        ctx.fill();
-
-        ctx.strokeStyle = reticleColor;
-        ctx.globalAlpha = 0.72;
-        ctx.lineWidth = 1.4;
-        ctx.beginPath();
-        ctx.ellipse(
-          aimedTarget.worldX,
-          aimedTarget.worldY + 9,
-          15 + pulse,
-          7 + pulse * 0.4,
-          0,
-          0,
-          Math.PI * 2
-        );
-        ctx.stroke();
-
-        // High-contrast corner brackets with dark outline
-        ctx.globalAlpha = 0.98;
-        const cLen = 7;
-        const drawBrackets = (stroke: string, width: number) => {
-          ctx.strokeStyle = stroke;
-          ctx.lineWidth = width;
-          ctx.beginPath();
-          ctx.moveTo(rx, ry + cLen);
-          ctx.lineTo(rx, ry);
-          ctx.lineTo(rx + cLen, ry);
-          ctx.moveTo(rx + rw - cLen, ry);
-          ctx.lineTo(rx + rw, ry);
-          ctx.lineTo(rx + rw, ry + cLen);
-          ctx.moveTo(rx, ry + rh - cLen);
-          ctx.lineTo(rx, ry + rh);
-          ctx.lineTo(rx + cLen, ry + rh);
-          ctx.moveTo(rx + rw - cLen, ry + rh);
-          ctx.lineTo(rx + rw, ry + rh);
-          ctx.lineTo(rx + rw, ry + rh - cLen);
-          ctx.stroke();
-        };
-        drawBrackets('#120b07', 3.2);
-        drawBrackets(reticleColor, 1.8);
-        ctx.restore();
-      }
     }
 
     // 3. Dropped Items with Rarity Ground Aura & Floating Glint
@@ -876,8 +828,9 @@ export class GameRenderer {
       lightSources.push({
         x: bag.x,
         y: bag.y,
-        radius: 105,
+        radius: 100,
         color: '250, 204, 21',
+        strength: 1.0,
       });
 
       renderQueue.push({
@@ -1184,22 +1137,16 @@ export class GameRenderer {
       ctx.fill();
       ctx.stroke();
 
-      // Compact floating label + action hint pill above the pointer arrow
+      // Compact floating pill showing ONLY the element name above the selector
       const shortLabel =
         aimedTarget.label.length > 28
           ? aimedTarget.label.slice(0, 27) + '…'
           : aimedTarget.label;
-      const shortAction =
-        aimedTarget.actionHint.length > 32
-          ? aimedTarget.actionHint.slice(0, 31) + '…'
-          : aimedTarget.actionHint;
 
       ctx.font = 'bold 7.5px "Plus Jakarta Sans", sans-serif';
       const w1 = ctx.measureText(shortLabel).width;
-      ctx.font = 'bold 7px "Plus Jakarta Sans", sans-serif';
-      const w2 = ctx.measureText(shortAction).width;
-      const boxW = Math.ceil(Math.max(w1, w2) + 12);
-      const boxH = 21;
+      const boxW = Math.ceil(w1 + 12);
+      const boxH = 13;
       const bx = Math.round(tx - boxW / 2);
       const by = Math.round(ty - 4 - boxH);
 
@@ -1212,12 +1159,44 @@ export class GameRenderer {
       ctx.textAlign = 'center';
       ctx.font = 'bold 7.5px "Plus Jakarta Sans", sans-serif';
       ctx.fillStyle = '#fef08a';
-      ctx.fillText(shortLabel, tx, by + 9);
-
-      ctx.font = 'bold 7px "Plus Jakarta Sans", sans-serif';
-      ctx.fillStyle = selectorColor;
-      ctx.fillText(shortAction, tx, by + 18);
+      ctx.fillText(shortLabel, tx, by + 9.5);
       ctx.restore();
+
+      // If this aimed element (nature node or structure) is being broken (hp < maxHp),
+      // render its break progression bar ABOVE the element's name box so they never overlap!
+      const targetTileX = Math.floor(aimedTarget.worldX / TILE_SIZE);
+      const targetTileY = Math.floor(aimedTarget.worldY / TILE_SIZE);
+      let breakRatio: number | null = null;
+      let breakBarColor = '#22c55e';
+
+      const targetChunkCoords = world.tileToChunk(targetTileX, targetTileY);
+      const targetChunk =
+        world.chunks[
+          WorldManager.chunkKey(targetChunkCoords.cx, targetChunkCoords.cy)
+        ];
+      const aimedNode = targetChunk?.nodes.find(
+        (n) => n.tileX === targetTileX && n.tileY === targetTileY
+      );
+      if (aimedNode && aimedNode.hp < aimedNode.maxHp) {
+        breakRatio = aimedNode.hp / aimedNode.maxHp;
+        breakBarColor = '#22c55e';
+      } else {
+        const aimedSt =
+          world.getStructureAtTile(targetTileX, targetTileY) ||
+          world.getGroundStructureAtTile(targetTileX, targetTileY);
+        if (aimedSt && aimedSt.hp < aimedSt.maxHp) {
+          breakRatio = aimedSt.hp / aimedSt.maxHp;
+          breakBarColor =
+            aimedSt.type === PlaceableType.OAK_SAPLING ||
+            aimedSt.type === PlaceableType.PALM_SAPLING
+              ? '#4ade80'
+              : '#38bdf8';
+        }
+      }
+
+      if (breakRatio !== null) {
+        this.drawMiniBar(ctx, tx, by - 7, breakRatio, breakBarColor);
+      }
     }
 
     // 7. Floating Damage / Loot Numbers with Pop-In Scale & Fade
@@ -1248,77 +1227,31 @@ export class GameRenderer {
     ctx.restore();
 
     // 8. Day & Night Dynamic Luminous Filter
-    const eq = player.equippedBySlot || {
-      head: null,
-      body: player.equippedArmorId || null,
-      legs: null,
-      feet: null,
-    };
-    const hasAstralPiece =
-      eq.head === 'astral_crown' ||
-      eq.body === 'astral_armor' ||
-      eq.legs === 'astral_leggings' ||
-      eq.feet === 'astral_boots';
-
-    let playerLightRadius = 135;
-    let playerLightColor = '255, 230, 140';
-    if (heldItem?.id === 'torch' || heldItem?.id === 'iron_lantern') {
-      playerLightRadius = 215;
-      playerLightColor = '255, 175, 70';
-    } else if (
-      heldItem?.id === 'astral_sword' ||
-      heldItem?.id === 'abyssal_trident' ||
-      heldItem?.id === 'recall_crystal'
-    ) {
-      playerLightRadius = 195;
-      playerLightColor = '80, 200, 255';
-    }
-    if (hasAstralPiece) {
-      playerLightRadius = Math.max(playerLightRadius, 220);
-      playerLightColor = '110, 215, 255';
-    }
-
+    const playerLight = GameRenderer.getPlayerLightSpec(
+      heldItem?.id || null,
+      player.equippedBySlot,
+      player.equippedArmorId
+    );
     lightSources.push({
       x: player.x,
       y: player.y,
-      radius: playerLightRadius,
-      color: playerLightColor,
+      radius: playerLight.radius,
+      color: playerLight.color,
+      strength: playerLight.strength,
     });
 
     for (const rp of remotePlayers) {
-      let rpRadius = 135;
-      let rpColor = '255, 230, 140';
-      if (rp.heldItemId === 'torch' || rp.heldItemId === 'iron_lantern') {
-        rpRadius = 215;
-        rpColor = '255, 175, 70';
-      } else if (
-        rp.heldItemId === 'astral_sword' ||
-        rp.heldItemId === 'abyssal_trident' ||
-        rp.heldItemId === 'recall_crystal'
-      ) {
-        rpRadius = 195;
-        rpColor = '80, 200, 255';
-      }
-      const rpEq = rp.equippedBySlot || {
-        head: null,
-        body: rp.equippedArmorId || null,
-        legs: null,
-        feet: null,
-      };
-      if (
-        rpEq.head === 'astral_crown' ||
-        rpEq.body === 'astral_armor' ||
-        rpEq.legs === 'astral_leggings' ||
-        rpEq.feet === 'astral_boots'
-      ) {
-        rpRadius = Math.max(rpRadius, 220);
-        rpColor = '110, 215, 255';
-      }
+      const rpLight = GameRenderer.getPlayerLightSpec(
+        rp.heldItemId || null,
+        rp.equippedBySlot,
+        rp.equippedArmorId
+      );
       lightSources.push({
         x: rp.x,
         y: rp.y,
-        radius: rpRadius,
-        color: rpColor,
+        radius: rpLight.radius,
+        color: rpLight.color,
+        strength: rpLight.strength,
       });
     }
 
@@ -1330,6 +1263,87 @@ export class GameRenderer {
       lightSources,
       player.hp / Math.max(1, player.maxHp)
     );
+  }
+
+  public static isFurnaceInUse(st: PlacedStructure): boolean {
+    return Boolean(
+      (st.fuelBurnRemaining && st.fuelBurnRemaining > 0) ||
+        (st.cookingInputCount && st.cookingInputCount > 0)
+    );
+  }
+
+  public static getStructureLightSpec(
+    st: PlacedStructure
+  ): { radius: number; strength: number; color: string } | null {
+    switch (st.type) {
+      case PlaceableType.TORCH:
+        return { radius: 140, strength: 1.0, color: '255, 165, 65' };
+      case PlaceableType.IRON_LANTERN:
+        return { radius: 200, strength: 1.0, color: '255, 220, 85' };
+      case PlaceableType.CAMPFIRE:
+        return { radius: 200, strength: 1.0, color: '255, 165, 65' };
+      case PlaceableType.FURNACE:
+        if (!GameRenderer.isFurnaceInUse(st)) return null;
+        return { radius: 80, strength: 0.5, color: '255, 145, 55' };
+      case PlaceableType.SOLAR_ALTAR:
+        return { radius: 180, strength: 1.0, color: '255, 220, 85' };
+      case PlaceableType.HEALING_FOUNTAIN:
+        return { radius: 140, strength: 0.5, color: '70, 205, 255' };
+      case PlaceableType.GUARDIAN_TOTEM:
+        return { radius: 300, strength: 0.8, color: '255, 220, 85' };
+      case PlaceableType.VILLAGE_HOUSE:
+        return { radius: 175, strength: 1.0, color: '255, 195, 95' };
+      case PlaceableType.ROYAL_BANNER:
+      case PlaceableType.EXPLORER_TENT:
+      case PlaceableType.WOOD_WINDOW:
+      case PlaceableType.STONE_WINDOW:
+      default:
+        return null;
+    }
+  }
+
+  public static getNatureNodeLightSpec(
+    type: NatureNodeType
+  ): { radius: number; strength: number; color: string } | null {
+    switch (type) {
+      case NatureNodeType.ANCIENT_WORLD_TREE:
+        return { radius: 80, strength: 0.33, color: '60, 225, 160' };
+      case NatureNodeType.DESERT_CRYSTAL:
+        return { radius: 60, strength: 0.11, color: '255, 200, 65' };
+      case NatureNodeType.SUNSTONE_OBELISK:
+      case NatureNodeType.PEARL_CLAM:
+      default:
+        return null;
+    }
+  }
+
+  public static getPlayerLightSpec(
+    heldItemId: string | null | undefined,
+    equippedBySlot?: PlayerState['equippedBySlot'],
+    equippedArmorId?: string | null
+  ): { radius: number; strength: number; color: string } {
+    if (heldItemId === 'torch' || heldItemId === 'iron_lantern') {
+      return { radius: 200, strength: 1.0, color: '255, 175, 70' };
+    }
+    const eq = equippedBySlot || {
+      head: null,
+      body: equippedArmorId || null,
+      legs: null,
+      feet: null,
+    };
+    const hasAstralPiece =
+      eq.head === 'astral_crown' ||
+      eq.body === 'astral_armor' ||
+      eq.legs === 'astral_leggings' ||
+      eq.feet === 'astral_boots';
+    const hasAstralHeldItem =
+      heldItemId === 'astral_sword' ||
+      heldItemId === 'abyssal_trident' ||
+      heldItemId === 'recall_crystal';
+    if (hasAstralHeldItem || hasAstralPiece) {
+      return { radius: 200, strength: 0.5, color: '95, 210, 255' };
+    }
+    return { radius: 100, strength: 0.33, color: '255, 230, 140' };
   }
 
   /**
@@ -1777,7 +1791,8 @@ export class GameRenderer {
     node: NatureNode,
     globalTime: number,
     shadowDx: number,
-    player?: PlayerState
+    player?: PlayerState,
+    isAimed = false
   ): void {
     // Deterministic spatial hashes for natural morphological variety, width variation, height variation & mirror flip
     const hVar =
@@ -1905,6 +1920,12 @@ export class GameRenderer {
         groundPadY = 1;
         break;
 
+      case NatureNodeType.SAND_DUNE:
+        drawW = Math.round(28 + wNorm * 6);
+        drawH = Math.round(18 + hNorm * 4);
+        groundPadY = 0;
+        break;
+
       case NatureNodeType.BOULDER:
       case NatureNodeType.IRON_OUTCROP:
         if (variant === 0) {
@@ -1950,18 +1971,24 @@ export class GameRenderer {
     const drawX = Math.round(centerX - drawW / 2);
     const drawY = Math.round(baseY - drawH);
 
-    // Directional Sun/Moon Dappled Ground Shadow scaled to the element's actual width
-    const shadowW = Math.round(drawW * (isLargeTree ? 0.68 : 0.76));
-    const shadowH = isLargeTree ? 9 : node.type === NatureNodeType.BERRY_BUSH ? 4 : 6;
-    ctx.fillStyle = isLargeTree
-      ? 'rgba(8, 12, 18, 0.32)'
-      : 'rgba(8, 12, 18, 0.24)';
-    ctx.fillRect(
-      Math.round(centerX - shadowW / 2 + shadowDx),
-      wy + TILE_SIZE - Math.round(shadowH * 0.65),
-      shadowW,
-      shadowH
-    );
+    // Directional Sun/Moon Dappled Ground Shadow scaled to the element's actual width (omitted for subtle SAND_DUNE)
+    if (node.type !== NatureNodeType.SAND_DUNE) {
+      const shadowW = Math.round(drawW * (isLargeTree ? 0.68 : 0.76));
+      const shadowH = isLargeTree
+        ? 9
+        : node.type === NatureNodeType.BERRY_BUSH
+        ? 4
+        : 6;
+      ctx.fillStyle = isLargeTree
+        ? 'rgba(8, 12, 18, 0.32)'
+        : 'rgba(8, 12, 18, 0.24)';
+      ctx.fillRect(
+        Math.round(centerX - shadowW / 2 + shadowDx),
+        wy + TILE_SIZE - Math.round(shadowH * 0.65),
+        shadowW,
+        shadowH
+      );
+    }
 
     // Sacred Ground Aura under Ancient World Tree, Sunstone Obelisk & Pearl Clam
     if (
@@ -2065,7 +2092,7 @@ export class GameRenderer {
       }
     }
 
-    if (node.hp < node.maxHp) {
+    if (node.hp < node.maxHp && !isAimed) {
       this.drawMiniBar(
         ctx,
         centerX,
@@ -2932,7 +2959,8 @@ export class GameRenderer {
     globalTime: number,
     shadowDx: number,
     player?: PlayerState,
-    creatures?: CreatureEntity[]
+    creatures?: CreatureEntity[],
+    isAimed = false
   ): void {
     const bp = CONSTRUCTION_BLUEPRINTS[st.type];
     const wx = st.tileX * TILE_SIZE;
@@ -2953,7 +2981,7 @@ export class GameRenderer {
       this.drawConnectedWallOrDoor(ctx, world, st, wx, wy, shadowDx);
       ctx.restore();
 
-      if (st.hp < st.maxHp) {
+      if (st.hp < st.maxHp && !isAimed) {
         this.drawMiniBar(ctx, wx + TILE_SIZE / 2, wy - 16, st.hp / st.maxHp, '#38bdf8');
       }
       return;
@@ -2970,7 +2998,7 @@ export class GameRenderer {
       }
       this.drawWallMountedTorch(ctx, world, st, wx, wy, globalTime);
       ctx.restore();
-      if (st.hp < st.maxHp) {
+      if (st.hp < st.maxHp && !isAimed) {
         this.drawMiniBar(ctx, wx + TILE_SIZE / 2, wy - 14, st.hp / st.maxHp, '#38bdf8');
       }
       return;
@@ -2989,7 +3017,7 @@ export class GameRenderer {
       }
       this.drawTreeSaplingStage(ctx, st, wx, wy, globalTime);
       ctx.restore();
-      if (st.hp < st.maxHp) {
+      if (st.hp < st.maxHp && !isAimed) {
         this.drawMiniBar(
           ctx,
           wx + TILE_SIZE / 2,
@@ -3070,6 +3098,12 @@ export class GameRenderer {
         // Wide carpenter's table at waist/chest height
         drawW = 40;
         drawH = 30;
+        groundPadY = 1;
+        break;
+      case PlaceableType.WEAVING_TABLE:
+        // Tailor & loom table with cloth roll, spools & dye pots
+        drawW = 38;
+        drawH = 32;
         groundPadY = 1;
         break;
       case PlaceableType.CAMPFIRE:
@@ -3159,6 +3193,7 @@ export class GameRenderer {
     } else if (
       !hasFloorUnder &&
       (st.type === PlaceableType.WORKBENCH ||
+        st.type === PlaceableType.WEAVING_TABLE ||
         st.type === PlaceableType.FURNACE ||
         st.type === PlaceableType.SOLAR_ALTAR ||
         st.type === PlaceableType.CHEST)
@@ -3196,7 +3231,7 @@ export class GameRenderer {
         ctx.fillText(String(storedCount), wx + TILE_SIZE - 6, wy + 9);
       }
 
-      if (st.hp < st.maxHp) {
+      if (st.hp < st.maxHp && !isAimed) {
         this.drawMiniBar(ctx, wx + TILE_SIZE / 2, wy - 4, st.hp / st.maxHp, '#38bdf8');
       }
       return;
@@ -3370,11 +3405,11 @@ export class GameRenderer {
       }
     }
 
-    if (st.hp < st.maxHp) {
+    if (st.hp < st.maxHp && !isAimed) {
       this.drawMiniBar(
         ctx,
         centerX,
-        Math.max(wy - 18, drawY - 5),
+        drawY - 20,
         st.hp / st.maxHp,
         '#38bdf8'
       );
@@ -3411,7 +3446,7 @@ export class GameRenderer {
 
     if (
       st.type === PlaceableType.CAMPFIRE ||
-      st.type === PlaceableType.FURNACE ||
+      (st.type === PlaceableType.FURNACE && GameRenderer.isFurnaceInUse(st)) ||
       st.type === PlaceableType.TORCH ||
       st.type === PlaceableType.IRON_LANTERN
     ) {
@@ -3873,6 +3908,20 @@ export class GameRenderer {
       ctx.fillStyle = 'rgba(8, 12, 18, 0.28)';
       ctx.fillRect(vx + vw, topY + 8, 3, totalH - 8);
 
+      // If window wall, keep the glass aperture clear of the solid wall fill so the window pane has 33% transparency
+      const sideGlassX = vx + 2;
+      const sideGlassY = wy - 1;
+      const sideGlassW = vw - 4;
+      const sideGlassH = 14;
+
+      if (isWindow) {
+        ctx.save();
+        ctx.beginPath();
+        ctx.rect(vx - 2, topY - 2, vw + 6, totalH + 4);
+        ctx.rect(sideGlassX, sideGlassY, sideGlassW, sideGlassH);
+        ctx.clip('evenodd');
+      }
+
       // Dark structural outline
       ctx.fillStyle = faceDark;
       ctx.fillRect(vx, topY, vw, totalH);
@@ -3890,13 +3939,20 @@ export class GameRenderer {
       }
 
       if (isWindow) {
-        // Side-viewed recessed glass slit
+        ctx.restore();
+        // Side-viewed window frame (solid) + glass slit with 33% transparency (alpha 0.67)
         ctx.fillStyle = '#0f172a';
-        ctx.fillRect(vx + 1, wy - 2, vw - 2, 16);
+        ctx.fillRect(vx + 1, wy - 2, vw - 2, 1);
+        ctx.fillRect(vx + 1, wy + 13, vw - 2, 1);
+        ctx.fillRect(vx + 1, wy - 1, 1, 14);
+        ctx.fillRect(vx + vw - 2, wy - 1, 1, 14);
+        ctx.save();
+        ctx.globalAlpha = 0.67; // 33% transparency on the window glass only
         ctx.fillStyle = '#38bdf8';
-        ctx.fillRect(vx + 2, wy - 1, vw - 4, 14);
+        ctx.fillRect(sideGlassX, sideGlassY, sideGlassW, sideGlassH);
         ctx.fillStyle = '#bae6fd';
         ctx.fillRect(vx + 3, wy, 1, 12);
+        ctx.restore();
       }
 
       // South end front face cap if wall terminates here
@@ -3944,6 +4000,23 @@ export class GameRenderer {
     const faceLeft = hasW ? spanX : spanX + 1;
     const faceRight = hasE ? spanRight : spanRight - 1;
     const faceW = Math.max(2, faceRight - faceLeft);
+
+    const winLeft = Math.max(spanX + 2, wx + 7);
+    const winRight = Math.min(spanRight - 2, wx + 25);
+    const winW = Math.max(6, winRight - winLeft);
+    const glassX = winLeft + 2;
+    const glassY = wy + 1;
+    const glassW = Math.max(2, winW - 4);
+    const glassH = 15;
+
+    // Exclude the window glass pane from the solid wall body so only the window glass has 33% transparency
+    if (isWindow) {
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(spanX - 2, wy - 16, spanW + 4, 48);
+      ctx.rect(glassX, glassY, glassW, glassH);
+      ctx.clip('evenodd');
+    }
 
     ctx.fillStyle = faceDark;
     ctx.fillRect(spanX, wy - 14, spanW, 42);
@@ -4008,17 +4081,24 @@ export class GameRenderer {
       ctx.fillRect(spanX, wy + 21, spanW, 2);
     }
 
-    // Window Glass & Mullion Frame if WOOD_WINDOW or STONE_WINDOW
+    // Window Glass (33% transparency) & Solid Mullion Frame if WOOD_WINDOW or STONE_WINDOW
     if (isWindow) {
-      const winLeft = Math.max(spanX + 2, wx + 7);
-      const winRight = Math.min(spanRight - 2, wx + 25);
-      const winW = Math.max(6, winRight - winLeft);
+      ctx.restore();
+      // Solid outer frame border around glass opening
       ctx.fillStyle = '#1e293b';
-      ctx.fillRect(winLeft, wy - 1, winW, 19);
+      ctx.fillRect(winLeft, wy - 1, winW, 2);
+      ctx.fillRect(winLeft, wy + 16, winW, 2);
+      ctx.fillRect(winLeft, wy + 1, 2, 15);
+      ctx.fillRect(winLeft + winW - 2, wy + 1, 2, 15);
+      // Window glass pane with 33% transparency (alpha = 0.67)
+      ctx.save();
+      ctx.globalAlpha = 0.67;
       ctx.fillStyle = '#38bdf8';
-      ctx.fillRect(winLeft + 2, wy + 1, Math.max(2, winW - 4), 15);
+      ctx.fillRect(glassX, glassY, glassW, glassH);
       ctx.fillStyle = '#bae6fd';
       ctx.fillRect(winLeft + 3, wy + 2, 2, 7);
+      ctx.restore();
+      // Solid mullion cross-bar & sill
       ctx.fillStyle = '#1e293b';
       ctx.fillRect(winLeft + 1, wy + 8, Math.max(2, winW - 2), 2);
       ctx.fillStyle = topCap;
@@ -4742,14 +4822,20 @@ export class GameRenderer {
     }
 
     if (isBoat) {
-      const seatsOccupied =
-        (cr.riderPlayerId ? 1 : 0) +
-        (cr.passengerPlayerId || cr.passengerPetId ? 1 : 0);
+      const hasHelm = Boolean(cr.riderPlayerId);
+      const hasPassenger = Boolean(cr.passengerPlayerId || cr.passengerPetId);
+      const seatsOccupied = (hasHelm ? 1 : 0) + (hasPassenger ? 1 : 0);
       ctx.save();
       ctx.font = 'bold 7px "Plus Jakarta Sans", sans-serif';
       ctx.textAlign = 'center';
       ctx.fillStyle = '#38bdf8';
-      ctx.fillText(`⛵ Bote [${seatsOccupied}/2]`, cr.x, headTopY - 2);
+      const seatLabel =
+        seatsOccupied === 0
+          ? '⛵ Bote [0/2 · Livre]'
+          : seatsOccupied === 1
+          ? '⛵ Bote [1/2 · 1 Assento Livre]'
+          : '⛵ Bote [2/2 · Lotado]';
+      ctx.fillText(seatLabel, cr.x, headTopY - 2);
       ctx.restore();
     } else if (cr.tamed) {
       const heartPulse = Math.sin(globalTime * 5) * 1;
@@ -5151,11 +5237,22 @@ export class GameRenderer {
     // Compute seat offset when mounted on Horse, Camel, or Boat
     let mountOffsetX = 0;
     let mountOffsetY = 0;
+    let isBoatPassengerSeat = false;
     if (mountEntity) {
       const dirSign = mountEntity.direction === 'left' ? -1 : 1;
       if (mountEntity.kind === 'BOAT') {
-        const isPassenger = mountEntity.passengerPlayerId === 'LOCAL';
-        mountOffsetX = isPassenger ? -6 * dirSign : 5 * dirSign;
+        const pUid = player.persistentPlayerId || '';
+        const isExplicitPassenger =
+          mountEntity.passengerPlayerId === 'LOCAL' ||
+          (Boolean(pUid) && mountEntity.passengerPlayerId === pUid);
+        const isHelmTakenByOther =
+          Boolean(mountEntity.riderPlayerId) &&
+          mountEntity.riderPlayerId !== 'LOCAL' &&
+          (!pUid || mountEntity.riderPlayerId !== pUid) &&
+          isExplicitPassenger;
+        isBoatPassengerSeat = isExplicitPassenger || isHelmTakenByOther;
+        // Seat 1 (Helm/Driver): front of boat (+8px along heading); Seat 2 (Passenger): rear of boat (-9px along heading)
+        mountOffsetX = isBoatPassengerSeat ? -9 * dirSign : 8 * dirSign;
         mountOffsetY = -5;
       } else if (mountEntity.kind === 'CAMEL') {
         mountOffsetX = -1 * dirSign;
@@ -5166,8 +5263,10 @@ export class GameRenderer {
       }
     }
 
-    const drawX = player.x + mountOffsetX;
-    const drawY = player.y + mountOffsetY;
+    const baseMountX = mountEntity ? mountEntity.x : player.x;
+    const baseMountY = mountEntity ? mountEntity.y : player.y;
+    const drawX = baseMountX + mountOffsetX;
+    const drawY = baseMountY + mountOffsetY;
 
     // Speed Buff / Gallop / Astral Gear Afterimage Trail & Step Dust Puff when moving on dry land
     if (player.isMoving && !isSwimming && !isBoatMount) {
@@ -5302,19 +5401,6 @@ export class GameRenderer {
     }
     ctx.restore();
 
-    // Overhead mini HP bar on the player character in the world when damaged (matching other mobs)
-    if (player.hp < player.maxHp || player.hitFlashTimer > 0) {
-      const headTopY =
-        isSwimming || isBoatMount ? drawY - 12 : drawY - 21;
-      this.drawMiniBar(
-        ctx,
-        drawX,
-        headTopY,
-        player.hp / Math.max(1, player.maxHp),
-        player.hitFlashTimer > 0 ? '#ef4444' : '#22c55e'
-      );
-    }
-
     if (isSwimming) {
       ctx.save();
       ctx.strokeStyle = 'rgba(224, 242, 254, 0.78)';
@@ -5334,31 +5420,37 @@ export class GameRenderer {
         ? 1 - player.swingTimer / player.swingDuration
         : 0;
 
-      let baseAngle = 0;
-      let offsetX = 10;
-      let offsetY = -2;
-      if (player.direction === 'up') {
-        baseAngle = -Math.PI / 2;
-        offsetX = 8;
-        offsetY = -10;
-      } else if (player.direction === 'down') {
-        baseAngle = Math.PI / 2;
-        offsetX = -8;
-        offsetY = 6;
-      } else if (player.direction === 'left') {
-        baseAngle = Math.PI;
-        offsetX = -11;
-        offsetY = 0;
-      } else {
-        baseAngle = 0;
-        offsetX = 11;
-        offsetY = 0;
-      }
-
+      // Exact hand anchor coordinates synced with walking arm swing (stepL / stepR) and body hop (walkHop)
+      const stepL = frame === 1 ? -2 : frame === 3 ? 2 : 0;
+      const stepR = -stepL;
       const swimItemOffsetY = isSwimming ? 5 : isBoatMount ? 2 : 0;
 
+      let baseAngle = 0;
+      let handOffsetX = 0;
+      let handOffsetY = 0;
+      if (player.direction === 'up') {
+        baseAngle = -Math.PI / 2;
+        handOffsetX = 6.5;
+        handOffsetY = 0.5 + stepR * 0.9;
+      } else if (player.direction === 'down') {
+        baseAngle = Math.PI / 2;
+        handOffsetX = -6.5;
+        handOffsetY = 1.0 + stepL * 0.9;
+      } else if (player.direction === 'left') {
+        baseAngle = Math.PI;
+        handOffsetX = -1.5 - stepL * 0.45;
+        handOffsetY = 1.0 + stepL * 0.9;
+      } else {
+        baseAngle = 0;
+        handOffsetX = 1.5 + stepR * 0.45;
+        handOffsetY = 1.0 + stepR * 0.9;
+      }
+
       ctx.save();
-      ctx.translate(player.x + offsetX, player.y + offsetY + swimItemOffsetY);
+      ctx.translate(
+        drawX + hurtShakeX + handOffsetX,
+        drawY - walkHop + handOffsetY + swimItemOffsetY
+      );
 
       if (isSwinging) {
         const swingArc = (swingProgress - 0.5) * 2.2;
@@ -5400,12 +5492,29 @@ export class GameRenderer {
         ctx.arc(0, 0, 21, -0.6, 0.6);
         ctx.stroke();
 
-        ctx.drawImage(itemCanvas, 0, -14, 22, 22);
+        // Draw item anchored by its handle at the hand origin (0, 0)
+        ctx.drawImage(itemCanvas, -3, -17, 20, 20);
       } else {
-        const idleBob = player.isMoving
-          ? Math.sin(player.animTimer * 12) * 1.5
-          : Math.sin(globalTime * 3.5) * 0.6;
-        ctx.drawImage(itemCanvas, -6, -10 + idleBob, 16, 16);
+        // Anchor the held item directly to the character's hand in all 4 directions (never floating)
+        if (player.direction === 'left') {
+          ctx.scale(-1, 1);
+          ctx.rotate(-0.12);
+          ctx.drawImage(itemCanvas, -3, -11, 14, 14);
+        } else if (player.direction === 'right') {
+          ctx.rotate(-0.12);
+          ctx.drawImage(itemCanvas, -3, -11, 14, 14);
+        } else if (player.direction === 'down') {
+          ctx.scale(-1, 1);
+          ctx.rotate(0.35);
+          ctx.drawImage(itemCanvas, -3, -11, 14, 14);
+        } else {
+          // facing up
+          ctx.rotate(-0.25);
+          ctx.drawImage(itemCanvas, -3, -11, 14, 14);
+        }
+        // Subtle hand-grip clasp over item handle so the hand visibly holds the item
+        ctx.fillStyle = player.appearance?.skinColor || '#f1c27d';
+        ctx.fillRect(-1.5, -1.5, 3, 3);
       }
       ctx.restore();
     }
@@ -5505,11 +5614,21 @@ export class GameRenderer {
 
     let mountOffsetX = 0;
     let mountOffsetY = 0;
+    let isRpBoatPassenger = false;
     if (mountEntity) {
       const dirSign = mountEntity.direction === 'left' ? -1 : 1;
       if (mountEntity.kind === 'BOAT') {
-        const isPassenger = mountEntity.passengerPlayerId === rp.peerId;
-        mountOffsetX = isPassenger ? -6 * dirSign : 5 * dirSign;
+        const rpUid = rp.persistentPlayerId || '';
+        const matchesPassenger =
+          mountEntity.passengerPlayerId === rp.peerId ||
+          (Boolean(rpUid) && mountEntity.passengerPlayerId === rpUid);
+        const matchesHelm =
+          mountEntity.riderPlayerId === rp.peerId ||
+          (Boolean(rpUid) && mountEntity.riderPlayerId === rpUid);
+        isRpBoatPassenger =
+          matchesPassenger || (Boolean(mountEntity.riderPlayerId) && !matchesHelm);
+        // Seat 1 (Helm/Driver): front (+8px); Seat 2 (Passenger): rear (-9px)
+        mountOffsetX = isRpBoatPassenger ? -9 * dirSign : 8 * dirSign;
         mountOffsetY = -5;
       } else if (mountEntity.kind === 'CAMEL') {
         mountOffsetX = -1 * dirSign;
@@ -5519,8 +5638,10 @@ export class GameRenderer {
         mountOffsetY = -11;
       }
     }
-    const drawX = rp.x + mountOffsetX;
-    const drawY = rp.y + mountOffsetY;
+    const baseRpMountX = mountEntity ? mountEntity.x : rp.x;
+    const baseRpMountY = mountEntity ? mountEntity.y : rp.y;
+    const drawX = baseRpMountX + mountOffsetX;
+    const drawY = baseRpMountY + mountOffsetY;
 
     // Subtle allied player ground aura ring
     ctx.save();
@@ -5624,31 +5745,36 @@ export class GameRenderer {
         ? 1 - rp.swingTimer / Math.max(0.1, rp.swingDuration)
         : 0;
 
+      const stepL = frame === 1 ? -2 : frame === 3 ? 2 : 0;
+      const stepR = -stepL;
+      const swimItemOffsetY = isSwimming ? 5 : isBoatMount ? 2 : 0;
+
       let baseAngle = 0;
-      let offsetX = 10;
-      let offsetY = -2;
+      let handOffsetX = 0;
+      let handOffsetY = 0;
       if (rp.direction === 'up') {
         baseAngle = -Math.PI / 2;
-        offsetX = 8;
-        offsetY = -10;
+        handOffsetX = 6.5;
+        handOffsetY = 0.5 + stepR * 0.9;
       } else if (rp.direction === 'down') {
         baseAngle = Math.PI / 2;
-        offsetX = -8;
-        offsetY = 6;
+        handOffsetX = -6.5;
+        handOffsetY = 1.0 + stepL * 0.9;
       } else if (rp.direction === 'left') {
         baseAngle = Math.PI;
-        offsetX = -11;
-        offsetY = 0;
+        handOffsetX = -1.5 - stepL * 0.45;
+        handOffsetY = 1.0 + stepL * 0.9;
       } else {
         baseAngle = 0;
-        offsetX = 11;
-        offsetY = 0;
+        handOffsetX = 1.5 + stepR * 0.45;
+        handOffsetY = 1.0 + stepR * 0.9;
       }
 
-      const swimItemOffsetY = isSwimming ? 5 : 0;
-
       ctx.save();
-      ctx.translate(rp.x + offsetX, rp.y + offsetY + swimItemOffsetY);
+      ctx.translate(
+        drawX + rpHurtShakeX + handOffsetX,
+        drawY - walkHop + handOffsetY + swimItemOffsetY
+      );
 
       if (isSwinging) {
         const swingArc = (swingProgress - 0.5) * 2.2;
@@ -5658,45 +5784,63 @@ export class GameRenderer {
         ctx.beginPath();
         ctx.arc(0, 0, 20, -0.75, 0.65);
         ctx.stroke();
-        ctx.drawImage(itemCanvas, 0, -14, 22, 22);
+        ctx.drawImage(itemCanvas, -3, -17, 20, 20);
       } else {
-        const idleBob = rp.isMoving
-          ? Math.sin(rp.animTimer * 12) * 1.5
-          : Math.sin(globalTime * 3.5) * 0.6;
-        ctx.drawImage(itemCanvas, -6, -10 + idleBob, 16, 16);
+        if (rp.direction === 'left') {
+          ctx.scale(-1, 1);
+          ctx.rotate(-0.12);
+          ctx.drawImage(itemCanvas, -3, -11, 14, 14);
+        } else if (rp.direction === 'right') {
+          ctx.rotate(-0.12);
+          ctx.drawImage(itemCanvas, -3, -11, 14, 14);
+        } else if (rp.direction === 'down') {
+          ctx.scale(-1, 1);
+          ctx.rotate(0.35);
+          ctx.drawImage(itemCanvas, -3, -11, 14, 14);
+        } else {
+          ctx.rotate(-0.25);
+          ctx.drawImage(itemCanvas, -3, -11, 14, 14);
+        }
+        ctx.fillStyle = rp.appearance?.skinColor || '#f1c27d';
+        ctx.fillRect(-1.5, -1.5, 3, 3);
       }
       ctx.restore();
     }
 
-    // Overhead Name Tag, Role Badge, HP Bar & Chat Bubble
-    const headTopY = isSwimming ? rp.y - 13 : rp.y - 22;
+    // Overhead Name Tag, Role Badge, Boat Seat Tag, HP Bar & Chat Bubble
+    const headTopY = isSwimming || isBoatMount ? drawY - 13 : drawY - 22;
     ctx.save();
     ctx.textAlign = 'center';
     ctx.font = 'bold 7px "Plus Jakarta Sans", sans-serif';
-    const badgeText = `${rp.isHost ? '👑 ' : '🌐 '}${rp.name} [NV.${rp.level || 1}]`;
+    const seatSuffix = isBoatMount
+      ? isRpBoatPassenger
+        ? ' · 2º Assento'
+        : ' · Leme'
+      : '';
+    const badgeText = `${rp.isHost ? '👑 ' : '🌐 '}${rp.name} [NV.${rp.level || 1}${seatSuffix}]`;
     const boxW = Math.max(66, badgeText.length * 4.4 + 10);
     ctx.fillStyle = 'rgba(10, 14, 23, 0.85)';
-    ctx.fillRect(rp.x - boxW / 2, headTopY - 14, boxW, 11);
+    ctx.fillRect(drawX - boxW / 2, headTopY - 14, boxW, 11);
     ctx.fillStyle = rp.isHost ? '#fde047' : '#38bdf8';
-    ctx.fillText(badgeText, rp.x, headTopY - 6);
+    ctx.fillText(badgeText, drawX, headTopY - 6);
 
     if (rp.chatMessage && (rp.chatTimer || 0) > 0) {
       const chatText = `💬 ${rp.chatMessage}`;
       const chatW = Math.max(72, Math.min(180, chatText.length * 4.6 + 12));
       ctx.fillStyle = 'rgba(26, 17, 11, 0.94)';
-      ctx.fillRect(rp.x - chatW / 2, headTopY - 28, chatW, 12);
+      ctx.fillRect(drawX - chatW / 2, headTopY - 28, chatW, 12);
       ctx.strokeStyle = '#f59e0b';
       ctx.lineWidth = 1;
-      ctx.strokeRect(rp.x - chatW / 2, headTopY - 28, chatW, 12);
+      ctx.strokeRect(drawX - chatW / 2, headTopY - 28, chatW, 12);
       ctx.fillStyle = '#fef08a';
-      ctx.fillText(chatText, rp.x, headTopY - 20);
+      ctx.fillText(chatText, drawX, headTopY - 20);
     }
     ctx.restore();
 
     if (rp.hp < rp.maxHp) {
       this.drawMiniBar(
         ctx,
-        rp.x,
+        drawX,
         headTopY - 2,
         rp.hp / Math.max(1, rp.maxHp),
         '#38bdf8'
@@ -5910,9 +6054,9 @@ export class GameRenderer {
           // Very low density: only ~22% of large 260x260 cells can host a firefly
           if (seedHash > 0.22) continue;
 
-          // Finite spawn/despawn cycle: spawns for ~6.5 seconds, then disappears for several seconds
-          const cyclePeriod = 14.0 + ((seedHash * 97) % 7.0); // 14s to 21s total cycle
-          const activeDuration = 6.5; // stays alive for 6.5 seconds then vanishes
+          // Finite spawn/despawn cycle: firefly lifetime is 10 seconds, then disappears for several seconds
+          const cyclePeriod = 20.0 + ((seedHash * 97) % 8.0); // 20s to 28s total cycle
+          const activeDuration = 10.0; // stays alive for 10.0 seconds then vanishes
           const timeOffset = seedHash * 313.7;
           const cycleTime = (globalTime + timeOffset) % cyclePeriod;
           if (cycleTime > activeDuration) continue;

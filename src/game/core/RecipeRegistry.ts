@@ -532,7 +532,7 @@ export const RECIPES: CraftingRecipe[] = [
     rarity: RarityTier.BASIC,
     ingredients: [
       { itemId: 'wood', count: 4 },
-      { itemId: 'fiber', count: 1 },
+      { itemId: 'glass', count: 1 },
     ],
   },
   {
@@ -622,6 +622,19 @@ export const RECIPES: CraftingRecipe[] = [
       { itemId: 'wood', count: 5 },
       { itemId: 'wool', count: 2 },
       { itemId: 'fiber', count: 2 },
+    ],
+  },
+  {
+    id: 'craft_weaving_table',
+    resultItemId: 'weaving_table',
+    resultCount: 1,
+    requiredStation: PlaceableType.WORKBENCH,
+    craftTimeSec: 0,
+    rarity: RarityTier.RARE,
+    ingredients: [
+      { itemId: 'iron_bar', count: 6 },
+      { itemId: 'wood', count: 4 },
+      { itemId: 'wool', count: 10 },
     ],
   },
   {
@@ -874,6 +887,15 @@ export const RECIPES: CraftingRecipe[] = [
     ingredients: [{ itemId: 'hardwood', count: 1 }],
   },
   {
+    id: 'smelt_glass',
+    resultItemId: 'glass',
+    resultCount: 1,
+    requiredStation: PlaceableType.FURNACE,
+    craftTimeSec: 6,
+    rarity: RarityTier.BASIC,
+    ingredients: [{ itemId: 'sand', count: 1 }],
+  },
+  {
     id: 'smelt_iron_bar',
     resultItemId: 'iron_bar',
     resultCount: 1,
@@ -928,7 +950,7 @@ export const RECIPES: CraftingRecipe[] = [
     rarity: RarityTier.RARE,
     ingredients: [
       { itemId: 'stone', count: 4 },
-      { itemId: 'solar_crystal', count: 1 },
+      { itemId: 'glass', count: 1 },
     ],
   },
   {
@@ -1156,6 +1178,160 @@ export const RECIPES: CraftingRecipe[] = [
       { itemId: 'solar_crystal', count: 2 },
       { itemId: 'spider_silk', count: 2 },
       { itemId: 'wool', count: 2 },
+    ],
+  },
+
+  // ==========================================================================
+  // 6. MESA DE TECELAGEM (requiredStation: WEAVING_TABLE — Confecção de Roupas)
+  // Categorias: Cabeça, Superior, Inferior, Pés (Com tempo de confecção)
+  // ==========================================================================
+  // --- CABEÇA ---
+  {
+    id: 'weave_fiber_hat',
+    resultItemId: 'fiber_hat',
+    resultCount: 1,
+    requiredStation: PlaceableType.WEAVING_TABLE,
+    craftTimeSec: 180, // 3 min
+    rarity: RarityTier.BASIC,
+    ingredients: [{ itemId: 'fiber', count: 12 }],
+  },
+  {
+    id: 'weave_leather_hat',
+    resultItemId: 'leather_hat',
+    resultCount: 1,
+    requiredStation: PlaceableType.WEAVING_TABLE,
+    craftTimeSec: 360, // 6 min
+    rarity: RarityTier.BASIC,
+    ingredients: [
+      { itemId: 'leather', count: 6 },
+      { itemId: 'fiber', count: 4 },
+    ],
+  },
+  {
+    id: 'weave_solar_necklace',
+    resultItemId: 'solar_necklace',
+    resultCount: 1,
+    requiredStation: PlaceableType.WEAVING_TABLE,
+    craftTimeSec: 300, // 5 min
+    rarity: RarityTier.RARE,
+    ingredients: [
+      { itemId: 'fiber', count: 3 },
+      { itemId: 'solar_crystal', count: 2 },
+    ],
+  },
+
+  // --- SUPERIOR ---
+  {
+    id: 'weave_tank_top',
+    resultItemId: 'white_tank_top',
+    resultCount: 1,
+    requiredStation: PlaceableType.WEAVING_TABLE,
+    craftTimeSec: 120, // 2 min
+    rarity: RarityTier.BASIC,
+    ingredients: [
+      { itemId: 'wool', count: 4 },
+      { itemId: 'fiber', count: 3 },
+    ],
+  },
+  {
+    id: 'weave_sweater',
+    resultItemId: 'sweater',
+    resultCount: 1,
+    requiredStation: PlaceableType.WEAVING_TABLE,
+    craftTimeSec: 240, // 4 min
+    rarity: RarityTier.BASIC,
+    ingredients: [
+      { itemId: 'wool', count: 8 },
+      { itemId: 'fiber', count: 4 },
+    ],
+  },
+  {
+    id: 'weave_short_dress',
+    resultItemId: 'short_dress',
+    resultCount: 1,
+    requiredStation: PlaceableType.WEAVING_TABLE,
+    craftTimeSec: 240, // 4 min
+    rarity: RarityTier.BASIC,
+    ingredients: [
+      { itemId: 'wool', count: 7 },
+      { itemId: 'fiber', count: 5 },
+    ],
+  },
+  {
+    id: 'weave_long_dress',
+    resultItemId: 'long_dress',
+    resultCount: 1,
+    requiredStation: PlaceableType.WEAVING_TABLE,
+    craftTimeSec: 300, // 5 min
+    rarity: RarityTier.BASIC,
+    ingredients: [
+      { itemId: 'wool', count: 10 },
+      { itemId: 'fiber', count: 6 },
+    ],
+  },
+
+  // --- INFERIOR ---
+  {
+    id: 'weave_shorts',
+    resultItemId: 'shorts',
+    resultCount: 1,
+    requiredStation: PlaceableType.WEAVING_TABLE,
+    craftTimeSec: 120, // 2 min
+    rarity: RarityTier.BASIC,
+    ingredients: [
+      { itemId: 'wool', count: 4 },
+      { itemId: 'fiber', count: 3 },
+    ],
+  },
+  {
+    id: 'weave_pants',
+    resultItemId: 'pants',
+    resultCount: 1,
+    requiredStation: PlaceableType.WEAVING_TABLE,
+    craftTimeSec: 180, // 3 min
+    rarity: RarityTier.BASIC,
+    ingredients: [
+      { itemId: 'wool', count: 6 },
+      { itemId: 'fiber', count: 4 },
+    ],
+  },
+  {
+    id: 'weave_overalls',
+    resultItemId: 'overalls',
+    resultCount: 1,
+    requiredStation: PlaceableType.WEAVING_TABLE,
+    craftTimeSec: 300, // 5 min
+    rarity: RarityTier.BASIC,
+    ingredients: [
+      { itemId: 'wool', count: 8 },
+      { itemId: 'fiber', count: 4 },
+      { itemId: 'leather', count: 2 },
+    ],
+  },
+
+  // --- PÉS ---
+  {
+    id: 'weave_sandals',
+    resultItemId: 'sandals',
+    resultCount: 1,
+    requiredStation: PlaceableType.WEAVING_TABLE,
+    craftTimeSec: 120, // 2 min
+    rarity: RarityTier.BASIC,
+    ingredients: [
+      { itemId: 'leather', count: 3 },
+      { itemId: 'fiber', count: 2 },
+    ],
+  },
+  {
+    id: 'weave_cowboy_boots',
+    resultItemId: 'cowboy_boots',
+    resultCount: 1,
+    requiredStation: PlaceableType.WEAVING_TABLE,
+    craftTimeSec: 240, // 4 min
+    rarity: RarityTier.BASIC,
+    ingredients: [
+      { itemId: 'leather', count: 5 },
+      { itemId: 'fiber', count: 3 },
     ],
   },
 ];

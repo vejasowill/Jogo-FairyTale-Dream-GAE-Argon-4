@@ -1,5 +1,7 @@
 import {
+  ClothingColorId,
   ConstructionBlueprint,
+  EquipmentSlot,
   ItemCategory,
   ItemDefinition,
   MaterialKind,
@@ -8,6 +10,40 @@ import {
   RarityTier,
   ToolType,
 } from './types';
+
+export interface ClothingColorDefinition {
+  id: ClothingColorId;
+  label: string;
+  hex: string;
+  darkHex: string;
+  lightHex: string;
+}
+
+export const CLOTHING_COLORS: ClothingColorDefinition[] = [
+  { id: 'preto', label: 'Preto', hex: '#232730', darkHex: '#11141a', lightHex: '#3b4252' },
+  { id: 'cinza', label: 'Cinza', hex: '#64748b', darkHex: '#334155', lightHex: '#94a3b8' },
+  { id: 'cinza_claro', label: 'Cinza-Claro', hex: '#cbd5e1', darkHex: '#94a3b8', lightHex: '#e2e8f0' },
+  { id: 'branco', label: 'Branco', hex: '#f1f5f9', darkHex: '#cbd5e1', lightHex: '#ffffff' },
+  { id: 'vermelho', label: 'Vermelho', hex: '#dc2626', darkHex: '#991b1b', lightHex: '#f87171' },
+  { id: 'laranja', label: 'Laranja', hex: '#ea580c', darkHex: '#9a3412', lightHex: '#fb923c' },
+  { id: 'amarelo', label: 'Amarelo', hex: '#eab308', darkHex: '#a16207', lightHex: '#fde047' },
+  { id: 'bege', label: 'Bege', hex: '#d6b88a', darkHex: '#9c7c50', lightHex: '#ead7b7' },
+  { id: 'verde_lima', label: 'Verde-Lima', hex: '#84cc16', darkHex: '#4d7c0f', lightHex: '#bef264' },
+  { id: 'verde', label: 'Verde', hex: '#16a34a', darkHex: '#14532d', lightHex: '#4ade80' },
+  { id: 'ciano', label: 'Ciano', hex: '#06b6d4', darkHex: '#0e7490', lightHex: '#67e8f9' },
+  { id: 'azul_claro', label: 'Azul-Claro', hex: '#38bdf8', darkHex: '#0284c7', lightHex: '#bae6fd' },
+  { id: 'azul', label: 'Azul', hex: '#2563eb', darkHex: '#1e3a8a', lightHex: '#60a5fa' },
+  { id: 'roxo', label: 'Roxo', hex: '#7c3aed', darkHex: '#4c1d95', lightHex: '#a78bfa' },
+  { id: 'magenta', label: 'Magenta', hex: '#c026d3', darkHex: '#86198f', lightHex: '#e879f9' },
+  { id: 'rosa', label: 'Rosa', hex: '#f472b6', darkHex: '#be185d', lightHex: '#fbcfe8' },
+  { id: 'marrom', label: 'Marrom', hex: '#8b5a2b', darkHex: '#5c3a18', lightHex: '#b07943' },
+];
+
+export const CLOTHING_COLOR_MAP: Record<ClothingColorId, ClothingColorDefinition> =
+  CLOTHING_COLORS.reduce((acc, c) => {
+    acc[c.id] = c;
+    return acc;
+  }, {} as Record<ClothingColorId, ClothingColorDefinition>);
 
 export const ITEMS: Record<string, ItemDefinition> = {
   // === BASIC RESOURCES ===
@@ -73,6 +109,39 @@ export const ITEMS: Record<string, ItemDefinition> = {
       'Combustível de alta pureza térmica obtido ao queimar Madeira Rústica ou Madeira Nobre na Fogueira ou Fornalha. Possui 5x mais eficiência energética que a madeira comum como lenha!',
     purposeSummary:
       'Combustível Nobre (60s de queima no Slot de Lenha — 5x mais eficiente que Madeira!), além de criar Tochas em lote e Bombas Solares.',
+    category: ItemCategory.RESOURCE,
+    rarity: RarityTier.BASIC,
+    maxStack: 99,
+  },
+  sand: {
+    id: 'sand',
+    name: 'Areia',
+    description:
+      'Grãos finos de sílica coletados ao quebrar Dunas de Areia nos solos de areia do deserto e das praias. Pode ser fundida na Fornalha para produzir Vidro.',
+    purposeSummary:
+      'Funda 1x Areia na Fornalha de Fundição (6s) para produzir 1x Vidro.',
+    category: ItemCategory.RESOURCE,
+    rarity: RarityTier.BASIC,
+    maxStack: 99,
+  },
+  glass: {
+    id: 'glass',
+    name: 'Vidro',
+    description:
+      'Painel cristalino translúcido produzido na Fornalha a partir da Areia (6s). Indispensável na construção de Paredes com Janela.',
+    purposeSummary:
+      'Usado na Bancada/Fornalha para criar Parede de Madeira com Janela e Parede de Pedra com Janela.',
+    category: ItemCategory.RESOURCE,
+    rarity: RarityTier.BASIC,
+    maxStack: 99,
+  },
+  leather: {
+    id: 'leather',
+    name: 'Couro',
+    description:
+      'Couro curtido resistente e flexível obtido ao caçar Javalis (15% de chance). Matéria-prima essencial para chapéus de couro, macacões, sandálias e botas na Mesa de Tecelagem.',
+    purposeSummary:
+      'Obtido de Javalis (15%): Usado na Mesa de Tecelagem para produzir Chapéu de Couro, Macacão, Sandália e Bota de Vaqueiro.',
     category: ItemCategory.RESOURCE,
     rarity: RarityTier.BASIC,
     maxStack: 99,
@@ -1014,6 +1083,253 @@ export const ITEMS: Record<string, ItemDefinition> = {
   },
 
   // === ARMORS & GARMENTS (4-SLOT SYSTEM: HEAD, BODY, LEGS, FEET) ===
+  // --- VESTIMENTAS E ROUPAS DE CUSTOMIZAÇÃO (MESA DE TECELAGEM · -1% DANO) ---
+  fiber_hat: {
+    id: 'fiber_hat',
+    name: 'Chapéu de Fibras',
+    description:
+      'Chapéu trançado artesanalmente com fibras vegetais secas ao sol. Leve e arejado para caminhadas no campo e no deserto. Não pode ser tingido.',
+    purposeSummary:
+      'Slot: Cabeça · Roupa de customização (-1% Dano sofrido · Cor natural fixa).',
+    category: ItemCategory.ARMOR,
+    rarity: RarityTier.BASIC,
+    maxStack: 1,
+    equipSlot: 'head',
+    defenseBonus: 0.01,
+    isClothing: true,
+    clothingCategory: 'head',
+    garmentBaseId: 'fiber_hat',
+    canBeDyed: false,
+  },
+  leather_hat: {
+    id: 'leather_hat',
+    name: 'Chapéu de Couro',
+    description:
+      'Chapéu de aba larga costurado com couro legítimo e fibras firmes. Elegante e personalizável na Mesa de Tecelagem.',
+    purposeSummary:
+      'Slot: Cabeça · Roupa de couro tingível (-1% Dano sofrido · Padrão: Marrom).',
+    category: ItemCategory.ARMOR,
+    rarity: RarityTier.BASIC,
+    maxStack: 1,
+    equipSlot: 'head',
+    defenseBonus: 0.01,
+    isClothing: true,
+    clothingCategory: 'head',
+    garmentBaseId: 'leather_hat',
+    garmentColorId: 'marrom',
+    garmentColorHex: '#8b5a2b',
+    canBeDyed: true,
+  },
+  solar_necklace: {
+    id: 'solar_necklace',
+    name: 'Colar Solar',
+    description:
+      'Adorno místico entrelaçado com fibras e Cristais Solares lapidados que repousa sobre o colarinho. Não pode ser tingido.',
+    purposeSummary:
+      'Slot: Cabeça · Adorno solar de customização (-1% Dano sofrido · Cor natural fixa).',
+    category: ItemCategory.ARMOR,
+    rarity: RarityTier.RARE,
+    maxStack: 1,
+    equipSlot: 'head',
+    defenseBonus: 0.01,
+    isClothing: true,
+    clothingCategory: 'head',
+    garmentBaseId: 'solar_necklace',
+    canBeDyed: false,
+  },
+  white_tank_top: {
+    id: 'white_tank_top',
+    name: 'Regata',
+    description:
+      'Camisa regata leve sem mangas tecida na Mesa de Tecelagem. Veste inicial confortável que pode ser tingida em 17 cores.',
+    purposeSummary:
+      'Slot: Superior · Roupa de costura tingível (-1% Dano sofrido · Padrão: Branco).',
+    category: ItemCategory.ARMOR,
+    rarity: RarityTier.BASIC,
+    maxStack: 1,
+    equipSlot: 'body',
+    defenseBonus: 0.01,
+    isClothing: true,
+    clothingCategory: 'body',
+    garmentBaseId: 'white_tank_top',
+    garmentColorId: 'branco',
+    garmentColorHex: '#f1f5f9',
+    canBeDyed: true,
+  },
+  sweater: {
+    id: 'sweater',
+    name: 'Suéter',
+    description:
+      'Suéter de malha macia com mangas compridas que cobrem todo o braço. Confeccionado e tingível na Mesa de Tecelagem.',
+    purposeSummary:
+      'Slot: Superior · Cobre todo o braço · Tingível (-1% Dano sofrido · Padrão: Branco).',
+    category: ItemCategory.ARMOR,
+    rarity: RarityTier.BASIC,
+    maxStack: 1,
+    equipSlot: 'body',
+    defenseBonus: 0.01,
+    isClothing: true,
+    clothingCategory: 'body',
+    garmentBaseId: 'sweater',
+    garmentColorId: 'branco',
+    garmentColorHex: '#f1f5f9',
+    canBeDyed: true,
+  },
+  short_dress: {
+    id: 'short_dress',
+    name: 'Vestido Curto',
+    description:
+      'Vestido leve sem mangas que se estende até a parte inferior. Não pode ser equipado junto com Macacão, e armaduras sempre sobrepõem seu visual.',
+    purposeSummary:
+      'Slot: Superior (Estende ao Inferior) · Sem mangas · Tingível (-1% Dano sofrido · Padrão: Branco).',
+    category: ItemCategory.ARMOR,
+    rarity: RarityTier.BASIC,
+    maxStack: 1,
+    equipSlot: 'body',
+    defenseBonus: 0.01,
+    isClothing: true,
+    clothingCategory: 'body',
+    garmentBaseId: 'short_dress',
+    garmentColorId: 'branco',
+    garmentColorHex: '#f1f5f9',
+    canBeDyed: true,
+    extendsToLegs: true,
+  },
+  long_dress: {
+    id: 'long_dress',
+    name: 'Vestido Longo',
+    description:
+      'Vestido elegante sem mangas com saia fluida que se estende até os tornozelos. Não pode ser equipado junto com Macacão, e armaduras sempre sobrepõem seu visual.',
+    purposeSummary:
+      'Slot: Superior (Estende ao Inferior) · Sem mangas · Tingível (-1% Dano sofrido · Padrão: Branco).',
+    category: ItemCategory.ARMOR,
+    rarity: RarityTier.BASIC,
+    maxStack: 1,
+    equipSlot: 'body',
+    defenseBonus: 0.01,
+    isClothing: true,
+    clothingCategory: 'body',
+    garmentBaseId: 'long_dress',
+    garmentColorId: 'branco',
+    garmentColorHex: '#f1f5f9',
+    canBeDyed: true,
+    extendsToLegs: true,
+  },
+  shorts: {
+    id: 'shorts',
+    name: 'Bermuda',
+    description:
+      'Bermuda confortável na altura dos joelhos confeccionada na Mesa de Tecelagem. Pode ser tingida em 17 cores.',
+    purposeSummary:
+      'Slot: Inferior · Roupa de costura tingível (-1% Dano sofrido · Padrão: Branco).',
+    category: ItemCategory.ARMOR,
+    rarity: RarityTier.BASIC,
+    maxStack: 1,
+    equipSlot: 'legs',
+    defenseBonus: 0.01,
+    isClothing: true,
+    clothingCategory: 'legs',
+    garmentBaseId: 'shorts',
+    garmentColorId: 'branco',
+    garmentColorHex: '#f1f5f9',
+    canBeDyed: true,
+  },
+  brown_shorts: {
+    id: 'brown_shorts',
+    name: 'Bermuda (Marrom)',
+    description:
+      'Bermuda de linho rústico marrom na altura dos joelhos. Veste inicial leve que também pode ser tingida na Mesa de Tecelagem.',
+    purposeSummary:
+      'Slot: Inferior · Roupa de costura tingível (-1% Dano sofrido · Cor: Marrom).',
+    category: ItemCategory.ARMOR,
+    rarity: RarityTier.BASIC,
+    maxStack: 1,
+    equipSlot: 'legs',
+    defenseBonus: 0.01,
+    isClothing: true,
+    clothingCategory: 'legs',
+    garmentBaseId: 'shorts',
+    garmentColorId: 'marrom',
+    garmentColorHex: '#8b5a2b',
+    canBeDyed: true,
+  },
+  pants: {
+    id: 'pants',
+    name: 'Calça',
+    description:
+      'Calça comprida de alfaiataria rústica que cobre toda a perna. Confeccionada e tingível na Mesa de Tecelagem.',
+    purposeSummary:
+      'Slot: Inferior · Roupa de costura tingível (-1% Dano sofrido · Padrão: Branco).',
+    category: ItemCategory.ARMOR,
+    rarity: RarityTier.BASIC,
+    maxStack: 1,
+    equipSlot: 'legs',
+    defenseBonus: 0.01,
+    isClothing: true,
+    clothingCategory: 'legs',
+    garmentBaseId: 'pants',
+    garmentColorId: 'branco',
+    garmentColorHex: '#f1f5f9',
+    canBeDyed: true,
+  },
+  overalls: {
+    id: 'overalls',
+    name: 'Macacão',
+    description:
+      'Macacão completo com suspensórios e peitilho que sobe até a parte superior, sobrepondo camisas/suéteres (mas nunca sobrepõe armaduras nem pode ser usado com vestidos).',
+    purposeSummary:
+      'Slot: Inferior (Estende ao Superior) · Tingível (-1% Dano sofrido · Padrão: Bege).',
+    category: ItemCategory.ARMOR,
+    rarity: RarityTier.BASIC,
+    maxStack: 1,
+    equipSlot: 'legs',
+    defenseBonus: 0.01,
+    isClothing: true,
+    clothingCategory: 'legs',
+    garmentBaseId: 'overalls',
+    garmentColorId: 'bege',
+    garmentColorHex: '#d6b88a',
+    canBeDyed: true,
+    extendsToBody: true,
+  },
+  sandals: {
+    id: 'sandals',
+    name: 'Sandália',
+    description:
+      'Sandália leve de tiras de couro curtido com solado confortável. Pode ser tingida na Mesa de Tecelagem.',
+    purposeSummary:
+      'Slot: Pés · Calçado de couro tingível (-1% Dano sofrido · Padrão: Marrom).',
+    category: ItemCategory.ARMOR,
+    rarity: RarityTier.BASIC,
+    maxStack: 1,
+    equipSlot: 'feet',
+    defenseBonus: 0.01,
+    isClothing: true,
+    clothingCategory: 'feet',
+    garmentBaseId: 'sandals',
+    garmentColorId: 'marrom',
+    garmentColorHex: '#8b5a2b',
+    canBeDyed: true,
+  },
+  cowboy_boots: {
+    id: 'cowboy_boots',
+    name: 'Bota de Vaqueiro',
+    description:
+      'Bota de cano médio em couro pespontado com salto firme de cavaleiro. Pode ser tingida na Mesa de Tecelagem.',
+    purposeSummary:
+      'Slot: Pés · Calçado de couro tingível (-1% Dano sofrido · Padrão: Marrom).',
+    category: ItemCategory.ARMOR,
+    rarity: RarityTier.BASIC,
+    maxStack: 1,
+    equipSlot: 'feet',
+    defenseBonus: 0.01,
+    isClothing: true,
+    clothingCategory: 'feet',
+    garmentBaseId: 'cowboy_boots',
+    garmentColorId: 'marrom',
+    garmentColorHex: '#8b5a2b',
+    canBeDyed: true,
+  },
   // --- CONJUNTO Nv.1: LÃ, COURO & FIBRA (BANCADA) ---
   leather_hood: {
     id: 'leather_hood',
@@ -1205,9 +1521,9 @@ export const ITEMS: Record<string, ItemDefinition> = {
     id: 'campfire',
     name: 'Fogueira de Acampamento',
     description:
-      'Estação culinária e de descanso. Interaja para abrir a Grelha da Fogueira: adicione lenha (Madeira ou Carvão Vegetal) para assar alimentos, pães, ensopados, rações, elixires e Carvão Vegetal com tempo de preparo, além de aquecer-se e salvar seu Ponto de Renascimento.',
+      'Estação culinária de acampamento (Luz 200px · 100%). Interaja para abrir a Grelha da Fogueira: adicione lenha (Madeira ou Carvão Vegetal) para assar alimentos, pães, ensopados, rações, elixires e Carvão Vegetal com tempo de preparo.',
     purposeSummary:
-      'Estação Culinária & Descanso (Sem Hitbox · Luz 190px): Prepara comidas/ingredientes no fogo com Slot de Lenha e salva seu Ponto de Renascimento.',
+      'Estação Culinária (Sem Hitbox · Luz 200px 100%): Prepara comidas e ingredientes no fogo com Slot de Lenha.',
     category: ItemCategory.PLACEABLE,
     rarity: RarityTier.BASIC,
     maxStack: 20,
@@ -1217,9 +1533,9 @@ export const ITEMS: Record<string, ItemDefinition> = {
     id: 'furnace',
     name: 'Fornalha de Fundição',
     description:
-      'Alto-forno metalúrgico de pedra e sílex. Interaja para abastecer o Slot de Lenha (Madeira ou Carvão Vegetal de alta eficiência) e fundir Minério de Ferro, queimar madeira em Carvão Vegetal e forjar tijolos e equipamentos pesados com tempo de preparo.',
+      'Alto-forno metalúrgico de pedra e sílex (emite Luz 80px · 50% apenas quando em uso). Interaja para abastecer o Slot de Lenha e fundir Minério de Ferro, queimar madeira em Carvão Vegetal e forjar tijolos e equipamentos pesados.',
     purposeSummary:
-      'Estação de Fundição Nv.2 (Hitbox Compacta 10px · Luz 150px): Funde Minério de Ferro, produz Carvão Vegetal e forja metais usando lenha.',
+      'Estação de Fundição Nv.2 (Hitbox Compacta 10px · Luz 80px 50% em uso): Funde Minério de Ferro, produz Carvão Vegetal e forja metais.',
     category: ItemCategory.PLACEABLE,
     rarity: RarityTier.RARE,
     maxStack: 10,
@@ -1229,9 +1545,9 @@ export const ITEMS: Record<string, ItemDefinition> = {
     id: 'solar_altar',
     name: 'Altar Alquímico Solar',
     description:
-      'Santuário astral com pedestal rúnico que se integra a pisos imperiais e tapetes. Interaja para forjar relíquias muito raras, armas astrais e Ambrosia Primordial.',
+      'Santuário astral com pedestal rúnico que se integra a pisos imperiais e tapetes (Luz 180px · 100%). Interaja para forjar relíquias muito raras, armas astrais e Ambrosia Primordial.',
     purposeSummary:
-      'Estação Nv.3 Máxima (Hitbox Compacta 10px · Luz 210px): Cria equipamentos supremos, Fonte Abissal e Totem Guardião.',
+      'Estação Nv.3 Máxima (Hitbox Compacta 10px · Luz 180px 100%): Cria equipamentos supremos, Fonte Abissal e Totem Guardião.',
     category: ItemCategory.PLACEABLE,
     rarity: RarityTier.VERY_RARE,
     maxStack: 5,
@@ -1241,9 +1557,9 @@ export const ITEMS: Record<string, ItemDefinition> = {
     id: 'explorer_tent',
     name: 'Tenda Real de Lã & Couro',
     description:
-      'Pavilhão acolchoado rotacionável (H/V) que pode ser evoluído diretamente para Cabana Medieval. Interaja à noite para DORMIR até o amanhecer (06:00) com 100% de Vida!',
+      'Pavilhão acolchoado rotacionável (H/V). Só é permitido dormir à noite: ao concluir o sono (5s), recupera 100% de Energia (Stamina), salva o Ponto de Renascimento e avança o tempo para 6h30!',
     purposeSummary:
-      'Abrigo Interativo (Hitbox Compacta 11px · Luz 165px): Dormir avança a noite para 06:00 e restaura 100% de Vida e Energia.',
+      'Ponto de Descanso Noturno (Hitbox Compacta 11px): Dormir à noite recupera 100% Energia, salva renascimento e avança para 6h30.',
     category: ItemCategory.PLACEABLE,
     rarity: RarityTier.RARE,
     maxStack: 10,
@@ -1263,7 +1579,7 @@ export const ITEMS: Record<string, ItemDefinition> = {
   },
   wood_wall: {
     id: 'wood_wall',
-    name: 'Muro de Madeira',
+    name: 'Parede de Madeira',
     description:
       'Parede estrutural de toras com ligações automáticas em 16 estados (cantos, junções em T, cruzamentos e pilares). Conecta-se perfeitamente a portas, janelas e cercas.',
     purposeSummary:
@@ -1275,11 +1591,11 @@ export const ITEMS: Record<string, ItemDefinition> = {
   },
   stone_wall: {
     id: 'stone_wall',
-    name: 'Muralha de Pedra & Ferro',
+    name: 'Parede de Pedra',
     description:
-      'Muralha fortificada com adaptação de continuidade em 16 estados e pilares de canto. Pode substituir Muros de Madeira diretamente no lugar!',
+      'Parede fortificada de pedra e ferro com adaptação de continuidade em 16 estados e pilares de canto. Pode substituir Paredes de Madeira diretamente no lugar!',
     purposeSummary:
-      'Muralha Contínua (260 HP · Hitbox Sólida): Conecta-se automaticamente a muralhas, vitrais e portões.',
+      'Parede Contínua (260 HP · Hitbox Sólida): Conecta-se automaticamente a paredes, janelas e portões.',
     category: ItemCategory.PLACEABLE,
     rarity: RarityTier.RARE,
     maxStack: 99,
@@ -1349,9 +1665,9 @@ export const ITEMS: Record<string, ItemDefinition> = {
     id: 'healing_fountain',
     name: 'Fonte Abissal de Cura',
     description:
-      'Santuário cristalino monumental com pedestal octogonal. Ilumina a fortaleza (230px) e regenera continuamente a vida do herói (+5 HP/s) e de todos os pets próximos!',
+      'Santuário cristalino monumental com pedestal octogonal (Luz 140px · 50%). Ao usar (1 vez por dia), recupera 100% de HP, 100% de Energia e 100% de Fome do jogador, além de recuperar 100% de HP de animais domesticados. Se quebrada, é destruída e não pode ser coletada.',
     purposeSummary:
-      'Santuário de Cura (Hitbox Compacta 10px · Luz 230px): Regenera +5 HP/s passivamente e cura 100% ao interagir.',
+      'Santuário de Cura (Luz 140px 50% · 1 uso/dia): Recupera 100% HP, Energia e Fome do herói + 100% HP dos pets. Destruída se quebrada.',
     category: ItemCategory.PLACEABLE,
     rarity: RarityTier.VERY_RARE,
     maxStack: 10,
@@ -1361,9 +1677,9 @@ export const ITEMS: Record<string, ItemDefinition> = {
     id: 'guardian_totem',
     name: 'Totem do Guardião Solar',
     description:
-      'Torreta obelisco muito rara que se integra a muralhas e pátios: ilumina 290px, aquece aliados e dispara Raios Solares automáticos (25 Dano) contra invasores!',
+      'Torreta obelisco muito rara que se integra a muralhas e pátios: ilumina 300px (80% de força) e dispara Raios Solares automáticos (25 Dano) contra invasores!',
     purposeSummary:
-      'Torreta Mágica Solar (Hitbox Compacta 9px · Luz 290px): Dispara raios de 25 de dano contra monstros próximos.',
+      'Torreta Mágica Solar (Hitbox Compacta 9px · Luz 300px 80%): Dispara raios de 25 de dano contra monstros próximos.',
     category: ItemCategory.PLACEABLE,
     rarity: RarityTier.VERY_RARE,
     maxStack: 10,
@@ -1460,9 +1776,9 @@ export const ITEMS: Record<string, ItemDefinition> = {
     id: 'village_well',
     name: 'Poço de Pedra da Vila',
     description:
-      'Fonte arquitetônica de alvenaria e madeira com água cristalina subterrânea. Interaja para beber água fresca e restaurar +20 Vida, +20 Fome e +55 Energia!',
+      'Fonte arquitetônica de alvenaria e madeira com água cristalina subterrânea. Interaja (1 vez por dia) para beber água fresca e restaurar +20 Vida, +20 Fome e +55 Energia! Se quebrado, é destruído e não pode ser coletado.',
     purposeSummary:
-      'Estrutura Interativa (Hitbox Compacta 10px): Restaura +20 HP, +20 Fome e +55 Energia ao interagir.',
+      'Estrutura Interativa (Hitbox Compacta 10px · 1 uso/dia): Restaura +20 HP, +20 Fome e +55 Energia ao beber. Destruído se quebrado.',
     category: ItemCategory.PLACEABLE,
     rarity: RarityTier.RARE,
     maxStack: 10,
@@ -1482,11 +1798,11 @@ export const ITEMS: Record<string, ItemDefinition> = {
   },
   village_house: {
     id: 'village_house',
-    name: 'Cabana Medieval (Casa)',
+    name: 'Casinha de Fada',
     description:
-      'Residência enxaimel rotacionável (H/V) de madeira e pedra com lareira acesa (175px). Serve de moradia para até 2 Aldeões — Andarilhos que passarem perto deixam de vagar e se mudam para cá como Aldeões!',
+      'Pequena casinha encantada decorativa com iluminação mágica intensa (alcance: 175px · força da luz: 100%). Puramente ornamental, não possui função ou efeito interativo.',
     purposeSummary:
-      'Moradia de até 2 Aldeões (240 HP · Luz 175px): Atrai Andarilhos sem teto para virarem Aldeões na sua base e permite dormir até o amanhecer.',
+      'Decoração Luminosa (240 HP · Luz 175px 100%): Ilumina os arredores com brilho feérico ornamental.',
     category: ItemCategory.PLACEABLE,
     rarity: RarityTier.RARE,
     maxStack: 10,
@@ -1496,9 +1812,9 @@ export const ITEMS: Record<string, ItemDefinition> = {
     id: 'royal_banner',
     name: 'Estandarte da Fronteira',
     description:
-      'Flâmula heráldica bordada com Seda Sombria e Ouro. Fixa-se automaticamente em muros/portões adjacentes e ilumina os arredores (160px) sem bloquear passagem!',
+      'Flâmula heráldica bordada com Seda Sombria e Ouro. Fixa-se automaticamente em muros/portões adjacentes sem bloquear passagem!',
     purposeSummary:
-      'Insígnia Adaptativa (Sem Hitbox · Luz 160px): Conecta-se a paredes/portões e ilumina salões sem obstruir.',
+      'Insígnia Adaptativa (Sem Hitbox): Conecta-se a paredes/portões e decora salões sem obstruir.',
     category: ItemCategory.PLACEABLE,
     rarity: RarityTier.RARE,
     maxStack: 20,
@@ -1544,11 +1860,11 @@ export const ITEMS: Record<string, ItemDefinition> = {
   },
   wood_window: {
     id: 'wood_window',
-    name: 'Parede com Janela Enxaimel',
+    name: 'Parede de Madeira com Janela',
     description:
-      'Parede de madeira nobre com janela emoldurada que se conecta continuamente aos muros adjacentes e irradia luz suave (95px).',
+      'Parede de madeira com janela de vidro translúcido (33% de transparência) que se conecta continuamente às paredes adjacentes.',
     purposeSummary:
-      'Parede com Janela (145 HP · Hitbox Sólida): Liga-se a muros e portas enquanto ilumina o ambiente.',
+      'Parede com Janela (145 HP · Hitbox Sólida): Liga-se a paredes e portas com vidro translúcido.',
     category: ItemCategory.PLACEABLE,
     rarity: RarityTier.BASIC,
     maxStack: 60,
@@ -1556,11 +1872,11 @@ export const ITEMS: Record<string, ItemDefinition> = {
   },
   stone_window: {
     id: 'stone_window',
-    name: 'Muralha com Vitral Gótico',
+    name: 'Parede de Pedra com Janela',
     description:
-      'Muralha de pedra com vitral arqueado de Cristal Solar. Conecta-se continuamente a muralhas e portões de ferro, iluminando 120px.',
+      'Parede de pedra fortificada com janela de vidro translúcido (33% de transparência). Conecta-se continuamente a paredes e portões.',
     purposeSummary:
-      'Muralha com Vitral (260 HP · Hitbox Sólida): Alta proteção com iluminação arquitetônica e conexão 4-lados.',
+      'Parede com Janela (260 HP · Hitbox Sólida): Alta proteção com janela translúcida e conexão 4-lados.',
     category: ItemCategory.PLACEABLE,
     rarity: RarityTier.RARE,
     maxStack: 60,
@@ -1580,11 +1896,11 @@ export const ITEMS: Record<string, ItemDefinition> = {
   },
   brick_wall: {
     id: 'brick_wall',
-    name: 'Muralha de Alvenaria Imperial',
+    name: 'Parede de Tijolo',
     description:
-      'Muralha soberana de tijolos maciços, pedra e ferro forjado com ameias e pilares de canto automáticos (320 HP).',
+      'Parede soberana de tijolos maciços, pedra e ferro forjado com ameias e pilares de canto automáticos (320 HP).',
     purposeSummary:
-      'Muralha Suprema (320 HP · Hitbox Sólida): Máxima resistência estrutural com continuidade de 16 estados.',
+      'Parede Suprema (320 HP · Hitbox Sólida): Máxima resistência estrutural com continuidade de 16 estados.',
     category: ItemCategory.PLACEABLE,
     rarity: RarityTier.RARE,
     maxStack: 99,
@@ -1606,9 +1922,9 @@ export const ITEMS: Record<string, ItemDefinition> = {
     id: 'iron_lantern',
     name: 'Lampião de Ferro Forjado',
     description:
-      'Luminária suspensa de ferro e cristal solar que ilumina uma ampla área (215px) sem possuir hitbox física, permitindo caminhar livremente!',
+      'Luminária suspensa de ferro e cristal solar que ilumina uma ampla área (200px · 100% de força) sem possuir hitbox física, permitindo caminhar livremente!',
     purposeSummary:
-      'Luminária Real (Sem Hitbox · Luz 215px): Iluminação intensa para ruas, pontes e salões sem obstruir.',
+      'Luminária Real (Sem Hitbox · Luz 200px 100%): Iluminação intensa para ruas, pontes e salões sem obstruir.',
     category: ItemCategory.PLACEABLE,
     rarity: RarityTier.RARE,
     maxStack: 50,
@@ -1700,15 +2016,84 @@ export const ITEMS: Record<string, ItemDefinition> = {
     id: 'bed',
     name: 'Cama de Madeira',
     description:
-      'Cama aconchegante de carvalho com travesseiro de lã e coberta macia. Funciona como Ponto de Descanso: permite dormir à noite (+100% HP & Energia) e define o Dono de uma Estrutura fechada com telhado!',
+      'Cama aconchegante de carvalho com travesseiro de lã e coberta macia. Só é permitido dormir à noite: ao concluir o sono (5s), recupera 100% da Energia, salva o Ponto de Renascimento e avança o tempo para 6h30, além de definir o Dono de uma Estrutura fechada com telhado!',
     purposeSummary:
-      'Ponto de Descanso & Dono de Estrutura (Rotacionável H/V · 110 HP): Dormir à noite ou definir posse de casa fechada com telhado.',
+      'Ponto de Descanso & Dono de Estrutura (Rotacionável H/V · 110 HP): Dormir à noite recupera 100% de Energia, salva renascimento e avança para 6h30.',
     category: ItemCategory.PLACEABLE,
     rarity: RarityTier.BASIC,
     maxStack: 10,
     placeableType: PlaceableType.BED,
   },
+  weaving_table: {
+    id: 'weaving_table',
+    name: 'Mesa de Tecelagem',
+    description:
+      'Estação de alfaiataria, costura e tinturaria construída com 6 Barras de Ferro, 4 Madeiras e 10 Lãs. Possui a janela de Confecção (Cabeça, Superior, Inferior e Pés) e a janela de Tingimento em 17 cores.',
+    purposeSummary:
+      'Estação de Roupas (Hitbox Compacta 10px · Interativa): Confecciona vestimentas e tinge peças de costura e couro.',
+    category: ItemCategory.PLACEABLE,
+    rarity: RarityTier.RARE,
+    maxStack: 10,
+    placeableType: PlaceableType.WEAVING_TABLE,
+  },
 };
+
+export const DYEABLE_GARMENT_BASE_IDS = [
+  'leather_hat',
+  'white_tank_top',
+  'sweater',
+  'short_dress',
+  'long_dress',
+  'shorts',
+  'pants',
+  'overalls',
+  'sandals',
+  'cowboy_boots',
+] as const;
+
+export function getDyedGarmentItemId(
+  itemOrBaseId: string,
+  colorId: ClothingColorId
+): string {
+  const existing = ITEMS[itemOrBaseId];
+  const baseId = existing?.garmentBaseId || itemOrBaseId;
+  const baseDef = ITEMS[baseId];
+  if (!baseDef || !baseDef.canBeDyed) return itemOrBaseId;
+  if (baseId === 'shorts' && colorId === 'marrom') {
+    return 'brown_shorts';
+  }
+  if (baseDef.garmentColorId === colorId) {
+    return baseId;
+  }
+  return `${baseId}__${colorId}`;
+}
+
+// Auto-generate all 17 color variants for dyeable garments in ITEMS
+for (const baseId of DYEABLE_GARMENT_BASE_IDS) {
+  const baseDef = ITEMS[baseId];
+  if (!baseDef) continue;
+  const baseDisplayName = baseDef.name.replace(/\s*\([^)]+\)\s*$/, '');
+  for (const colorDef of CLOTHING_COLORS) {
+    const variantId = getDyedGarmentItemId(baseId, colorDef.id);
+    if (ITEMS[variantId]) {
+      // Ensure default/canonical entry also has color label clarity when needed
+      ITEMS[variantId].garmentBaseId = baseId;
+      ITEMS[variantId].garmentColorId = colorDef.id;
+      ITEMS[variantId].garmentColorHex = colorDef.hex;
+      continue;
+    }
+    ITEMS[variantId] = {
+      ...baseDef,
+      id: variantId,
+      name: `${baseDisplayName} (${colorDef.label})`,
+      garmentBaseId: baseId,
+      garmentColorId: colorDef.id,
+      garmentColorHex: colorDef.hex,
+      canBeDyed: true,
+      isClothing: true,
+    };
+  }
+}
 
 export const CONSTRUCTION_BLUEPRINTS: Record<PlaceableType, ConstructionBlueprint> = {
   // === LAYER 1: GROUND (CHÃO, PISOS, TAPETES E PONTES — SEM HITBOX) ===
@@ -1861,7 +2246,7 @@ export const CONSTRUCTION_BLUEPRINTS: Record<PlaceableType, ConstructionBlueprin
     connectionGroup: 'wall',
     connectsToGroups: ['wall', 'fence'],
     maxHp: 145,
-    lightRadius: 95,
+    lightRadius: 0,
   },
   [PlaceableType.STONE_WINDOW]: {
     type: PlaceableType.STONE_WINDOW,
@@ -1871,13 +2256,13 @@ export const CONSTRUCTION_BLUEPRINTS: Record<PlaceableType, ConstructionBlueprin
     layerLabel: 'Camada de Parede (Sobre Chão/Terra)',
     hasHitbox: true,
     hitboxBehavior: 'SOLID_FULL',
-    hitboxLabel: 'Hitbox Sólida (Luz Solar 120px)',
+    hitboxLabel: 'Hitbox Sólida (Vitral Gótico)',
     continuityMode: 'WALL_16',
     continuityLabel: 'Continuidade 16-Estados Integrada a Muralhas',
     connectionGroup: 'wall',
     connectsToGroups: ['wall', 'fence'],
     maxHp: 260,
-    lightRadius: 120,
+    lightRadius: 0,
   },
   [PlaceableType.WOOD_DOOR]: {
     type: PlaceableType.WOOD_DOOR,
@@ -1962,12 +2347,12 @@ export const CONSTRUCTION_BLUEPRINTS: Record<PlaceableType, ConstructionBlueprin
     connectionGroup: 'none',
     connectsToGroups: ['wall', 'fence'],
     maxHp: 110,
-    lightRadius: 215,
+    lightRadius: 200,
   },
   [PlaceableType.ROYAL_BANNER]: {
     type: PlaceableType.ROYAL_BANNER,
-    role: 'ILUMINACAO',
-    roleLabel: 'Insígnia & Luz',
+    role: 'MOBILIA',
+    roleLabel: 'Insígnia Real',
     layer: 'FURNITURE',
     layerLabel: 'Camada de Decoração (Fixa em Muralhas/Piso)',
     hasHitbox: false,
@@ -1978,12 +2363,12 @@ export const CONSTRUCTION_BLUEPRINTS: Record<PlaceableType, ConstructionBlueprin
     connectionGroup: 'none',
     connectsToGroups: ['wall', 'fence'],
     maxHp: 110,
-    lightRadius: 160,
+    lightRadius: 0,
   },
   [PlaceableType.CAMPFIRE]: {
     type: PlaceableType.CAMPFIRE,
     role: 'ILUMINACAO',
-    roleLabel: 'Lareira & Descanso',
+    roleLabel: 'Culinária & Iluminação',
     layer: 'FURNITURE',
     layerLabel: 'Camada de Acampamento (Sobre Chão/Terra)',
     hasHitbox: false,
@@ -1994,7 +2379,7 @@ export const CONSTRUCTION_BLUEPRINTS: Record<PlaceableType, ConstructionBlueprin
     connectionGroup: 'none',
     connectsToGroups: [],
     maxHp: 100,
-    lightRadius: 190,
+    lightRadius: 200,
     isInteractive: true,
   },
   [PlaceableType.SPIKE_TRAP]: {
@@ -2046,7 +2431,7 @@ export const CONSTRUCTION_BLUEPRINTS: Record<PlaceableType, ConstructionBlueprin
     connectionGroup: 'none',
     connectsToGroups: ['wall'],
     maxHp: 160,
-    lightRadius: 150,
+    lightRadius: 80,
     isInteractive: true,
   },
   [PlaceableType.SOLAR_ALTAR]: {
@@ -2064,7 +2449,7 @@ export const CONSTRUCTION_BLUEPRINTS: Record<PlaceableType, ConstructionBlueprin
     connectionGroup: 'none',
     connectsToGroups: ['carpet', 'brick_floor'],
     maxHp: 180,
-    lightRadius: 210,
+    lightRadius: 180,
     isInteractive: true,
   },
   [PlaceableType.CHEST]: {
@@ -2090,7 +2475,7 @@ export const CONSTRUCTION_BLUEPRINTS: Record<PlaceableType, ConstructionBlueprin
     role: 'MOBILIA',
     roleLabel: 'Abrigo de Descanso',
     layer: 'FURNITURE',
-    layerLabel: 'Camada de Abrigo (Evolui p/ Cabana Medieval)',
+    layerLabel: 'Camada de Abrigo (Ponto de Descanso Noturno)',
     hasHitbox: true,
     hitboxBehavior: 'SOLID_COMPACT',
     hitboxLabel: 'Hitbox Compacta (11px)',
@@ -2100,13 +2485,13 @@ export const CONSTRUCTION_BLUEPRINTS: Record<PlaceableType, ConstructionBlueprin
     connectionGroup: 'none',
     connectsToGroups: ['wood_floor', 'stone_floor'],
     maxHp: 140,
-    lightRadius: 165,
+    lightRadius: 0,
     isInteractive: true,
   },
   [PlaceableType.HEALING_FOUNTAIN]: {
     type: PlaceableType.HEALING_FOUNTAIN,
     role: 'DEFESA',
-    roleLabel: 'Santuário de Cura',
+    roleLabel: 'Santuário de Cura (1x/Dia)',
     layer: 'FURNITURE',
     layerLabel: 'Camada Monumental (Sobre Chão/Terra)',
     hasHitbox: true,
@@ -2118,7 +2503,7 @@ export const CONSTRUCTION_BLUEPRINTS: Record<PlaceableType, ConstructionBlueprin
     connectionGroup: 'none',
     connectsToGroups: ['stone_floor', 'brick_floor'],
     maxHp: 200,
-    lightRadius: 230,
+    lightRadius: 140,
     isInteractive: true,
   },
   [PlaceableType.GUARDIAN_TOTEM]: {
@@ -2136,7 +2521,7 @@ export const CONSTRUCTION_BLUEPRINTS: Record<PlaceableType, ConstructionBlueprin
     connectionGroup: 'none',
     connectsToGroups: ['wall', 'fence'],
     maxHp: 220,
-    lightRadius: 290,
+    lightRadius: 300,
   },
   [PlaceableType.VILLAGE_WELL]: {
     type: PlaceableType.VILLAGE_WELL,
@@ -2176,21 +2561,21 @@ export const CONSTRUCTION_BLUEPRINTS: Record<PlaceableType, ConstructionBlueprin
   },
   [PlaceableType.VILLAGE_HOUSE]: {
     type: PlaceableType.VILLAGE_HOUSE,
-    role: 'MOBILIA',
-    roleLabel: 'Cabana Medieval',
+    role: 'ILUMINACAO',
+    roleLabel: 'Casinha de Fada (Decorativa)',
     layer: 'FURNITURE',
-    layerLabel: 'Camada de Edifício (Substitui Tenda no Lugar)',
+    layerLabel: 'Camada Decorativa (Luz 175px 100%)',
     hasHitbox: true,
     hitboxBehavior: 'SOLID_COMPACT',
     hitboxLabel: 'Hitbox Compacta (12px)',
     hitboxRadius: 12,
     continuityMode: 'STANDALONE',
-    continuityLabel: 'Fachada Enxaimel Rotacionável H/V',
+    continuityLabel: 'Casinha de Fada Rotacionável H/V',
     connectionGroup: 'none',
     connectsToGroups: ['wall', 'stone_floor', 'brick_floor'],
     maxHp: 240,
     lightRadius: 175,
-    isInteractive: true,
+    isInteractive: false,
   },
   [PlaceableType.TILLED_SOIL]: {
     type: PlaceableType.TILLED_SOIL,
@@ -2277,6 +2662,24 @@ export const CONSTRUCTION_BLUEPRINTS: Record<PlaceableType, ConstructionBlueprin
     lightRadius: 0,
     isInteractive: true,
   },
+  [PlaceableType.WEAVING_TABLE]: {
+    type: PlaceableType.WEAVING_TABLE,
+    role: 'ESTACAO',
+    roleLabel: 'Estação de Costura & Tingimento',
+    layer: 'FURNITURE',
+    layerLabel: 'Camada de Estação (Sobre Chão/Terra · Rotacionável)',
+    hasHitbox: true,
+    hitboxBehavior: 'SOLID_COMPACT',
+    hitboxLabel: 'Hitbox Compacta (10px · Contorno Fluido)',
+    hitboxRadius: 10,
+    continuityMode: 'STANDALONE',
+    continuityLabel: 'Mesa de Tecelagem & Tinturaria H/V',
+    connectionGroup: 'none',
+    connectsToGroups: ['wall', 'wood_floor', 'stone_floor', 'brick_floor', 'carpet'],
+    maxHp: 140,
+    lightRadius: 0,
+    isInteractive: true,
+  },
 };
 
 export function getConstructionBlueprint(
@@ -2331,6 +2734,21 @@ export const NATURE_BLUEPRINTS: Record<NatureNodeType, NatureNodeBlueprint> = {
     drops: [
       { itemId: 'berry', min: 2, max: 4, chance: 1.0 },
       { itemId: 'fiber', min: 2, max: 3, chance: 0.9 },
+    ],
+  },
+  [NatureNodeType.SAND_DUNE]: {
+    type: NatureNodeType.SAND_DUNE,
+    name: 'Duna de Areia',
+    rarity: RarityTier.BASIC,
+    maxHp: 25,
+    materialKind: 'FIBER_FOLIAGE',
+    requiredTool: ToolType.NONE,
+    requiredTier: 0,
+    xpReward: 6,
+    hasHitbox: false, // Sand dunes have no hitbox and blend subtly into sandy soil!
+    hitboxRadius: 0,
+    drops: [
+      { itemId: 'sand', min: 1, max: 2, chance: 1.0 },
     ],
   },
   [NatureNodeType.BOULDER]: {
@@ -2503,6 +2921,8 @@ export const ITEM_BASE_PRICES: Record<string, number> = {
   berry_seeds: 3,
   carrot_seeds: 3,
   bone_fertilizer: 3,
+  sand: 2,
+  glass: 5,
   charcoal: 4,
   flint: 4,
   cactus_fruit: 4,
@@ -2551,7 +2971,9 @@ export const ITEM_BASE_PRICES: Record<string, number> = {
   wood_sword: 20,
   flint_spear: 30,
 
-  // Armaduras Nv.1 (Conjunto de Lã, Couro & Fibra — Bancada)
+  // Vestimentas Iniciais & Armaduras Nv.1 (Conjunto de Lã, Couro & Fibra — Bancada)
+  white_tank_top: 6,
+  brown_shorts: 6,
   leather_hood: 25,
   leather_boots: 26,
   leather_pants: 28,
@@ -2641,6 +3063,9 @@ export function getItemBasePrice(itemId: string): number {
     return ITEM_BASE_PRICES[itemId];
   }
   const def = ITEMS[itemId];
+  if (def?.garmentBaseId && ITEM_BASE_PRICES[def.garmentBaseId] !== undefined) {
+    return ITEM_BASE_PRICES[def.garmentBaseId];
+  }
   if (!def) return 2;
   if (def.rarity === RarityTier.VERY_RARE) return 500;
   if (def.rarity === RarityTier.RARE) return 60;
@@ -2901,6 +3326,12 @@ export const STRUCTURE_MATERIAL_REQUIREMENTS: Record<
     requirementLabel: 'Mão Livre ou Machado',
   },
   [PlaceableType.BED]: {
+    materialKind: 'SOFT_WOOD',
+    requiredTool: ToolType.AXE,
+    requiredTier: 0,
+    requirementLabel: 'Mão Livre ou Machado (Ideal: Machado)',
+  },
+  [PlaceableType.WEAVING_TABLE]: {
     materialKind: 'SOFT_WOOD',
     requiredTool: ToolType.AXE,
     requiredTier: 0,

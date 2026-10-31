@@ -455,6 +455,44 @@ class SoundManager {
     }
   }
 
+  private listenerX = 0;
+  private listenerY = 0;
+  private hasListenerPos = false;
+
+  public setListenerPosition(x: number, y: number): void {
+    this.listenerX = x;
+    this.listenerY = y;
+    this.hasListenerPos = true;
+  }
+
+  /**
+   * Computes a smooth proximity volume factor [0..1] based on the distance from the local player listener
+   * to the world position `(worldX, worldY)` where the sound effect originated.
+   * Sounds within 56px play at 100% volume; sounds fade out smoothly with distance up to `maxDist` (default 540px),
+   * and beyond `maxDist` are completely silent (0).
+   */
+  public getDistanceGain(
+    worldX?: number,
+    worldY?: number,
+    maxDist = 540
+  ): number {
+    if (
+      !this.hasListenerPos ||
+      worldX === undefined ||
+      worldY === undefined ||
+      !Number.isFinite(worldX) ||
+      !Number.isFinite(worldY)
+    ) {
+      return 1.0;
+    }
+    const dist = Math.hypot(worldX - this.listenerX, worldY - this.listenerY);
+    if (dist >= maxDist) return 0;
+    const fullVolRadius = 56;
+    if (dist <= fullVolRadius) return 1.0;
+    const t = 1 - (dist - fullVolRadius) / Math.max(1, maxDist - fullVolRadius);
+    return Math.max(0, Math.min(1, t * t));
+  }
+
   private getContext(): AudioContext | null {
     return this.getAudioContext(false);
   }
@@ -464,8 +502,13 @@ class SoundManager {
     endFreq: number,
     duration: number,
     type: OscillatorType = 'square',
-    gainMult = 1
+    gainMult = 1,
+    worldX?: number,
+    worldY?: number
   ): void {
+    const distGain = this.getDistanceGain(worldX, worldY);
+    if (distGain <= 0.008) return;
+
     const ctx = this.getContext();
     if (!ctx) return;
 
@@ -477,7 +520,8 @@ class SoundManager {
       osc.frequency.setValueAtTime(freq, now);
       osc.frequency.exponentialRampToValueAtTime(Math.max(20, endFreq), now + duration);
 
-      const peak = Math.min(1, this.volume * gainMult);
+      const peak = Math.min(1, this.volume * gainMult * distGain);
+      if (peak <= 0.002) return;
       gain.gain.setValueAtTime(peak, now);
       gain.gain.exponentialRampToValueAtTime(0.001, now + duration);
 
@@ -491,47 +535,66 @@ class SoundManager {
     }
   }
 
-  public playSwing(): void {
-    this.playTone(260, 90, 0.11, 'triangle', 0.6);
+  public playSwing(worldX?: number, worldY?: number): void {
+    this.playTone(260, 90, 0.11, 'triangle', 0.6, worldX, worldY);
   }
 
-  public playHitWood(): void {
-    this.playTone(180, 75, 0.09, 'square', 0.7);
+  public playHitWood(worldX?: number, worldY?: number): void {
+    this.playTone(180, 75, 0.09, 'square', 0.7, worldX, worldY);
   }
 
-  public playHitStone(): void {
-    this.playTone(520, 210, 0.08, 'sawtooth', 0.6);
+  public playHitStone(worldX?: number, worldY?: number): void {
+    this.playTone(520, 210, 0.08, 'sawtooth', 0.6, worldX, worldY);
   }
 
-  public playHitEnemy(): void {
-    this.playTone(320, 110, 0.12, 'sawtooth', 0.75);
+  public playHitEnemy(worldX?: number, worldY?: number): void {
+    this.playTone(320, 110, 0.12, 'sawtooth', 0.75, worldX, worldY);
   }
 
-  public playPlayerHurt(): void {
-    this.playTone(150, 55, 0.2, 'sawtooth', 0.9);
+  public playPlayerHurt(worldX?: number, worldY?: number): void {
+    this.playTone(150, 55, 0.2, 'sawtooth', 0.9, worldX, worldY);
   }
 
-  public playPickup(): void {
-    this.playTone(440, 880, 0.09, 'sine', 0.5);
+  public playPickup(worldX?: number, worldY?: number): void {
+    this.playTone(440, 880, 0.09, 'sine', 0.5, worldX, worldY);
   }
 
-  public playCraft(): void {
-    this.playTone(330, 660, 0.15, 'triangle', 0.7);
-    setTimeout(() => this.playTone(550, 880, 0.16, 'triangle', 0.7), 90);
+  public playCraft(worldX?: number, worldY?: number): void {
+    const distGain = this.getDistanceGain(worldX, worldY);
+    if (distGain <= 0.008) return;
+    this.playTone(330, 660, 0.15, 'triangle', 0.7, worldX, worldY);
+    setTimeout(
+      () => this.playTone(550, 880, 0.16, 'triangle', 0.7, worldX, worldY),
+      90
+    );
   }
 
-  public playTameSuccess(): void {
-    this.playTone(440, 554, 0.12, 'sine', 0.7);
-    setTimeout(() => this.playTone(554, 659, 0.12, 'sine', 0.7), 110);
-    setTimeout(() => this.playTone(659, 880, 0.22, 'sine', 0.8), 220);
+  public playTameSuccess(worldX?: number, worldY?: number): void {
+    const distGain = this.getDistanceGain(worldX, worldY);
+    if (distGain <= 0.008) return;
+    this.playTone(440, 554, 0.12, 'sine', 0.7, worldX, worldY);
+    setTimeout(
+      () => this.playTone(554, 659, 0.12, 'sine', 0.7, worldX, worldY),
+      110
+    );
+    setTimeout(
+      () => this.playTone(659, 880, 0.22, 'sine', 0.8, worldX, worldY),
+      220
+    );
   }
 
-  public playLevelUp(): void {
+  public playLevelUp(worldX?: number, worldY?: number): void {
+    const distGain = this.getDistanceGain(worldX, worldY);
+    if (distGain <= 0.008) return;
     const notes = [440, 554, 659, 880];
     notes.forEach((n, idx) => {
-      setTimeout(() => this.playTone(n, n * 1.05, 0.16, 'triangle', 0.8), idx * 95);
+      setTimeout(
+        () => this.playTone(n, n * 1.05, 0.16, 'triangle', 0.8, worldX, worldY),
+        idx * 95
+      );
     });
   }
 }
 
 export const soundManager = new SoundManager();
+

@@ -1,22 +1,31 @@
 import {
   BiomeType,
+  ClothingColorId,
   CreatureKind,
   Direction,
+  EyeStyleId,
+  HairStyleId,
   NatureNodeType,
   PlaceableType,
   PlayerAppearance,
   PlayerEquipment,
   PlayerState,
+  SkinMarkId,
 } from '../core/types';
+import {
+  CLOTHING_COLOR_MAP,
+  ClothingColorDefinition,
+  ITEMS,
+} from '../core/ItemRegistry';
 
 export const DEFAULT_PLAYER_APPEARANCE: PlayerAppearance = {
   gender: 'masculino',
   skinColor: '#fdba74',
+  skinMark: 'none',
   hairColor: '#451a03',
   hairStyle: 'adventurer',
+  eyeStyle: 'classic',
   eyeColor: '#0f172a',
-  shirtColor: '#2563eb',
-  pantsColor: '#334155',
 };
 
 type PixelGrid = string[];
@@ -113,7 +122,20 @@ class SpriteAtlasManager {
 
   public getItemCanvas(itemId: string): HTMLCanvasElement {
     this.ensureInitialized();
-    return this.itemCanvases.get(itemId) || this.itemCanvases.get('wood')!;
+    const existing = this.itemCanvases.get(itemId);
+    if (existing) return existing;
+
+    const def = ITEMS[itemId];
+    if (def?.garmentBaseId) {
+      const colorId: ClothingColorId = def.garmentColorId || 'branco';
+      const colorDef =
+        CLOTHING_COLOR_MAP[colorId] || CLOTHING_COLOR_MAP.branco;
+      const c = this.createGarmentIconCanvas(def.garmentBaseId, colorDef);
+      this.itemCanvases.set(itemId, c);
+      return c;
+    }
+
+    return this.itemCanvases.get('wood')!;
   }
 
   public getItemIconUrl(itemId: string): string {
@@ -123,6 +145,251 @@ class SpriteAtlasManager {
       this.itemDataUrls.set(itemId, c.toDataURL());
     }
     return this.itemDataUrls.get(itemId)!;
+  }
+
+  private createGarmentIconCanvas(
+    baseId: string,
+    colorDef: ClothingColorDefinition
+  ): HTMLCanvasElement {
+    const c = createPixelCanvas(16, 16);
+    const ctx = c.getContext('2d')!;
+    const m = colorDef.hex;
+    const d = colorDef.darkHex;
+    const l = colorDef.lightHex;
+    const o = '#0f172a';
+
+    if (baseId === 'leather_hat') {
+      drawPixelMatrix(
+        ctx,
+        [
+          '................',
+          '.....oooooo.....',
+          '....odllllmo....',
+          '...odlmmmmmdo...',
+          '...odmmmmmmmo...',
+          '...odyyyyyydo...',
+          '.oooddddddddooo.',
+          'odllmmmmmmmmmdo.',
+          'odmmmmmmmmmmmddo',
+          '.oooooooooooooo.',
+          '................',
+          '................',
+          '................',
+          '................',
+          '................',
+          '................',
+        ],
+        { o, m, d, l, y: '#fbbf24' }
+      );
+    } else if (baseId === 'white_tank_top') {
+      drawPixelMatrix(
+        ctx,
+        [
+          '................',
+          '...ooo....ooo...',
+          '...olmo..omlo...',
+          '...olmmoommlo...',
+          '..oodlllllldoo..',
+          '..odlmmmmmmmdo..',
+          '..odlmmddmmmdo..',
+          '..odlmmddmmmdo..',
+          '..odlmmmmmmmdo..',
+          '..odmmmmmmmmdo..',
+          '..oddddddddddo..',
+          '...oooooooooo...',
+          '................',
+          '................',
+          '................',
+          '................',
+        ],
+        { o, m, d, l }
+      );
+    } else if (baseId === 'sweater') {
+      drawPixelMatrix(
+        ctx,
+        [
+          '................',
+          '....oooooooo....',
+          '..oooddddddooo..',
+          '.odllmmmmmmlldo.',
+          'odlmmmdllmmmlmdo',
+          'odmmmdmmmmmmmdmo',
+          'odmmmdmddmmmmdmo',
+          'odmmmdmddmmmmdmo',
+          'odddoommmmmmoodd',
+          '.ooo.oddddddo.oo',
+          '.....oooooooo...',
+          '................',
+          '................',
+          '................',
+          '................',
+          '................',
+        ],
+        { o, m, d, l }
+      );
+    } else if (baseId === 'short_dress') {
+      drawPixelMatrix(
+        ctx,
+        [
+          '................',
+          '....oo....oo....',
+          '....olooooMo....',
+          '...odlmmmmmdo...',
+          '...odmmmmmmmo...',
+          '...odyyyyyydo...',
+          '..odlmmmmmmmldo.',
+          '.odlmmmdmmdmmmdo',
+          '.odmmmmdmmdmmmmo',
+          '.odddddddddddddo',
+          '..ooooooooooooo.',
+          '................',
+          '................',
+          '................',
+          '................',
+          '................',
+        ],
+        { o, m, d, l, M: m, y: d }
+      );
+    } else if (baseId === 'long_dress') {
+      drawPixelMatrix(
+        ctx,
+        [
+          '....oo....oo....',
+          '....oloooomo....',
+          '...odlmmmmmdo...',
+          '...odmmmmmmmo...',
+          '...oddddddddo...',
+          '..odlmmmmmmmldo.',
+          '..odmmmdmmdmmmo.',
+          '.odlmmmdmmdmmmdo',
+          '.odmmmmdmmdmmmmo',
+          'odlmmmmdmmdmmmmd',
+          'odmmmmmdmmdmmmmd',
+          'oddddddddddddddo',
+          '.oooooooooooooo.',
+          '................',
+          '................',
+          '................',
+        ],
+        { o, m, d, l }
+      );
+    } else if (baseId === 'shorts') {
+      drawPixelMatrix(
+        ctx,
+        [
+          '................',
+          '................',
+          '..oooooooooooo..',
+          '.obbbyyyyybbbo..',
+          '.odllmmmmmmmdo..',
+          '.odlmmmmmmmmdo..',
+          '.odlmmmoommmmo..',
+          '.odmmmmoommmmo..',
+          '.odddddooddddo..',
+          '..ooooo..ooooo..',
+          '................',
+          '................',
+          '................',
+          '................',
+          '................',
+          '................',
+        ],
+        { o, m, d, l, b: '#451a03', y: '#fbbf24' }
+      );
+    } else if (baseId === 'pants') {
+      drawPixelMatrix(
+        ctx,
+        [
+          '................',
+          '..oooooooooooo..',
+          '.obbbyyyyybbbo..',
+          '.odllmmmmmmmdo..',
+          '.odlmmmmmmmmdo..',
+          '.odlmmmoommmmo..',
+          '.odlmmmoommmmo..',
+          '.odmmmmoommmmo..',
+          '.odmmmmoommmmo..',
+          '.odmmmmoommmmo..',
+          '.odddddooddddo..',
+          '..ooooo..ooooo..',
+          '................',
+          '................',
+          '................',
+          '................',
+        ],
+        { o, m, d, l, b: '#451a03', y: '#fbbf24' }
+      );
+    } else if (baseId === 'overalls') {
+      drawPixelMatrix(
+        ctx,
+        [
+          '...ooo....ooo...',
+          '...odmo..omdo...',
+          '...oymooommyo...',
+          '..oodlmmmmmdoo..',
+          '..odlmmdddmmmo..',
+          '..odlmmmmmmmmo..',
+          '..oddddddddddo..',
+          '..odlmmmoommmo..',
+          '..odmmmmoommmo..',
+          '..odmmmmoommmo..',
+          '..odddddoodddo..',
+          '...ooooo..oooo..',
+          '................',
+          '................',
+          '................',
+          '................',
+        ],
+        { o, m, d, l, y: '#fbbf24' }
+      );
+    } else if (baseId === 'sandals') {
+      drawPixelMatrix(
+        ctx,
+        [
+          '................',
+          '................',
+          '................',
+          '................',
+          '..ooooo..ooooo..',
+          '.odmmmd..odmmmd.',
+          '.oymmmd..oymmmd.',
+          '.oddddo..oddddo.',
+          '.odmmmd..odmmmd.',
+          '.osssso..osssso.',
+          '..ooooo..ooooo..',
+          '................',
+          '................',
+          '................',
+          '................',
+          '................',
+        ],
+        { o, m, d, l, y: '#fbbf24', s: '#291305' }
+      );
+    } else if (baseId === 'cowboy_boots') {
+      drawPixelMatrix(
+        ctx,
+        [
+          '................',
+          '................',
+          '..oo.oo..oo.oo..',
+          '.odmodm..odmodm.',
+          '.odlmmmo.odlmmmo',
+          '.odmydmo.odmydmo',
+          '.odmmmmo.odmmmmo',
+          '.odmmmmo.odmmmmo',
+          'oodmmmmddodmmmmd',
+          'osssssssoossssss',
+          '.ooooooo..oooooo',
+          '................',
+          '................',
+          '................',
+          '................',
+          '................',
+        ],
+        { o, m, d, l, y: '#fde047', s: '#1c0d04' }
+      );
+    }
+    return c;
   }
 
   public getPlayerSprite(
@@ -594,6 +861,54 @@ class SpriteAtlasManager {
       { w: '#cbd5e1', f: '#f8fafc' }
     );
 
+    // Sand (Areia)
+    registerItem(
+      'sand',
+      [
+        '................',
+        '.......ll.......',
+        '......lssl......',
+        '.....lssssl.....',
+        '....lssllssl....',
+        '...lssssssssd...',
+        '..lssssssssssd..',
+        '.ddssssssssssdd.',
+        '..dddddddddddd..',
+        '................',
+        '................',
+        '................',
+        '................',
+        '................',
+        '................',
+        '................',
+      ],
+      { l: '#fef08a', s: '#f59e0b', d: '#b45309' }
+    );
+
+    // Glass (Vidro)
+    registerItem(
+      'glass',
+      [
+        '................',
+        '..bbbbbbbbbbbb..',
+        '..bggggggggggb..',
+        '..bgwwgggggggb..',
+        '..bgwggggwgggb..',
+        '..bgggggwggggb..',
+        '..bggggwgggggb..',
+        '..bgggwggggggb..',
+        '..bggggggggwwb..',
+        '..bggggggggggb..',
+        '..bbbbbbbbbbbb..',
+        '................',
+        '................',
+        '................',
+        '................',
+        '................',
+      ],
+      { b: '#0284c7', g: '#7dd3fc', w: '#f0f9ff' }
+    );
+
     // Berry
     registerItem(
       'berry',
@@ -1043,123 +1358,414 @@ class SpriteAtlasManager {
     buildSword('astral_sword', '#38bdf8', '#fef08a', '#d97706');
 
     // Armors & Garments (Head, Body, Legs, Feet)
-    const buildHelmet = (id: string, main: string, trim: string, crest?: string) => {
-      registerItem(
-        id,
-        [
-          '......cccc......',
-          '....tttttttt....',
-          '...tmmmmmmmmt...',
-          '..tmmmmmmmmmmt..',
-          '..tmttttttttmt..',
-          '..tmt..tt..tmt..',
-          '..tmt..tt..tmt..',
-          '...tt......tt...',
-          '................',
-          '................',
-          '................',
-          '................',
-          '................',
-          '................',
-          '................',
-          '................',
-        ],
-        { m: main, t: trim, c: crest || trim }
-      );
-    };
+    // Starter Equipped Clothing: White Tank Top & Brown Shorts
+    registerItem(
+      'white_tank_top',
+      [
+        '................',
+        '....oo....oo....',
+        '...owwo..owwo...',
+        '...owwwoowwwo...',
+        '...owwwwwwwwo...',
+        '...owwswwswwo...',
+        '...owwswwswwo...',
+        '...owwwwwwwwo...',
+        '...owwswwswwo...',
+        '...owwswwswwo...',
+        '...owwwwwwwwo...',
+        '...oooooooooo...',
+        '................',
+        '................',
+        '................',
+        '................',
+      ],
+      { o: '#334155', w: '#f8fafc', s: '#cbd5e1' }
+    );
+    registerItem(
+      'brown_shorts',
+      [
+        '................',
+        '................',
+        '................',
+        '...oooooooooo...',
+        '..obbbbyybbbbo..',
+        '..oooooooooooo..',
+        '..ommmmmmmmmmo..',
+        '..ommmmsmmmmmo..',
+        '..ommmmoommmmo..',
+        '..ommmmoommmmo..',
+        '..ossso..ossso..',
+        '..ooooo..ooooo..',
+        '................',
+        '................',
+        '................',
+        '................',
+      ],
+      { o: '#0f172a', b: '#451a03', y: '#fbbf24', m: '#78350f', s: '#92400e' }
+    );
 
-    const buildArmor = (id: string, main: string, trim: string) => {
-      registerItem(
-        id,
-        [
-          '..tttt....tttt..',
-          '.tmmmmttttmmmmt.',
-          '.tmmmmmmmmmmmmt.',
-          '..ttmmmmmmmmtt..',
-          '....tmmmmmmt....',
-          '....tmmmmmmt....',
-          '....tmmmmmmt....',
-          '....tttttttt....',
-          '................',
-          '................',
-          '................',
-          '................',
-          '................',
-          '................',
-          '................',
-          '................',
-        ],
-        { m: main, t: trim }
-      );
-    };
+    // =========================================================================
+    // TIER 1: ROBUST STUDDED LEATHER & WOOL ARMOR SET
+    // =========================================================================
+    registerItem(
+      'leather_hood',
+      [
+        '....oooooooo....',
+        '..ooddddddddoo..',
+        '.odmmmmmmmmmmdd.',
+        '.odmllllllllmdo.',
+        '.odmwwwwwwwwmdo.',
+        '.odmwwoooowwmdo.',
+        '.odmwwo..owwmdo.',
+        '.odmrro..orrmdo.',
+        '..odddo..odddo..',
+        '..ooooo..ooooo..',
+        '................',
+        '................',
+        '................',
+        '................',
+        '................',
+        '................',
+      ],
+      {
+        o: '#1c1008',
+        d: '#451a03',
+        m: '#78350f',
+        l: '#b45309',
+        w: '#fef3c7',
+        r: '#fbbf24',
+      }
+    );
+    registerItem(
+      'leather_tunic',
+      [
+        '.ooooo....ooooo.',
+        'opppppo..opppppo',
+        'oprrrpooooprrrpo',
+        'oppppwwwwwwppppo',
+        '.oooommmmmmoooo.',
+        '..oommsbbsmmoo..',
+        '..oommbbbbmmoo..',
+        '..oommrbbrmmoo..',
+        '..oommmbbmmmoo..',
+        '..ooddrbbrddoo..',
+        '..oommmmmmmmoo..',
+        '...oooooooooo...',
+        '................',
+        '................',
+        '................',
+        '................',
+      ],
+      {
+        o: '#1c1008',
+        p: '#78350f',
+        r: '#fbbf24',
+        w: '#fef3c7',
+        m: '#92400e',
+        s: '#b45309',
+        b: '#451a03',
+        d: '#5c2808',
+      }
+    );
+    registerItem(
+      'leather_pants',
+      [
+        '................',
+        '..oooooooooooo..',
+        '.obbbbrrrrbbbbo.',
+        '.oooooooooooooo.',
+        '.oommmmmmmmmmoo.',
+        '.oommddoommddoo.',
+        '.oommrroommrroo.',
+        '.ookkkkookkkkoo.',
+        '.ookrrkookrrkoo.',
+        '.oommmmoommmmoo.',
+        '.ooddddoo.dddoo.',
+        '..ooooo..ooooo..',
+        '................',
+        '................',
+        '................',
+        '................',
+      ],
+      {
+        o: '#1c1008',
+        b: '#451a03',
+        r: '#fbbf24',
+        m: '#854d0e',
+        d: '#713f12',
+        k: '#a16207',
+      }
+    );
+    registerItem(
+      'leather_boots',
+      [
+        '................',
+        '................',
+        '..oooooo..oooooo',
+        '.owwwwwwoowwwwwwo',
+        '.oooooooo.oooooo',
+        '.ommrrmo..ommrrm',
+        '.ommmmmo..ommmmm',
+        '.oddrrdo..oddrrd',
+        'oommmmmmooommmmm',
+        'osssssssoossssss',
+        'oooooooo..oooooo',
+        '................',
+        '................',
+        '................',
+        '................',
+        '................',
+      ],
+      {
+        o: '#1c1008',
+        w: '#fef3c7',
+        m: '#78350f',
+        d: '#451a03',
+        r: '#fbbf24',
+        s: '#291305',
+      }
+    );
 
-    const buildLegs = (id: string, main: string, trim: string, belt: string) => {
-      registerItem(
-        id,
-        [
-          '................',
-          '...bbbbbbbbbb...',
-          '...tmmmmmmmmt...',
-          '...tmmmmmmmmt...',
-          '...tmmm..mmmt...',
-          '...tmmm..mmmt...',
-          '...ttrt..trtt...',
-          '...tmmm..mmmt...',
-          '...tttt..tttt...',
-          '................',
-          '................',
-          '................',
-          '................',
-          '................',
-          '................',
-          '................',
-        ],
-        { m: main, t: trim, r: belt, b: belt }
-      );
-    };
+    // =========================================================================
+    // TIER 2: HEAVY FORGED IRON & OGRE PLATE SET
+    // =========================================================================
+    registerItem(
+      'iron_helmet',
+      [
+        '.....cccccc.....',
+        'oo..cccccccc..oo',
+        'ohhoooooooooohho',
+        '.ohossssssssoho.',
+        '.ooosllllllsooo.',
+        '.osssggggggssso.',
+        '.osssoooooossso.',
+        '.osgdookkoodgso.',
+        '.osgdo.oo.odgso.',
+        '..oooo.oo.oooo..',
+        '................',
+        '................',
+        '................',
+        '................',
+        '................',
+        '................',
+      ],
+      {
+        o: '#0f172a',
+        c: '#dc2626',
+        h: '#fef3c7',
+        s: '#94a3b8',
+        l: '#f8fafc',
+        g: '#cbd5e1',
+        d: '#475569',
+        k: '#1e293b',
+      }
+    );
+    registerItem(
+      'iron_armor',
+      [
+        'oooooo....oooooo',
+        'olllllooooillllo',
+        'osssggssssggssso',
+        'ooddssssssssddoo',
+        '.ooosllllllsooo.',
+        '..ooslgggglsoo..',
+        '..oosssggsssoo..',
+        '..oosddggddsoo..',
+        '..oosrrrrrrsoo..',
+        '..oosddggddsoo..',
+        '..ooddddddddoo..',
+        '...oooooooooo...',
+        '................',
+        '................',
+        '................',
+        '................',
+      ],
+      {
+        o: '#0f172a',
+        l: '#f8fafc',
+        i: '#e2e8f0',
+        s: '#94a3b8',
+        g: '#cbd5e1',
+        d: '#475569',
+        r: '#fbbf24',
+      }
+    );
+    registerItem(
+      'iron_greaves',
+      [
+        '................',
+        '..oooooooooooo..',
+        '.oddddrrrrddddo.',
+        '.oooooooooooooo.',
+        '.oossllllllssoo.',
+        '.oossddoossddoo.',
+        '.oossggoossggoo.',
+        '.oollllooollllo.',
+        '.oolrrloolrrloo.',
+        '.oossggoossggoo.',
+        '.ooddddoo.dddoo.',
+        '..ooooo..ooooo..',
+        '................',
+        '................',
+        '................',
+        '................',
+      ],
+      {
+        o: '#0f172a',
+        d: '#334155',
+        r: '#fbbf24',
+        s: '#64748b',
+        l: '#f8fafc',
+        g: '#94a3b8',
+      }
+    );
+    registerItem(
+      'iron_boots',
+      [
+        '................',
+        '................',
+        '..oooooo..oooooo',
+        '.ollllllo.olllll',
+        '.osssrsso.osssrs',
+        '.osssssso.osssss',
+        '.oddddddo.oddddd',
+        'oollllllooolllll',
+        'osssssssoossssss',
+        'odddddddoodddddd',
+        'oooooooo..oooooo',
+        '................',
+        '................',
+        '................',
+        '................',
+        '................',
+      ],
+      {
+        o: '#0f172a',
+        l: '#f8fafc',
+        s: '#94a3b8',
+        r: '#fbbf24',
+        d: '#334155',
+      }
+    );
 
-    const buildBoots = (id: string, main: string, sole: string, wing?: string) => {
-      registerItem(
-        id,
-        [
-          '................',
-          '................',
-          '..wwww....wwww..',
-          '...mmmm..mmmm...',
-          '...mmmm..mmmm...',
-          '...mmmm..mmmm...',
-          '..mmmmmm.mmmmmm.',
-          '..ssssss.ssssss.',
-          '................',
-          '................',
-          '................',
-          '................',
-          '................',
-          '................',
-          '................',
-          '................',
-        ],
-        { m: main, s: sole, w: wing || main }
-      );
-    };
-
-    // Tier 1: Leather & Wool Set
-    buildHelmet('leather_hood', '#92400e', '#fde68a', '#78350f');
-    buildArmor('leather_tunic', '#a16207', '#fde047');
-    buildLegs('leather_pants', '#854d0e', '#ca8a04', '#fde047');
-    buildBoots('leather_boots', '#78350f', '#451a03', '#b45309');
-
-    // Tier 2: Iron & Ogre Set
-    buildHelmet('iron_helmet', '#94a3b8', '#f8fafc', '#dc2626');
-    buildArmor('iron_armor', '#94a3b8', '#f8fafc');
-    buildLegs('iron_greaves', '#64748b', '#cbd5e1', '#fbbf24');
-    buildBoots('iron_boots', '#94a3b8', '#334155', '#e2e8f0');
-
-    // Tier 3: Sovereign Astral Set
-    buildHelmet('astral_crown', '#0284c7', '#fde047', '#38bdf8');
-    buildArmor('astral_armor', '#0284c7', '#fde047');
-    buildLegs('astral_leggings', '#0369a1', '#38bdf8', '#fde047');
-    buildBoots('astral_boots', '#0284c7', '#f59e0b', '#fef08a');
+    // =========================================================================
+    // TIER 3: SOVEREIGN ASTRAL CELESTIAL PLATE SET
+    // =========================================================================
+    registerItem(
+      'astral_crown',
+      [
+        '......oooo......',
+        '..oo.oggcgo.oo..',
+        '.owwoogccgoowwo.',
+        'owwwooggcgoowwwo',
+        'owwggggccggggwwo',
+        '.oogbggggggbgoo.',
+        '.oobbbbbbbbbboo.',
+        '.oobcbo..obcboo.',
+        '..oooo....oooo..',
+        '................',
+        '................',
+        '................',
+        '................',
+        '................',
+        '................',
+        '................',
+      ],
+      {
+        o: '#082f49',
+        g: '#fde047',
+        c: '#38bdf8',
+        w: '#ffffff',
+        b: '#0284c7',
+      }
+    );
+    registerItem(
+      'astral_armor',
+      [
+        'owwwwo....owwwwo',
+        'owgggwoooowgggwo',
+        'oggbbbbccbbbbggo',
+        '.oobbbccccbbboo.',
+        '..oobbcwwcbboo..',
+        '..ooggccccggoo..',
+        '..oobbbggbbboo..',
+        '..oobbggggbboo..',
+        '..ooggbbbbggoo..',
+        '..ooddbggbddoo..',
+        '..ooggddddggoo..',
+        '...oooooooooo...',
+        '................',
+        '................',
+        '................',
+        '................',
+      ],
+      {
+        o: '#082f49',
+        w: '#fef9c3',
+        g: '#fde047',
+        b: '#0284c7',
+        c: '#38bdf8',
+        d: '#0369a1',
+      }
+    );
+    registerItem(
+      'astral_leggings',
+      [
+        '................',
+        '..oooooooooooo..',
+        '.oggggccccggggo.',
+        '.oooooooooooooo.',
+        '.oobbccccccbboo.',
+        '.oobbddoobbddoo.',
+        '.oobbgghhggbboo.',
+        '.ooggccooggccoo.',
+        '.oogwwgoogwwgoo.',
+        '.oobbddoobbddoo.',
+        '.ooggddoo.ggdoo.',
+        '..ooooo..ooooo..',
+        '................',
+        '................',
+        '................',
+        '................',
+      ],
+      {
+        o: '#082f49',
+        g: '#fde047',
+        c: '#38bdf8',
+        b: '#0284c7',
+        d: '#0369a1',
+        h: '#0c4a6e',
+        w: '#ffffff',
+      }
+    );
+    registerItem(
+      'astral_boots',
+      [
+        '................',
+        '................',
+        'owwooooo..owwooo',
+        'owwggggo..owwggg',
+        '.owgbbbo...owgbb',
+        '..obbcco....obbc',
+        '..obbbbo....obbb',
+        '.oobggggoo.oobgg',
+        '.oobbbbbbo.oobbb',
+        '.ooggggggo.ooggg',
+        '..ooooooo...oooo',
+        '................',
+        '................',
+        '................',
+        '................',
+        '................',
+      ],
+      {
+        o: '#082f49',
+        w: '#ffffff',
+        g: '#fde047',
+        b: '#0284c7',
+        c: '#38bdf8',
+      }
+    );
 
     // Placeables icons
     registerItem(
@@ -3052,6 +3658,126 @@ class SpriteAtlasManager {
         y: '#fde047',
       }
     );
+
+    // Couro (leather) — Supple tanned boar hide pelt with stitched edges
+    registerItem(
+      'leather',
+      [
+        '................',
+        '...ddd....ddd...',
+        '..dbbbddddbbbd..',
+        '.dbllllllllllbd.',
+        '.dblmmmmmmmmlbd.',
+        '..dbmmmmmmmmbd..',
+        '..dbmmmmmmmmbd..',
+        '.dblmmmmmmmmlbd.',
+        '.dbllllllllllbd.',
+        '..dbbbddddbbbd..',
+        '...ddd....ddd...',
+        '................',
+        '................',
+        '................',
+        '................',
+        '................',
+      ],
+      {
+        d: '#2a1205',
+        b: '#78350f',
+        m: '#9a5b25',
+        l: '#c27d38',
+      }
+    );
+
+    // Mesa de Tecelagem (weaving_table) — Tailor & loom station with iron frame, fabric roll & spools
+    registerItem(
+      'weaving_table',
+      [
+        '................',
+        '..dddddddddddd..',
+        '.dwwwwrrrrbbbbd.',
+        '.dwwwwrrrrbbbbd.',
+        '.dddddddddddddd.',
+        '.dmmmmmmmmmmmmd.',
+        '.dlllllllllllld.',
+        '.dddddddddddddd.',
+        '..diiid..diiid..',
+        '..diiid..diiid..',
+        '..diiid..diiid..',
+        '..ddddd..ddddd..',
+        '................',
+        '................',
+        '................',
+        '................',
+      ],
+      {
+        d: '#1e293b',
+        w: '#f8fafc',
+        r: '#ef4444',
+        b: '#38bdf8',
+        m: '#92400e',
+        l: '#d97706',
+        i: '#94a3b8',
+      }
+    );
+
+    // Chapéu de Fibras (fiber_hat) — Woven golden straw sun hat with braided cord band
+    registerItem(
+      'fiber_hat',
+      [
+        '................',
+        '.....dddddd.....',
+        '....dyyyyyyd....',
+        '...dyllllllyd...',
+        '...dyyyyyyyyd...',
+        '...dbbbbbbbbd...',
+        '.dddddddddddddd.',
+        'dyyllllllllllyyd',
+        'dyyyyyyyyyyyyyyd',
+        '.dddddddddddddd.',
+        '................',
+        '................',
+        '................',
+        '................',
+        '................',
+        '................',
+      ],
+      {
+        d: '#451a03',
+        y: '#eab308',
+        l: '#fef08a',
+        b: '#92400e',
+      }
+    );
+
+    // Colar Solar (solar_necklace) — Braided fiber collar with radiant solar crystal pendants
+    registerItem(
+      'solar_necklace',
+      [
+        '................',
+        '....ddd..ddd....',
+        '...dfffddfffd...',
+        '..dff......ffd..',
+        '..df........fd..',
+        '..df........fd..',
+        '...df..dd..fd...',
+        '...dfooyyoofd...',
+        '....doywwyod....',
+        '....doywwyod....',
+        '.....doooood....',
+        '......ddddd.....',
+        '................',
+        '................',
+        '................',
+        '................',
+      ],
+      {
+        d: '#451a03',
+        f: '#ca8a04',
+        o: '#ea580c',
+        y: '#fde047',
+        w: '#ffffff',
+      }
+    );
   }
 
   private buildNatureNodes(): void {
@@ -3535,6 +4261,57 @@ class SpriteAtlasManager {
         ctx.fillStyle = '#ffe4e6';
         ctx.fillRect(bx + sway, by, 1, 1);
       }
+    });
+
+    // 6B. SAND DUNE (36x28 canvas) — Subtle, low-profile wind-sculpted sand mound almost camouflaged into the sand floor
+    registerNatureVariants(NatureNodeType.SAND_DUNE, 36, 28, (ctx, _f, v) => {
+      // Soft translucent base blending seamlessly into the underlying sand tile
+      ctx.fillStyle = 'rgba(180, 83, 9, 0.16)';
+      if (v === 1) {
+        ctx.fillRect(4, 18, 28, 6);
+        ctx.fillRect(7, 15, 22, 4);
+      } else if (v === 2) {
+        ctx.fillRect(5, 17, 26, 6);
+        ctx.fillRect(9, 14, 18, 4);
+      } else {
+        ctx.fillRect(4, 17, 28, 6);
+        ctx.fillRect(8, 14, 20, 4);
+      }
+
+      // Warm golden sand slope (subtle mid-tone)
+      ctx.fillStyle = 'rgba(217, 119, 6, 0.22)';
+      if (v === 1) {
+        ctx.fillRect(6, 16, 24, 5);
+        ctx.fillRect(10, 13, 16, 3);
+      } else if (v === 2) {
+        ctx.fillRect(7, 15, 22, 5);
+        ctx.fillRect(11, 12, 14, 3);
+      } else {
+        ctx.fillRect(6, 15, 24, 5);
+        ctx.fillRect(10, 12, 16, 3);
+      }
+
+      // Wind-swept sunlit crest line (almost camouflaged highlight)
+      ctx.fillStyle = 'rgba(253, 224, 71, 0.32)';
+      if (v === 1) {
+        ctx.fillRect(8, 14, 18, 2);
+        ctx.fillRect(12, 12, 11, 2);
+        ctx.fillRect(9, 18, 14, 1);
+      } else if (v === 2) {
+        ctx.fillRect(9, 13, 16, 2);
+        ctx.fillRect(12, 11, 10, 2);
+        ctx.fillRect(11, 17, 12, 1);
+      } else {
+        ctx.fillRect(8, 13, 18, 2);
+        ctx.fillRect(11, 11, 12, 2);
+        ctx.fillRect(10, 17, 15, 1);
+      }
+
+      // Delicate silica grain glints
+      ctx.fillStyle = 'rgba(254, 249, 195, 0.38)';
+      ctx.fillRect(13, 12, 2, 1);
+      ctx.fillRect(20, 15, 2, 1);
+      ctx.fillRect(10, 16, 1, 1);
     });
 
     // 7. BOULDER (48x48 canvas) — 3 distinct rock formations:
@@ -4765,6 +5542,60 @@ class SpriteAtlasManager {
         ctx.fillRect(24, 21, 3, 2);
       })
     );
+
+    // WEAVING_TABLE (Mesa de Tecelagem — 38x32 wooden loom & tailoring table with forged iron legs, colorful wool rolls & dye pots)
+    this.structureSprites.set(
+      PlaceableType.WEAVING_TABLE,
+      createFrames(38, 32, (ctx) => {
+        // Ground shadow
+        ctx.fillStyle = 'rgba(0,0,0,0.36)';
+        ctx.fillRect(3, 26, 32, 5);
+        // Dark silhouette outline
+        ctx.fillStyle = '#1e293b';
+        ctx.fillRect(3, 7, 32, 22);
+        // Forged iron legs & crossbar
+        ctx.fillStyle = '#475569';
+        ctx.fillRect(5, 18, 4, 10);
+        ctx.fillRect(29, 18, 4, 10);
+        ctx.fillRect(9, 22, 20, 2);
+        ctx.fillStyle = '#94a3b8';
+        ctx.fillRect(6, 18, 2, 9);
+        ctx.fillRect(30, 18, 2, 9);
+        // Oak tailor tabletop
+        ctx.fillStyle = '#78350f';
+        ctx.fillRect(4, 9, 30, 10);
+        ctx.fillStyle = '#b45309';
+        ctx.fillRect(5, 9, 28, 7);
+        ctx.fillStyle = '#d97706';
+        ctx.fillRect(6, 10, 26, 3);
+        // Raised wooden loom rack at the back
+        ctx.fillStyle = '#451a03';
+        ctx.fillRect(6, 4, 16, 6);
+        ctx.fillStyle = '#f8fafc';
+        ctx.fillRect(8, 5, 12, 4);
+        // Woven cloth bolt unrolled on the table (white & crimson/blue dye stripes)
+        ctx.fillStyle = '#f1f5f9';
+        ctx.fillRect(7, 10, 13, 6);
+        ctx.fillStyle = '#cbd5e1';
+        ctx.fillRect(7, 15, 13, 1);
+        ctx.fillStyle = '#dc2626';
+        ctx.fillRect(9, 11, 9, 1);
+        ctx.fillStyle = '#2563eb';
+        ctx.fillRect(9, 13, 9, 1);
+        // Colorful thread spools & golden tailor shears on the right
+        ctx.fillStyle = '#eab308';
+        ctx.fillRect(22, 9, 3, 4);
+        ctx.fillStyle = '#ec4899';
+        ctx.fillRect(26, 9, 3, 4);
+        ctx.fillStyle = '#22c55e';
+        ctx.fillRect(30, 10, 3, 4);
+        // Iron shears
+        ctx.fillStyle = '#e2e8f0';
+        ctx.fillRect(23, 14, 6, 2);
+        ctx.fillStyle = '#f59e0b';
+        ctx.fillRect(22, 14, 2, 2);
+      })
+    );
   }
 
   private buildPlayerSprites(): void {
@@ -4775,12 +5606,158 @@ class SpriteAtlasManager {
         this.getCompositePlayerSprite(
           dir,
           f,
-          { head: null, body: null, legs: null, feet: null },
+          {
+            head: null,
+            body: 'white_tank_top',
+            legs: 'brown_shorts',
+            feet: null,
+          },
           DEFAULT_PLAYER_APPEARANCE,
           'none'
         );
       }
     }
+  }
+
+  private shadeHexColor(hex: string, percent: number): string {
+    const clean = (hex || '#fdba74').replace('#', '');
+    if (clean.length !== 6) return hex;
+    const num = parseInt(clean, 16);
+    if (Number.isNaN(num)) return hex;
+    const r = Math.min(
+      255,
+      Math.max(0, ((num >> 16) & 0xff) + Math.round(2.55 * percent))
+    );
+    const g = Math.min(
+      255,
+      Math.max(0, ((num >> 8) & 0xff) + Math.round(2.55 * percent))
+    );
+    const b = Math.min(
+      255,
+      Math.max(0, (num & 0xff) + Math.round(2.55 * percent))
+    );
+    return `#${((1 << 24) + (r << 16) + (g << 8) + b).toString(16).slice(1)}`;
+  }
+
+  public getSkinMarkPreviewUrl(mark: SkinMarkId, skinColor: string): string {
+    this.ensureInitialized();
+    const key = `preview_mark_${mark}_${skinColor}`;
+    const existing = this.itemDataUrls.get(key);
+    if (existing) return existing;
+
+    const c = createPixelCanvas(24, 24);
+    const ctx = c.getContext('2d')!;
+    const skinBase = skinColor || '#fdba74';
+    const skinLight = this.shadeHexColor(skinBase, 10);
+    const skinShadow = this.shadeHexColor(skinBase, -12);
+    const freckleColor = this.shadeHexColor(skinBase, -30);
+
+    // Face oval frame
+    ctx.fillStyle = '#0f172a';
+    ctx.fillRect(4, 3, 16, 18);
+    ctx.fillStyle = skinBase;
+    ctx.fillRect(5, 4, 14, 16);
+    ctx.fillStyle = skinLight;
+    ctx.fillRect(6, 5, 12, 3);
+    ctx.fillStyle = skinShadow;
+    ctx.fillRect(5, 18, 14, 2);
+
+    // Subtle reference eyes
+    ctx.fillStyle = '#1e293b';
+    ctx.fillRect(7, 10, 3, 2);
+    ctx.fillRect(14, 10, 3, 2);
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(7, 10, 1, 1);
+    ctx.fillRect(14, 10, 1, 1);
+
+    if (mark === 'freckles' || mark === 'freckles_and_scar') {
+      ctx.fillStyle = freckleColor;
+      ctx.fillRect(6, 13, 1, 1);
+      ctx.fillRect(8, 14, 1, 1);
+      ctx.fillRect(10, 13, 1, 1);
+      ctx.fillRect(11, 12, 2, 1);
+      ctx.fillRect(13, 13, 1, 1);
+      ctx.fillRect(15, 14, 1, 1);
+      ctx.fillRect(17, 13, 1, 1);
+    }
+
+    if (mark === 'eye_scar' || mark === 'freckles_and_scar') {
+      ctx.fillStyle = '#9f1239';
+      ctx.fillRect(15, 6, 1, 3);
+      ctx.fillRect(15, 12, 1, 4);
+      ctx.fillRect(14, 15, 1, 2);
+      ctx.fillStyle = '#fda4af';
+      ctx.fillRect(16, 7, 1, 2);
+      ctx.fillRect(16, 12, 1, 3);
+    }
+
+    const url = c.toDataURL();
+    this.itemDataUrls.set(key, url);
+    return url;
+  }
+
+  public getHairStylePreviewUrl(
+    style: HairStyleId,
+    hairColor: string,
+    skinColor: string
+  ): string {
+    this.ensureInitialized();
+    const key = `preview_hair_${style}_${hairColor}_${skinColor}`;
+    const existing = this.itemDataUrls.get(key);
+    if (existing) return existing;
+
+    const full = this.getCompositePlayerSprite(
+      'down',
+      0,
+      { head: null, body: 'white_tank_top', legs: 'brown_shorts', feet: null },
+      {
+        ...DEFAULT_PLAYER_APPEARANCE,
+        skinColor: skinColor || '#fdba74',
+        hairColor: hairColor || '#451a03',
+        hairStyle: style,
+      },
+      'none'
+    );
+    const c = createPixelCanvas(24, 24);
+    const ctx = c.getContext('2d')!;
+    // Crop upper head & shoulders region (x=4..28, y=0..20) into 24x24 preview
+    ctx.drawImage(full, 4, 0, 24, 20, 0, 2, 24, 20);
+    const url = c.toDataURL();
+    this.itemDataUrls.set(key, url);
+    return url;
+  }
+
+  public getEyeStylePreviewUrl(
+    style: EyeStyleId,
+    eyeColor: string,
+    skinColor: string
+  ): string {
+    this.ensureInitialized();
+    const key = `preview_eye_${style}_${eyeColor}_${skinColor}`;
+    const existing = this.itemDataUrls.get(key);
+    if (existing) return existing;
+
+    const full = this.getCompositePlayerSprite(
+      'down',
+      0,
+      { head: null, body: 'white_tank_top', legs: 'brown_shorts', feet: null },
+      {
+        ...DEFAULT_PLAYER_APPEARANCE,
+        skinColor: skinColor || '#fdba74',
+        hairColor: '#451a03',
+        hairStyle: 'SamuraiPreview' as unknown as HairStyleId,
+        eyeStyle: style,
+        eyeColor: eyeColor || '#0f172a',
+      },
+      'none'
+    );
+    const c = createPixelCanvas(16, 16);
+    const ctx = c.getContext('2d')!;
+    // Crop the face & eye region (x=8..24, y=3..15) so the eye shape fills the slot clearly
+    ctx.drawImage(full, 8, 2, 16, 12, 0, 2, 16, 12);
+    const url = c.toDataURL();
+    this.itemDataUrls.set(key, url);
+    return url;
   }
 
   private getCompositePlayerSprite(
@@ -4792,6 +5769,10 @@ class SpriteAtlasManager {
   ): HTMLCanvasElement {
     const f = frame % 4;
     const gender = app.gender || 'masculino';
+    const skinMark: SkinMarkId = app.skinMark || 'none';
+    const eyeStyle: EyeStyleId = app.eyeStyle || 'classic';
+    const hStyle = app.hairStyle || 'adventurer';
+
     const key = [
       dir,
       f,
@@ -4802,509 +5783,1589 @@ class SpriteAtlasManager {
       eq.legs || 'none',
       eq.feet || 'none',
       app.skinColor,
+      skinMark,
       app.hairColor,
-      app.hairStyle,
+      hStyle,
+      eyeStyle,
       app.eyeColor,
-      app.shirtColor,
-      app.pantsColor,
     ].join('|');
 
     const cached = this.playerSprites.get(key);
     if (cached) return cached;
 
-    if (this.playerSprites.size > 600) {
+    if (this.playerSprites.size > 800) {
       this.playerSprites.clear();
     }
 
-    const c = createPixelCanvas(20, 20);
+    // 32x32 HD Pixel Canvas (rendered into 30x30 world space by GameRenderer)
+    const c = createPixelCanvas(32, 32);
     const ctx = c.getContext('2d')!;
     const stepL = mountPose === 'none' ? (f === 1 ? -1 : f === 3 ? 1 : 0) : 0;
     const stepR = -stepL;
     const isFeminine = gender === 'feminino';
 
-    // Resolve Torso / Body Garment visual palette
-    let torsoMain = app.shirtColor || '#2563eb';
-    let torsoTrim = isFeminine ? '#fef3c7' : '#e2e8f0';
+    // Multi-tone skin palette
+    const skinBase = app.skinColor || '#fdba74';
+    const skinLight = this.shadeHexColor(skinBase, 11);
+    const skinShadow = this.shadeHexColor(skinBase, -12);
+    const skinDeep = this.shadeHexColor(skinBase, -24);
+    const freckleTone = this.shadeHexColor(skinBase, -32);
+
+    // Multi-tone hair palette
+    const hairMain = app.hairColor || '#451a03';
+    const hairHighlight = this.shadeHexColor(hairMain, 18);
+    const hairShadow = this.shadeHexColor(hairMain, -15);
+    const hairDeep = this.shadeHexColor(hairMain, -28);
+
+    // Multi-tone eye palette
+    const eyeMain = app.eyeColor || '#0f172a';
+    const eyeLight = this.shadeHexColor(eyeMain, 24);
+    const eyeDark = this.shadeHexColor(eyeMain, -20);
+
+    // Resolve Body / Torso equipment state
+    const bodyId = eq.body || null;
     let capeColor: string | null = null;
-    let hasPauldrons = false;
+    if (bodyId === 'leather_tunic') capeColor = '#451a03';
+    else if (bodyId === 'iron_armor') capeColor = '#991b1b';
+    else if (bodyId === 'astral_armor') capeColor = '#7e22ce';
 
-    if (eq.body === 'leather_tunic') {
-      torsoMain = '#a16207';
-      torsoTrim = '#fde047';
-      capeColor = '#451a03';
-      hasPauldrons = true;
-    } else if (eq.body === 'iron_armor') {
-      torsoMain = '#94a3b8';
-      torsoTrim = '#f8fafc';
-      capeColor = '#991b1b';
-      hasPauldrons = true;
-    } else if (eq.body === 'astral_armor') {
-      torsoMain = '#0284c7';
-      torsoTrim = '#fde047';
-      capeColor = '#7e22ce';
-      hasPauldrons = true;
-    }
+    const legsId = eq.legs || null;
+    const feetId = eq.feet || null;
+    const headId = eq.head || null;
 
-    // Resolve Legs visual palette
-    let legsMain = app.pantsColor || '#334155';
-    let legsKnee: string | null = null;
-    let beltColor = '#451a03';
-    let buckleColor = '#fbbf24';
-
-    if (eq.legs === 'leather_pants') {
-      legsMain = '#854d0e';
-      legsKnee = '#ca8a04';
-      beltColor = '#451a03';
-      buckleColor = '#fde047';
-    } else if (eq.legs === 'iron_greaves') {
-      legsMain = '#64748b';
-      legsKnee = '#e2e8f0';
-      beltColor = '#1e293b';
-      buckleColor = '#f8fafc';
-    } else if (eq.legs === 'astral_leggings') {
-      legsMain = '#0369a1';
-      legsKnee = '#38bdf8';
-      beltColor = '#581c87';
-      buckleColor = '#fde047';
-    }
-
-    // Resolve Feet / Boots visual palette
-    let bootsMain = '#1e293b';
-    let bootsTrim = '#475569';
-    let bootsWing: string | null = null;
-
-    if (eq.feet === 'leather_boots') {
-      bootsMain = '#78350f';
-      bootsTrim = '#d97706';
-    } else if (eq.feet === 'iron_boots') {
-      bootsMain = '#94a3b8';
-      bootsTrim = '#f8fafc';
-    } else if (eq.feet === 'astral_boots') {
-      bootsMain = '#0284c7';
-      bootsTrim = '#fde047';
-      bootsWing = '#fef08a';
-    }
-
-    // 1. Ground Shadow (only when walking/standing on foot)
+    // 1. Ground Shadow
     if (mountPose === 'none') {
       ctx.fillStyle = 'rgba(0,0,0,0.32)';
-      ctx.fillRect(5, 17, 10, 2);
+      ctx.fillRect(8, 28, 16, 3);
     }
 
-    // 2. Back Hair / Flowing Locks behind shoulders & Back Cape
-    if (capeColor && (dir === 'up' || dir === 'left' || dir === 'right')) {
-      ctx.fillStyle = capeColor;
-      const capeH = mountPose === 'boat' ? 5 : 8;
-      if (dir === 'up') {
-        ctx.fillRect(5, 8, 10, capeH);
-      } else if (dir === 'left') {
-        ctx.fillRect(12, 8, 3, capeH - 1);
-      } else if (dir === 'right') {
-        ctx.fillRect(5, 8, 3, capeH - 1);
+    // 2. Back Hair Layer (drawn behind shoulders/head before silhouette)
+    if (!headId || headId === 'astral_crown') {
+      if (hStyle === 'long_mane') {
+        ctx.fillStyle = hairDeep;
+        ctx.fillRect(8, 7, 16, 11);
+        ctx.fillStyle = hairShadow;
+        ctx.fillRect(9, 8, 14, 9);
+      } else if (hStyle === 'twin_tails') {
+        ctx.fillStyle = hairDeep;
+        if (dir !== 'left') ctx.fillRect(5, 6, 4, 11);
+        if (dir !== 'right') ctx.fillRect(23, 6, 4, 11);
+        ctx.fillStyle = hairMain;
+        if (dir !== 'left') ctx.fillRect(6, 6, 3, 9);
+        if (dir !== 'right') ctx.fillRect(23, 6, 3, 9);
+      } else if (hStyle === 'ponytail' && dir === 'down') {
+        ctx.fillStyle = hairShadow;
+        ctx.fillRect(13, 1, 6, 3);
       }
     }
 
-    // 3. Dark Character Silhouette Outline
+    // Back Cape for Armors
+    if (capeColor && (dir === 'up' || dir === 'left' || dir === 'right')) {
+      ctx.fillStyle = capeColor;
+      const capeH = mountPose === 'boat' ? 8 : 12;
+      if (dir === 'up') {
+        ctx.fillRect(8, 14, 16, capeH);
+      } else if (dir === 'left') {
+        ctx.fillRect(19, 14, 5, capeH - 1);
+      } else if (dir === 'right') {
+        ctx.fillRect(8, 14, 5, capeH - 1);
+      }
+    }
+
+    // 3. Dark Character Silhouette Outline & Base Anatomy
     ctx.fillStyle = '#0f172a';
-    ctx.fillRect(5, 1, 10, 8); // Head outline
+    // Head outline (x=9..22, y=2..13 -> 14x12)
+    ctx.fillRect(9, 2, 14, 12);
+    // Neck
+    ctx.fillRect(13, 13, 6, 2);
+
     if (mountPose === 'boat') {
-      // Seated in Boat: Upper torso & arms resting on gunwales (no standing legs)
-      ctx.fillRect(3, 8, 14, 6);
+      // Seated in Boat: Upper torso & arms resting on gunwales
+      ctx.fillRect(6, 14, 20, 9);
     } else if (mountPose === 'horse') {
-      // Astride Horse / Camel: Torso + wide straddling or side-bent riding legs
-      ctx.fillRect(4, 8, 12, 6);
+      // Astride Mount
+      ctx.fillRect(7, 14, 18, 9);
       if (dir === 'left' || dir === 'right') {
-        ctx.fillRect(6, 13, 8, 5);
+        ctx.fillRect(10, 22, 12, 7);
       } else {
-        ctx.fillRect(3, 13, 4, 5);
-        ctx.fillRect(13, 13, 4, 5);
+        ctx.fillRect(6, 22, 6, 7);
+        ctx.fillRect(20, 22, 6, 7);
       }
     } else {
       // Standing / Walking
-      ctx.fillRect(4, 8, 12, 7); // Torso/Arms outline
-      ctx.fillRect(5, 14, 4, 4); // Left leg/boot outline
-      ctx.fillRect(11, 14, 4, 4); // Right leg/boot outline
-    }
-
-    // 4. Ears, Face Skin & Facial Shading
-    ctx.fillStyle = app.skinColor;
-    ctx.fillRect(6, 3, 8, 5);
-    // Side ears when facing down/up
-    if (dir === 'down' || dir === 'up') {
-      ctx.fillRect(5, 4, 1, 2);
-      ctx.fillRect(14, 4, 1, 2);
-    }
-    // Subtle forehead/cheek highlight for depth
-    ctx.fillStyle = 'rgba(255,255,255,0.22)';
-    ctx.fillRect(7, 3, 6, 1);
-
-    // Feminine blush & delicate chin / Masculine defined brow
-    if (dir === 'down') {
-      if (isFeminine) {
-        ctx.fillStyle = 'rgba(244, 114, 182, 0.45)';
-        ctx.fillRect(6, 6, 2, 1);
-        ctx.fillRect(12, 6, 2, 1);
-      } else {
-        ctx.fillStyle = 'rgba(15, 23, 42, 0.28)';
-        ctx.fillRect(7, 4, 2, 1);
-        ctx.fillRect(11, 4, 2, 1);
-      }
-    }
-
-    // 5. Directional Eyes (before front hair bangs so hair frames the face cleanly)
-    if (dir === 'down') {
-      ctx.fillStyle = app.eyeColor || '#0f172a';
-      ctx.fillRect(7, 5, 2, 2);
-      ctx.fillRect(11, 5, 2, 2);
-      ctx.fillStyle = '#ffffff';
-      ctx.fillRect(7, 5, 1, 1);
-      ctx.fillRect(11, 5, 1, 1);
-      if (isFeminine) {
-        // Eyelash outer flicks
-        ctx.fillStyle = '#0f172a';
-        ctx.fillRect(6, 5, 1, 1);
-        ctx.fillRect(13, 5, 1, 1);
-      }
-    } else if (dir === 'left') {
-      ctx.fillStyle = app.eyeColor || '#0f172a';
-      ctx.fillRect(6, 5, 2, 2);
-      ctx.fillStyle = '#ffffff';
-      ctx.fillRect(6, 5, 1, 1);
-      if (isFeminine) {
-        ctx.fillStyle = '#0f172a';
-        ctx.fillRect(8, 5, 1, 1);
-        ctx.fillStyle = 'rgba(244, 114, 182, 0.42)';
-        ctx.fillRect(7, 6, 2, 1);
-      }
-    } else if (dir === 'right') {
-      ctx.fillStyle = app.eyeColor || '#0f172a';
-      ctx.fillRect(12, 5, 2, 2);
-      ctx.fillStyle = '#ffffff';
-      ctx.fillRect(13, 5, 1, 1);
-      if (isFeminine) {
-        ctx.fillStyle = '#0f172a';
-        ctx.fillRect(11, 5, 1, 1);
-        ctx.fillStyle = 'rgba(244, 114, 182, 0.42)';
-        ctx.fillRect(11, 6, 2, 1);
-      }
-    }
-
-    // 6. Enhanced 10 Hairstyles with Directional Volume & Specular Highlights
-    const hStyle = app.hairStyle || 'adventurer';
-    ctx.fillStyle = app.hairColor;
-
-    // Base crown hair
-    ctx.fillRect(6, 1, 8, 2);
-    if (dir === 'left') {
-      ctx.fillRect(10, 2, 4, 5);
-    } else if (dir === 'right') {
-      ctx.fillRect(6, 2, 4, 5);
-    } else if (dir === 'up') {
-      ctx.fillRect(6, 2, 8, 6);
-    }
-
-    if (hStyle === 'warrior_crest') {
-      // Tall spartan/mohawk crest
-      ctx.fillRect(8, 0, 4, 2);
-      ctx.fillRect(9, 2, 2, 2);
-      if (dir === 'left' || dir === 'right') {
-        ctx.fillRect(7, 0, 6, 2);
-      }
-    } else if (hStyle === 'long_mane') {
-      // Flowing shoulder-length mane
-      ctx.fillRect(5, 2, 2, 7);
-      ctx.fillRect(13, 2, 2, 7);
-      ctx.fillRect(6, 3, 2, 1);
-      ctx.fillRect(12, 3, 2, 1);
-      if (dir === 'up') {
-        ctx.fillRect(5, 2, 10, 8);
-      }
-    } else if (hStyle === 'braided') {
-      // Nordic side braids with gold ties
-      ctx.fillRect(5, 2, 2, 4);
-      ctx.fillRect(13, 2, 2, 4);
-      ctx.fillRect(4, 5, 2, 5);
-      ctx.fillRect(14, 5, 2, 5);
-      ctx.fillStyle = '#fbbf24';
-      ctx.fillRect(4, 8, 2, 1);
-      ctx.fillRect(14, 8, 2, 1);
-      ctx.fillStyle = app.hairColor;
-    } else if (hStyle === 'ponytail') {
-      // High tied adventurer ponytail with gold clasp
-      ctx.fillRect(6, 2, 3, 2);
-      ctx.fillRect(11, 2, 3, 2);
+      const torsoW = isFeminine ? 10 : 12;
+      const torsoX = isFeminine ? 11 : 10;
+      ctx.fillRect(torsoX - 1, 14, torsoW + 2, 9); // Torso outline
+      // Arms outline (directional: 2 side arms in front/back view; far + near arm in side profile)
       if (dir === 'left') {
-        ctx.fillStyle = '#fbbf24';
-        ctx.fillRect(14, 2, 1, 2);
-        ctx.fillStyle = app.hairColor;
-        ctx.fillRect(15, 2, 3, 2);
-        ctx.fillRect(16, 4, 2, 3);
+        ctx.fillRect(8 + Math.round(stepR * 0.5), 14 + stepR, 4, 8); // Far arm outline
+        ctx.fillRect(13 - Math.round(stepL * 0.5), 14 + stepL, 5, 8); // Near arm outline
       } else if (dir === 'right') {
-        ctx.fillStyle = '#fbbf24';
-        ctx.fillRect(5, 2, 1, 2);
-        ctx.fillStyle = app.hairColor;
-        ctx.fillRect(2, 2, 3, 2);
-        ctx.fillRect(2, 4, 2, 3);
-      } else if (dir === 'up') {
-        ctx.fillStyle = '#fbbf24';
-        ctx.fillRect(9, 3, 2, 1);
-        ctx.fillStyle = app.hairColor;
-        ctx.fillRect(8, 4, 4, 5);
+        ctx.fillRect(20 - Math.round(stepL * 0.5), 14 + stepL, 4, 8); // Far arm outline
+        ctx.fillRect(14 + Math.round(stepR * 0.5), 14 + stepR, 5, 8); // Near arm outline
       } else {
-        ctx.fillRect(9, 0, 3, 2);
-        ctx.fillRect(14, 3, 2, 4);
+        ctx.fillRect(7, 14 + stepL, 4, 8);
+        ctx.fillRect(21, 14 + stepR, 4, 8);
       }
-    } else if (hStyle === 'twin_tails') {
-      // Dual side pigtails with ribbons
-      ctx.fillRect(6, 2, 8, 2);
-      ctx.fillRect(3, 3, 2, 6);
-      ctx.fillRect(15, 3, 2, 6);
-      ctx.fillStyle = '#f43f5e';
-      ctx.fillRect(4, 3, 2, 1);
-      ctx.fillRect(14, 3, 2, 1);
-      ctx.fillStyle = app.hairColor;
-    } else if (hStyle === 'curly_crown') {
-      // Voluminous textured curly halo
-      ctx.fillRect(5, 0, 10, 3);
-      ctx.fillRect(4, 2, 2, 4);
-      ctx.fillRect(14, 2, 2, 4);
-      if (dir === 'up') {
-        ctx.fillRect(4, 1, 12, 7);
-      }
-    } else if (hStyle === 'samurai_bun') {
-      // Topknot warrior bun + sharp temple locks
-      ctx.fillRect(8, 0, 4, 2);
-      ctx.fillStyle = '#fbbf24';
-      ctx.fillRect(8, 1, 4, 1);
-      ctx.fillStyle = app.hairColor;
-      ctx.fillRect(5, 3, 1, 4);
-      ctx.fillRect(14, 3, 1, 4);
-    } else if (hStyle === 'noble_waves') {
-      // Side-parted royal waves
-      ctx.fillRect(5, 1, 10, 2);
-      ctx.fillRect(5, 3, 3, 2);
-      ctx.fillRect(13, 3, 2, 4);
-      ctx.fillRect(5, 5, 1, 3);
-      if (dir === 'up') {
-        ctx.fillRect(5, 2, 10, 7);
-      }
-    } else if (hStyle === 'valkyrie_bangs') {
-      // Straight bangs + long side framing locks & crown braid
-      ctx.fillRect(6, 2, 8, 2);
-      ctx.fillRect(8, 3, 4, 1);
-      ctx.fillRect(5, 3, 1, 7);
-      ctx.fillRect(14, 3, 1, 7);
-      ctx.fillStyle = '#fde047';
-      ctx.fillRect(6, 2, 8, 1);
-      ctx.fillStyle = app.hairColor;
-    } else {
-      // 'adventurer': Classic layered fringe
-      ctx.fillRect(5, 2, 2, 2);
-      ctx.fillRect(13, 2, 2, 2);
-      ctx.fillRect(7, 3, 2, 1);
-      ctx.fillRect(12, 3, 2, 1);
+      // Hips / Pelvis outline
+      ctx.fillRect(10, 21, 12, 4);
+      // Legs outline
+      ctx.fillRect(10, 23, 5, 7);
+      ctx.fillRect(17, 23, 5, 7);
     }
 
-    // Specular hair shine band across crown
-    ctx.fillStyle = 'rgba(255, 255, 255, 0.24)';
-    ctx.fillRect(7, 1, 5, 1);
-
-    // 7. Equipped HEAD Slot Overlay (Hood, Iron Helmet, Astral Crown)
-    if (eq.head === 'leather_hood') {
-      ctx.fillStyle = '#78350f';
-      ctx.fillRect(5, 1, 10, 3);
-      ctx.fillStyle = '#92400e';
-      ctx.fillRect(6, 1, 8, 2);
-      ctx.fillStyle = '#fde68a';
-      ctx.fillRect(6, 3, 8, 1);
-      if (dir !== 'down') {
-        ctx.fillStyle = '#78350f';
-        ctx.fillRect(5, 3, 2, 4);
-        ctx.fillRect(13, 3, 2, 4);
+    // 4. Base Body Skin, Built-in White Underwear (Cueca Branca & Sutiã Branco Feminino) & Bare Feet
+    if (mountPose === 'boat') {
+      // Seated Torso & Arms skin
+      ctx.fillStyle = skinBase;
+      ctx.fillRect(11, 14, 10, 8);
+      if (dir === 'down' || dir === 'up') {
+        ctx.fillRect(7, 15, 4, 6);
+        ctx.fillRect(21, 15, 4, 6);
+        ctx.fillStyle = skinShadow;
+        ctx.fillRect(7, 19, 3, 2);
+        ctx.fillRect(22, 19, 3, 2);
       }
-    } else if (eq.head === 'iron_helmet') {
-      ctx.fillStyle = '#64748b';
-      ctx.fillRect(5, 1, 10, 3);
-      ctx.fillStyle = '#cbd5e1';
-      ctx.fillRect(6, 1, 8, 2);
-      ctx.fillStyle = '#dc2626';
-      ctx.fillRect(9, 0, 2, 2);
-      ctx.fillStyle = '#fef3c7';
-      ctx.fillRect(3, 1, 2, 2);
-      ctx.fillRect(15, 1, 2, 2);
+    } else if (mountPose === 'horse') {
+      ctx.fillStyle = skinBase;
+      ctx.fillRect(11, 14, 10, 8);
+      if (dir === 'left' || dir === 'right') {
+        ctx.fillRect(11, 22, 9, 5);
+      } else {
+        ctx.fillRect(7, 15, 4, 6);
+        ctx.fillRect(21, 15, 4, 6);
+        ctx.fillRect(7, 22, 4, 5);
+        ctx.fillRect(21, 22, 4, 5);
+      }
+    } else {
+      // Standing / Walking: If facing left/right, draw FAR arm behind torso first
+      if (dir === 'left') {
+        const farX = 9 + Math.round(stepR * 0.5);
+        ctx.fillStyle = skinShadow;
+        ctx.fillRect(farX, 15 + stepR, 2, 5);
+        ctx.fillStyle = skinDeep;
+        ctx.fillRect(farX, 20 + stepR, 2, 1);
+      } else if (dir === 'right') {
+        const farX = 21 - Math.round(stepL * 0.5);
+        ctx.fillStyle = skinShadow;
+        ctx.fillRect(farX, 15 + stepL, 2, 5);
+        ctx.fillStyle = skinDeep;
+        ctx.fillRect(farX, 20 + stepL, 2, 1);
+      }
+
+      // Standing / Walking Base Skin Torso
+      const torsoW = 10;
+      const torsoX = 11;
+      ctx.fillStyle = skinBase;
+      ctx.fillRect(torsoX, 14, torsoW, 8);
+      // Clavicle & chest/back shading
+      ctx.fillStyle = skinLight;
+      ctx.fillRect(12, 14, 8, 1);
+      ctx.fillStyle = skinShadow;
+      if (isFeminine) {
+        // Feminine waist taper
+        ctx.fillRect(11, 18, 1, 3);
+        ctx.fillRect(20, 18, 1, 3);
+      } else if (dir === 'down') {
+        // Subtle masculine pectoral & abdominal shading
+        ctx.fillRect(12, 17, 3, 1);
+        ctx.fillRect(17, 17, 3, 1);
+        ctx.fillRect(15, 17, 2, 3);
+      }
+
+      // Bare Side Arms & Hands for front/back views (side-profile near arm is drawn after torso/outfit so it layers cleanly)
+      if (dir === 'down' || dir === 'up') {
+        ctx.fillStyle = skinBase;
+        ctx.fillRect(8, 15 + stepL, 2, 6);
+        ctx.fillRect(22, 15 + stepR, 2, 6);
+        ctx.fillStyle = skinLight;
+        ctx.fillRect(8, 15 + stepL, 1, 4);
+        ctx.fillRect(23, 15 + stepR, 1, 4);
+        ctx.fillStyle = skinShadow;
+        ctx.fillRect(8, 20 + stepL, 2, 1);
+        ctx.fillRect(22, 20 + stepR, 2, 1);
+      }
+
+      // Bare Legs & Bare Feet (before pants/shorts/boots overlays)
+      const leftFootY = 27 + Math.max(0, stepL);
+      const rightFootY = 27 + Math.max(0, stepR);
+
+      ctx.fillStyle = skinBase;
+      ctx.fillRect(11, 24, 3, 4);
+      ctx.fillRect(18, 24, 3, 4);
+      ctx.fillStyle = skinShadow;
+      ctx.fillRect(13, 24, 1, 4);
+      ctx.fillRect(18, 24, 1, 4);
+
+      // Bare feet
+      ctx.fillStyle = skinBase;
+      ctx.fillRect(11, leftFootY, 3, 2);
+      ctx.fillRect(18, rightFootY, 3, 2);
+      ctx.fillStyle = skinDeep;
+      ctx.fillRect(11, leftFootY + 1, 3, 1);
+      ctx.fillRect(18, rightFootY + 1, 3, 1);
+
+      // BUILT-IN WHITE BRIEFS / UNDERWEAR (Cueca Branca embutida quando sem calça/bermuda)
+      if (!legsId) {
+        // Elastic waistband
+        ctx.fillStyle = '#cbd5e1';
+        ctx.fillRect(11, 21, 10, 1);
+        // White briefs body
+        ctx.fillStyle = '#f8fafc';
+        ctx.fillRect(11, 22, 10, 2);
+        ctx.fillRect(13, 24, 6, 1);
+        // Subtle seam shading
+        ctx.fillStyle = '#e2e8f0';
+        ctx.fillRect(11, 23, 2, 1);
+        ctx.fillRect(19, 23, 2, 1);
+      }
+    }
+
+    // Resolve base IDs and dye colors for equipped garments
+    const bodyDef = bodyId ? ITEMS[bodyId] : null;
+    const bodyBaseId = bodyDef?.garmentBaseId || bodyId;
+    const bodyColorDef =
+      CLOTHING_COLOR_MAP[bodyDef?.garmentColorId || 'branco'] ||
+      CLOTHING_COLOR_MAP.branco;
+    const isBodyArmor =
+      bodyId === 'leather_tunic' ||
+      bodyId === 'iron_armor' ||
+      bodyId === 'astral_armor';
+
+    const legsDef = legsId ? ITEMS[legsId] : null;
+    const legsBaseId = legsDef?.garmentBaseId || legsId;
+    const legsColorDef =
+      CLOTHING_COLOR_MAP[
+        legsDef?.garmentColorId ||
+          (legsId === 'overalls'
+            ? 'bege'
+            : legsId === 'brown_shorts'
+            ? 'marrom'
+            : 'branco')
+      ] || CLOTHING_COLOR_MAP.branco;
+    const isLegsArmor =
+      legsId === 'leather_pants' ||
+      legsId === 'iron_greaves' ||
+      legsId === 'astral_leggings';
+
+    const feetDef = feetId ? ITEMS[feetId] : null;
+    const feetBaseId = feetDef?.garmentBaseId || feetId;
+    const feetColorDef =
+      CLOTHING_COLOR_MAP[feetDef?.garmentColorId || 'marrom'] ||
+      CLOTHING_COLOR_MAP.marrom;
+
+    // Helper to draw Overalls upper torso bib & suspenders (drawn over clothing tops, or under body armor)
+    const drawOverallsUpperTorso = () => {
+      const m = legsColorDef.hex;
+      const d = legsColorDef.darkHex;
+      const l = legsColorDef.lightHex;
       if (dir === 'down') {
+        // Suspender straps over shoulders
+        ctx.fillStyle = d;
+        ctx.fillRect(12, 14, 2, 3);
+        ctx.fillRect(18, 14, 2, 3);
+        // Chest bib
+        ctx.fillStyle = m;
+        ctx.fillRect(12, 16, 8, 6);
+        ctx.fillStyle = l;
+        ctx.fillRect(13, 17, 6, 3);
+        // Center bib pocket & stitching
+        ctx.fillStyle = d;
+        ctx.fillRect(14, 18, 4, 3);
+        ctx.fillStyle = m;
+        ctx.fillRect(15, 19, 2, 1);
+        // Brass suspender buttons
+        ctx.fillStyle = '#fbbf24';
+        ctx.fillRect(12, 16, 1, 1);
+        ctx.fillRect(19, 16, 1, 1);
+      } else if (dir === 'up') {
+        // Crossed back suspender straps & high waist back
+        ctx.fillStyle = d;
+        ctx.fillRect(12, 14, 2, 3);
+        ctx.fillRect(18, 14, 2, 3);
+        ctx.fillRect(14, 16, 4, 3);
+        ctx.fillStyle = m;
+        ctx.fillRect(11, 18, 10, 4);
+      } else {
+        // Side profile bib & shoulder strap
+        ctx.fillStyle = d;
+        ctx.fillRect(14, 14, 3, 3);
+        ctx.fillStyle = m;
+        ctx.fillRect(11, 17, 10, 5);
+        ctx.fillStyle = '#fbbf24';
+        ctx.fillRect(14, 17, 1, 1);
+      }
+    };
+
+    // Helper to draw Dress skirt on lower body (for short_dress & long_dress)
+    const drawDressLowerSkirt = (isLong: boolean) => {
+      const m = bodyColorDef.hex;
+      const d = bodyColorDef.darkHex;
+      const l = bodyColorDef.lightHex;
+      const skirtH = isLong ? 6 : 4; // short_dress: y=22..25 (knees), long_dress: y=22..27 (ankles)
+      if (mountPose === 'none') {
+        // Waist sash
+        ctx.fillStyle = d;
+        ctx.fillRect(11, 21, 10, 1);
+        // Flared pleated skirt
+        ctx.fillStyle = m;
+        ctx.fillRect(10, 22, 12, skirtH);
+        if (isLong) {
+          ctx.fillRect(9, 24, 14, 4);
+        }
+        // Vertical pleat highlights & shadow folds
+        ctx.fillStyle = l;
+        ctx.fillRect(11, 22, 2, skirtH - 1);
+        ctx.fillRect(15, 22, 2, skirtH - 1);
+        ctx.fillRect(19, 22, 2, skirtH - 1);
+        ctx.fillStyle = d;
+        ctx.fillRect(13, 23, 1, skirtH - 1);
+        ctx.fillRect(18, 23, 1, skirtH - 1);
+        // Bottom hem trim
+        ctx.fillRect(isLong ? 9 : 10, 22 + skirtH - 1, isLong ? 14 : 12, 1);
+      } else if (mountPose === 'horse') {
+        ctx.fillStyle = m;
+        if (dir === 'left' || dir === 'right') {
+          ctx.fillRect(11, 22, 9, isLong ? 5 : 3);
+        } else {
+          ctx.fillRect(7, 22, 4, isLong ? 5 : 3);
+          ctx.fillRect(21, 22, 4, isLong ? 5 : 3);
+        }
+      }
+    };
+
+    // BUILT-IN FEMALE WHITE BRA (Sutiã Branco embutido quando personagem feminino está sem camisa/armadura e sem macacão)
+    if (!bodyId && legsBaseId !== 'overalls' && isFeminine) {
+      ctx.fillStyle = '#cbd5e1';
+      if (dir === 'down') {
+        ctx.fillRect(12, 14, 1, 2);
+        ctx.fillRect(19, 14, 1, 2);
+        ctx.fillStyle = '#f8fafc';
+        ctx.fillRect(11, 16, 4, 3);
+        ctx.fillRect(17, 16, 4, 3);
+        ctx.fillRect(15, 17, 2, 1);
+        ctx.fillStyle = '#cbd5e1';
+        ctx.fillRect(11, 18, 10, 1);
+      } else if (dir === 'up') {
+        ctx.fillRect(12, 14, 1, 3);
+        ctx.fillRect(19, 14, 1, 3);
+        ctx.fillStyle = '#f8fafc';
+        ctx.fillRect(11, 17, 10, 1);
+      } else if (dir === 'left') {
+        ctx.fillRect(14, 14, 1, 2);
+        ctx.fillStyle = '#f8fafc';
+        ctx.fillRect(11, 16, 6, 3);
+        ctx.fillStyle = '#cbd5e1';
+        ctx.fillRect(11, 18, 8, 1);
+      } else if (dir === 'right') {
+        ctx.fillRect(17, 14, 1, 2);
+        ctx.fillStyle = '#f8fafc';
+        ctx.fillRect(15, 16, 6, 3);
+        ctx.fillStyle = '#cbd5e1';
+        ctx.fillRect(13, 18, 8, 1);
+      }
+    }
+
+    // If wearing Overalls AND a body Armor, draw Overalls upper torso BEFORE body armor so armor overrides it!
+    if (legsBaseId === 'overalls' && isBodyArmor) {
+      drawOverallsUpperTorso();
+    }
+
+    // 5. Equipped BODY Garments (Clothing or Robust Armors)
+    if (
+      bodyBaseId === 'white_tank_top' ||
+      bodyBaseId === 'short_dress' ||
+      bodyBaseId === 'long_dress'
+    ) {
+      // Sleeveless Tank Top or Dress Bodice (uses 17-color palette)
+      const m = bodyColorDef.hex;
+      const d = bodyColorDef.darkHex;
+      const l = bodyColorDef.lightHex;
+      if (dir === 'down') {
+        ctx.fillStyle = d;
+        ctx.fillRect(12, 14, 2, 2);
+        ctx.fillRect(18, 14, 2, 2);
+        ctx.fillStyle = m;
+        ctx.fillRect(11, 16, 10, 6);
+        ctx.fillStyle = l;
+        ctx.fillRect(12, 16, 8, 4);
+        ctx.fillStyle = d;
+        ctx.fillRect(11, 16, 1, 6);
+        ctx.fillRect(20, 16, 1, 6);
+        ctx.fillRect(14, 15, 4, 1);
+      } else if (dir === 'up') {
+        ctx.fillStyle = d;
+        ctx.fillRect(12, 14, 2, 2);
+        ctx.fillRect(18, 14, 2, 2);
+        ctx.fillRect(14, 15, 4, 1);
+        ctx.fillStyle = m;
+        ctx.fillRect(11, 16, 10, 6);
+        ctx.fillStyle = d;
+        ctx.fillRect(11, 16, 1, 6);
+        ctx.fillRect(20, 16, 1, 6);
+        ctx.fillRect(15, 16, 2, 5);
+      } else {
+        ctx.fillStyle = m;
+        ctx.fillRect(11, 15, 10, 7);
+        ctx.fillStyle = d;
+        ctx.fillRect(14, 14, 4, 2);
+        ctx.fillRect(11, 16, 1, 6);
+        ctx.fillRect(20, 16, 1, 6);
+      }
+    } else if (bodyBaseId === 'sweater') {
+      // Suéter: Cozy knit sweater that covers the entire torso and full arms (leaves only hands bare)
+      const m = bodyColorDef.hex;
+      const d = bodyColorDef.darkHex;
+      const l = bodyColorDef.lightHex;
+      // Torso knit body
+      ctx.fillStyle = m;
+      ctx.fillRect(11, 14, 10, 8);
+      ctx.fillStyle = l;
+      ctx.fillRect(12, 15, 8, 5);
+      // Ribbed collar & bottom hem
+      ctx.fillStyle = d;
+      ctx.fillRect(12, 14, 8, 1);
+      ctx.fillRect(11, 21, 10, 1);
+      if (dir === 'down' || dir === 'up') {
+        // Subtle knit vertical cable lines
+        ctx.fillRect(14, 16, 1, 5);
+        ctx.fillRect(17, 16, 1, 5);
+        // Full long sleeves covering both arms (y=15..19, leaving hand at y=20 skin-colored)
+        const sL = mountPose === 'none' ? stepL : 0;
+        const sR = mountPose === 'none' ? stepR : 0;
+        if (mountPose === 'boat') {
+          ctx.fillStyle = m;
+          ctx.fillRect(7, 15, 4, 4);
+          ctx.fillRect(21, 15, 4, 4);
+          ctx.fillStyle = d;
+          ctx.fillRect(7, 18, 4, 1);
+          ctx.fillRect(21, 18, 4, 1);
+        } else {
+          ctx.fillStyle = m;
+          ctx.fillRect(8, 14 + sL, 3, 6);
+          ctx.fillRect(21, 14 + sR, 3, 6);
+          ctx.fillStyle = l;
+          ctx.fillRect(8, 15 + sL, 2, 4);
+          ctx.fillRect(22, 15 + sR, 2, 4);
+          ctx.fillStyle = d;
+          ctx.fillRect(8, 19 + sL, 3, 1);
+          ctx.fillRect(21, 19 + sR, 3, 1);
+        }
+      } else if (dir === 'left' && mountPose === 'none') {
+        // Far arm sleeve in side profile
+        const farX = 9 + Math.round(stepR * 0.5);
+        ctx.fillStyle = d;
+        ctx.fillRect(farX, 15 + stepR, 2, 5);
+      } else if (dir === 'right' && mountPose === 'none') {
+        const farX = 21 - Math.round(stepL * 0.5);
+        ctx.fillStyle = d;
+        ctx.fillRect(farX, 15 + stepL, 2, 5);
+      }
+    } else if (bodyId === 'leather_tunic') {
+      // ROBUST STUDDED LEATHER CUIRASS: Reinforced brown hide, sheep-wool collar, diagonal chest baldric & brass rivets
+      ctx.fillStyle = '#92400e';
+      ctx.fillRect(10, 14, 12, 8);
+      ctx.fillStyle = '#78350f';
+      ctx.fillRect(10, 18, 12, 4);
+      ctx.fillStyle = '#fef3c7';
+      ctx.fillRect(11, 14, 10, 1);
+      ctx.fillStyle = '#451a03';
+      ctx.fillRect(10, 20, 12, 2);
+      if (dir === 'down') {
+        ctx.fillRect(12, 15, 2, 2);
+        ctx.fillRect(14, 17, 2, 2);
+        ctx.fillRect(16, 19, 2, 2);
+        ctx.fillStyle = '#fbbf24';
+        ctx.fillRect(11, 16, 1, 1);
+        ctx.fillRect(20, 16, 1, 1);
+        ctx.fillRect(11, 19, 1, 1);
+        ctx.fillRect(20, 19, 1, 1);
+        ctx.fillRect(15, 20, 2, 2);
+      } else if (dir === 'up') {
+        ctx.fillRect(15, 15, 2, 6);
+        ctx.fillStyle = '#fbbf24';
+        ctx.fillRect(13, 16, 1, 1);
+        ctx.fillRect(18, 16, 1, 1);
+      }
+      if (dir === 'down' || dir === 'up') {
+        const pL = mountPose === 'none' ? stepL : 0;
+        const pR = mountPose === 'none' ? stepR : 0;
+        ctx.fillStyle = '#78350f';
+        ctx.fillRect(7, 14 + pL, 4, 4);
+        ctx.fillRect(21, 14 + pR, 4, 4);
+        ctx.fillStyle = '#b45309';
+        ctx.fillRect(7, 14 + pL, 4, 2);
+        ctx.fillRect(21, 14 + pR, 4, 2);
+        ctx.fillStyle = '#fbbf24';
+        ctx.fillRect(8, 15 + pL, 1, 1);
+        ctx.fillRect(23, 15 + pR, 1, 1);
+      }
+    } else if (bodyId === 'iron_armor') {
+      // HEAVY FORGED IRON BREASTPLATE
+      ctx.fillStyle = '#64748b';
+      ctx.fillRect(10, 14, 12, 8);
+      ctx.fillStyle = '#94a3b8';
+      ctx.fillRect(11, 14, 10, 6);
+      ctx.fillStyle = '#e2e8f0';
+      if (dir === 'down') {
+        ctx.fillRect(11, 15, 4, 3);
+        ctx.fillRect(17, 15, 4, 3);
+        ctx.fillStyle = '#f8fafc';
+        ctx.fillRect(12, 15, 2, 2);
+        ctx.fillRect(18, 15, 2, 2);
+        ctx.fillStyle = '#334155';
+        ctx.fillRect(11, 18, 10, 1);
+        ctx.fillRect(11, 20, 10, 1);
+        ctx.fillRect(15, 15, 2, 6);
+        ctx.fillStyle = '#fbbf24';
+        ctx.fillRect(15, 19, 2, 2);
+      } else if (dir === 'up') {
+        ctx.fillRect(12, 15, 8, 3);
+        ctx.fillStyle = '#334155';
+        ctx.fillRect(15, 14, 2, 8);
+        ctx.fillRect(11, 19, 10, 1);
+      } else {
+        ctx.fillRect(12, 15, 8, 3);
+        ctx.fillStyle = '#334155';
+        ctx.fillRect(11, 19, 10, 1);
+      }
+      if (dir === 'down' || dir === 'up') {
+        const pL = mountPose === 'none' ? stepL : 0;
+        const pR = mountPose === 'none' ? stepR : 0;
+        ctx.fillStyle = '#475569';
+        ctx.fillRect(6, 13 + pL, 5, 5);
+        ctx.fillRect(21, 13 + pR, 5, 5);
+        ctx.fillStyle = '#cbd5e1';
+        ctx.fillRect(7, 13 + pL, 4, 3);
+        ctx.fillRect(21, 13 + pR, 4, 3);
+        ctx.fillStyle = '#f8fafc';
+        ctx.fillRect(7, 13 + pL, 3, 1);
+        ctx.fillRect(22, 13 + pR, 3, 1);
+      }
+    } else if (bodyId === 'astral_armor') {
+      // SOVEREIGN ASTRAL CUIRASS
+      ctx.fillStyle = '#0369a1';
+      ctx.fillRect(10, 14, 12, 8);
+      ctx.fillStyle = '#0284c7';
+      ctx.fillRect(11, 14, 10, 7);
+      ctx.fillStyle = '#fde047';
+      ctx.fillRect(11, 14, 10, 1);
+      ctx.fillRect(10, 20, 12, 2);
+      if (dir === 'down') {
+        ctx.fillStyle = '#38bdf8';
+        ctx.fillRect(14, 15, 4, 4);
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(15, 16, 2, 2);
+        ctx.fillStyle = '#f59e0b';
+        ctx.fillRect(11, 17, 3, 2);
+        ctx.fillRect(18, 17, 3, 2);
+      } else if (dir === 'up') {
+        ctx.fillStyle = '#38bdf8';
+        ctx.fillRect(14, 15, 4, 5);
+        ctx.fillStyle = '#fde047';
+        ctx.fillRect(15, 14, 2, 7);
+      } else {
+        ctx.fillStyle = '#38bdf8';
+        ctx.fillRect(13, 16, 6, 3);
+      }
+      if (dir === 'down' || dir === 'up') {
+        const pL = mountPose === 'none' ? stepL : 0;
+        const pR = mountPose === 'none' ? stepR : 0;
+        ctx.fillStyle = '#f59e0b';
+        ctx.fillRect(6, 12 + pL, 5, 5);
+        ctx.fillRect(21, 12 + pR, 5, 5);
+        ctx.fillStyle = '#fde047';
+        ctx.fillRect(6, 12 + pL, 4, 3);
+        ctx.fillRect(22, 12 + pR, 4, 3);
+        ctx.fillStyle = '#fef9c3';
+        ctx.fillRect(6, 12 + pL, 2, 2);
+        ctx.fillRect(24, 12 + pR, 2, 2);
+      }
+    }
+
+    // If wearing Overalls AND NOT wearing body armor, Overalls upper bib & straps override the clothing top!
+    if (legsBaseId === 'overalls' && !isBodyArmor) {
+      drawOverallsUpperTorso();
+    }
+
+    // 5B. Side-Profile Foreground Arm (drawn AFTER torso/outfit so the character always has strictly 2 arms: 1 far + 1 near)
+    if (dir === 'left' || dir === 'right') {
+      const nearStep = mountPose === 'none' ? (dir === 'left' ? stepL : stepR) : 0;
+      const nearX =
+        dir === 'left'
+          ? 14 - Math.round(nearStep * 0.5)
+          : 15 + Math.round(nearStep * 0.5);
+
+      // Base bare arm & hand in foreground
+      ctx.fillStyle = skinBase;
+      ctx.fillRect(nearX, 15 + nearStep, 3, 6);
+      ctx.fillStyle = skinLight;
+      ctx.fillRect(nearX + (dir === 'left' ? 0 : 1), 15 + nearStep, 2, 4);
+      ctx.fillStyle = skinShadow;
+      ctx.fillRect(nearX, 20 + nearStep, 3, 1);
+
+      if (bodyBaseId === 'sweater') {
+        // Suéter covers the entire foreground arm down to the wrist (y=15..19), leaving hand at y=20 visible
+        ctx.fillStyle = bodyColorDef.hex;
+        ctx.fillRect(nearX, 14 + nearStep, 3, 6);
+        ctx.fillStyle = bodyColorDef.lightHex;
+        ctx.fillRect(nearX + (dir === 'left' ? 0 : 1), 15 + nearStep, 2, 4);
+        ctx.fillStyle = bodyColorDef.darkHex;
+        ctx.fillRect(nearX, 19 + nearStep, 3, 1);
+      } else if (bodyId === 'leather_tunic') {
+        ctx.fillStyle = '#78350f';
+        ctx.fillRect(nearX - 1, 14 + nearStep, 5, 4);
+        ctx.fillStyle = '#b45309';
+        ctx.fillRect(nearX, 14 + nearStep, 3, 2);
+        ctx.fillStyle = '#fbbf24';
+        ctx.fillRect(nearX + 1, 15 + nearStep, 1, 1);
+      } else if (bodyId === 'iron_armor') {
+        ctx.fillStyle = '#475569';
+        ctx.fillRect(nearX - 1, 13 + nearStep, 5, 5);
+        ctx.fillStyle = '#cbd5e1';
+        ctx.fillRect(nearX, 13 + nearStep, 3, 3);
+        ctx.fillStyle = '#f8fafc';
+        ctx.fillRect(nearX, 13 + nearStep, 2, 1);
         ctx.fillStyle = '#94a3b8';
-        ctx.fillRect(9, 4, 2, 2);
+        ctx.fillRect(nearX, 18 + nearStep, 3, 2);
+      } else if (bodyId === 'astral_armor') {
+        ctx.fillStyle = '#f59e0b';
+        ctx.fillRect(nearX - 1, 12 + nearStep, 5, 5);
+        ctx.fillStyle = '#fde047';
+        ctx.fillRect(nearX, 12 + nearStep, 4, 3);
+        ctx.fillStyle = '#38bdf8';
+        ctx.fillRect(nearX, 17 + nearStep, 3, 3);
+      }
+    }
+
+    // If wearing Short Dress or Long Dress, draw the lower skirt BEFORE leg armor so leg armor overrides it if equipped!
+    if (bodyBaseId === 'short_dress') {
+      drawDressLowerSkirt(false);
+    } else if (bodyBaseId === 'long_dress') {
+      drawDressLowerSkirt(true);
+    }
+
+    // 6. Equipped LEGS Garments (Bermuda, Calça, Macacão, or Robust Armor Greaves/Pants)
+    if (legsBaseId === 'shorts') {
+      // Bermuda (any of the 17 colors, including brown_shorts): knee-length shorts leaving lower calves bare
+      const m = legsColorDef.hex;
+      const d = legsColorDef.darkHex;
+      const l = legsColorDef.lightHex;
+      if (mountPose === 'none') {
+        ctx.fillStyle = '#451a03';
+        ctx.fillRect(11, 21, 10, 1);
+        ctx.fillStyle = '#d97706';
+        ctx.fillRect(15, 21, 2, 1);
+        ctx.fillStyle = m;
+        ctx.fillRect(11, 22, 10, 2);
+        ctx.fillRect(11, 24, 4, 2);
+        ctx.fillRect(17, 24, 4, 2);
+        ctx.fillStyle = l;
+        ctx.fillRect(12, 22, 2, 3);
+        ctx.fillRect(18, 22, 2, 3);
+        ctx.fillStyle = d;
+        ctx.fillRect(11, 25, 4, 1);
+        ctx.fillRect(17, 25, 4, 1);
+      } else if (mountPose === 'horse') {
+        ctx.fillStyle = m;
+        if (dir === 'left' || dir === 'right') {
+          ctx.fillRect(11, 22, 8, 3);
+        } else {
+          ctx.fillRect(7, 22, 4, 3);
+          ctx.fillRect(21, 22, 4, 3);
+        }
+      }
+    } else if (legsBaseId === 'pants' || legsBaseId === 'overalls') {
+      // Calça or Macacão lower trousers: full-length pants covering legs down to ankles (y=21..27)
+      const m = legsColorDef.hex;
+      const d = legsColorDef.darkHex;
+      const l = legsColorDef.lightHex;
+      if (mountPose === 'none') {
+        if (legsBaseId === 'pants') {
+          ctx.fillStyle = '#451a03';
+          ctx.fillRect(11, 21, 10, 1);
+          ctx.fillStyle = '#fbbf24';
+          ctx.fillRect(15, 21, 2, 1);
+        } else {
+          // Overalls waist seam & brass side buttons
+          ctx.fillStyle = d;
+          ctx.fillRect(11, 21, 10, 1);
+          ctx.fillStyle = '#fbbf24';
+          ctx.fillRect(11, 21, 1, 1);
+          ctx.fillRect(20, 21, 1, 1);
+        }
+        ctx.fillStyle = m;
+        ctx.fillRect(11, 22, 10, 2);
+        ctx.fillRect(11, 24, 4, 3);
+        ctx.fillRect(17, 24, 4, 3);
+        ctx.fillStyle = l;
+        ctx.fillRect(12, 22, 2, 4);
+        ctx.fillRect(18, 22, 2, 4);
+        ctx.fillStyle = d;
+        ctx.fillRect(14, 24, 1, 3);
+        ctx.fillRect(17, 24, 1, 3);
+        ctx.fillRect(11, 26, 4, 1);
+        ctx.fillRect(17, 26, 4, 1);
+      } else if (mountPose === 'horse') {
+        ctx.fillStyle = m;
+        if (dir === 'left' || dir === 'right') {
+          ctx.fillRect(11, 22, 9, 4);
+        } else {
+          ctx.fillRect(7, 22, 4, 4);
+          ctx.fillRect(21, 22, 4, 4);
+        }
+      }
+    } else if (isLegsArmor) {
+      let legsMain = '#854d0e';
+      let legsShadow = '#713f12';
+      let legsKnee = '#ca8a04';
+      let kneeRivet = '#fef08a';
+      let beltColor = '#451a03';
+      let buckleColor = '#fbbf24';
+      if (legsId === 'iron_greaves') {
+        legsMain = '#64748b';
+        legsShadow = '#334155';
+        legsKnee = '#e2e8f0';
+        kneeRivet = '#ffffff';
+        beltColor = '#1e293b';
+        buckleColor = '#fbbf24';
+      } else if (legsId === 'astral_leggings') {
+        legsMain = '#0284c7';
+        legsShadow = '#0369a1';
+        legsKnee = '#fde047';
+        kneeRivet = '#38bdf8';
+        beltColor = '#082f49';
+        buckleColor = '#fde047';
+      }
+
+      if (mountPose === 'none') {
+        ctx.fillStyle = beltColor;
+        ctx.fillRect(10, 21, 12, 2);
+        ctx.fillStyle = buckleColor;
+        ctx.fillRect(14, 21, 4, 2);
+        ctx.fillStyle = legsMain;
+        ctx.fillRect(11, 23, 10, 1);
+        ctx.fillRect(10, 24, 5, 3);
+        ctx.fillRect(17, 24, 5, 3);
+        ctx.fillStyle = legsShadow;
+        ctx.fillRect(14, 24, 1, 3);
+        ctx.fillRect(17, 24, 1, 3);
+        ctx.fillStyle = legsKnee;
+        ctx.fillRect(11, 24, 3, 2);
+        ctx.fillRect(18, 24, 3, 2);
+        ctx.fillStyle = kneeRivet;
+        ctx.fillRect(12, 24, 1, 1);
+        ctx.fillRect(19, 24, 1, 1);
+      } else if (mountPose === 'horse') {
+        ctx.fillStyle = legsMain;
+        if (dir === 'left' || dir === 'right') {
+          ctx.fillRect(11, 22, 9, 4);
+          ctx.fillStyle = legsKnee;
+          ctx.fillRect(16, 23, 3, 2);
+        } else {
+          ctx.fillRect(7, 22, 4, 4);
+          ctx.fillRect(21, 22, 4, 4);
+          ctx.fillStyle = legsKnee;
+          ctx.fillRect(7, 23, 3, 2);
+          ctx.fillRect(22, 23, 3, 2);
+        }
+      }
+    }
+
+    // 7. Equipped FEET / Boots (Sandália, Bota de Vaqueiro, or Robust Armored Sabatons)
+    if (feetBaseId === 'sandals') {
+      const m = feetColorDef.hex;
+      const d = feetColorDef.darkHex;
+      if (mountPose === 'none') {
+        const leftFootY = 27 + Math.max(0, stepL);
+        const rightFootY = 27 + Math.max(0, stepR);
+        // Leather sandal sole
+        ctx.fillStyle = d;
+        ctx.fillRect(10, leftFootY + 1, 4, 1);
+        ctx.fillRect(18, rightFootY + 1, 4, 1);
+        // Open-toe leather straps (leaving bare toes visible)
+        ctx.fillStyle = m;
+        ctx.fillRect(11, leftFootY, 2, 1);
+        ctx.fillRect(18, rightFootY, 2, 1);
+        ctx.fillStyle = '#fbbf24';
+        ctx.fillRect(11, leftFootY, 1, 1);
+        ctx.fillRect(19, rightFootY, 1, 1);
+      } else if (mountPose === 'horse') {
+        ctx.fillStyle = m;
+        if (dir === 'left' || dir === 'right') {
+          ctx.fillRect(11, 27, 4, 1);
+        } else {
+          ctx.fillRect(7, 27, 3, 1);
+          ctx.fillRect(22, 27, 3, 1);
+        }
+      }
+    } else if (feetBaseId === 'cowboy_boots') {
+      const m = feetColorDef.hex;
+      const d = feetColorDef.darkHex;
+      const l = feetColorDef.lightHex;
+      if (mountPose === 'none') {
+        const leftBootY = 25 + Math.max(0, stepL);
+        const rightBootY = 25 + Math.max(0, stepR);
+        // Tall Western boot shaft & V-cut collar
+        ctx.fillStyle = m;
+        ctx.fillRect(10, leftBootY, 5, 4);
+        ctx.fillRect(17, rightBootY, 5, 4);
+        ctx.fillStyle = l;
+        ctx.fillRect(10, leftBootY, 2, 3);
+        ctx.fillRect(19, rightBootY, 2, 3);
+        // Western golden embroidery stitch & spur stud
+        ctx.fillStyle = '#fde047';
+        ctx.fillRect(12, leftBootY + 1, 1, 1);
+        ctx.fillRect(19, rightBootY + 1, 1, 1);
+        // Dark angled riding heel & sole
+        ctx.fillStyle = d;
+        ctx.fillRect(10, leftBootY + 3, 5, 1);
+        ctx.fillRect(17, rightBootY + 3, 5, 1);
+      } else if (mountPose === 'horse') {
+        ctx.fillStyle = m;
+        if (dir === 'left' || dir === 'right') {
+          ctx.fillRect(11, 25, 5, 3);
+          ctx.fillStyle = d;
+          ctx.fillRect(11, 27, 5, 1);
+        } else {
+          ctx.fillRect(7, 25, 4, 3);
+          ctx.fillRect(21, 25, 4, 3);
+        }
+      }
+    } else if (
+      feetId === 'leather_boots' ||
+      feetId === 'iron_boots' ||
+      feetId === 'astral_boots'
+    ) {
+      let bootsMain = '#78350f';
+      let bootsTrim = '#fef3c7';
+      let bootsSole = '#291305';
+      let bootsBuckle = '#fbbf24';
+      let bootsWing: string | null = null;
+      if (feetId === 'iron_boots') {
+        bootsMain = '#94a3b8';
+        bootsTrim = '#f8fafc';
+        bootsSole = '#1e293b';
+        bootsBuckle = '#cbd5e1';
+      } else if (feetId === 'astral_boots') {
+        bootsMain = '#0284c7';
+        bootsTrim = '#fde047';
+        bootsSole = '#b45309';
+        bootsBuckle = '#38bdf8';
+        bootsWing = '#fef9c3';
+      }
+
+      if (mountPose === 'none') {
+        const leftBootY = 26 + Math.max(0, stepL);
+        const rightBootY = 26 + Math.max(0, stepR);
+        ctx.fillStyle = bootsMain;
+        ctx.fillRect(10, leftBootY, 5, 3);
+        ctx.fillRect(17, rightBootY, 5, 3);
+        ctx.fillStyle = bootsTrim;
+        ctx.fillRect(10, leftBootY, 5, 1);
+        ctx.fillRect(17, rightBootY, 5, 1);
+        ctx.fillStyle = bootsBuckle;
+        ctx.fillRect(11, leftBootY + 1, 2, 1);
+        ctx.fillRect(19, rightBootY + 1, 2, 1);
+        ctx.fillStyle = bootsSole;
+        ctx.fillRect(10, leftBootY + 2, 5, 1);
+        ctx.fillRect(17, rightBootY + 2, 5, 1);
+        if (bootsWing) {
+          ctx.fillStyle = bootsWing;
+          ctx.fillRect(8, leftBootY - 1, 2, 3);
+          ctx.fillRect(22, rightBootY - 1, 2, 3);
+        }
+      } else if (mountPose === 'horse') {
+        ctx.fillStyle = bootsMain;
+        if (dir === 'left' || dir === 'right') {
+          ctx.fillRect(11, 26, 5, 2);
+          ctx.fillStyle = bootsTrim;
+          ctx.fillRect(11, 26, 5, 1);
+        } else {
+          ctx.fillRect(7, 26, 4, 2);
+          ctx.fillRect(21, 26, 4, 2);
+          ctx.fillStyle = bootsTrim;
+          ctx.fillRect(7, 26, 4, 1);
+          ctx.fillRect(21, 26, 4, 1);
+        }
+      }
+    }
+
+    // 8. Head, Ears & Multi-tone Facial Skin
+    ctx.fillStyle = skinBase;
+    ctx.fillRect(10, 4, 12, 9);
+    // Forehead highlight & jawline shadow
+    ctx.fillStyle = skinLight;
+    ctx.fillRect(11, 4, 10, 2);
+    ctx.fillStyle = skinShadow;
+    ctx.fillRect(11, 12, 10, 1);
+
+    // Ears
+    if (dir === 'down' || dir === 'up') {
+      ctx.fillStyle = skinBase;
+      ctx.fillRect(8, 7, 2, 3);
+      ctx.fillRect(22, 7, 2, 3);
+      ctx.fillStyle = skinShadow;
+      ctx.fillRect(8, 8, 1, 2);
+      ctx.fillRect(23, 8, 1, 2);
+    } else if (dir === 'left') {
+      ctx.fillStyle = skinBase;
+      ctx.fillRect(16, 7, 2, 3);
+      ctx.fillStyle = skinShadow;
+      ctx.fillRect(17, 8, 1, 2);
+    } else if (dir === 'right') {
+      ctx.fillStyle = skinBase;
+      ctx.fillRect(14, 7, 2, 3);
+      ctx.fillStyle = skinShadow;
+      ctx.fillRect(14, 8, 1, 2);
+    }
+
+    // Subtle nose / cheek blush
+    if (dir === 'down') {
+      ctx.fillStyle = skinShadow;
+      ctx.fillRect(15, 9, 2, 1); // nose tip shadow
+      if (isFeminine) {
+        ctx.fillStyle = 'rgba(244, 114, 182, 0.35)';
+        ctx.fillRect(10, 10, 2, 1);
+        ctx.fillRect(20, 10, 2, 1);
+      }
+    }
+
+    // 9. SKIN MARKS: Freckles (Sardas) & Eye Scar (Cicatriz no Olho)
+    if (skinMark === 'freckles' || skinMark === 'freckles_and_scar') {
+      ctx.fillStyle = freckleTone;
+      if (dir === 'down') {
+        // Freckles across cheeks and nose bridge
+        ctx.fillRect(11, 10, 1, 1);
+        ctx.fillRect(13, 11, 1, 1);
+        ctx.fillRect(15, 9, 1, 1);
+        ctx.fillRect(16, 10, 1, 1);
+        ctx.fillRect(18, 11, 1, 1);
+        ctx.fillRect(20, 10, 1, 1);
+      } else if (dir === 'left') {
+        ctx.fillRect(10, 10, 1, 1);
+        ctx.fillRect(12, 11, 1, 1);
+        ctx.fillRect(14, 10, 1, 1);
+      } else if (dir === 'right') {
+        ctx.fillRect(17, 10, 1, 1);
+        ctx.fillRect(19, 11, 1, 1);
+        ctx.fillRect(21, 10, 1, 1);
+      }
+    }
+
+    if (skinMark === 'eye_scar' || skinMark === 'freckles_and_scar') {
+      if (dir === 'down') {
+        // Vertical battle scar over viewer-right eye (x=19..20)
+        ctx.fillStyle = '#9f1239';
+        ctx.fillRect(19, 5, 1, 2);
+        ctx.fillRect(19, 10, 1, 3);
+        ctx.fillStyle = '#fda4af';
+        ctx.fillRect(20, 5, 1, 2);
+        ctx.fillRect(20, 10, 1, 2);
+      } else if (dir === 'right') {
+        ctx.fillStyle = '#9f1239';
+        ctx.fillRect(19, 5, 1, 2);
+        ctx.fillRect(19, 10, 1, 3);
+        ctx.fillStyle = '#fda4af';
+        ctx.fillRect(18, 10, 1, 2);
+      }
+    }
+
+    // 10. EYES: 6 Distinct Shape Variants (classic, sharp, large, calm, fierce, mystic)
+    const drawEyePairDown = () => {
+      // Left eye at x=11..13, Right eye at x=18..20, y=7..9
+      if (eyeStyle === 'sharp') {
+        // Narrow hunter eyes with sharp outer wing
+        ctx.fillStyle = '#0f172a';
+        ctx.fillRect(10, 7, 4, 1);
+        ctx.fillRect(18, 7, 4, 1);
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(11, 8, 3, 2);
+        ctx.fillRect(18, 8, 3, 2);
+        ctx.fillStyle = eyeMain;
+        ctx.fillRect(12, 8, 2, 2);
+        ctx.fillRect(18, 8, 2, 2);
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(12, 8, 1, 1);
+        ctx.fillRect(18, 8, 1, 1);
+      } else if (eyeStyle === 'large') {
+        // Large expressive anime/RPG eyes (3x4) with dual glints
+        ctx.fillStyle = '#0f172a';
+        ctx.fillRect(11, 6, 3, 1);
+        ctx.fillRect(18, 6, 3, 1);
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(11, 7, 3, 3);
+        ctx.fillRect(18, 7, 3, 3);
+        ctx.fillStyle = eyeDark;
+        ctx.fillRect(12, 7, 2, 3);
+        ctx.fillRect(18, 7, 2, 3);
+        ctx.fillStyle = eyeMain;
+        ctx.fillRect(12, 8, 2, 2);
+        ctx.fillRect(18, 8, 2, 2);
+        ctx.fillStyle = eyeLight;
+        ctx.fillRect(13, 9, 1, 1);
+        ctx.fillRect(19, 9, 1, 1);
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(11, 7, 1, 1);
+        ctx.fillRect(18, 7, 1, 1);
+      } else if (eyeStyle === 'calm') {
+        // Gentle half-lidded serene eyes
+        ctx.fillStyle = skinShadow;
+        ctx.fillRect(11, 6, 3, 1);
+        ctx.fillRect(18, 6, 3, 1);
+        ctx.fillStyle = '#0f172a';
+        ctx.fillRect(11, 7, 3, 1);
+        ctx.fillRect(18, 7, 3, 1);
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(11, 8, 3, 2);
+        ctx.fillRect(18, 8, 3, 2);
+        ctx.fillStyle = eyeMain;
+        ctx.fillRect(12, 8, 2, 2);
+        ctx.fillRect(18, 8, 2, 2);
+        ctx.fillStyle = eyeLight;
+        ctx.fillRect(12, 9, 2, 1);
+        ctx.fillRect(18, 9, 2, 1);
+      } else if (eyeStyle === 'fierce') {
+        // Determined warrior eyes with angled inner brows
+        ctx.fillStyle = '#0f172a';
+        ctx.fillRect(11, 6, 2, 1);
+        ctx.fillRect(13, 7, 1, 1);
+        ctx.fillRect(18, 7, 1, 1);
+        ctx.fillRect(19, 6, 2, 1);
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(11, 8, 3, 2);
+        ctx.fillRect(18, 8, 3, 2);
+        ctx.fillStyle = eyeDark;
+        ctx.fillRect(12, 8, 2, 2);
+        ctx.fillRect(18, 8, 2, 2);
+        ctx.fillStyle = eyeLight;
+        ctx.fillRect(12, 8, 1, 1);
+        ctx.fillRect(18, 8, 1, 1);
+      } else if (eyeStyle === 'mystic') {
+        // Arcane eyes with glowing center pupil
+        ctx.fillStyle = '#0f172a';
+        ctx.fillRect(11, 6, 3, 1);
+        ctx.fillRect(18, 6, 3, 1);
+        ctx.fillStyle = eyeDark;
+        ctx.fillRect(11, 7, 3, 3);
+        ctx.fillRect(18, 7, 3, 3);
+        ctx.fillStyle = eyeMain;
+        ctx.fillRect(11, 8, 3, 2);
+        ctx.fillRect(18, 8, 3, 2);
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(12, 7, 1, 2);
+        ctx.fillRect(19, 7, 1, 2);
+        ctx.fillStyle = eyeLight;
+        ctx.fillRect(12, 9, 1, 1);
+        ctx.fillRect(19, 9, 1, 1);
+      } else {
+        // 'classic': Balanced 3x3 RPG eyes
+        ctx.fillStyle = '#0f172a';
+        ctx.fillRect(11, 6, 3, 1);
+        ctx.fillRect(18, 6, 3, 1);
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(11, 7, 3, 3);
+        ctx.fillRect(18, 7, 3, 3);
+        ctx.fillStyle = eyeDark;
+        ctx.fillRect(12, 7, 2, 3);
+        ctx.fillRect(18, 7, 2, 3);
+        ctx.fillStyle = eyeMain;
+        ctx.fillRect(12, 8, 2, 2);
+        ctx.fillRect(18, 8, 2, 2);
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(12, 7, 1, 1);
+        ctx.fillRect(18, 7, 1, 1);
+      }
+      if (isFeminine) {
+        ctx.fillStyle = '#0f172a';
+        ctx.fillRect(10, 7, 1, 1);
+        ctx.fillRect(21, 7, 1, 1);
+      }
+    };
+
+    if (dir === 'down') {
+      drawEyePairDown();
+    } else if (dir === 'left') {
+      const eyeH = eyeStyle === 'large' ? 3 : 2;
+      ctx.fillStyle = '#0f172a';
+      ctx.fillRect(10, 6, 3, 1);
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(10, 7, 3, eyeH);
+      ctx.fillStyle = eyeMain;
+      ctx.fillRect(10, 7, 2, eyeH);
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(10, 7, 1, 1);
+      if (isFeminine) {
+        ctx.fillStyle = '#0f172a';
+        ctx.fillRect(13, 7, 1, 1);
+      }
+    } else if (dir === 'right') {
+      const eyeH = eyeStyle === 'large' ? 3 : 2;
+      ctx.fillStyle = '#0f172a';
+      ctx.fillRect(19, 6, 3, 1);
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(19, 7, 3, eyeH);
+      ctx.fillStyle = eyeMain;
+      ctx.fillRect(20, 7, 2, eyeH);
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(21, 7, 1, 1);
+      if (isFeminine) {
+        ctx.fillStyle = '#0f172a';
+        ctx.fillRect(18, 7, 1, 1);
+      }
+    }
+
+    // 11. HAIRSTYLES: 10 Detailed Multi-Tone Styles Responsive to Every Direction (down, up, left, right)
+    if ((hStyle as string) !== 'SamuraiPreview') {
+      // Base crown & directional skull coverage
+      ctx.fillStyle = hairMain;
+      ctx.fillRect(9, 2, 14, 3);
+      ctx.fillStyle = hairHighlight;
+      ctx.fillRect(11, 2, 10, 1);
+
+      if (dir === 'up') {
+        // Full back-of-head hair coverage with vertical strand shading
+        ctx.fillStyle = hairMain;
+        ctx.fillRect(9, 3, 14, 10);
+        ctx.fillStyle = hairShadow;
+        ctx.fillRect(9, 9, 14, 4);
+        ctx.fillRect(11, 4, 1, 8);
+        ctx.fillRect(15, 4, 2, 8);
+        ctx.fillRect(20, 4, 1, 8);
+        ctx.fillStyle = hairHighlight;
+        ctx.fillRect(11, 3, 10, 2);
+      } else if (dir === 'left') {
+        // Back & crown coverage on right side of head (x=14..23)
+        ctx.fillStyle = hairMain;
+        ctx.fillRect(14, 3, 9, 9);
+        ctx.fillStyle = hairShadow;
+        ctx.fillRect(17, 6, 6, 6);
+        ctx.fillStyle = hairHighlight;
+        ctx.fillRect(12, 3, 8, 1);
+      } else if (dir === 'right') {
+        // Back & crown coverage on left side of head (x=9..18)
+        ctx.fillStyle = hairMain;
+        ctx.fillRect(9, 3, 9, 9);
+        ctx.fillStyle = hairShadow;
+        ctx.fillRect(9, 6, 6, 6);
+        ctx.fillStyle = hairHighlight;
+        ctx.fillRect(12, 3, 8, 1);
+      }
+
+      // Style-specific directional sculpting
+      if (hStyle === 'warrior_crest') {
+        // Tall spartan/warrior mohawk crest
+        ctx.fillStyle = hairDeep;
+        if (dir === 'down' || dir === 'up') {
+          ctx.fillRect(13, 0, 6, 3);
+          ctx.fillStyle = hairMain;
+          ctx.fillRect(14, 0, 4, 5);
+          ctx.fillStyle = hairHighlight;
+          ctx.fillRect(15, 0, 2, 3);
+          if (dir === 'up') {
+            ctx.fillStyle = hairDeep;
+            ctx.fillRect(14, 4, 4, 10);
+          }
+        } else {
+          // Sweeping side crest profile!
+          ctx.fillRect(10, 0, 12, 3);
+          ctx.fillStyle = hairMain;
+          ctx.fillRect(11, 0, 10, 3);
+          ctx.fillStyle = hairHighlight;
+          ctx.fillRect(12, 0, 7, 1);
+        }
+      } else if (hStyle === 'long_mane') {
+        if (dir === 'down') {
+          // Side bangs & long shoulder-draping locks
+          ctx.fillStyle = hairMain;
+          ctx.fillRect(8, 3, 3, 13);
+          ctx.fillRect(21, 3, 3, 13);
+          ctx.fillRect(10, 4, 3, 2);
+          ctx.fillRect(19, 4, 3, 2);
+          ctx.fillStyle = hairShadow;
+          ctx.fillRect(8, 10, 2, 6);
+          ctx.fillRect(22, 10, 2, 6);
+        } else if (dir === 'up') {
+          // Long flowing cape of hair down the back
+          ctx.fillStyle = hairDeep;
+          ctx.fillRect(8, 4, 16, 15);
+          ctx.fillStyle = hairMain;
+          ctx.fillRect(9, 3, 14, 14);
+          ctx.fillStyle = hairShadow;
+          ctx.fillRect(11, 7, 2, 10);
+          ctx.fillRect(15, 8, 2, 9);
+          ctx.fillRect(19, 7, 2, 10);
+          ctx.fillStyle = hairHighlight;
+          ctx.fillRect(11, 4, 10, 2);
+        } else if (dir === 'left') {
+          ctx.fillStyle = hairMain;
+          ctx.fillRect(9, 4, 3, 2); // Front temple bang
+          ctx.fillRect(14, 3, 10, 15); // Long mane cascading down right/back
+          ctx.fillStyle = hairShadow;
+          ctx.fillRect(16, 9, 7, 9);
+          ctx.fillStyle = hairHighlight;
+          ctx.fillRect(14, 4, 6, 2);
+        } else if (dir === 'right') {
+          ctx.fillStyle = hairMain;
+          ctx.fillRect(20, 4, 3, 2);
+          ctx.fillRect(8, 3, 10, 15);
+          ctx.fillStyle = hairShadow;
+          ctx.fillRect(9, 9, 7, 9);
+          ctx.fillStyle = hairHighlight;
+          ctx.fillRect(12, 4, 6, 2);
+        }
+      } else if (hStyle === 'braided') {
+        // Nordic braids with golden clasps
+        if (dir === 'down') {
+          ctx.fillStyle = hairMain;
+          ctx.fillRect(8, 3, 3, 6);
+          ctx.fillRect(21, 3, 3, 6);
+          // Braided segments over shoulders
+          ctx.fillRect(7, 8, 3, 9);
+          ctx.fillRect(22, 8, 3, 9);
+          ctx.fillStyle = hairShadow;
+          ctx.fillRect(7, 9, 3, 1);
+          ctx.fillRect(7, 11, 3, 1);
+          ctx.fillRect(7, 13, 3, 1);
+          ctx.fillRect(22, 9, 3, 1);
+          ctx.fillRect(22, 11, 3, 1);
+          ctx.fillRect(22, 13, 3, 1);
+          ctx.fillStyle = '#fbbf24';
+          ctx.fillRect(7, 15, 3, 1);
+          ctx.fillRect(22, 15, 3, 1);
+        } else if (dir === 'up') {
+          ctx.fillStyle = hairShadow;
+          ctx.fillRect(15, 3, 2, 9); // Center parting
+          ctx.fillStyle = hairMain;
+          ctx.fillRect(8, 8, 4, 10);
+          ctx.fillRect(20, 8, 4, 10);
+          ctx.fillStyle = '#fbbf24';
+          ctx.fillRect(8, 16, 4, 1);
+          ctx.fillRect(20, 16, 4, 1);
+        } else if (dir === 'left') {
+          ctx.fillStyle = hairMain;
+          ctx.fillRect(15, 6, 4, 11);
+          ctx.fillStyle = hairShadow;
+          ctx.fillRect(15, 8, 4, 1);
+          ctx.fillRect(15, 10, 4, 1);
+          ctx.fillRect(15, 12, 4, 1);
+          ctx.fillStyle = '#fbbf24';
+          ctx.fillRect(15, 15, 4, 1);
+        } else if (dir === 'right') {
+          ctx.fillStyle = hairMain;
+          ctx.fillRect(13, 6, 4, 11);
+          ctx.fillStyle = hairShadow;
+          ctx.fillRect(13, 8, 4, 1);
+          ctx.fillRect(13, 10, 4, 1);
+          ctx.fillRect(13, 12, 4, 1);
+          ctx.fillStyle = '#fbbf24';
+          ctx.fillRect(13, 15, 4, 1);
+        }
+      } else if (hStyle === 'ponytail') {
+        if (dir === 'down') {
+          ctx.fillStyle = hairMain;
+          ctx.fillRect(9, 3, 4, 3);
+          ctx.fillRect(19, 3, 4, 3);
+          ctx.fillRect(13, 3, 6, 2);
+          ctx.fillStyle = '#fbbf24';
+          ctx.fillRect(14, 1, 4, 1);
+        } else if (dir === 'up') {
+          ctx.fillStyle = '#fbbf24';
+          ctx.fillRect(14, 5, 4, 2);
+          ctx.fillStyle = hairDeep;
+          ctx.fillRect(12, 7, 8, 10);
+          ctx.fillStyle = hairMain;
+          ctx.fillRect(13, 7, 6, 9);
+          ctx.fillStyle = hairHighlight;
+          ctx.fillRect(15, 7, 2, 6);
+        } else if (dir === 'left') {
+          ctx.fillStyle = '#fbbf24';
+          ctx.fillRect(22, 4, 2, 3);
+          ctx.fillStyle = hairMain;
+          ctx.fillRect(24, 4, 4, 4);
+          ctx.fillRect(25, 7, 4, 6);
+          ctx.fillStyle = hairShadow;
+          ctx.fillRect(25, 10, 3, 3);
+        } else if (dir === 'right') {
+          ctx.fillStyle = '#fbbf24';
+          ctx.fillRect(8, 4, 2, 3);
+          ctx.fillStyle = hairMain;
+          ctx.fillRect(4, 4, 4, 4);
+          ctx.fillRect(3, 7, 4, 6);
+          ctx.fillStyle = hairShadow;
+          ctx.fillRect(4, 10, 3, 3);
+        }
+      } else if (hStyle === 'twin_tails') {
+        // Dual high pigtails with crimson ribbons
+        ctx.fillStyle = '#f43f5e';
+        if (dir !== 'left') ctx.fillRect(7, 4, 2, 2);
+        if (dir !== 'right') ctx.fillRect(23, 4, 2, 2);
+        ctx.fillStyle = hairMain;
+        if (dir === 'down') {
+          ctx.fillRect(9, 3, 14, 2);
+          ctx.fillRect(11, 5, 3, 1);
+          ctx.fillRect(18, 5, 3, 1);
+        } else if (dir === 'left') {
+          ctx.fillRect(19, 5, 5, 11);
+          ctx.fillStyle = '#f43f5e';
+          ctx.fillRect(19, 4, 3, 2);
+        } else if (dir === 'right') {
+          ctx.fillRect(8, 5, 5, 11);
+          ctx.fillStyle = '#f43f5e';
+          ctx.fillRect(10, 4, 3, 2);
+        }
+      } else if (hStyle === 'curly_crown') {
+        // Voluminous textured curly halo
+        ctx.fillStyle = hairDeep;
+        ctx.fillRect(7, 0, 18, 5);
+        ctx.fillRect(6, 3, 4, 8);
+        ctx.fillRect(22, 3, 4, 8);
+        ctx.fillStyle = hairMain;
+        ctx.fillRect(8, 1, 16, 4);
+        ctx.fillRect(7, 3, 3, 6);
+        ctx.fillRect(22, 3, 3, 6);
+        ctx.fillStyle = hairHighlight;
+        ctx.fillRect(10, 1, 3, 2);
+        ctx.fillRect(15, 1, 3, 2);
+        ctx.fillRect(20, 2, 2, 2);
+        if (dir === 'up') {
+          ctx.fillStyle = hairDeep;
+          ctx.fillRect(6, 2, 20, 12);
+          ctx.fillStyle = hairMain;
+          ctx.fillRect(7, 2, 18, 10);
+        }
+      } else if (hStyle === 'samurai_bun') {
+        // Topknot bun bound with gold cord + sharp temple locks
+        ctx.fillStyle = hairDeep;
+        ctx.fillRect(13, 0, 6, 3);
+        ctx.fillStyle = hairMain;
+        ctx.fillRect(14, 0, 4, 2);
+        ctx.fillStyle = '#fbbf24';
+        ctx.fillRect(13, 2, 6, 1);
+        ctx.fillStyle = hairMain;
+        if (dir === 'down') {
+          ctx.fillRect(9, 4, 2, 6);
+          ctx.fillRect(21, 4, 2, 6);
+        } else if (dir === 'left') {
+          ctx.fillRect(16, 0, 5, 3);
+          ctx.fillRect(10, 4, 2, 5);
+        } else if (dir === 'right') {
+          ctx.fillRect(11, 0, 5, 3);
+          ctx.fillRect(20, 4, 2, 5);
+        }
+      } else if (hStyle === 'noble_waves') {
+        // Side-parted royal waves
+        ctx.fillStyle = hairMain;
+        if (dir === 'down') {
+          ctx.fillRect(9, 3, 8, 3);
+          ctx.fillRect(11, 5, 4, 1);
+          ctx.fillRect(20, 3, 3, 8);
+          ctx.fillRect(8, 4, 2, 6);
+        } else if (dir === 'left') {
+          ctx.fillRect(9, 3, 6, 3);
+          ctx.fillRect(15, 3, 8, 10);
+        } else if (dir === 'right') {
+          ctx.fillRect(17, 3, 6, 3);
+          ctx.fillRect(9, 3, 8, 10);
+        }
+      } else if (hStyle === 'valkyrie_bangs') {
+        // Straight fringe + golden crown braid + long side framing locks
+        ctx.fillStyle = hairMain;
+        if (dir === 'down') {
+          ctx.fillRect(10, 3, 12, 3);
+          ctx.fillRect(13, 5, 6, 1);
+          ctx.fillRect(8, 4, 2, 12);
+          ctx.fillRect(22, 4, 2, 12);
+        } else if (dir === 'left') {
+          ctx.fillRect(9, 3, 4, 3);
+          ctx.fillRect(12, 5, 2, 10);
+        } else if (dir === 'right') {
+          ctx.fillRect(19, 3, 4, 3);
+          ctx.fillRect(18, 5, 2, 10);
+        }
+        ctx.fillStyle = '#fde047';
+        ctx.fillRect(10, 3, 12, 1);
+      } else {
+        // 'adventurer': Classic layered spiky fringe
+        ctx.fillStyle = hairMain;
+        if (dir === 'down') {
+          ctx.fillRect(9, 3, 3, 4);
+          ctx.fillRect(20, 3, 3, 4);
+          ctx.fillRect(11, 3, 4, 3);
+          ctx.fillRect(17, 3, 4, 3);
+          ctx.fillRect(13, 5, 2, 1);
+          ctx.fillRect(18, 5, 2, 1);
+        } else if (dir === 'left') {
+          ctx.fillRect(8, 3, 5, 3);
+          ctx.fillRect(9, 5, 3, 1);
+          ctx.fillRect(21, 5, 3, 4);
+        } else if (dir === 'right') {
+          ctx.fillRect(19, 3, 5, 3);
+          ctx.fillRect(20, 5, 3, 1);
+          ctx.fillRect(8, 5, 3, 4);
+        }
+      }
+    }
+
+    // 12. Equipped HEAD Slot Overlay (Chapéu de Fibras, Chapéu de Couro, Colar Solar, or Robust Armors)
+    const headDef = headId ? ITEMS[headId] : null;
+    const headBaseId = headDef?.garmentBaseId || headId;
+    const headColorDef =
+      CLOTHING_COLOR_MAP[headDef?.garmentColorId || 'marrom'] ||
+      CLOTHING_COLOR_MAP.marrom;
+
+    if (headBaseId === 'fiber_hat') {
+      // Chapéu de Fibras: Wide-brimmed woven golden straw sun hat with dark braided band
+      ctx.fillStyle = '#451a03';
+      ctx.fillRect(5, 3, 22, 2);
+      ctx.fillStyle = '#eab308';
+      ctx.fillRect(9, 0, 14, 4);
+      ctx.fillRect(6, 3, 20, 2);
+      ctx.fillStyle = '#fef08a';
+      ctx.fillRect(10, 0, 12, 2);
+      ctx.fillRect(7, 3, 18, 1);
+      // Braided fiber band
+      ctx.fillStyle = '#92400e';
+      ctx.fillRect(9, 2, 14, 1);
+    } else if (headBaseId === 'leather_hat') {
+      // Chapéu de Couro: Wide-brimmed leather hat in any of the 17 colors with brass buckle band
+      const m = headColorDef.hex;
+      const d = headColorDef.darkHex;
+      const l = headColorDef.lightHex;
+      ctx.fillStyle = '#0f172a';
+      ctx.fillRect(5, 3, 22, 2);
+      ctx.fillStyle = m;
+      ctx.fillRect(9, 0, 14, 4);
+      ctx.fillRect(6, 3, 20, 2);
+      ctx.fillStyle = l;
+      ctx.fillRect(10, 0, 12, 2);
+      ctx.fillRect(7, 3, 18, 1);
+      ctx.fillStyle = d;
+      ctx.fillRect(9, 2, 14, 1);
+      ctx.fillStyle = '#fbbf24';
+      ctx.fillRect(15, 2, 2, 1);
+    } else if (headBaseId === 'solar_necklace') {
+      // Colar Solar: Braided fiber cord around collar with glowing golden solar crystal pendants
+      if (dir === 'down') {
+        ctx.fillStyle = '#78350f';
+        ctx.fillRect(12, 13, 8, 1);
+        ctx.fillRect(11, 14, 2, 1);
+        ctx.fillRect(19, 14, 2, 1);
+        // Radiant solar crystals along chest neckline
+        ctx.fillStyle = '#ea580c';
+        ctx.fillRect(13, 14, 6, 2);
+        ctx.fillStyle = '#fde047';
+        ctx.fillRect(13, 14, 1, 2);
+        ctx.fillRect(15, 14, 2, 2);
+        ctx.fillRect(18, 14, 1, 2);
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(15, 14, 1, 1);
+      } else if (dir === 'up') {
+        ctx.fillStyle = '#78350f';
+        ctx.fillRect(12, 13, 8, 2);
+        ctx.fillStyle = '#fbbf24';
+        ctx.fillRect(15, 13, 2, 2);
+      } else {
+        ctx.fillStyle = '#78350f';
+        ctx.fillRect(13, 13, 6, 2);
+        ctx.fillStyle = '#fde047';
+        ctx.fillRect(dir === 'left' ? 12 : 18, 14, 2, 2);
+      }
+    } else if (headId === 'leather_hood') {
+      // Reinforced Ranger Leather Cowl with sheep-wool brow lining & brass rivets
+      ctx.fillStyle = '#451a03';
+      ctx.fillRect(7, 1, 18, 5);
+      ctx.fillStyle = '#78350f';
+      ctx.fillRect(8, 1, 16, 4);
+      ctx.fillStyle = '#b45309';
+      ctx.fillRect(10, 1, 12, 2);
+      ctx.fillStyle = '#fef3c7';
+      ctx.fillRect(9, 5, 14, 1);
+      if (dir === 'down') {
+        ctx.fillStyle = '#78350f';
+        ctx.fillRect(8, 5, 2, 7);
+        ctx.fillRect(22, 5, 2, 7);
+        ctx.fillStyle = '#fbbf24';
+        ctx.fillRect(8, 8, 1, 1);
+        ctx.fillRect(23, 8, 1, 1);
+      } else if (dir === 'up') {
+        ctx.fillStyle = '#78350f';
+        ctx.fillRect(8, 5, 16, 9);
+        ctx.fillStyle = '#451a03';
+        ctx.fillRect(15, 3, 2, 10);
+      } else if (dir === 'left') {
+        ctx.fillStyle = '#78350f';
+        ctx.fillRect(13, 4, 11, 9);
+        ctx.fillStyle = '#fbbf24';
+        ctx.fillRect(14, 8, 1, 1);
+      } else if (dir === 'right') {
+        ctx.fillStyle = '#78350f';
+        ctx.fillRect(8, 4, 11, 9);
+        ctx.fillStyle = '#fbbf24';
+        ctx.fillRect(17, 8, 1, 1);
+      }
+    } else if (headId === 'iron_helmet') {
+      // Heavy Forged Steel Greathelm with Crimson Plume, Horns, Nasal Guard & Cheek Plates
+      ctx.fillStyle = '#dc2626';
+      ctx.fillRect(13, 0, 6, 2);
+      ctx.fillStyle = '#475569';
+      ctx.fillRect(8, 1, 16, 5);
+      ctx.fillStyle = '#94a3b8';
+      ctx.fillRect(9, 2, 14, 3);
+      ctx.fillStyle = '#f8fafc';
+      ctx.fillRect(11, 2, 10, 2);
+      ctx.fillStyle = '#fef3c7';
+      ctx.fillRect(5, 2, 3, 3);
+      ctx.fillRect(4, 1, 2, 2);
+      ctx.fillRect(24, 2, 3, 3);
+      ctx.fillRect(26, 1, 2, 2);
+      if (dir === 'down') {
+        ctx.fillStyle = '#cbd5e1';
+        ctx.fillRect(9, 5, 14, 1);
+        ctx.fillRect(15, 6, 2, 4);
+        ctx.fillStyle = '#64748b';
+        ctx.fillRect(8, 6, 2, 6);
+        ctx.fillRect(22, 6, 2, 6);
+        ctx.fillStyle = '#fbbf24';
+        ctx.fillRect(15, 5, 2, 1);
       } else if (dir === 'up') {
         ctx.fillStyle = '#64748b';
-        ctx.fillRect(6, 3, 8, 4);
+        ctx.fillRect(8, 5, 16, 8);
+        ctx.fillStyle = '#dc2626';
+        ctx.fillRect(14, 2, 4, 9);
+      } else if (dir === 'left') {
+        ctx.fillStyle = '#64748b';
+        ctx.fillRect(13, 5, 11, 8);
+        ctx.fillStyle = '#cbd5e1';
+        ctx.fillRect(9, 5, 6, 2);
+        ctx.fillRect(9, 6, 2, 3);
+      } else if (dir === 'right') {
+        ctx.fillStyle = '#64748b';
+        ctx.fillRect(8, 5, 11, 8);
+        ctx.fillStyle = '#cbd5e1';
+        ctx.fillRect(17, 5, 6, 2);
+        ctx.fillRect(21, 6, 2, 3);
       }
-    } else if (eq.head === 'astral_crown') {
+    } else if (headId === 'astral_crown') {
+      // Sovereign Astral Winged Diadem with Glowing Starlight Sapphire Gem
       ctx.fillStyle = '#f59e0b';
-      ctx.fillRect(5, 1, 10, 2);
+      ctx.fillRect(8, 2, 16, 3);
       ctx.fillStyle = '#fde047';
-      ctx.fillRect(6, 0, 2, 2);
-      ctx.fillRect(9, 0, 2, 2);
-      ctx.fillRect(12, 0, 2, 2);
+      ctx.fillRect(9, 2, 14, 2);
+      ctx.fillRect(10, 0, 2, 3);
+      ctx.fillRect(14, 0, 4, 3);
+      ctx.fillRect(20, 0, 2, 3);
+      ctx.fillStyle = '#fef9c3';
+      ctx.fillRect(6, 1, 2, 3);
+      ctx.fillRect(5, 0, 2, 2);
+      ctx.fillRect(24, 1, 2, 3);
+      ctx.fillRect(25, 0, 2, 2);
+      ctx.fillStyle = '#0284c7';
+      ctx.fillRect(14, 1, 4, 3);
       ctx.fillStyle = '#38bdf8';
-      ctx.fillRect(9, 1, 2, 2);
+      ctx.fillRect(15, 1, 2, 2);
       ctx.fillStyle = '#ffffff';
-      ctx.fillRect(9, 1, 1, 1);
-    }
-
-    // 8. Equipped BODY / Torso Slot (Base Shirt or Tunic / Iron Cuirass / Astral Breastplate)
-    ctx.fillStyle = torsoMain;
-    ctx.fillRect(6, 8, 8, 5);
-    ctx.fillStyle = torsoTrim;
-    ctx.fillRect(7, 8, 6, 1);
-    if (isFeminine && !hasPauldrons) {
-      // Tailored V-neck collar & waist shading
-      ctx.fillRect(9, 9, 2, 1);
-      ctx.fillStyle = 'rgba(15, 23, 42, 0.25)';
-      ctx.fillRect(6, 11, 1, 2);
-      ctx.fillRect(13, 11, 1, 2);
-    }
-    if (hasPauldrons) {
-      ctx.fillStyle = torsoTrim;
-      ctx.fillRect(4, 8, 2, 2);
-      ctx.fillRect(14, 8, 2, 2);
-      ctx.fillRect(9, 9, 2, 4);
-    }
-
-    // 9. Posture-Specific Arms, Belt, Legs & Boots
-    if (mountPose === 'boat') {
-      // SEATED IN BOAT (Half-Sprite Posture):
-      // Arms angled slightly outward resting on the boat gunwales/oars; waist belt at base of seated torso
-      ctx.fillStyle = torsoMain;
-      ctx.fillRect(4, 9, 2, 3);
-      ctx.fillRect(14, 9, 2, 3);
-      ctx.fillStyle = app.skinColor;
-      ctx.fillRect(3, 11, 2, 2);
-      ctx.fillRect(15, 11, 2, 2);
-      ctx.fillStyle = beltColor;
-      ctx.fillRect(6, 13, 8, 1);
-      ctx.fillStyle = buckleColor;
-      ctx.fillRect(9, 13, 2, 1);
-    } else if (mountPose === 'horse') {
-      // ASTRIDE HORSE / CAMEL POSTURE:
-      // Arms & hands brought forward gripping the saddle reins
-      ctx.fillStyle = torsoMain;
-      if (dir === 'left') {
-        ctx.fillRect(5, 9, 3, 2);
-        ctx.fillStyle = app.skinColor;
-        ctx.fillRect(4, 10, 2, 2);
-        // Leather rein strap in hand
-        ctx.fillStyle = '#78350f';
-        ctx.fillRect(2, 11, 3, 1);
-      } else if (dir === 'right') {
-        ctx.fillRect(12, 9, 3, 2);
-        ctx.fillStyle = app.skinColor;
-        ctx.fillRect(14, 10, 2, 2);
-        ctx.fillStyle = '#78350f';
-        ctx.fillRect(15, 11, 3, 1);
-      } else {
-        ctx.fillRect(4, 9, 2, 2);
-        ctx.fillRect(14, 9, 2, 2);
-        ctx.fillStyle = app.skinColor;
-        ctx.fillRect(5, 11, 2, 2);
-        ctx.fillRect(13, 11, 2, 2);
-      }
-
-      // Belt
-      ctx.fillStyle = beltColor;
-      ctx.fillRect(6, 13, 8, 1);
-      ctx.fillStyle = buckleColor;
-      ctx.fillRect(9, 13, 2, 1);
-
-      // Astride Saddle Legs & Stirrup Boots
-      if (dir === 'left') {
-        // Side-profile bent rider leg on saddle flank + boot in golden stirrup
-        ctx.fillStyle = legsMain;
-        ctx.fillRect(7, 14, 5, 2);
-        ctx.fillRect(8, 15, 3, 2);
-        if (legsKnee) {
-          ctx.fillStyle = legsKnee;
-          ctx.fillRect(7, 14, 2, 2);
-        }
-        ctx.fillStyle = bootsMain;
-        ctx.fillRect(7, 16, 4, 2);
-        ctx.fillStyle = bootsTrim;
-        ctx.fillRect(7, 16, 2, 1);
-        // Golden stirrup iron
-        ctx.fillStyle = '#fde047';
-        ctx.fillRect(7, 18, 3, 1);
-      } else if (dir === 'right') {
-        ctx.fillStyle = legsMain;
-        ctx.fillRect(8, 14, 5, 2);
-        ctx.fillRect(9, 15, 3, 2);
-        if (legsKnee) {
-          ctx.fillStyle = legsKnee;
-          ctx.fillRect(11, 14, 2, 2);
-        }
-        ctx.fillStyle = bootsMain;
-        ctx.fillRect(9, 16, 4, 2);
-        ctx.fillStyle = bootsTrim;
-        ctx.fillRect(11, 16, 2, 1);
-        ctx.fillStyle = '#fde047';
-        ctx.fillRect(10, 18, 3, 1);
-      } else {
-        // Front / Back wide straddling legs around the mount's barrel
-        ctx.fillStyle = legsMain;
-        ctx.fillRect(4, 13, 3, 3);
-        ctx.fillRect(13, 13, 3, 3);
-        if (legsKnee) {
-          ctx.fillStyle = legsKnee;
-          ctx.fillRect(4, 14, 2, 1);
-          ctx.fillRect(14, 14, 2, 1);
-        }
-        ctx.fillStyle = bootsMain;
-        ctx.fillRect(4, 16, 3, 2);
-        ctx.fillRect(13, 16, 3, 2);
-        ctx.fillStyle = '#fde047';
-        ctx.fillRect(4, 18, 2, 1);
-        ctx.fillRect(14, 18, 2, 1);
-      }
-    } else {
-      // STANDING / WALKING POSTURE:
-      // Swinging Arms & Hands
-      ctx.fillStyle = torsoMain;
-      ctx.fillRect(4, 9 + stepL, 2, 2);
-      ctx.fillRect(14, 9 + stepR, 2, 2);
-      ctx.fillStyle = app.skinColor;
-      ctx.fillRect(4, 11 + stepL, 2, 2);
-      ctx.fillRect(14, 11 + stepR, 2, 2);
-
-      // Belt
-      ctx.fillStyle = beltColor;
-      ctx.fillRect(6, 13, 8, 1);
-      ctx.fillStyle = buckleColor;
-      ctx.fillRect(9, 13, 2, 1);
-
-      const leftLegY = 14 + Math.max(0, stepL);
-      const rightLegY = 14 + Math.max(0, stepR);
-
-      ctx.fillStyle = legsMain;
-      ctx.fillRect(6, 14, 3, 2);
-      ctx.fillRect(11, 14, 3, 2);
-      if (legsKnee) {
-        ctx.fillStyle = legsKnee;
-        ctx.fillRect(6, 14, 2, 1);
-        ctx.fillRect(11, 14, 2, 1);
-      }
-
-      // Boots
-      ctx.fillStyle = bootsMain;
-      ctx.fillRect(6, leftLegY + 1, 3, 2);
-      ctx.fillRect(11, rightLegY + 1, 3, 2);
-      ctx.fillStyle = bootsTrim;
-      ctx.fillRect(6, leftLegY + 1, 2, 1);
-      ctx.fillRect(11, rightLegY + 1, 2, 1);
-
-      if (bootsWing) {
-        ctx.fillStyle = bootsWing;
-        ctx.fillRect(4, leftLegY + 1, 2, 1);
-        ctx.fillRect(14, rightLegY + 1, 2, 1);
-      }
+      ctx.fillRect(15, 1, 1, 1);
     }
 
     this.playerSprites.set(key, c);

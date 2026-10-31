@@ -1211,6 +1211,8 @@ export class WorldManager {
             } else {
               nodeType = NatureNodeType.BOULDER;
             }
+          } else if (hash2D(tx, ty, this.seed + 6173) < 0.068) {
+            nodeType = NatureNodeType.SAND_DUNE;
           }
         } else if (biome === BiomeType.OCEAN) {
           const nearShore =
@@ -1493,6 +1495,21 @@ export class WorldManager {
           case EcologicalZone.DEEP_OCEAN:
           default:
             break;
+        }
+
+        // Duna de Areia: elemento natural sem hitbox, tão comum quanto arbustos, exclusivo de solo de areia
+        if (
+          !nodeType &&
+          (biome === BiomeType.DESERT ||
+            (biome === BiomeType.ISLAND &&
+              zone === EcologicalZone.COASTAL_TROPICS))
+        ) {
+          const rawDuneRoll = hash2D(tx, ty, this.seed + 6173);
+          const duneRoll =
+            biome === BiomeType.ISLAND ? rawDuneRoll / 1.3 : rawDuneRoll;
+          if (duneRoll < 0.068) {
+            nodeType = NatureNodeType.SAND_DUNE;
+          }
         }
 
         if (nodeType) {
@@ -3202,12 +3219,13 @@ export class WorldManager {
     const bp = CONSTRUCTION_BLUEPRINTS[placeableType];
     if (!bp) return false;
 
-    // Cannot build on top of an unharvested Nature Node (except Berry Bushes can be cleared automatically when building!)
+    // Cannot build on top of an unharvested Nature Node (except passable Berry Bushes and Sand Dunes can be cleared automatically when building!)
     const hasBlockingNode = chunk.nodes.some(
       (n) =>
         n.tileX === tx &&
         n.tileY === ty &&
-        n.type !== NatureNodeType.BERRY_BUSH
+        n.type !== NatureNodeType.BERRY_BUSH &&
+        n.type !== NatureNodeType.SAND_DUNE
     );
     if (hasBlockingNode) {
       return false;
@@ -3498,12 +3516,13 @@ export class WorldManager {
     const chunk = this.getOrCreateChunk(cx, cy);
     const bp = CONSTRUCTION_BLUEPRINTS[placeableType];
 
-    // If there is a passable Berry Bush on the tile, clear it cleanly
+    // If there is a passable Berry Bush or Sand Dune on the tile, clear it cleanly
     const bushIdx = chunk.nodes.findIndex(
       (n) =>
         n.tileX === tx &&
         n.tileY === ty &&
-        n.type === NatureNodeType.BERRY_BUSH
+        (n.type === NatureNodeType.BERRY_BUSH ||
+          n.type === NatureNodeType.SAND_DUNE)
     );
     if (bushIdx !== -1) {
       chunk.nodes.splice(bushIdx, 1);
@@ -3706,9 +3725,13 @@ export class WorldManager {
     const chunk = this.chunks[WorldManager.chunkKey(cx, cy)];
     if (!chunk) return true;
 
-    // Solid nature nodes prevent tilling (passable berry bushes are allowed to be cleared)
+    // Solid nature nodes prevent tilling (passable berry bushes and sand dunes are allowed to be cleared)
     const node = chunk.nodes.find((n) => n.tileX === tx && n.tileY === ty);
-    if (node && node.type !== NatureNodeType.BERRY_BUSH) {
+    if (
+      node &&
+      node.type !== NatureNodeType.BERRY_BUSH &&
+      node.type !== NatureNodeType.SAND_DUNE
+    ) {
       return false;
     }
 
@@ -3742,9 +3765,13 @@ export class WorldManager {
     const { cx, cy } = this.tileToChunk(tx, ty);
     const chunk = this.getOrCreateChunk(cx, cy);
 
-    // Clear any berry bush on tile
+    // Clear any berry bush or sand dune on tile
     const bushIdx = chunk.nodes.findIndex(
-      (n) => n.tileX === tx && n.tileY === ty && n.type === NatureNodeType.BERRY_BUSH
+      (n) =>
+        n.tileX === tx &&
+        n.tileY === ty &&
+        (n.type === NatureNodeType.BERRY_BUSH ||
+          n.type === NatureNodeType.SAND_DUNE)
     );
     if (bushIdx !== -1) {
       chunk.nodes.splice(bushIdx, 1);
@@ -3785,9 +3812,13 @@ export class WorldManager {
     const chunk = this.chunks[WorldManager.chunkKey(cx, cy)];
     if (!chunk) return true;
 
-    // Solid nature nodes prevent making a path (passable berry bushes are cleared automatically)
+    // Solid nature nodes prevent making a path (passable berry bushes and sand dunes are cleared automatically)
     const node = chunk.nodes.find((n) => n.tileX === tx && n.tileY === ty);
-    if (node && node.type !== NatureNodeType.BERRY_BUSH) {
+    if (
+      node &&
+      node.type !== NatureNodeType.BERRY_BUSH &&
+      node.type !== NatureNodeType.SAND_DUNE
+    ) {
       return false;
     }
 
@@ -3821,9 +3852,13 @@ export class WorldManager {
     const { cx, cy } = this.tileToChunk(tx, ty);
     const chunk = this.getOrCreateChunk(cx, cy);
 
-    // Clear any passable berry bush on the tile
+    // Clear any passable berry bush or sand dune on the tile
     const bushIdx = chunk.nodes.findIndex(
-      (n) => n.tileX === tx && n.tileY === ty && n.type === NatureNodeType.BERRY_BUSH
+      (n) =>
+        n.tileX === tx &&
+        n.tileY === ty &&
+        (n.type === NatureNodeType.BERRY_BUSH ||
+          n.type === NatureNodeType.SAND_DUNE)
     );
     if (bushIdx !== -1) {
       chunk.nodes.splice(bushIdx, 1);

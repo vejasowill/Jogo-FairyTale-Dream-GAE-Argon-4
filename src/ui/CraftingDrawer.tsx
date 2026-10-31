@@ -10,6 +10,8 @@ import {
   Hand,
   Heart,
   Layers,
+  Palette,
+  Scissors,
   Shield,
   Sparkles,
   Sun,
@@ -21,14 +23,17 @@ import {
   Zap,
 } from 'lucide-react';
 import {
+  CLOTHING_COLORS,
   CONSTRUCTION_BLUEPRINTS,
   FUEL_ITEM_ORDER,
   FUEL_ITEMS,
+  getDyedGarmentItemId,
   getItemBasePrice,
   ITEMS,
 } from '../game/core/ItemRegistry';
 import { CraftingRecipe, RECIPES } from '../game/core/RecipeRegistry';
 import {
+  ClothingColorId,
   EquipmentSlot,
   HOTBAR_SIZE,
   ItemCategory,
@@ -157,6 +162,26 @@ function getStationTheme(station: PlaceableType | null): StationThemeConfig {
         emptyHint:
           'O Altar Solar cria apenas relíquias astrais, equipamentos primordiais e santuários sagrados.',
       };
+    case PlaceableType.WEAVING_TABLE:
+      return {
+        id: 'WEAVING_TABLE',
+        title: 'MESA DE TECELAGEM & ALFAIATARIA',
+        subtitle:
+          'Confecção de Roupas (Cabeça, Superior, Inferior, Pés) & Tingimento de Peças de Costura e Couro em 17 Cores',
+        badgeText: 'CONFECÇÃO & TINGIMENTO',
+        outerPanelClass:
+          'bg-[#1c1226] border-2 border-fuchsia-400/80 shadow-[0_0_38px_rgba(217,70,239,0.3)]',
+        headerBgClass:
+          'bg-gradient-to-r from-[#2e1035] via-[#3b1730] to-[#1e1024] border-b-2 border-fuchsia-400/65',
+        accentTextClass: 'text-fuchsia-300',
+        accentBorderClass: 'border-fuchsia-400/50',
+        slotActiveClass:
+          'bg-[#3b1542] border-2 border-fuchsia-300 shadow-[0_0_12px_rgba(232,121,249,0.45)]',
+        primaryBtnClass: 'medieval-btn-gold',
+        matrixTitle: 'TEAR DE COSTURA & TINGIMENTO',
+        emptyHint:
+          'Nenhuma peça de roupa encontrada nesta categoria.',
+      };
     default:
       return {
         id: 'HAND',
@@ -210,6 +235,20 @@ export const CraftingDrawer: React.FC<CraftingDrawerProps> = ({
   );
   const [showHelp, setShowHelp] = useState(false);
 
+  // Mesa de Tecelagem state: Janela de Confecção vs Janela de Tingimento
+  const [weavingWindow, setWeavingWindow] = useState<'confeccao' | 'tingimento'>(
+    'confeccao'
+  );
+  const [weavingCategory, setWeavingCategory] = useState<EquipmentSlot>('head');
+  const [craftColorId, setCraftColorId] = useState<ClothingColorId>('branco');
+  const [selectedDyeSource, setSelectedDyeSource] = useState<
+    | { kind: 'equipped'; equipSlot: EquipmentSlot }
+    | { kind: 'inventory'; slotIndex: number }
+    | null
+  >(null);
+  const [targetDyeColorId, setTargetDyeColorId] =
+    useState<ClothingColorId>('vermelho');
+
   useEffect(() => {
     if (isOpen) {
       setActiveTab(initialTab);
@@ -217,6 +256,7 @@ export const CraftingDrawer: React.FC<CraftingDrawerProps> = ({
       setCategoryFilter('ALL');
       setSelectedInvIndex(null);
       setCampfireBannerMsg(null);
+      setWeavingWindow('confeccao');
     }
   }, [isOpen, initialTab, stationContext]);
 
@@ -227,6 +267,7 @@ export const CraftingDrawer: React.FC<CraftingDrawerProps> = ({
     const list: (PlaceableType | null)[] = [null];
     const order: PlaceableType[] = [
       PlaceableType.WORKBENCH,
+      PlaceableType.WEAVING_TABLE,
       PlaceableType.CAMPFIRE,
       PlaceableType.FURNACE,
       PlaceableType.SOLAR_ALTAR,
@@ -248,8 +289,12 @@ export const CraftingDrawer: React.FC<CraftingDrawerProps> = ({
   const filteredRecipes = useMemo(() => {
     return stationRecipes
       .filter((r) => {
-        if (categoryFilter === 'ALL') return true;
         const out = ITEMS[r.resultItemId];
+        if (activeStation === PlaceableType.WEAVING_TABLE) {
+          const cat = out?.clothingCategory || out?.equipSlot || 'body';
+          return cat === weavingCategory;
+        }
+        if (categoryFilter === 'ALL') return true;
         return out?.category === categoryFilter;
       })
       .sort((a, b) => {
@@ -258,7 +303,14 @@ export const CraftingDrawer: React.FC<CraftingDrawerProps> = ({
         if (aCan !== bCan) return bCan - aCan;
         return 0;
       });
-  }, [stationRecipes, categoryFilter, player.inventory, engine]);
+  }, [
+    stationRecipes,
+    activeStation,
+    weavingCategory,
+    categoryFilter,
+    player.inventory,
+    engine,
+  ]);
 
   useEffect(() => {
     if (
@@ -273,6 +325,18 @@ export const CraftingDrawer: React.FC<CraftingDrawerProps> = ({
     filteredRecipes.find((r) => r.id === selectedRecipeId) ||
     filteredRecipes[0] ||
     stationRecipes[0];
+
+  // Sync default craft color when selecting a clothing recipe in Mesa de Tecelagem
+  useEffect(() => {
+    if (activeStation === PlaceableType.WEAVING_TABLE && selectedRecipe) {
+      const def = ITEMS[selectedRecipe.resultItemId];
+      if (def?.garmentColorId) {
+        setCraftColorId(def.garmentColorId);
+      } else {
+        setCraftColorId('branco');
+      }
+    }
+  }, [activeStation, selectedRecipe?.id]);
 
   const selectedSlot =
     selectedInvIndex !== null ? player.inventory[selectedInvIndex] || null : null;
@@ -295,15 +359,35 @@ export const CraftingDrawer: React.FC<CraftingDrawerProps> = ({
     activeStation === PlaceableType.CAMPFIRE ||
     activeStation === PlaceableType.FURNACE;
 
+  const isWeavingStation = activeStation === PlaceableType.WEAVING_TABLE;
+
   const thermalState = isThermalStation
     ? engine.getActiveThermalStation(
         activeStation as PlaceableType.CAMPFIRE | PlaceableType.FURNACE
       )
     : null;
 
+  const weavingState = isWeavingStation
+    ? engine.getActiveWeavingStation()
+    : null;
+
+  const formatCraftDuration = (sec?: number) => {
+    if (!sec || sec <= 0) return 'Instantâneo';
+    if (sec >= 60 && sec % 60 === 0) {
+      return `${Math.round(sec / 60)}min`;
+    }
+    if (sec >= 60) {
+      const m = Math.floor(sec / 60);
+      const s = Math.ceil(sec % 60);
+      return `${m}m ${s}s`;
+    }
+    return `${Math.ceil(sec)}s`;
+  };
+
   const stationShortName = (st: PlaceableType | null) => {
     if (!st) return 'Mão Livre';
     if (st === PlaceableType.WORKBENCH) return 'Bancada';
+    if (st === PlaceableType.WEAVING_TABLE) return 'Mesa de Tecelagem';
     if (st === PlaceableType.CAMPFIRE) return 'Fogueira';
     if (st === PlaceableType.FURNACE) return 'Fornalha';
     if (st === PlaceableType.SOLAR_ALTAR) return 'Altar Solar';
@@ -478,6 +562,12 @@ export const CraftingDrawer: React.FC<CraftingDrawerProps> = ({
                     alt="Altar Solar"
                     className="w-6 h-6 pixelated"
                   />
+                ) : activeStation === PlaceableType.WEAVING_TABLE ? (
+                  <img
+                    src={spriteAtlas.getItemIconUrl('weaving_table')}
+                    alt="Mesa de Tecelagem"
+                    className="w-6 h-6 pixelated"
+                  />
                 ) : (
                   <Hand className="w-5 h-5 text-amber-400" />
                 )}
@@ -514,12 +604,18 @@ export const CraftingDrawer: React.FC<CraftingDrawerProps> = ({
                   <Anvil className="w-3.5 h-3.5" />
                 ) : activeStation === PlaceableType.SOLAR_ALTAR ? (
                   <Sparkles className="w-3.5 h-3.5" />
+                ) : activeStation === PlaceableType.WEAVING_TABLE ? (
+                  <Scissors className="w-3.5 h-3.5" />
                 ) : activeStation === PlaceableType.WORKBENCH ? (
                   <Hammer className="w-3.5 h-3.5" />
                 ) : (
                   <Hand className="w-3.5 h-3.5" />
                 )}
-                <span>Criar</span>
+                <span>
+                  {activeStation === PlaceableType.WEAVING_TABLE
+                    ? 'Tecelagem'
+                    : 'Criar'}
+                </span>
               </button>
 
               <button
@@ -556,6 +652,8 @@ export const CraftingDrawer: React.FC<CraftingDrawerProps> = ({
                     ? '✋ Mão (2x2)'
                     : st === PlaceableType.WORKBENCH
                     ? '🔨 Bancada'
+                    : st === PlaceableType.WEAVING_TABLE
+                    ? '🧵 Tecelagem'
                     : st === PlaceableType.CAMPFIRE
                     ? '🔥 Fogueira'
                     : st === PlaceableType.FURNACE
@@ -580,39 +678,749 @@ export const CraftingDrawer: React.FC<CraftingDrawerProps> = ({
                 );
               })}
             </div>
-
-            {/* Campfire Dedicated Warmth & Respawn Button */}
-            {activeStation === PlaceableType.CAMPFIRE && (
-              <button
-                onClick={() => {
-                  const res = engine.restAtCampfireStation();
-                  setCampfireBannerMsg(res.message);
-                }}
-                className="px-2.5 py-1 bg-orange-950/90 hover:bg-orange-900 border border-orange-400/80 text-orange-200 font-pixel text-[10px] font-bold flex items-center gap-1 rounded-sm shadow-sm"
-              >
-                <Heart className="w-3.5 h-3.5 text-rose-400" />
-                <span>Descansar</span>
-              </button>
-            )}
           </div>
-
-          {campfireBannerMsg && activeStation === PlaceableType.CAMPFIRE && (
-            <div className="px-2.5 py-1 bg-orange-950/80 border border-orange-500/60 text-[10px] text-amber-200 flex items-center justify-between">
-              <span>{campfireBannerMsg}</span>
-              <button
-                onClick={() => setCampfireBannerMsg(null)}
-                className="text-orange-300 hover:text-white text-xs font-bold ml-2"
-              >
-                ✕
-              </button>
-            </div>
-          )}
         </div>
 
         {/* ================================================================= */}
         {/* TAB 1: STATION-SPECIFIC CRAFTING HUD                              */}
         {/* ================================================================= */}
-        {activeTab === 'craft' ? (
+        {activeTab === 'craft' && isWeavingStation ? (
+          <div className="flex-1 overflow-y-auto p-2.5 sm:p-3.5 flex flex-col gap-3">
+            {/* TOP BAR OF WEAVING TABLE: Switch between Janela de Confecção & Janela de Tingimento */}
+            <div className="flex flex-wrap items-center justify-between gap-2 bg-black/45 border border-fuchsia-400/35 p-2 rounded-sm">
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => {
+                    setWeavingWindow('confeccao');
+                    setCampfireBannerMsg(null);
+                  }}
+                  className={`px-3 py-1.5 font-pixel text-[10px] sm:text-xs font-bold flex items-center gap-1.5 rounded-sm border transition-all ${
+                    weavingWindow === 'confeccao'
+                      ? `${theme.slotActiveClass} text-white`
+                      : 'bg-black/40 border-white/15 text-[#c4ab7d] hover:text-white'
+                  }`}
+                >
+                  <Scissors className="w-3.5 h-3.5" />
+                  <span>Janela de Confecção</span>
+                </button>
+                <button
+                  onClick={() => {
+                    setWeavingWindow('tingimento');
+                    setCampfireBannerMsg(null);
+                  }}
+                  className={`px-3 py-1.5 font-pixel text-[10px] sm:text-xs font-bold flex items-center gap-1.5 rounded-sm border transition-all ${
+                    weavingWindow === 'tingimento'
+                      ? `${theme.slotActiveClass} text-white`
+                      : 'bg-black/40 border-white/15 text-[#c4ab7d] hover:text-white'
+                  }`}
+                >
+                  <Palette className="w-3.5 h-3.5" />
+                  <span>Janela de Tingimento</span>
+                </button>
+              </div>
+
+              {campfireBannerMsg && (
+                <span className="text-[10px] font-bold text-amber-300 bg-black/60 px-2 py-1 border border-amber-400/40 rounded-sm">
+                  {campfireBannerMsg}
+                </span>
+              )}
+            </div>
+
+            {weavingWindow === 'confeccao' ? (
+              <div className="grid grid-cols-1 sm:grid-cols-12 gap-3 items-start">
+                {/* LEFT COLUMN (7 cols): 4 Clothing Categories + Recipes + Active Loom Progress */}
+                <div className="sm:col-span-7 bg-black/35 border border-white/10 p-2.5 space-y-2.5 flex flex-col">
+                  {/* 4 Clothing Categories: Cabeça, Superior, Inferior, Pés */}
+                  <div className="flex flex-wrap items-center justify-between gap-1.5 border-b border-white/10 pb-2">
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      {(
+                        [
+                          { id: 'head' as EquipmentSlot, label: '1. Cabeça' },
+                          { id: 'body' as EquipmentSlot, label: '2. Superior' },
+                          { id: 'legs' as EquipmentSlot, label: '3. Inferior' },
+                          { id: 'feet' as EquipmentSlot, label: '4. Pés' },
+                        ] as const
+                      ).map((cat) => {
+                        const count = stationRecipes.filter((r) => {
+                          const out = ITEMS[r.resultItemId];
+                          return (out?.clothingCategory || out?.equipSlot) === cat.id;
+                        }).length;
+                        return (
+                          <button
+                            key={cat.id}
+                            onClick={() => setWeavingCategory(cat.id)}
+                            className={`px-2.5 py-1 text-[10px] font-pixel font-bold border rounded-sm transition-all ${
+                              weavingCategory === cat.id
+                                ? `${theme.slotActiveClass} text-white`
+                                : 'bg-black/40 border-white/15 text-[#c4ab7d] hover:text-white'
+                            }`}
+                          >
+                            {cat.label} ({count})
+                          </button>
+                        );
+                      })}
+                    </div>
+                    <span className="text-[10px] text-fuchsia-300 font-pixel">
+                      Roupas (-1% Dano)
+                    </span>
+                  </div>
+
+                  {/* Clothing Recipe Grid */}
+                  <div className="grid grid-cols-4 sm:grid-cols-5 gap-2">
+                    {filteredRecipes.map((recipe) => {
+                      const baseItem = ITEMS[recipe.resultItemId];
+                      if (!baseItem) return null;
+                      const isSelected = selectedRecipe?.id === recipe.id;
+                      const previewItemId =
+                        isSelected && baseItem.canBeDyed
+                          ? getDyedGarmentItemId(baseItem.id, craftColorId)
+                          : baseItem.id;
+                      const canCraft = engine.getMaxCraftableCount(recipe) > 0;
+                      const isWeavingThis =
+                        weavingState?.cookingRecipeId === recipe.id &&
+                        (weavingState?.cookingInputCount || 0) > 0;
+
+                      return (
+                        <button
+                          key={recipe.id}
+                          onClick={() => setSelectedRecipeId(recipe.id)}
+                          className={`relative aspect-square min-h-[58px] p-1.5 flex flex-col items-center justify-center transition-transform rounded-sm ${
+                            isSelected ? theme.slotActiveClass : 'mc-slot'
+                          } ${!canCraft && !isWeavingThis ? 'opacity-60' : ''}`}
+                          title={baseItem.name}
+                        >
+                          <img
+                            src={spriteAtlas.getItemIconUrl(previewItemId)}
+                            alt={baseItem.name}
+                            className="w-7 h-7 pixelated"
+                          />
+                          <span className="mt-1 text-[9px] text-white font-bold truncate max-w-full">
+                            {baseItem.name}
+                          </span>
+                          <span className="absolute top-0.5 left-0.5 px-1 bg-black/75 text-[8px] font-mono-tabular text-fuchsia-300 rounded-sm">
+                            {formatCraftDuration(recipe.craftTimeSec)}
+                          </span>
+                          {isWeavingThis ? (
+                            <span className="absolute top-0.5 right-0.5 w-2.5 h-2.5 rounded-full bg-fuchsia-400 animate-ping" />
+                          ) : (
+                            <span
+                              className={`absolute top-1 right-1 w-2 h-2 rounded-full ${
+                                canCraft ? 'bg-emerald-400' : 'bg-stone-600'
+                              }`}
+                            />
+                          )}
+                        </button>
+                      );
+                    })}
+                  </div>
+
+                  {/* Active Loom / Weaving Queue & Output Box */}
+                  {weavingState && (
+                    <div className="mt-2 p-2.5 bg-[#24112e] border border-fuchsia-400/50 rounded-sm space-y-2">
+                      <div className="flex items-center justify-between border-b border-white/10 pb-1">
+                        <span className="font-pixel text-[10px] font-bold text-fuchsia-300 flex items-center gap-1.5">
+                          <Clock className="w-3.5 h-3.5" />
+                          ANDAMENTO DA CONFECÇÃO & SAÍDA DO TEAR
+                        </span>
+                        <span className="text-[9px] font-mono-tabular text-[#c4ab7d]">
+                          {(weavingState.cookingInputCount || 0) > 0
+                            ? '🧵 Confeccionando peça...'
+                            : (weavingState.outputCount || 0) > 0
+                            ? '✨ Peça pronta para recolher!'
+                            : 'Tear livre'}
+                        </span>
+                      </div>
+
+                      <div className="grid grid-cols-12 gap-2 items-center bg-black/40 p-2 rounded-sm border border-white/10">
+                        {/* Active Weaving Slot */}
+                        <div className="col-span-5 flex items-center gap-2">
+                          <div className="w-10 h-10 mc-slot flex items-center justify-center shrink-0">
+                            {weavingState.cookingRecipeId &&
+                            (weavingState.cookingInputCount || 0) > 0 ? (
+                              <img
+                                src={spriteAtlas.getItemIconUrl(
+                                  weavingState.weavingTargetItemId ||
+                                    RECIPES.find(
+                                      (r) => r.id === weavingState.cookingRecipeId
+                                    )?.resultItemId ||
+                                    'wool'
+                                )}
+                                alt="Em confecção"
+                                className="w-6 h-6 pixelated"
+                              />
+                            ) : (
+                              <Scissors className="w-4 h-4 text-stone-600" />
+                            )}
+                          </div>
+                          <div className="min-w-0 flex-1">
+                            <div className="text-[9px] text-fuchsia-300 font-pixel">
+                              NO TEAR:
+                            </div>
+                            <div className="text-[10px] font-bold text-white truncate">
+                              {weavingState.cookingRecipeId &&
+                              (weavingState.cookingInputCount || 0) > 0
+                                ? ITEMS[
+                                    weavingState.weavingTargetItemId || ''
+                                  ]?.name || 'Confeccionando...'
+                                : 'Nenhuma peça'}
+                            </div>
+                            {(weavingState.cookingInputCount || 0) > 0 && (
+                              <button
+                                onClick={() => engine.cancelWeavingStationQueue()}
+                                className="text-[9px] text-rose-400 hover:underline font-bold"
+                              >
+                                Cancelar e devolver itens
+                              </button>
+                            )}
+                          </div>
+                        </div>
+
+                        {/* Progress Bar */}
+                        <div className="col-span-4 flex flex-col items-center gap-1">
+                          {(() => {
+                            const wCount = weavingState.cookingInputCount || 0;
+                            const wProg = weavingState.cookingProgress || 0;
+                            const wDur = Math.max(
+                              1,
+                              weavingState.cookingDuration || 120
+                            );
+                            const wPct =
+                              wCount > 0
+                                ? Math.min(100, Math.max(0, (wProg / wDur) * 100))
+                                : 0;
+                            const remSec = Math.max(0, Math.ceil(wDur - wProg));
+                            return (
+                              <>
+                                <div className="text-[9px] font-mono-tabular text-fuchsia-200 font-bold">
+                                  {wCount > 0
+                                    ? `Restante: ${formatCraftDuration(remSec)}`
+                                    : 'Aguardando'}
+                                </div>
+                                <div className="w-full h-2.5 bg-stone-900 border border-stone-600 rounded-sm overflow-hidden">
+                                  <div
+                                    className="h-full bg-gradient-to-r from-fuchsia-500 via-pink-400 to-emerald-400 transition-all duration-150"
+                                    style={{ width: `${wPct}%` }}
+                                  />
+                                </div>
+                              </>
+                            );
+                          })()}
+                        </div>
+
+                        {/* Output Slot */}
+                        <div className="col-span-3 flex flex-col items-center justify-center gap-1">
+                          {weavingState.outputItemId &&
+                          (weavingState.outputCount || 0) > 0 ? (
+                            <button
+                              onClick={() => engine.collectWeavingStationOutput()}
+                              className="w-full py-1.5 px-2 medieval-btn-emerald font-pixel text-[9px] font-bold flex items-center justify-center gap-1 animate-pulse"
+                            >
+                              <img
+                                src={spriteAtlas.getItemIconUrl(
+                                  weavingState.outputItemId
+                                )}
+                                alt=""
+                                className="w-4 h-4 pixelated"
+                              />
+                              <span>Recolher</span>
+                            </button>
+                          ) : (
+                            <span className="text-[9px] text-stone-400">
+                              Saída vazia
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                {/* RIGHT COLUMN (5 cols): Selected Clothing Recipe + 17-Color Picker + Craft Button */}
+                <div className="sm:col-span-5 space-y-2.5">
+                  {selectedRecipe && resultItem ? (
+                    <div className="bg-black/40 border border-white/15 p-3 rounded-sm space-y-2.5">
+                      {(() => {
+                        const targetPreviewId = resultItem.canBeDyed
+                          ? getDyedGarmentItemId(resultItem.id, craftColorId)
+                          : resultItem.id;
+                        const targetPreviewItem =
+                          ITEMS[targetPreviewId] || resultItem;
+
+                        return (
+                          <>
+                            <div className="flex items-start gap-2.5 border-b border-white/10 pb-2">
+                              <div
+                                className={`w-12 h-12 flex items-center justify-center shrink-0 rounded-sm ${theme.slotActiveClass}`}
+                              >
+                                <img
+                                  src={spriteAtlas.getItemIconUrl(
+                                    targetPreviewItem.id
+                                  )}
+                                  alt={targetPreviewItem.name}
+                                  className="w-8 h-8 pixelated"
+                                />
+                              </div>
+                              <div className="min-w-0 flex-1">
+                                <h3 className="font-pixel text-xs font-bold text-white">
+                                  {targetPreviewItem.name}
+                                </h3>
+                                <div className="flex flex-wrap items-center gap-1.5 mt-1 text-[9px]">
+                                  <span className="px-1.5 py-0.5 bg-fuchsia-950/90 text-fuchsia-200 border border-fuchsia-400/50 font-bold">
+                                    Slot: {equipSlotLabel(resultItem.equipSlot)}
+                                  </span>
+                                  <span className="px-1.5 py-0.5 bg-sky-950/80 border border-sky-500/40 text-sky-300 font-bold">
+                                    🛡 -1% de Dano
+                                  </span>
+                                  <span className="px-1.5 py-0.5 bg-orange-950/90 text-orange-300 border border-orange-500/50 flex items-center gap-1 font-bold">
+                                    <Clock className="w-3 h-3" />
+                                    <span>
+                                      Tempo:{' '}
+                                      {formatCraftDuration(
+                                        selectedRecipe.craftTimeSec
+                                      )}
+                                    </span>
+                                  </span>
+                                </div>
+                              </div>
+                            </div>
+
+                            <p className="text-[10px] text-[#e5d5b5] leading-snug">
+                              {targetPreviewItem.description}
+                            </p>
+
+                            {/* Color Picker at Crafting Time (only for costura/couro pieces!) */}
+                            {resultItem.canBeDyed ? (
+                              <div className="space-y-1.5 pt-1 border-t border-white/10">
+                                <div className="flex items-center justify-between text-[9px]">
+                                  <span className="font-pixel text-fuchsia-300">
+                                    COR DA PEÇA (17 CORES DE TINGIMENTO):
+                                  </span>
+                                  <span className="text-white font-bold">
+                                    {
+                                      CLOTHING_COLORS.find(
+                                        (c) => c.id === craftColorId
+                                      )?.label
+                                    }
+                                  </span>
+                                </div>
+                                <div className="grid grid-cols-9 gap-1">
+                                  {CLOTHING_COLORS.map((col) => {
+                                    const active = craftColorId === col.id;
+                                    return (
+                                      <button
+                                        key={col.id}
+                                        type="button"
+                                        onClick={() => setCraftColorId(col.id)}
+                                        title={col.label}
+                                        className={`h-5 rounded-sm border transition-transform ${
+                                          active
+                                            ? 'border-white ring-2 ring-fuchsia-400 scale-110 z-10'
+                                            : 'border-black/60 hover:scale-105'
+                                        }`}
+                                        style={{ backgroundColor: col.hex }}
+                                      />
+                                    );
+                                  })}
+                                </div>
+                              </div>
+                            ) : (
+                              <div className="p-2 bg-stone-900/80 border border-stone-600/60 rounded-sm text-[9px] text-amber-200">
+                                ✦ Esta peça não é de costura/couro e{' '}
+                                <b>não pode ser tingida</b>.
+                              </div>
+                            )}
+
+                            {/* Ingredients List */}
+                            <div className="space-y-1 pt-1 border-t border-white/10">
+                              <span className="text-[9px] font-pixel text-[#c4ab7d] block">
+                                MATERIAIS DE CONFECÇÃO:
+                              </span>
+                              <div className="grid grid-cols-2 gap-1.5">
+                                {selectedRecipe.ingredients.map((ing) => {
+                                  const ingDef = ITEMS[ing.itemId];
+                                  const have = engine.getItemCount(ing.itemId);
+                                  const enough = have >= ing.count;
+                                  return (
+                                    <div
+                                      key={ing.itemId}
+                                      className={`p-1.5 rounded-sm border flex items-center justify-between gap-1.5 ${
+                                        enough
+                                          ? 'bg-black/45 border-emerald-500/40'
+                                          : 'bg-rose-950/30 border-rose-500/40'
+                                      }`}
+                                    >
+                                      <div className="flex items-center gap-1.5 min-w-0">
+                                        <img
+                                          src={spriteAtlas.getItemIconUrl(
+                                            ing.itemId
+                                          )}
+                                          alt={ingDef?.name || ing.itemId}
+                                          className="w-5 h-5 pixelated shrink-0"
+                                        />
+                                        <span className="text-[10px] text-white truncate">
+                                          {ingDef?.name || ing.itemId}
+                                        </span>
+                                      </div>
+                                      <span
+                                        className={`text-[10px] font-mono-tabular font-bold shrink-0 ${
+                                          enough
+                                            ? 'text-emerald-400'
+                                            : 'text-rose-400'
+                                        }`}
+                                      >
+                                        {have}/{ing.count}
+                                      </span>
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            </div>
+
+                            <button
+                              disabled={
+                                maxCraftCount <= 0 ||
+                                Boolean(
+                                  weavingState?.cookingInputCount &&
+                                    weavingState.cookingInputCount > 0
+                                )
+                              }
+                              onClick={() => {
+                                const res = engine.startWeavingTableCraft(
+                                  selectedRecipe.id,
+                                  resultItem.canBeDyed ? craftColorId : undefined
+                                );
+                                setCampfireBannerMsg(res.message);
+                              }}
+                              className={`w-full min-h-[38px] px-3 py-1.5 font-pixel text-[11px] font-bold flex items-center justify-center gap-1.5 ${
+                                maxCraftCount > 0 &&
+                                !(
+                                  weavingState?.cookingInputCount &&
+                                  weavingState.cookingInputCount > 0
+                                )
+                                  ? theme.primaryBtnClass
+                                  : 'medieval-btn-wood opacity-50 cursor-not-allowed'
+                              }`}
+                            >
+                              <Scissors className="w-4 h-4" />
+                              <span>
+                                {weavingState?.cookingInputCount &&
+                                weavingState.cookingInputCount > 0
+                                  ? 'Tear Ocupado...'
+                                  : 'Confeccionar'}
+                              </span>
+                            </button>
+                          </>
+                        );
+                      })()}
+                    </div>
+                  ) : null}
+                </div>
+              </div>
+            ) : (
+              /* ============================================================= */
+              /* JANELA DE TINGIMENTO (TINGIR ROUPAS DE COSTURA E COURO)       */
+              /* ============================================================= */
+              <div className="grid grid-cols-1 sm:grid-cols-12 gap-3 items-start">
+                {/* LEFT COLUMN (7 cols): Select Garment from Equipped or Inventory */}
+                <div className="sm:col-span-7 bg-black/35 border border-white/10 p-2.5 space-y-3">
+                  <div className="space-y-1.5">
+                    <span className="font-pixel text-[10px] text-fuchsia-300 block">
+                      ROUPAS EQUIPADAS NO PERSONAGEM:
+                    </span>
+                    <div className="grid grid-cols-4 gap-2">
+                      {(
+                        [
+                          { slot: 'head' as EquipmentSlot, label: 'Cabeça' },
+                          { slot: 'body' as EquipmentSlot, label: 'Superior' },
+                          { slot: 'legs' as EquipmentSlot, label: 'Inferior' },
+                          { slot: 'feet' as EquipmentSlot, label: 'Pés' },
+                        ] as const
+                      ).map(({ slot, label }) => {
+                        const eqId =
+                          player.equippedBySlot?.[slot] ??
+                          (slot === 'body' ? player.equippedArmorId : null);
+                        const itemDef = eqId ? ITEMS[eqId] : null;
+                        const isClothing = Boolean(itemDef?.isClothing);
+                        const canDye = Boolean(itemDef?.canBeDyed);
+                        const isSel =
+                          selectedDyeSource?.kind === 'equipped' &&
+                          selectedDyeSource.equipSlot === slot;
+
+                        return (
+                          <button
+                            key={slot}
+                            disabled={!isClothing}
+                            onClick={() => {
+                              setSelectedDyeSource({
+                                kind: 'equipped',
+                                equipSlot: slot,
+                              });
+                              if (itemDef?.garmentColorId) {
+                                setTargetDyeColorId(itemDef.garmentColorId);
+                              }
+                            }}
+                            className={`p-2 rounded-sm border flex flex-col items-center gap-1 transition-all ${
+                              isSel
+                                ? theme.slotActiveClass
+                                : isClothing
+                                ? 'mc-slot hover:border-fuchsia-400/70'
+                                : 'mc-slot opacity-45 cursor-not-allowed'
+                            }`}
+                          >
+                            <span className="text-[8px] font-pixel text-[#c4ab7d]">
+                              {label}
+                            </span>
+                            {itemDef ? (
+                              <>
+                                <img
+                                  src={spriteAtlas.getItemIconUrl(itemDef.id)}
+                                  alt={itemDef.name}
+                                  className="w-6 h-6 pixelated"
+                                />
+                                <span className="text-[9px] font-bold text-white truncate max-w-full">
+                                  {itemDef.name}
+                                </span>
+                                <span
+                                  className={`text-[8px] ${
+                                    canDye
+                                      ? 'text-emerald-300'
+                                      : 'text-amber-300'
+                                  }`}
+                                >
+                                  {canDye
+                                    ? 'Pode tingir'
+                                    : isClothing
+                                    ? 'Não tingível'
+                                    : 'Armadura'}
+                                </span>
+                              </>
+                            ) : (
+                              <span className="text-[9px] text-stone-500 py-3">
+                                Vazio
+                              </span>
+                            )}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  <div className="space-y-1.5 pt-2 border-t border-white/10">
+                    <span className="font-pixel text-[10px] text-fuchsia-300 block">
+                      ROUPAS NA MOCHILA:
+                    </span>
+                    {(() => {
+                      const invClothing = player.inventory
+                        .map((slot, idx) => ({
+                          slot,
+                          idx,
+                          def: slot ? ITEMS[slot.itemId] : null,
+                        }))
+                        .filter((entry) => entry.slot && entry.def?.isClothing);
+
+                      if (invClothing.length === 0) {
+                        return (
+                          <div className="py-6 text-center text-[10px] text-[#c4ab7d]">
+                            Nenhuma roupa guardada na mochila no momento.
+                          </div>
+                        );
+                      }
+
+                      return (
+                        <div className="grid grid-cols-4 sm:grid-cols-5 gap-2 max-h-[210px] overflow-y-auto pr-1">
+                          {invClothing.map(({ slot, idx, def }) => {
+                            if (!slot || !def) return null;
+                            const isSel =
+                              selectedDyeSource?.kind === 'inventory' &&
+                              selectedDyeSource.slotIndex === idx;
+                            return (
+                              <button
+                                key={idx}
+                                onClick={() => {
+                                  setSelectedDyeSource({
+                                    kind: 'inventory',
+                                    slotIndex: idx,
+                                  });
+                                  if (def.garmentColorId) {
+                                    setTargetDyeColorId(def.garmentColorId);
+                                  }
+                                }}
+                                className={`p-1.5 rounded-sm border flex flex-col items-center gap-1 relative ${
+                                  isSel ? theme.slotActiveClass : 'mc-slot'
+                                }`}
+                              >
+                                <img
+                                  src={spriteAtlas.getItemIconUrl(def.id)}
+                                  alt={def.name}
+                                  className="w-6 h-6 pixelated"
+                                />
+                                <span className="text-[9px] text-white font-bold truncate max-w-full">
+                                  {def.name}
+                                </span>
+                                <span
+                                  className={`text-[8px] ${
+                                    def.canBeDyed
+                                      ? 'text-emerald-300'
+                                      : 'text-amber-300'
+                                  }`}
+                                >
+                                  {def.canBeDyed
+                                    ? 'Tingível'
+                                    : 'Não tingível'}
+                                </span>
+                              </button>
+                            );
+                          })}
+                        </div>
+                      );
+                    })()}
+                  </div>
+                </div>
+
+                {/* RIGHT COLUMN (5 cols): Dye Palette & Apply Button */}
+                <div className="sm:col-span-5 bg-black/40 border border-white/15 p-3 rounded-sm space-y-3">
+                  {(() => {
+                    let currentItemDef = null;
+                    if (selectedDyeSource?.kind === 'equipped') {
+                      const eqId =
+                        player.equippedBySlot?.[selectedDyeSource.equipSlot] ??
+                        (selectedDyeSource.equipSlot === 'body'
+                          ? player.equippedArmorId
+                          : null);
+                      if (eqId) currentItemDef = ITEMS[eqId] || null;
+                    } else if (selectedDyeSource?.kind === 'inventory') {
+                      const st = player.inventory[selectedDyeSource.slotIndex];
+                      if (st) currentItemDef = ITEMS[st.itemId] || null;
+                    }
+
+                    if (!currentItemDef || !currentItemDef.isClothing) {
+                      return (
+                        <div className="py-10 text-center text-xs text-[#c4ab7d]">
+                          Selecione uma peça de roupa equipada ou da mochila ao
+                          lado para tingi-la.
+                        </div>
+                      );
+                    }
+
+                    const previewDyedId = currentItemDef.canBeDyed
+                      ? getDyedGarmentItemId(
+                          currentItemDef.id,
+                          targetDyeColorId
+                        )
+                      : currentItemDef.id;
+                    const previewDyedDef =
+                      ITEMS[previewDyedId] || currentItemDef;
+
+                    return (
+                      <>
+                        <div className="flex items-center gap-3 border-b border-white/10 pb-2.5">
+                          <div
+                            className={`w-12 h-12 flex items-center justify-center rounded-sm shrink-0 ${theme.slotActiveClass}`}
+                          >
+                            <img
+                              src={spriteAtlas.getItemIconUrl(
+                                previewDyedDef.id
+                              )}
+                              alt={previewDyedDef.name}
+                              className="w-8 h-8 pixelated"
+                            />
+                          </div>
+                          <div className="min-w-0 flex-1">
+                            <div className="text-[9px] text-fuchsia-300 font-pixel">
+                              RESULTADO DO TINGIMENTO:
+                            </div>
+                            <div className="font-pixel text-xs font-bold text-white truncate">
+                              {previewDyedDef.name}
+                            </div>
+                            <div className="text-[10px] text-[#c4ab7d]">
+                              Atual: {currentItemDef.name}
+                            </div>
+                          </div>
+                        </div>
+
+                        {currentItemDef.canBeDyed ? (
+                          <>
+                            <div className="space-y-1.5">
+                              <div className="flex items-center justify-between text-[9px]">
+                                <span className="font-pixel text-fuchsia-300">
+                                  ESCOLHA A COR (17 TONALIDADES):
+                                </span>
+                                <span className="font-bold text-white">
+                                  {
+                                    CLOTHING_COLORS.find(
+                                      (c) => c.id === targetDyeColorId
+                                    )?.label
+                                  }
+                                </span>
+                              </div>
+                              <div className="grid grid-cols-6 gap-1.5">
+                                {CLOTHING_COLORS.map((col) => {
+                                  const active = targetDyeColorId === col.id;
+                                  return (
+                                    <button
+                                      key={col.id}
+                                      type="button"
+                                      onClick={() =>
+                                        setTargetDyeColorId(col.id)
+                                      }
+                                      className={`p-1 rounded-sm border flex flex-col items-center gap-0.5 transition-all ${
+                                        active
+                                          ? 'border-white bg-white/15 ring-1 ring-fuchsia-300'
+                                          : 'border-white/15 bg-black/40 hover:border-white/40'
+                                      }`}
+                                    >
+                                      <span
+                                        className="w-5 h-3.5 rounded-sm border border-black/60"
+                                        style={{ backgroundColor: col.hex }}
+                                      />
+                                      <span className="text-[7px] text-white truncate max-w-full">
+                                        {col.label}
+                                      </span>
+                                    </button>
+                                  );
+                                })}
+                              </div>
+                            </div>
+
+                            <button
+                              disabled={previewDyedId === currentItemDef.id}
+                              onClick={() => {
+                                if (!selectedDyeSource) return;
+                                const res = engine.dyeClothingItem(
+                                  selectedDyeSource,
+                                  targetDyeColorId
+                                );
+                                setCampfireBannerMsg(res.message);
+                              }}
+                              className={`w-full min-h-[38px] px-3 py-1.5 font-pixel text-[11px] font-bold flex items-center justify-center gap-1.5 ${
+                                previewDyedId !== currentItemDef.id
+                                  ? 'medieval-btn-gold'
+                                  : 'medieval-btn-wood opacity-50 cursor-not-allowed'
+                              }`}
+                            >
+                              <Palette className="w-4 h-4" />
+                              <span>
+                                {previewDyedId === currentItemDef.id
+                                  ? 'Já está nesta cor'
+                                  : 'Tingir Peça'}
+                              </span>
+                            </button>
+                          </>
+                        ) : (
+                          <div className="p-3 bg-stone-900/90 border border-amber-500/40 rounded-sm text-[10px] text-amber-200 leading-relaxed">
+                            ✦ <b>{currentItemDef.name}</b> não é uma peça de
+                            costura ou de couro, portanto{' '}
+                            <b>não pode ser tingido</b>.
+                          </div>
+                        )}
+                      </>
+                    );
+                  })()}
+                </div>
+              </div>
+            )}
+          </div>
+        ) : activeTab === 'craft' ? (
           <div className="flex-1 overflow-y-auto p-2.5 sm:p-3.5 grid grid-cols-1 sm:grid-cols-12 gap-3 items-start">
             {/* LEFT COLUMN (7 cols): Category Filter + Station Recipe Grid */}
             <div className="sm:col-span-7 bg-black/35 border border-white/10 p-2.5 space-y-2.5 flex flex-col h-full">

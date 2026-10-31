@@ -353,6 +353,7 @@ const VILLAGER_PROFILES: Record<
 export class EntityManager {
   public creatures: CreatureEntity[] = [];
   private spawnTimer = 0;
+  public isPositionIlluminatedCheck?: (wx: number, wy: number) => boolean;
 
   constructor(initialCreatures?: CreatureEntity[]) {
     if (initialCreatures) {
@@ -532,10 +533,14 @@ export class EntityManager {
     }
 
     // Regra global de limite de spawn por geração natural:
-    // Máximo de 3 mobs hostis e 3 animais selvagens por chunk (contados separadamente)
+    // - Mobs não spawnam naturalmente onde tem luz
+    // - Máximo de 3 mobs hostis e 3 animais selvagens por chunk (contados separadamente)
     if (!options?.ignoreNaturalChunkCap) {
-      const { cx, cy } = world.tileToChunk(tx, ty);
       const isHostileMob = EntityManager.isMonsterKind(kind);
+      if (isHostileMob && this.isPositionIlluminatedCheck?.(wx, wy)) {
+        return null;
+      }
+      const { cx, cy } = world.tileToChunk(tx, ty);
       const isWildAnimal = EntityManager.isWildAnimalKind(kind);
       if (isHostileMob || isWildAnimal) {
         const counts = this.getChunkNaturalCreatureCounts(world, cx, cy);

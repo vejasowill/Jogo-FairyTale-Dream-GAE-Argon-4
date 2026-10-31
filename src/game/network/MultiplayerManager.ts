@@ -12,6 +12,7 @@ import {
   RemotePlayerState,
   WorldSaveData,
 } from '../core/types';
+import { soundManager } from '../core/SoundManager';
 
 export interface MultiplayerCallbacks {
   onSessionChanged?: (session: OnlineSessionInfo) => void;
@@ -249,6 +250,7 @@ export class MultiplayerManager {
       equippedArmorId: player.equippedArmorId,
       equippedBySlot: player.equippedBySlot,
       appearance: player.appearance,
+      isSleeping: Boolean(player.isSleeping),
     };
   }
 
@@ -3048,6 +3050,10 @@ export class MultiplayerManager {
         existing.y = existing.targetY;
       }
       existing.direction = st.direction || st.facing || existing.direction;
+      if (typeof st.hp === 'number' && st.hp < existing.hp - 0.5) {
+        existing.hitFlashTimer = 0.18;
+        soundManager.playPlayerHurt(existing.targetX, existing.targetY);
+      }
       existing.hp = typeof st.hp === 'number' ? st.hp : existing.hp;
       existing.maxHp = typeof st.maxHp === 'number' ? st.maxHp : existing.maxHp;
       existing.level = typeof st.level === 'number' ? st.level : existing.level;
@@ -3065,6 +3071,9 @@ export class MultiplayerManager {
         st.mountedCreatureData !== undefined
           ? st.mountedCreatureData
           : existing.mountedCreatureData;
+      if (prevSwing <= 0.04 && incomingSwing > 0.08) {
+        soundManager.playSwing(existing.targetX, existing.targetY);
+      }
       existing.swingTimer = Math.max(prevSwing, incomingSwing);
       existing.swingDuration =
         st.swingDuration ?? existing.swingDuration ?? 0.25;
@@ -3077,6 +3086,7 @@ export class MultiplayerManager {
       if (st.appearance) {
         existing.appearance = st.appearance;
       }
+      existing.isSleeping = Boolean(st.isSleeping);
     } else {
       const rx = typeof st.x === 'number' ? st.x : 0;
       const ry = typeof st.y === 'number' ? st.y : 0;
@@ -3097,6 +3107,7 @@ export class MultiplayerManager {
         level: st.level ?? 1,
         isMoving: Boolean(st.isMoving),
         isSwimming: Boolean(st.isSwimming),
+        isSleeping: Boolean(st.isSleeping),
         mountedEntityId: st.mountedEntityId ?? null,
         isGalloping: Boolean(st.isGalloping),
         mountedCreatureData: st.mountedCreatureData ?? null,

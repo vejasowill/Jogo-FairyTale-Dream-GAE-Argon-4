@@ -56,6 +56,25 @@ export type AttackDeliveryType = 'melee' | 'ranged';
 
 export type AttackTargetScope = 'single' | 'area';
 
+export type ClothingColorId =
+  | 'preto'
+  | 'cinza'
+  | 'cinza_claro'
+  | 'branco'
+  | 'vermelho'
+  | 'laranja'
+  | 'amarelo'
+  | 'bege'
+  | 'verde_lima'
+  | 'verde'
+  | 'ciano'
+  | 'azul_claro'
+  | 'azul'
+  | 'roxo'
+  | 'magenta'
+  | 'rosa'
+  | 'marrom';
+
 export interface ItemDefinition {
   id: string;
   name: string;
@@ -86,6 +105,14 @@ export interface ItemDefinition {
   defenseBonus?: number;
   speedBonus?: number;
   maxHpBonus?: number;
+  isClothing?: boolean;
+  clothingCategory?: EquipmentSlot;
+  garmentBaseId?: string;
+  garmentColorId?: ClothingColorId;
+  garmentColorHex?: string;
+  canBeDyed?: boolean;
+  extendsToLegs?: boolean;
+  extendsToBody?: boolean;
   placeableType?: PlaceableType;
   seedCropType?: CropType;
   waterCharges?: number;
@@ -161,6 +188,7 @@ export enum NatureNodeType {
   // Basic
   OAK_TREE = 'OAK_TREE',
   BERRY_BUSH = 'BERRY_BUSH',
+  SAND_DUNE = 'SAND_DUNE',
   BOULDER = 'BOULDER',
   CACTUS = 'CACTUS',
   PALM_TREE = 'PALM_TREE',
@@ -208,6 +236,7 @@ export enum PlaceableType {
   OAK_SAPLING = 'OAK_SAPLING',
   PALM_SAPLING = 'PALM_SAPLING',
   BED = 'BED',
+  WEAVING_TABLE = 'WEAVING_TABLE',
 }
 
 export interface NatureNode {
@@ -267,6 +296,7 @@ export interface PlacedStructure {
   stallSalesCount?: number;
   stallTotalGoldEarned?: number;
   stallUnclaimedGold?: number;
+  stallLastRefreshDay?: number;
   ownerSleeping?: boolean;
   // Thermal Station Processing (CAMPFIRE & FURNACE — Minecraft-inspired Fuel + Timed Prep)
   fuelItemId?: string | null;
@@ -279,6 +309,7 @@ export interface PlacedStructure {
   cookingDuration?: number; // Required preparation seconds per batch
   outputItemId?: string | null;
   outputCount?: number;
+  weavingTargetItemId?: string | null;
   // Wall-mounted attachment (exclusively for PlaceableType.TORCH)
   attachedToWall?: boolean;
 }
@@ -435,6 +466,7 @@ export interface DroppedItem {
   y: number;
   bobTimer: number;
   pickupDelay: number;
+  expiresTimer?: number;
   claimedBy?: string | null;
 }
 
@@ -528,6 +560,12 @@ export type PlayerEquipment = Record<EquipmentSlot, string | null>;
 
 export type PlayerGender = 'masculino' | 'feminino';
 
+export type SkinMarkId =
+  | 'none'
+  | 'freckles'
+  | 'eye_scar'
+  | 'freckles_and_scar';
+
 export type HairStyleId =
   | 'adventurer'
   | 'warrior_crest'
@@ -540,14 +578,24 @@ export type HairStyleId =
   | 'noble_waves'
   | 'valkyrie_bangs';
 
+export type EyeStyleId =
+  | 'classic'
+  | 'sharp'
+  | 'large'
+  | 'calm'
+  | 'fierce'
+  | 'mystic';
+
 export interface PlayerAppearance {
   gender?: PlayerGender;
   skinColor: string;
+  skinMark?: SkinMarkId;
   hairColor: string;
   hairStyle: HairStyleId;
+  eyeStyle?: EyeStyleId;
   eyeColor: string;
-  shirtColor: string;
-  pantsColor: string;
+  shirtColor?: string;
+  pantsColor?: string;
 }
 
 export interface FishingState {
@@ -608,6 +656,15 @@ export interface PlayerState {
   respawnX?: number;
   respawnY?: number;
   respawnLabel?: string;
+  // Daily Healing Fountain & Village Well usage & Sleep countdown state
+  lastFountainUseDay?: number;
+  lastWellUseDay?: number;
+  isSleeping?: boolean;
+  sleepTimer?: number;
+  sleepingStructureId?: string | null;
+  sleepingStructureType?: PlaceableType | null;
+  sleepingTargetX?: number;
+  sleepingTargetY?: number;
   // Animation state
   isMoving: boolean;
   isSwimming?: boolean;
@@ -639,6 +696,7 @@ export interface RemotePlayerState {
   mountedEntityId?: string | null;
   mountedCreatureData?: CreatureEntity | null;
   isGalloping?: boolean;
+  isSleeping?: boolean;
   animFrame: number;
   animTimer: number;
   swingTimer: number;
@@ -667,7 +725,7 @@ export interface OnlineActivationStep {
 }
 
 // REGRA PERMANENTE: A cada nova atualização do jogo, incremente a versão para o número seguinte da beta (ex: 0.4.4-beta -> 0.4.5-beta).
-export const GAME_VERSION = '0.6.0-beta';
+export const GAME_VERSION = '0.6.3-beta';
 export const CURRENT_WORLD_GEN_VERSION = 3;
 
 export interface OnlineSessionInfo {
