@@ -28,6 +28,9 @@ import {
   FUEL_ITEM_ORDER,
   FUEL_ITEMS,
   getDyedGarmentItemId,
+  getDyeItemIdForColor,
+  getFlowerColorHex,
+  getFlowerColorLabel,
   getItemBasePrice,
   ITEMS,
 } from '../game/core/ItemRegistry';
@@ -248,6 +251,9 @@ export const CraftingDrawer: React.FC<CraftingDrawerProps> = ({
   >(null);
   const [targetDyeColorId, setTargetDyeColorId] =
     useState<ClothingColorId>('vermelho');
+  const [selectedMaterialOptionId, setSelectedMaterialOptionId] =
+    useState<string>('');
+  const [weavingOpenGuard, setWeavingOpenGuard] = useState<boolean>(false);
 
   useEffect(() => {
     if (isOpen) {
@@ -259,6 +265,20 @@ export const CraftingDrawer: React.FC<CraftingDrawerProps> = ({
       setWeavingWindow('confeccao');
     }
   }, [isOpen, initialTab, stationContext]);
+
+  // 0,2s (200ms) protection when opening or switching to Mesa de Tecelagem
+  useEffect(() => {
+    if (isOpen && activeStation === PlaceableType.WEAVING_TABLE) {
+      engine.weavingTableOpenedAtMs = performance.now();
+      setWeavingOpenGuard(true);
+      const timer = window.setTimeout(() => {
+        setWeavingOpenGuard(false);
+      }, 200);
+      return () => window.clearTimeout(timer);
+    } else {
+      setWeavingOpenGuard(false);
+    }
+  }, [isOpen, activeStation, engine]);
 
   const theme = getStationTheme(activeStation);
 
@@ -326,7 +346,8 @@ export const CraftingDrawer: React.FC<CraftingDrawerProps> = ({
     filteredRecipes[0] ||
     stationRecipes[0];
 
-  // Sync default craft color when selecting a clothing recipe in Mesa de Tecelagem
+  // Sync default craft color when selecting a clothing recipe in Mesa de Tecelagem,
+  // and sync default materialOptionId when selecting a dye recipe with multiple material options
   useEffect(() => {
     if (activeStation === PlaceableType.WEAVING_TABLE && selectedRecipe) {
       const def = ITEMS[selectedRecipe.resultItemId];
@@ -336,7 +357,19 @@ export const CraftingDrawer: React.FC<CraftingDrawerProps> = ({
         setCraftColorId('branco');
       }
     }
-  }, [activeStation, selectedRecipe?.id]);
+    if (selectedRecipe?.materialOptions && selectedRecipe.materialOptions.length > 0) {
+      const firstAvailable = selectedRecipe.materialOptions.find((opt) =>
+        opt.ingredients.every(
+          (ing) => engine.getIngredientAvailableCount(ing) >= ing.count
+        )
+      );
+      setSelectedMaterialOptionId(
+        firstAvailable?.id || selectedRecipe.materialOptions[0].id
+      );
+    } else {
+      setSelectedMaterialOptionId('');
+    }
+  }, [activeStation, selectedRecipe?.id, engine]);
 
   const selectedSlot =
     selectedInvIndex !== null ? player.inventory[selectedInvIndex] || null : null;
@@ -345,8 +378,12 @@ export const CraftingDrawer: React.FC<CraftingDrawerProps> = ({
   // Find all recipes where the selected inventory item is used as an ingredient
   const usedInRecipes = useMemo(() => {
     if (!selectedSlotItem) return [];
-    return RECIPES.filter((r) =>
-      r.ingredients.some((ing) => ing.itemId === selectedSlotItem.id)
+    return RECIPES.filter(
+      (r) =>
+        r.ingredients.some((ing) => ing.itemId === selectedSlotItem.id) ||
+        r.materialOptions?.some((opt) =>
+          opt.ingredients.some((ing) => ing.itemId === selectedSlotItem.id)
+        )
     ).map((r) => ({
       recipe: r,
       resultName: ITEMS[r.resultItemId]?.name || r.resultItemId,
@@ -476,8 +513,11 @@ export const CraftingDrawer: React.FC<CraftingDrawerProps> = ({
   const resultItem = selectedRecipe
     ? ITEMS[selectedRecipe.resultItemId]
     : undefined;
+  const activeRecipeIngredients = selectedRecipe
+    ? engine.getRecipeActiveIngredients(selectedRecipe, selectedMaterialOptionId)
+    : [];
   const maxCraftCount = selectedRecipe
-    ? engine.getMaxCraftableCount(selectedRecipe)
+    ? engine.getMaxCraftableCount(selectedRecipe, selectedMaterialOptionId)
     : 0;
   const playerPreviewUrl = spriteAtlas
     .getPlayerSprite('down', 0, player)
@@ -685,7 +725,11 @@ export const CraftingDrawer: React.FC<CraftingDrawerProps> = ({
         {/* TAB 1: STATION-SPECIFIC CRAFTING HUD                              */}
         {/* ================================================================= */}
         {activeTab === 'craft' && isWeavingStation ? (
-          <div className="flex-1 overflow-y-auto p-2.5 sm:p-3.5 flex flex-col gap-3">
+          <div
+            className={`flex-1 overflow-y-auto p-2.5 sm:p-3.5 flex flex-col gap-3 ${
+              weavingOpenGuard ? 'pointer-events-none select-none' : ''
+            }`}
+          >
             {/* TOP BAR OF WEAVING TABLE: Switch between Janela de Confecção & Janela de Tingimento */}
             <div className="flex flex-wrap items-center justify-between gap-2 bg-black/45 border border-fuchsia-400/35 p-2 rounded-sm">
               <div className="flex items-center gap-2">
@@ -1001,24 +1045,54 @@ export const CraftingDrawer: React.FC<CraftingDrawerProps> = ({
                                         (c) => c.id === craftColorId
                                       )?.label
                                     }
+                                    {craftColorId ===
+                                    (resultItem.garmentColorId || 'branco') ? (
+                                      <span className="ml-1 text-emerald-300 text-[8px]">
+                                        (Padrão · Sem Corante)
+                                      </span>
+                                    ) : (
+                                      <span className="ml-1 text-fuchsia-300 text-[8px]">
+                                        (Requer Corante)
+                                      </span>
+                                    )}
                                   </span>
                                 </div>
                                 <div className="grid grid-cols-9 gap-1">
                                   {CLOTHING_COLORS.map((col) => {
                                     const active = craftColorId === col.id;
+                                    const isDefault =
+                                      col.id ===
+                                      (resultItem.garmentColorId || 'branco');
+                                    const dyeId = getDyeItemIdForColor(col.id);
+                                    const hasDye =
+                                      isDefault || engine.getItemCount(dyeId) > 0;
                                     return (
                                       <button
                                         key={col.id}
                                         type="button"
                                         onClick={() => setCraftColorId(col.id)}
-                                        title={col.label}
-                                        className={`h-5 rounded-sm border transition-transform ${
+                                        title={
+                                          isDefault
+                                            ? `${col.label} (Cor Padrão - Não requer corante)`
+                                            : `${col.label} (${
+                                                hasDye
+                                                  ? 'Corante disponível'
+                                                  : 'Requer 1x ' +
+                                                    (ITEMS[dyeId]?.name ||
+                                                      'Corante')
+                                              })`
+                                        }
+                                        className={`relative h-5 rounded-sm border transition-transform ${
                                           active
                                             ? 'border-white ring-2 ring-fuchsia-400 scale-110 z-10'
                                             : 'border-black/60 hover:scale-105'
                                         }`}
                                         style={{ backgroundColor: col.hex }}
-                                      />
+                                      >
+                                        {!isDefault && hasDye && (
+                                          <span className="absolute -top-0.5 -right-0.5 w-1.5 h-1.5 rounded-full bg-emerald-400 border border-black" />
+                                        )}
+                                      </button>
                                     );
                                   })}
                                 </div>
@@ -1030,85 +1104,152 @@ export const CraftingDrawer: React.FC<CraftingDrawerProps> = ({
                               </div>
                             )}
 
-                            {/* Ingredients List */}
-                            <div className="space-y-1 pt-1 border-t border-white/10">
-                              <span className="text-[9px] font-pixel text-[#c4ab7d] block">
-                                MATERIAIS DE CONFECÇÃO:
-                              </span>
-                              <div className="grid grid-cols-2 gap-1.5">
-                                {selectedRecipe.ingredients.map((ing) => {
-                                  const ingDef = ITEMS[ing.itemId];
-                                  const have = engine.getItemCount(ing.itemId);
-                                  const enough = have >= ing.count;
-                                  return (
-                                    <div
-                                      key={ing.itemId}
-                                      className={`p-1.5 rounded-sm border flex items-center justify-between gap-1.5 ${
-                                        enough
-                                          ? 'bg-black/45 border-emerald-500/40'
-                                          : 'bg-rose-950/30 border-rose-500/40'
-                                      }`}
-                                    >
-                                      <div className="flex items-center gap-1.5 min-w-0">
-                                        <img
-                                          src={spriteAtlas.getItemIconUrl(
-                                            ing.itemId
-                                          )}
-                                          alt={ingDef?.name || ing.itemId}
-                                          className="w-5 h-5 pixelated shrink-0"
-                                        />
-                                        <span className="text-[10px] text-white truncate">
-                                          {ingDef?.name || ing.itemId}
-                                        </span>
-                                      </div>
-                                      <span
-                                        className={`text-[10px] font-mono-tabular font-bold shrink-0 ${
-                                          enough
-                                            ? 'text-emerald-400'
-                                            : 'text-rose-400'
-                                        }`}
-                                      >
-                                        {have}/{ing.count}
-                                      </span>
-                                    </div>
-                                  );
-                                })}
-                              </div>
-                            </div>
-
-                            <button
-                              disabled={
-                                maxCraftCount <= 0 ||
-                                Boolean(
-                                  weavingState?.cookingInputCount &&
-                                    weavingState.cookingInputCount > 0
-                                )
-                              }
-                              onClick={() => {
-                                const res = engine.startWeavingTableCraft(
-                                  selectedRecipe.id,
-                                  resultItem.canBeDyed ? craftColorId : undefined
-                                );
-                                setCampfireBannerMsg(res.message);
-                              }}
-                              className={`w-full min-h-[38px] px-3 py-1.5 font-pixel text-[11px] font-bold flex items-center justify-center gap-1.5 ${
+                            {/* Ingredients List + Optional Dye Requirement */}
+                            {(() => {
+                              const defaultColor: ClothingColorId =
+                                resultItem.garmentColorId || 'branco';
+                              const requiresDye = Boolean(
+                                resultItem.canBeDyed &&
+                                  craftColorId !== defaultColor
+                              );
+                              const requiredDyeId = requiresDye
+                                ? getDyeItemIdForColor(craftColorId)
+                                : null;
+                              const requiredDyeDef = requiredDyeId
+                                ? ITEMS[requiredDyeId]
+                                : null;
+                              const haveDye = requiredDyeId
+                                ? engine.getItemCount(requiredDyeId)
+                                : 1;
+                              const enoughDye = !requiresDye || haveDye >= 1;
+                              const canWeaveNow =
+                                !weavingOpenGuard &&
                                 maxCraftCount > 0 &&
+                                enoughDye &&
                                 !(
                                   weavingState?.cookingInputCount &&
                                   weavingState.cookingInputCount > 0
-                                )
-                                  ? theme.primaryBtnClass
-                                  : 'medieval-btn-wood opacity-50 cursor-not-allowed'
-                              }`}
-                            >
-                              <Scissors className="w-4 h-4" />
-                              <span>
-                                {weavingState?.cookingInputCount &&
-                                weavingState.cookingInputCount > 0
-                                  ? 'Tear Ocupado...'
-                                  : 'Confeccionar'}
-                              </span>
-                            </button>
+                                );
+
+                              return (
+                                <>
+                                  <div className="space-y-1 pt-1 border-t border-white/10">
+                                    <span className="text-[9px] font-pixel text-[#c4ab7d] block">
+                                      MATERIAIS DE CONFECÇÃO:
+                                    </span>
+                                    <div className="grid grid-cols-2 gap-1.5">
+                                      {selectedRecipe.ingredients.map((ing) => {
+                                        const ingDef = ITEMS[ing.itemId];
+                                        const have = engine.getItemCount(
+                                          ing.itemId
+                                        );
+                                        const enough = have >= ing.count;
+                                        return (
+                                          <div
+                                            key={ing.itemId}
+                                            className={`p-1.5 rounded-sm border flex items-center justify-between gap-1.5 ${
+                                              enough
+                                                ? 'bg-black/45 border-emerald-500/40'
+                                                : 'bg-rose-950/30 border-rose-500/40'
+                                            }`}
+                                          >
+                                            <div className="flex items-center gap-1.5 min-w-0">
+                                              <img
+                                                src={spriteAtlas.getItemIconUrl(
+                                                  ing.itemId
+                                                )}
+                                                alt={ingDef?.name || ing.itemId}
+                                                className="w-5 h-5 pixelated shrink-0"
+                                              />
+                                              <span className="text-[10px] text-white truncate">
+                                                {ingDef?.name || ing.itemId}
+                                              </span>
+                                            </div>
+                                            <span
+                                              className={`text-[10px] font-mono-tabular font-bold shrink-0 ${
+                                                enough
+                                                  ? 'text-emerald-400'
+                                                  : 'text-rose-400'
+                                              }`}
+                                            >
+                                              {have}/{ing.count}
+                                            </span>
+                                          </div>
+                                        );
+                                      })}
+
+                                      {requiresDye && requiredDyeId && (
+                                        <div
+                                          className={`col-span-2 p-1.5 rounded-sm border flex items-center justify-between gap-1.5 ${
+                                            enoughDye
+                                              ? 'bg-fuchsia-950/35 border-emerald-500/50'
+                                              : 'bg-rose-950/40 border-rose-500/50'
+                                          }`}
+                                        >
+                                          <div className="flex items-center gap-1.5 min-w-0">
+                                            <img
+                                              src={spriteAtlas.getItemIconUrl(
+                                                requiredDyeId
+                                              )}
+                                              alt={
+                                                requiredDyeDef?.name ||
+                                                requiredDyeId
+                                              }
+                                              className="w-5 h-5 pixelated shrink-0"
+                                            />
+                                            <span className="text-[10px] text-fuchsia-200 font-bold truncate">
+                                              {requiredDyeDef?.name ||
+                                                requiredDyeId}{' '}
+                                              (Cor escolhida)
+                                            </span>
+                                          </div>
+                                          <span
+                                            className={`text-[10px] font-mono-tabular font-bold shrink-0 ${
+                                              enoughDye
+                                                ? 'text-emerald-400'
+                                                : 'text-rose-400'
+                                            }`}
+                                          >
+                                            {haveDye}/1
+                                          </span>
+                                        </div>
+                                      )}
+                                    </div>
+                                  </div>
+
+                                  <button
+                                    disabled={!canWeaveNow}
+                                    onClick={() => {
+                                      if (weavingOpenGuard) return;
+                                      const res = engine.startWeavingTableCraft(
+                                        selectedRecipe.id,
+                                        resultItem.canBeDyed
+                                          ? craftColorId
+                                          : undefined
+                                      );
+                                      setCampfireBannerMsg(res.message);
+                                    }}
+                                    className={`w-full min-h-[38px] px-3 py-1.5 font-pixel text-[11px] font-bold flex items-center justify-center gap-1.5 ${
+                                      canWeaveNow
+                                        ? theme.primaryBtnClass
+                                        : 'medieval-btn-wood opacity-50 cursor-not-allowed'
+                                    }`}
+                                  >
+                                    <Scissors className="w-4 h-4" />
+                                    <span>
+                                      {weavingState?.cookingInputCount &&
+                                      weavingState.cookingInputCount > 0
+                                        ? 'Tear Ocupado...'
+                                        : !enoughDye
+                                        ? `Falta ${
+                                            requiredDyeDef?.name || 'Corante'
+                                          }`
+                                        : 'Confeccionar'}
+                                    </span>
+                                  </button>
+                                </>
+                              );
+                            })()}
                           </>
                         );
                       })()}
@@ -1353,59 +1494,131 @@ export const CraftingDrawer: React.FC<CraftingDrawerProps> = ({
                                   }
                                 </span>
                               </div>
-                              <div className="grid grid-cols-6 gap-1.5">
-                                {CLOTHING_COLORS.map((col) => {
-                                  const active = targetDyeColorId === col.id;
-                                  return (
+                                <div className="grid grid-cols-6 gap-1.5">
+                                  {CLOTHING_COLORS.map((col) => {
+                                    const active = targetDyeColorId === col.id;
+                                    const dyeId = getDyeItemIdForColor(col.id);
+                                    const hasDye =
+                                      engine.getItemCount(dyeId) >= 1;
+                                    return (
+                                      <button
+                                        key={col.id}
+                                        type="button"
+                                        onClick={() =>
+                                          setTargetDyeColorId(col.id)
+                                        }
+                                        className={`relative p-1 rounded-sm border flex flex-col items-center gap-0.5 transition-all ${
+                                          active
+                                            ? 'border-white bg-white/15 ring-1 ring-fuchsia-300'
+                                            : 'border-white/15 bg-black/40 hover:border-white/40'
+                                        }`}
+                                      >
+                                        <span
+                                          className="w-5 h-3.5 rounded-sm border border-black/60"
+                                          style={{ backgroundColor: col.hex }}
+                                        />
+                                        <span className="text-[7px] text-white truncate max-w-full">
+                                          {col.label}
+                                        </span>
+                                        {hasDye && (
+                                          <span className="absolute top-0.5 right-0.5 w-1.5 h-1.5 rounded-full bg-emerald-400 border border-black" />
+                                        )}
+                                      </button>
+                                    );
+                                  })}
+                                </div>
+                              </div>
+
+                              {(() => {
+                                const requiredDyeId =
+                                  getDyeItemIdForColor(targetDyeColorId);
+                                const requiredDyeDef = ITEMS[requiredDyeId];
+                                const haveDye =
+                                  engine.getItemCount(requiredDyeId);
+                                const enoughDye = haveDye >= 1;
+                                const isSameColor =
+                                  previewDyedId === currentItemDef.id;
+                                const canDyeNow =
+                                  !weavingOpenGuard &&
+                                  !isSameColor &&
+                                  enoughDye;
+
+                                return (
+                                  <>
+                                    <div className="space-y-1 pt-1 border-t border-white/10">
+                                      <span className="text-[9px] font-pixel text-[#c4ab7d] block">
+                                        CORANTE NECESSÁRIO:
+                                      </span>
+                                      <div
+                                        className={`p-1.5 rounded-sm border flex items-center justify-between gap-2 ${
+                                          enoughDye
+                                            ? 'bg-black/45 border-emerald-500/50'
+                                            : 'bg-rose-950/40 border-rose-500/50'
+                                        }`}
+                                      >
+                                        <div className="flex items-center gap-2 min-w-0">
+                                          <img
+                                            src={spriteAtlas.getItemIconUrl(
+                                              requiredDyeId
+                                            )}
+                                            alt={
+                                              requiredDyeDef?.name ||
+                                              requiredDyeId
+                                            }
+                                            className="w-5 h-5 pixelated shrink-0"
+                                          />
+                                          <span className="text-[10px] text-white font-bold truncate">
+                                            {requiredDyeDef?.name ||
+                                              requiredDyeId}
+                                          </span>
+                                        </div>
+                                        <span
+                                          className={`text-[10px] font-mono-tabular font-bold shrink-0 ${
+                                            enoughDye
+                                              ? 'text-emerald-400'
+                                              : 'text-rose-400'
+                                          }`}
+                                        >
+                                          {haveDye}/1
+                                        </span>
+                                      </div>
+                                    </div>
+
                                     <button
-                                      key={col.id}
-                                      type="button"
-                                      onClick={() =>
-                                        setTargetDyeColorId(col.id)
-                                      }
-                                      className={`p-1 rounded-sm border flex flex-col items-center gap-0.5 transition-all ${
-                                        active
-                                          ? 'border-white bg-white/15 ring-1 ring-fuchsia-300'
-                                          : 'border-white/15 bg-black/40 hover:border-white/40'
+                                      disabled={!canDyeNow}
+                                      onClick={() => {
+                                        if (
+                                          weavingOpenGuard ||
+                                          !selectedDyeSource
+                                        )
+                                          return;
+                                        const res = engine.dyeClothingItem(
+                                          selectedDyeSource,
+                                          targetDyeColorId
+                                        );
+                                        setCampfireBannerMsg(res.message);
+                                      }}
+                                      className={`w-full min-h-[38px] px-3 py-1.5 font-pixel text-[11px] font-bold flex items-center justify-center gap-1.5 ${
+                                        canDyeNow
+                                          ? 'medieval-btn-gold'
+                                          : 'medieval-btn-wood opacity-50 cursor-not-allowed'
                                       }`}
                                     >
-                                      <span
-                                        className="w-5 h-3.5 rounded-sm border border-black/60"
-                                        style={{ backgroundColor: col.hex }}
-                                      />
-                                      <span className="text-[7px] text-white truncate max-w-full">
-                                        {col.label}
+                                      <Palette className="w-4 h-4" />
+                                      <span>
+                                        {isSameColor
+                                          ? 'Já está nesta cor'
+                                          : !enoughDye
+                                          ? `Falta ${
+                                              requiredDyeDef?.name || 'Corante'
+                                            }`
+                                          : 'Tingir Peça'}
                                       </span>
                                     </button>
-                                  );
-                                })}
-                              </div>
-                            </div>
-
-                            <button
-                              disabled={previewDyedId === currentItemDef.id}
-                              onClick={() => {
-                                if (!selectedDyeSource) return;
-                                const res = engine.dyeClothingItem(
-                                  selectedDyeSource,
-                                  targetDyeColorId
+                                  </>
                                 );
-                                setCampfireBannerMsg(res.message);
-                              }}
-                              className={`w-full min-h-[38px] px-3 py-1.5 font-pixel text-[11px] font-bold flex items-center justify-center gap-1.5 ${
-                                previewDyedId !== currentItemDef.id
-                                  ? 'medieval-btn-gold'
-                                  : 'medieval-btn-wood opacity-50 cursor-not-allowed'
-                              }`}
-                            >
-                              <Palette className="w-4 h-4" />
-                              <span>
-                                {previewDyedId === currentItemDef.id
-                                  ? 'Já está nesta cor'
-                                  : 'Tingir Peça'}
-                              </span>
-                            </button>
-                          </>
+                              })()}
+                            </>
                         ) : (
                           <div className="p-3 bg-stone-900/90 border border-amber-500/40 rounded-sm text-[10px] text-amber-200 leading-relaxed">
                             ✦ <b>{currentItemDef.name}</b> não é uma peça de
@@ -1909,7 +2122,7 @@ export const CraftingDrawer: React.FC<CraftingDrawerProps> = ({
                           /* 2x2 Hand Crafting Grid */
                           <div className="grid grid-cols-2 gap-1 p-1 bg-[#1a0f08] border border-amber-700/60 rounded-sm">
                             {[0, 1, 2, 3].map((slotIdx) => {
-                              const ing = selectedRecipe.ingredients[slotIdx];
+                              const ing = activeRecipeIngredients[slotIdx];
                               return (
                                 <div
                                   key={slotIdx}
@@ -1919,7 +2132,8 @@ export const CraftingDrawer: React.FC<CraftingDrawerProps> = ({
                                     <>
                                       <img
                                         src={spriteAtlas.getItemIconUrl(
-                                          ing.itemId
+                                          ing.itemId,
+                                          ing.flowerColor
                                         )}
                                         alt=""
                                         className="w-4 h-4 pixelated"
@@ -1937,7 +2151,7 @@ export const CraftingDrawer: React.FC<CraftingDrawerProps> = ({
                           /* 3x3 Workbench Blueprint Grid */
                           <div className="grid grid-cols-3 gap-0.5 p-1 bg-[#0f172a] border border-amber-500/60 rounded-sm">
                             {[0, 1, 2, 3, 4, 5, 6, 7, 8].map((slotIdx) => {
-                              const ing = selectedRecipe.ingredients[slotIdx];
+                              const ing = activeRecipeIngredients[slotIdx];
                               return (
                                 <div
                                   key={slotIdx}
@@ -1947,7 +2161,8 @@ export const CraftingDrawer: React.FC<CraftingDrawerProps> = ({
                                     <>
                                       <img
                                         src={spriteAtlas.getItemIconUrl(
-                                          ing.itemId
+                                          ing.itemId,
+                                          ing.flowerColor
                                         )}
                                         alt=""
                                         className="w-4 h-4 pixelated"
@@ -1964,13 +2179,16 @@ export const CraftingDrawer: React.FC<CraftingDrawerProps> = ({
                         ) : (
                           /* Solar Altar Runic Matrix */
                           <div className="flex items-center gap-1 p-1.5 bg-[#091526] border border-cyan-400/60 rounded-sm">
-                            {selectedRecipe.ingredients.map((ing, i) => (
+                            {activeRecipeIngredients.map((ing, i) => (
                               <div
                                 key={i}
                                 className="w-7 h-7 bg-[#0c2540] border border-cyan-400/50 rounded-full flex items-center justify-center relative"
                               >
                                 <img
-                                  src={spriteAtlas.getItemIconUrl(ing.itemId)}
+                                  src={spriteAtlas.getItemIconUrl(
+                                    ing.itemId,
+                                    ing.flowerColor
+                                  )}
                                   alt=""
                                   className="w-4 h-4 pixelated"
                                 />
@@ -2094,19 +2312,87 @@ export const CraftingDrawer: React.FC<CraftingDrawerProps> = ({
                     )}
                   </div>
 
+                  {/* Material Option Selector for Multi-Source Dye Recipes */}
+                  {selectedRecipe.materialOptions &&
+                    selectedRecipe.materialOptions.length > 1 && (
+                      <div className="space-y-1.5 pt-1 border-t border-white/10">
+                        <span className="text-[9px] font-pixel text-amber-300 block">
+                          ESCOLHA O MATERIAL PARA PRODUZIR O CORANTE:
+                        </span>
+                        <div className="grid grid-cols-1 gap-1">
+                          {selectedRecipe.materialOptions.map((opt) => {
+                            const isSelectedOpt =
+                              (selectedMaterialOptionId ||
+                                selectedRecipe.materialOptions![0].id) ===
+                              opt.id;
+                            const firstIng = opt.ingredients[0];
+                            const have = firstIng
+                              ? engine.getIngredientAvailableCount(firstIng)
+                              : 0;
+                            const need = firstIng?.count || 1;
+                            const enough = have >= need;
+                            return (
+                              <button
+                                key={opt.id}
+                                type="button"
+                                onClick={() =>
+                                  setSelectedMaterialOptionId(opt.id)
+                                }
+                                className={`p-1.5 rounded-sm border flex items-center justify-between gap-2 text-left transition-all ${
+                                  isSelectedOpt
+                                    ? 'bg-amber-950/60 border-amber-400 ring-1 ring-amber-400/60'
+                                    : 'bg-black/45 border-white/15 hover:border-amber-400/50'
+                                }`}
+                              >
+                                <div className="flex items-center gap-2 min-w-0">
+                                  {firstIng && (
+                                    <img
+                                      src={spriteAtlas.getItemIconUrl(
+                                        firstIng.itemId,
+                                        firstIng.flowerColor
+                                      )}
+                                      alt={opt.label}
+                                      className="w-5 h-5 pixelated shrink-0"
+                                    />
+                                  )}
+                                  <span className="text-[10px] font-bold text-white truncate">
+                                    {opt.label}
+                                  </span>
+                                </div>
+                                <span
+                                  className={`text-[10px] font-mono-tabular font-bold shrink-0 ${
+                                    enough
+                                      ? 'text-emerald-400'
+                                      : 'text-rose-400'
+                                  }`}
+                                >
+                                  {have}/{need}
+                                </span>
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )}
+
                   {/* Ingredients List */}
                   <div className="space-y-1 pt-1 border-t border-white/10">
                     <span className="text-[9px] font-pixel text-[#c4ab7d] block">
                       INGREDIENTES NECESSÁRIOS:
                     </span>
                     <div className="grid grid-cols-2 gap-1.5">
-                      {selectedRecipe.ingredients.map((ing) => {
+                      {activeRecipeIngredients.map((ing, idx) => {
                         const ingDef = ITEMS[ing.itemId];
-                        const have = engine.getItemCount(ing.itemId);
+                        const have = engine.getIngredientAvailableCount(ing);
                         const enough = have >= ing.count;
+                        const ingName = ing.flowerColor
+                          ? `${ingDef?.name || ing.itemId} (${getFlowerColorLabel(
+                              ing.flowerColor
+                            )})`
+                          : ingDef?.name || ing.itemId;
                         return (
                           <div
-                            key={ing.itemId}
+                            key={`${ing.itemId}_${ing.flowerColor || idx}`}
                             className={`p-1.5 rounded-sm border flex items-center justify-between gap-1.5 ${
                               enough
                                 ? 'bg-black/45 border-emerald-500/40'
@@ -2115,12 +2401,15 @@ export const CraftingDrawer: React.FC<CraftingDrawerProps> = ({
                           >
                             <div className="flex items-center gap-1.5 min-w-0">
                               <img
-                                src={spriteAtlas.getItemIconUrl(ing.itemId)}
-                                alt={ingDef?.name || ing.itemId}
+                                src={spriteAtlas.getItemIconUrl(
+                                  ing.itemId,
+                                  ing.flowerColor
+                                )}
+                                alt={ingName}
                                 className="w-5 h-5 pixelated shrink-0"
                               />
                               <span className="text-[10px] text-white truncate">
-                                {ingDef?.name || ing.itemId}
+                                {ingName}
                               </span>
                             </div>
                             <span
@@ -2144,7 +2433,8 @@ export const CraftingDrawer: React.FC<CraftingDrawerProps> = ({
                         engine.craftRecipe(
                           selectedRecipe.id,
                           activeStation,
-                          1
+                          1,
+                          selectedMaterialOptionId || undefined
                         )
                       }
                       className={`flex-1 min-h-[38px] px-3 py-1.5 font-pixel text-[11px] font-bold flex items-center justify-center gap-1.5 ${
@@ -2176,7 +2466,8 @@ export const CraftingDrawer: React.FC<CraftingDrawerProps> = ({
                           engine.craftRecipe(
                             selectedRecipe.id,
                             activeStation,
-                            Math.min(5, maxCraftCount)
+                            Math.min(5, maxCraftCount),
+                            selectedMaterialOptionId || undefined
                           )
                         }
                         className="min-h-[38px] px-3 py-1.5 font-pixel text-[11px] font-bold medieval-btn-emerald flex items-center justify-center gap-1"
@@ -2231,7 +2522,10 @@ export const CraftingDrawer: React.FC<CraftingDrawerProps> = ({
                           {slot && def ? (
                             <>
                               <img
-                                src={spriteAtlas.getItemIconUrl(slot.itemId)}
+                                src={spriteAtlas.getItemIconUrl(
+                                  slot.itemId,
+                                  slot.selectedColor
+                                )}
                                 alt={def.name}
                                 className="w-5 h-5 sm:w-6 sm:h-6 pixelated"
                               />
@@ -2278,7 +2572,10 @@ export const CraftingDrawer: React.FC<CraftingDrawerProps> = ({
                         {slot && def ? (
                           <>
                             <img
-                              src={spriteAtlas.getItemIconUrl(slot.itemId)}
+                              src={spriteAtlas.getItemIconUrl(
+                                slot.itemId,
+                                slot.selectedColor
+                              )}
                               alt={def.name}
                               className="w-5 h-5 sm:w-6 sm:h-6 pixelated"
                             />
@@ -2377,14 +2674,24 @@ export const CraftingDrawer: React.FC<CraftingDrawerProps> = ({
                     <div className="flex items-center gap-2 border-b border-[#3d281a] pb-1.5">
                       <div className="w-9 h-9 mc-slot-active flex items-center justify-center shrink-0">
                         <img
-                          src={spriteAtlas.getItemIconUrl(selectedSlotItem.id)}
+                          src={spriteAtlas.getItemIconUrl(
+                            selectedSlotItem.id,
+                            selectedSlot.selectedColor
+                          )}
                           alt={selectedSlotItem.name}
                           className="w-6 h-6 pixelated"
                         />
                       </div>
                       <div className="min-w-0">
                         <div className="font-pixel text-[11px] font-bold text-white truncate">
-                          {selectedSlotItem.name} (x{selectedSlot.count})
+                          {selectedSlotItem.name}
+                          {selectedSlotItem.isFlower &&
+                          selectedSlot.selectedColor
+                            ? ` · ${getFlowerColorLabel(
+                                selectedSlot.selectedColor
+                              )}`
+                            : ''}{' '}
+                          (x{selectedSlot.count})
                         </div>
                         <div className="text-[10px] text-[#c4ab7d]">
                           {categoryName(selectedSlotItem.category)} ·{' '}
@@ -2406,6 +2713,92 @@ export const CraftingDrawer: React.FC<CraftingDrawerProps> = ({
                     <p className="text-[10px] text-[#e5d5b5] leading-snug">
                       {selectedSlotItem.description}
                     </p>
+
+                    {/* Flower Species Color Breakdown & Active Color Selector */}
+                    {selectedSlotItem.isFlower && selectedInvIndex !== null && (
+                      <div className="bg-[#120b07] p-2 border border-amber-500/40 rounded-sm space-y-1.5">
+                        <div className="flex items-center justify-between text-[9px]">
+                          <span className="font-pixel text-amber-300">
+                            CORES DESTA ESPÉCIE NO SLOT:
+                          </span>
+                          <span className="text-[#c4ab7d]">
+                            Toque para escolher a cor de uso
+                          </span>
+                        </div>
+                        <div className="grid grid-cols-2 gap-1">
+                          {(() => {
+                            const defaultCol =
+                              selectedSlotItem.allowedFlowerColors?.[0] ||
+                              'amarelo';
+                            const countsMap: Partial<
+                              Record<ClothingColorId, number>
+                            > =
+                              selectedSlot.colorCounts &&
+                              Object.keys(selectedSlot.colorCounts).length > 0
+                                ? selectedSlot.colorCounts
+                                : {
+                                    [selectedSlot.selectedColor || defaultCol]:
+                                      selectedSlot.count,
+                                  };
+                            const entries = (
+                              Object.entries(countsMap) as [
+                                ClothingColorId,
+                                number
+                              ][]
+                            ).filter(([, c]) => (c || 0) > 0);
+                            const activeCol =
+                              selectedSlot.selectedColor ||
+                              entries[0]?.[0] ||
+                              defaultCol;
+
+                            return entries.map(([colorId, count]) => {
+                              const isActiveColor = activeCol === colorId;
+                              return (
+                                <button
+                                  key={colorId}
+                                  type="button"
+                                  onClick={() =>
+                                    engine.selectInventoryFlowerColor(
+                                      selectedInvIndex,
+                                      colorId
+                                    )
+                                  }
+                                  className={`p-1.5 rounded-sm border flex items-center justify-between gap-1.5 transition-all ${
+                                    isActiveColor
+                                      ? 'bg-amber-950/70 border-amber-400 ring-1 ring-amber-400/70'
+                                      : 'bg-black/50 border-white/15 hover:border-amber-400/50'
+                                  }`}
+                                >
+                                  <div className="flex items-center gap-1.5 min-w-0">
+                                    <img
+                                      src={spriteAtlas.getItemIconUrl(
+                                        selectedSlotItem.id,
+                                        colorId
+                                      )}
+                                      alt={getFlowerColorLabel(colorId)}
+                                      className="w-4 h-4 pixelated shrink-0"
+                                    />
+                                    <span
+                                      className="w-2.5 h-2.5 rounded-full border border-black/80 shrink-0"
+                                      style={{
+                                        backgroundColor:
+                                          getFlowerColorHex(colorId),
+                                      }}
+                                    />
+                                    <span className="text-[10px] font-bold text-white truncate">
+                                      {getFlowerColorLabel(colorId)}
+                                    </span>
+                                  </div>
+                                  <span className="text-[10px] font-mono-tabular font-bold text-amber-300 shrink-0">
+                                    x{count}
+                                  </span>
+                                </button>
+                              );
+                            });
+                          })()}
+                        </div>
+                      </div>
+                    )}
 
                     {(selectedSlotItem.attackDamage ||
                       selectedSlotItem.defenseBonus ||

@@ -696,6 +696,20 @@ export const ITEMS: Record<string, ItemDefinition> = {
     buffType: 'speed',
     buffDuration: 35,
   },
+  squid: {
+    id: 'squid',
+    name: 'Lula',
+    description:
+      'Cefalópode marinho de tinta escura intensa. Só pode ser pescado nas águas salgadas do Oceano.',
+    purposeSummary:
+      'Pescado exclusivamente no Oceano. Ingrediente essencial para produzir Corante Preto na Bancada de Trabalho (ou consumir: +22 Fome, +10 HP, +15 Energia).',
+    category: ItemCategory.CONSUMABLE,
+    rarity: RarityTier.RARE,
+    maxStack: 50,
+    hungerRestore: 22,
+    hpRestore: 10,
+    staminaRestore: 15,
+  },
   cooked_fish: {
     id: 'cooked_fish',
     name: 'Peixe Assado na Brasa',
@@ -2036,7 +2050,324 @@ export const ITEMS: Record<string, ItemDefinition> = {
     maxStack: 10,
     placeableType: PlaceableType.WEAVING_TABLE,
   },
+
+  // === FLORES SELVAGENS COLETÁVEIS E COLOCÁVEIS (SEM HITBOX · AGRUPADAS POR ESPÉCIE NO INVENTÁRIO) ===
+  flower_tulip: {
+    id: 'flower_tulip',
+    name: 'Tulipa',
+    description:
+      'Flor de cálice clássico encontrada em canteiros naturais. Coletável e colocável no chão (sem hitbox). Agrupa todas as cores de Tulipa no mesmo slot; clique no slot para escolher a cor!',
+    purposeSummary:
+      'Flor Ornamental & Tinturaria (Cores: Branco, Vermelho, Laranja, Amarelo, Azul, Roxo, Magenta, Rosa): Usada para criar corantes na Bancada de Trabalho ou decorar o chão.',
+    category: ItemCategory.PLACEABLE,
+    rarity: RarityTier.BASIC,
+    maxStack: 99,
+    placeableType: PlaceableType.FLOWER_TULIP,
+    isFlower: true,
+    flowerSpecies: 'tulip',
+    allowedFlowerColors: [
+      'branco',
+      'vermelho',
+      'laranja',
+      'amarelo',
+      'azul',
+      'roxo',
+      'magenta',
+      'rosa',
+    ],
+  },
+  flower_lily: {
+    id: 'flower_lily',
+    name: 'Lírio-do-Vale',
+    description:
+      'Flor delicada de sinos pendentes encontrada em manchas naturais pelo mundo. Coletável e colocável no chão (sem hitbox). Agrupa todas as cores de Lírio-do-Vale no mesmo slot; clique no slot para escolher a cor!',
+    purposeSummary:
+      'Flor Ornamental & Tinturaria (Cores: Branco, Vermelho, Laranja, Amarelo, Roxo, Rosa): Usada para criar corantes na Bancada de Trabalho ou decorar o chão.',
+    category: ItemCategory.PLACEABLE,
+    rarity: RarityTier.BASIC,
+    maxStack: 99,
+    placeableType: PlaceableType.FLOWER_LILY,
+    isFlower: true,
+    flowerSpecies: 'lily',
+    allowedFlowerColors: [
+      'branco',
+      'vermelho',
+      'laranja',
+      'amarelo',
+      'roxo',
+      'rosa',
+    ],
+  },
+  flower_sunflower: {
+    id: 'flower_sunflower',
+    name: 'Girassol',
+    description:
+      'Flor radiante de coroa dourada e centro escuro (cor única: Amarelo). Coletável e colocável no chão sem hitbox.',
+    purposeSummary:
+      'Flor Ornamental & Tinturaria (Cor única: Amarelo): Usada para criar Corante Amarelo na Bancada de Trabalho ou decorar jardins.',
+    category: ItemCategory.PLACEABLE,
+    rarity: RarityTier.BASIC,
+    maxStack: 99,
+    placeableType: PlaceableType.FLOWER_SUNFLOWER,
+    isFlower: true,
+    flowerSpecies: 'sunflower',
+    allowedFlowerColors: ['amarelo'],
+  },
+  flower_solar_drop: {
+    id: 'flower_solar_drop',
+    name: 'Gota Solar',
+    description:
+      'Flor rara bioluminescente em formato de gota dourada que nasce em qualquer bioma (5% de chance). Emite luz suave (66% de força num raio de 60px) e não possui hitbox!',
+    purposeSummary:
+      'Flor Luminosa Rara (Sem Hitbox · Luz 66% em 60px de raio): Ilumina caminhos e jardins naturalmente quando plantada no chão.',
+    category: ItemCategory.PLACEABLE,
+    rarity: RarityTier.RARE,
+    maxStack: 99,
+    placeableType: PlaceableType.FLOWER_SOLAR_DROP,
+    isFlower: true,
+    flowerSpecies: 'solar_drop',
+    allowedFlowerColors: ['amarelo'],
+  },
+
+  // === CORANTES (MATERIAIS NÃO AGRUPÁVEIS CRIADOS NA BANCADA DE TRABALHO) ===
+  dye_preto: {
+    id: 'dye_preto',
+    name: 'Corante Preto',
+    description:
+      'Pigmento escuro concentrado extraído da tinta de Lula na Bancada de Trabalho. Material não agrupável usado na Mesa de Tecelagem.',
+    purposeSummary:
+      'Corante de Alfaiataria (Não Agrupável): Exigido na Mesa de Tecelagem para confeccionar ou tingir roupas na cor Preto (ou misturar outros corantes).',
+    category: ItemCategory.RESOURCE,
+    rarity: RarityTier.BASIC,
+    maxStack: 1,
+    isDye: true,
+    dyeColorId: 'preto',
+  },
+  dye_cinza: {
+    id: 'dye_cinza',
+    name: 'Corante Cinza',
+    description:
+      'Pigmento neutro obtido na Bancada de Trabalho combinando Corante Preto + Corante Branco. Material não agrupável.',
+    purposeSummary:
+      'Corante de Alfaiataria (Não Agrupável): Exigido na Mesa de Tecelagem para confeccionar ou tingir roupas na cor Cinza.',
+    category: ItemCategory.RESOURCE,
+    rarity: RarityTier.BASIC,
+    maxStack: 1,
+    isDye: true,
+    dyeColorId: 'cinza',
+  },
+  dye_cinza_claro: {
+    id: 'dye_cinza_claro',
+    name: 'Corante Cinza-Claro',
+    description:
+      'Pigmento prateado suave obtido na Bancada de Trabalho combinando Corante Cinza + Corante Branco. Material não agrupável.',
+    purposeSummary:
+      'Corante de Alfaiataria (Não Agrupável): Exigido na Mesa de Tecelagem para confeccionar ou tingir roupas na cor Cinza-Claro.',
+    category: ItemCategory.RESOURCE,
+    rarity: RarityTier.BASIC,
+    maxStack: 1,
+    isDye: true,
+    dyeColorId: 'cinza_claro',
+  },
+  dye_branco: {
+    id: 'dye_branco',
+    name: 'Corante Branco',
+    description:
+      'Pigmento alvo extraído na Bancada de Trabalho a partir de Tulipa Branca ou Lírio-do-Vale Branco. Material não agrupável.',
+    purposeSummary:
+      'Corante de Alfaiataria (Não Agrupável): Exigido na Mesa de Tecelagem para confeccionar ou tingir roupas na cor Branco (ou clarear outros corantes).',
+    category: ItemCategory.RESOURCE,
+    rarity: RarityTier.BASIC,
+    maxStack: 1,
+    isDye: true,
+    dyeColorId: 'branco',
+  },
+  dye_vermelho: {
+    id: 'dye_vermelho',
+    name: 'Corante Vermelho',
+    description:
+      'Pigmento carmesim extraído na Bancada de Trabalho a partir de Tulipa Vermelha ou Lírio-do-Vale Vermelho. Material não agrupável.',
+    purposeSummary:
+      'Corante de Alfaiataria (Não Agrupável): Exigido na Mesa de Tecelagem para confeccionar ou tingir roupas na cor Vermelho.',
+    category: ItemCategory.RESOURCE,
+    rarity: RarityTier.BASIC,
+    maxStack: 1,
+    isDye: true,
+    dyeColorId: 'vermelho',
+  },
+  dye_laranja: {
+    id: 'dye_laranja',
+    name: 'Corante Laranja',
+    description:
+      'Pigmento cítrico extraído na Bancada de Trabalho a partir de Tulipa Laranja ou Lírio-do-Vale Laranja. Material não agrupável.',
+    purposeSummary:
+      'Corante de Alfaiataria (Não Agrupável): Exigido na Mesa de Tecelagem para confeccionar ou tingir roupas na cor Laranja.',
+    category: ItemCategory.RESOURCE,
+    rarity: RarityTier.BASIC,
+    maxStack: 1,
+    isDye: true,
+    dyeColorId: 'laranja',
+  },
+  dye_amarelo: {
+    id: 'dye_amarelo',
+    name: 'Corante Amarelo',
+    description:
+      'Pigmento solar extraído na Bancada de Trabalho a partir de Girassol, Tulipa Amarela ou Lírio-do-Vale Amarelo. Material não agrupável.',
+    purposeSummary:
+      'Corante de Alfaiataria (Não Agrupável): Exigido na Mesa de Tecelagem para confeccionar ou tingir roupas na cor Amarelo.',
+    category: ItemCategory.RESOURCE,
+    rarity: RarityTier.BASIC,
+    maxStack: 1,
+    isDye: true,
+    dyeColorId: 'amarelo',
+  },
+  dye_verde_lima: {
+    id: 'dye_verde_lima',
+    name: 'Corante Verde-Lima',
+    description:
+      'Pigmento cítrico vibrante obtido na Bancada de Trabalho combinando Corante Verde + Corante Branco. Material não agrupável.',
+    purposeSummary:
+      'Corante de Alfaiataria (Não Agrupável): Exigido na Mesa de Tecelagem para confeccionar ou tingir roupas na cor Verde-Lima.',
+    category: ItemCategory.RESOURCE,
+    rarity: RarityTier.BASIC,
+    maxStack: 1,
+    isDye: true,
+    dyeColorId: 'verde_lima',
+  },
+  dye_verde: {
+    id: 'dye_verde',
+    name: 'Corante Verde',
+    description:
+      'Pigmento botânico extraído de Fibras vegetais na Bancada de Trabalho. Material não agrupável.',
+    purposeSummary:
+      'Corante de Alfaiataria (Não Agrupável): Exigido na Mesa de Tecelagem para confeccionar ou tingir roupas na cor Verde.',
+    category: ItemCategory.RESOURCE,
+    rarity: RarityTier.BASIC,
+    maxStack: 1,
+    isDye: true,
+    dyeColorId: 'verde',
+  },
+  dye_ciano: {
+    id: 'dye_ciano',
+    name: 'Corante Ciano',
+    description:
+      'Pigmento turquesa obtido na Bancada de Trabalho combinando Corante Verde + Corante Azul. Material não agrupável.',
+    purposeSummary:
+      'Corante de Alfaiataria (Não Agrupável): Exigido na Mesa de Tecelagem para confeccionar ou tingir roupas na cor Ciano.',
+    category: ItemCategory.RESOURCE,
+    rarity: RarityTier.BASIC,
+    maxStack: 1,
+    isDye: true,
+    dyeColorId: 'ciano',
+  },
+  dye_azul_claro: {
+    id: 'dye_azul_claro',
+    name: 'Corante Azul-Claro',
+    description:
+      'Pigmento celeste obtido na Bancada de Trabalho combinando Corante Azul + Corante Branco. Material não agrupável.',
+    purposeSummary:
+      'Corante de Alfaiataria (Não Agrupável): Exigido na Mesa de Tecelagem para confeccionar ou tingir roupas na cor Azul-Claro.',
+    category: ItemCategory.RESOURCE,
+    rarity: RarityTier.BASIC,
+    maxStack: 1,
+    isDye: true,
+    dyeColorId: 'azul_claro',
+  },
+  dye_azul: {
+    id: 'dye_azul',
+    name: 'Corante Azul',
+    description:
+      'Pigmento safira extraído na Bancada de Trabalho a partir de Tulipa Azul. Material não agrupável.',
+    purposeSummary:
+      'Corante de Alfaiataria (Não Agrupável): Exigido na Mesa de Tecelagem para confeccionar ou tingir roupas na cor Azul.',
+    category: ItemCategory.RESOURCE,
+    rarity: RarityTier.BASIC,
+    maxStack: 1,
+    isDye: true,
+    dyeColorId: 'azul',
+  },
+  dye_roxo: {
+    id: 'dye_roxo',
+    name: 'Corante Roxo',
+    description:
+      'Pigmento ametista extraído na Bancada de Trabalho a partir de Tulipa Roxa ou Lírio-do-Vale Roxo. Material não agrupável.',
+    purposeSummary:
+      'Corante de Alfaiataria (Não Agrupável): Exigido na Mesa de Tecelagem para confeccionar ou tingir roupas na cor Roxo.',
+    category: ItemCategory.RESOURCE,
+    rarity: RarityTier.BASIC,
+    maxStack: 1,
+    isDye: true,
+    dyeColorId: 'roxo',
+  },
+  dye_magenta: {
+    id: 'dye_magenta',
+    name: 'Corante Magenta',
+    description:
+      'Pigmento púrpura intenso extraído na Bancada de Trabalho a partir de Tulipa Magenta. Material não agrupável.',
+    purposeSummary:
+      'Corante de Alfaiataria (Não Agrupável): Exigido na Mesa de Tecelagem para confeccionar ou tingir roupas na cor Magenta.',
+    category: ItemCategory.RESOURCE,
+    rarity: RarityTier.BASIC,
+    maxStack: 1,
+    isDye: true,
+    dyeColorId: 'magenta',
+  },
+  dye_rosa: {
+    id: 'dye_rosa',
+    name: 'Corante Rosa',
+    description:
+      'Pigmento rosado extraído na Bancada de Trabalho a partir de Lírio-do-Vale Rosa ou Tulipa Rosa. Material não agrupável.',
+    purposeSummary:
+      'Corante de Alfaiataria (Não Agrupável): Exigido na Mesa de Tecelagem para confeccionar ou tingir roupas na cor Rosa.',
+    category: ItemCategory.RESOURCE,
+    rarity: RarityTier.BASIC,
+    maxStack: 1,
+    isDye: true,
+    dyeColorId: 'rosa',
+  },
+  dye_marrom: {
+    id: 'dye_marrom',
+    name: 'Corante Marrom',
+    description:
+      'Pigmento terroso obtido na Bancada de Trabalho combinando Corante Laranja + Corante Preto. Material não agrupável.',
+    purposeSummary:
+      'Corante de Alfaiataria (Não Agrupável): Exigido na Mesa de Tecelagem para confeccionar ou tingir roupas na cor Marrom.',
+    category: ItemCategory.RESOURCE,
+    rarity: RarityTier.BASIC,
+    maxStack: 1,
+    isDye: true,
+    dyeColorId: 'marrom',
+  },
+  dye_bege: {
+    id: 'dye_bege',
+    name: 'Corante Bege',
+    description:
+      'Pigmento areia suave obtido na Bancada de Trabalho combinando Corante Marrom + Corante Branco. Material não agrupável.',
+    purposeSummary:
+      'Corante de Alfaiataria (Não Agrupável): Exigido na Mesa de Tecelagem para confeccionar ou tingir roupas na cor Bege.',
+    category: ItemCategory.RESOURCE,
+    rarity: RarityTier.BASIC,
+    maxStack: 1,
+    isDye: true,
+    dyeColorId: 'bege',
+  },
 };
+
+export function getDyeItemIdForColor(colorId: ClothingColorId): string {
+  return `dye_${colorId}`;
+}
+
+export function getFlowerColorLabel(colorId?: ClothingColorId): string {
+  if (!colorId) return 'Amarelo';
+  const found = CLOTHING_COLORS.find((c) => c.id === colorId);
+  return found ? found.label : colorId;
+}
+
+export function getFlowerColorHex(colorId?: ClothingColorId): string {
+  if (!colorId) return '#eab308';
+  const found = CLOTHING_COLORS.find((c) => c.id === colorId);
+  return found ? found.hex : '#eab308';
+}
 
 export const DYEABLE_GARMENT_BASE_IDS = [
   'leather_hat',
@@ -2680,6 +3011,70 @@ export const CONSTRUCTION_BLUEPRINTS: Record<PlaceableType, ConstructionBlueprin
     lightRadius: 0,
     isInteractive: true,
   },
+  [PlaceableType.FLOWER_TULIP]: {
+    type: PlaceableType.FLOWER_TULIP,
+    role: 'MOBILIA',
+    roleLabel: 'Flor Ornamental (Tulipa)',
+    layer: 'FURNITURE',
+    layerLabel: 'Camada Botânica (Sem Hitbox)',
+    hasHitbox: false,
+    hitboxBehavior: 'NONE',
+    hitboxLabel: 'Sem Hitbox (Livre Passagem)',
+    continuityMode: 'STANDALONE',
+    continuityLabel: 'Flor Colocável no Chão',
+    connectionGroup: 'none',
+    connectsToGroups: [],
+    maxHp: 10,
+    lightRadius: 0,
+  },
+  [PlaceableType.FLOWER_LILY]: {
+    type: PlaceableType.FLOWER_LILY,
+    role: 'MOBILIA',
+    roleLabel: 'Flor Ornamental (Lírio-do-Vale)',
+    layer: 'FURNITURE',
+    layerLabel: 'Camada Botânica (Sem Hitbox)',
+    hasHitbox: false,
+    hitboxBehavior: 'NONE',
+    hitboxLabel: 'Sem Hitbox (Livre Passagem)',
+    continuityMode: 'STANDALONE',
+    continuityLabel: 'Flor Colocável no Chão',
+    connectionGroup: 'none',
+    connectsToGroups: [],
+    maxHp: 10,
+    lightRadius: 0,
+  },
+  [PlaceableType.FLOWER_SUNFLOWER]: {
+    type: PlaceableType.FLOWER_SUNFLOWER,
+    role: 'MOBILIA',
+    roleLabel: 'Flor Ornamental (Girassol)',
+    layer: 'FURNITURE',
+    layerLabel: 'Camada Botânica (Sem Hitbox)',
+    hasHitbox: false,
+    hitboxBehavior: 'NONE',
+    hitboxLabel: 'Sem Hitbox (Livre Passagem)',
+    continuityMode: 'STANDALONE',
+    continuityLabel: 'Flor Colocável no Chão',
+    connectionGroup: 'none',
+    connectsToGroups: [],
+    maxHp: 10,
+    lightRadius: 0,
+  },
+  [PlaceableType.FLOWER_SOLAR_DROP]: {
+    type: PlaceableType.FLOWER_SOLAR_DROP,
+    role: 'ILUMINACAO',
+    roleLabel: 'Flor Luminosa (Gota Solar)',
+    layer: 'FURNITURE',
+    layerLabel: 'Camada Botânica Luminosa (Luz 66% em 60px)',
+    hasHitbox: false,
+    hitboxBehavior: 'NONE',
+    hitboxLabel: 'Sem Hitbox (Livre Passagem)',
+    continuityMode: 'STANDALONE',
+    continuityLabel: 'Flor Luminosa Colocável no Chão',
+    connectionGroup: 'none',
+    connectsToGroups: [],
+    maxHp: 12,
+    lightRadius: 60,
+  },
 };
 
 export function getConstructionBlueprint(
@@ -2893,6 +3288,58 @@ export const NATURE_BLUEPRINTS: Record<NatureNodeType, NatureNodeBlueprint> = {
       { itemId: 'hardwood', min: 4, max: 8, chance: 1.0 },
     ],
   },
+  [NatureNodeType.FLOWER_TULIP]: {
+    type: NatureNodeType.FLOWER_TULIP,
+    name: 'Tulipa',
+    rarity: RarityTier.BASIC,
+    maxHp: 10,
+    materialKind: 'FIBER_FOLIAGE',
+    requiredTool: ToolType.NONE,
+    requiredTier: 0,
+    xpReward: 4,
+    hasHitbox: false,
+    hitboxRadius: 0,
+    drops: [{ itemId: 'flower_tulip', min: 1, max: 1, chance: 1.0 }],
+  },
+  [NatureNodeType.FLOWER_LILY]: {
+    type: NatureNodeType.FLOWER_LILY,
+    name: 'Lírio-do-Vale',
+    rarity: RarityTier.BASIC,
+    maxHp: 10,
+    materialKind: 'FIBER_FOLIAGE',
+    requiredTool: ToolType.NONE,
+    requiredTier: 0,
+    xpReward: 4,
+    hasHitbox: false,
+    hitboxRadius: 0,
+    drops: [{ itemId: 'flower_lily', min: 1, max: 1, chance: 1.0 }],
+  },
+  [NatureNodeType.FLOWER_SUNFLOWER]: {
+    type: NatureNodeType.FLOWER_SUNFLOWER,
+    name: 'Girassol',
+    rarity: RarityTier.BASIC,
+    maxHp: 10,
+    materialKind: 'FIBER_FOLIAGE',
+    requiredTool: ToolType.NONE,
+    requiredTier: 0,
+    xpReward: 4,
+    hasHitbox: false,
+    hitboxRadius: 0,
+    drops: [{ itemId: 'flower_sunflower', min: 1, max: 1, chance: 1.0 }],
+  },
+  [NatureNodeType.FLOWER_SOLAR_DROP]: {
+    type: NatureNodeType.FLOWER_SOLAR_DROP,
+    name: 'Gota Solar',
+    rarity: RarityTier.RARE,
+    maxHp: 12,
+    materialKind: 'FIBER_FOLIAGE',
+    requiredTool: ToolType.NONE,
+    requiredTier: 0,
+    xpReward: 10,
+    hasHitbox: false,
+    hitboxRadius: 0,
+    drops: [{ itemId: 'flower_solar_drop', min: 1, max: 1, chance: 1.0 }],
+  },
 };
 
 /**
@@ -2911,6 +3358,28 @@ export const ITEM_BASE_PRICES: Record<string, number> = {
   tilled_soil: 2,
   oak_sapling: 2,
   palm_sapling: 3,
+  flower_tulip: 3,
+  flower_lily: 3,
+  flower_sunflower: 4,
+  flower_solar_drop: 18,
+  squid: 14,
+  dye_verde: 3,
+  dye_branco: 5,
+  dye_vermelho: 5,
+  dye_laranja: 5,
+  dye_amarelo: 5,
+  dye_azul: 6,
+  dye_roxo: 6,
+  dye_magenta: 6,
+  dye_rosa: 6,
+  dye_preto: 16,
+  dye_cinza: 22,
+  dye_cinza_claro: 28,
+  dye_verde_lima: 9,
+  dye_ciano: 10,
+  dye_azul_claro: 12,
+  dye_marrom: 22,
+  dye_bege: 28,
   raw_lamb: 7,
   raw_pork: 8,
   cooked_lamb: 15,
@@ -3262,6 +3731,30 @@ export const STRUCTURE_MATERIAL_REQUIREMENTS: Record<
     requiredTool: ToolType.NONE,
     requiredTier: 0,
     requirementLabel: 'Mão Livre ou Machado',
+  },
+  [PlaceableType.FLOWER_TULIP]: {
+    materialKind: 'FIBER_FOLIAGE',
+    requiredTool: ToolType.NONE,
+    requiredTier: 0,
+    requirementLabel: 'Mão Livre ou Qualquer Ferramenta',
+  },
+  [PlaceableType.FLOWER_LILY]: {
+    materialKind: 'FIBER_FOLIAGE',
+    requiredTool: ToolType.NONE,
+    requiredTier: 0,
+    requirementLabel: 'Mão Livre ou Qualquer Ferramenta',
+  },
+  [PlaceableType.FLOWER_SUNFLOWER]: {
+    materialKind: 'FIBER_FOLIAGE',
+    requiredTool: ToolType.NONE,
+    requiredTier: 0,
+    requirementLabel: 'Mão Livre ou Qualquer Ferramenta',
+  },
+  [PlaceableType.FLOWER_SOLAR_DROP]: {
+    materialKind: 'FIBER_FOLIAGE',
+    requiredTool: ToolType.NONE,
+    requiredTier: 0,
+    requirementLabel: 'Mão Livre ou Qualquer Ferramenta',
   },
 
   // === MADEIRA RÚSTICA (Quebrável com a Mão com força menor; ideal com Machado) ===

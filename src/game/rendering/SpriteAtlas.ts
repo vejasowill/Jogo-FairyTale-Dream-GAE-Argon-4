@@ -120,12 +120,37 @@ class SpriteAtlasManager {
     return frames[animFrame % frames.length];
   }
 
-  public getItemCanvas(itemId: string): HTMLCanvasElement {
+  public getItemCanvas(
+    itemId: string,
+    flowerColor?: ClothingColorId
+  ): HTMLCanvasElement {
     this.ensureInitialized();
+    const def = ITEMS[itemId];
+
+    if (def?.isFlower) {
+      const colorId: ClothingColorId =
+        flowerColor || def.allowedFlowerColors?.[0] || 'branco';
+      const cacheKey = `${itemId}__${colorId}`;
+      const existingFlower = this.itemCanvases.get(cacheKey);
+      if (existingFlower) return existingFlower;
+      const c = this.createFlowerIconCanvas(itemId, colorId);
+      this.itemCanvases.set(cacheKey, c);
+      return c;
+    }
+
+    if (def?.isDye && def.dyeColorId) {
+      const existingDye = this.itemCanvases.get(itemId);
+      if (existingDye) return existingDye;
+      const colorDef =
+        CLOTHING_COLOR_MAP[def.dyeColorId] || CLOTHING_COLOR_MAP.branco;
+      const c = this.createDyeIconCanvas(colorDef);
+      this.itemCanvases.set(itemId, c);
+      return c;
+    }
+
     const existing = this.itemCanvases.get(itemId);
     if (existing) return existing;
 
-    const def = ITEMS[itemId];
     if (def?.garmentBaseId) {
       const colorId: ClothingColorId = def.garmentColorId || 'branco';
       const colorDef =
@@ -138,13 +163,193 @@ class SpriteAtlasManager {
     return this.itemCanvases.get('wood')!;
   }
 
-  public getItemIconUrl(itemId: string): string {
+  public getItemIconUrl(
+    itemId: string,
+    flowerColor?: ClothingColorId
+  ): string {
     this.ensureInitialized();
-    if (!this.itemDataUrls.has(itemId)) {
-      const c = this.getItemCanvas(itemId);
-      this.itemDataUrls.set(itemId, c.toDataURL());
+    const def = ITEMS[itemId];
+    const cacheKey =
+      def?.isFlower && flowerColor ? `${itemId}__${flowerColor}` : itemId;
+    if (!this.itemDataUrls.has(cacheKey)) {
+      const c = this.getItemCanvas(itemId, flowerColor);
+      this.itemDataUrls.set(cacheKey, c.toDataURL());
     }
-    return this.itemDataUrls.get(itemId)!;
+    return this.itemDataUrls.get(cacheKey)!;
+  }
+
+  private createFlowerIconCanvas(
+    itemId: string,
+    colorId: ClothingColorId
+  ): HTMLCanvasElement {
+    const c = createPixelCanvas(16, 16);
+    const ctx = c.getContext('2d')!;
+    const colorDef =
+      CLOTHING_COLOR_MAP[colorId] || CLOTHING_COLOR_MAP.branco;
+    const m = colorDef.hex;
+    const d = colorDef.darkHex;
+    const l = colorDef.lightHex;
+    const o = '#0f172a';
+    const g = '#15803d';
+    const G = '#22c55e';
+    const s = '#052e16';
+
+    if (itemId === 'flower_tulip') {
+      // Tulipa: Classic 3-pointed cup blossom with curved leaf & stem
+      drawPixelMatrix(
+        ctx,
+        [
+          '................',
+          '....oo.oo.oo....',
+          '...olmolmolmo...',
+          '...olmmmmmmmo...',
+          '...odlmmmmmdo...',
+          '...odlmmmmmdo...',
+          '....oddddddo....',
+          '.....oosgoo.....',
+          '......osgo.oo...',
+          '......osgoGGso..',
+          '......osgGGso...',
+          '......osggso....',
+          '......osgo......',
+          '......oooo......',
+          '................',
+          '................',
+        ],
+        { o, m, d, l, g, G, s }
+      );
+    } else if (itemId === 'flower_lily') {
+      // Lírio-do-Vale: Arching green stem with delicate hanging bell blossoms
+      drawPixelMatrix(
+        ctx,
+        [
+          '................',
+          '......ooooo.....',
+          '.....oGGggso....',
+          '....oGgo..oso...',
+          '...oGgo..oolmo..',
+          '...ogo...odmmdo.',
+          '...ogo....o.o...',
+          '..oGgo.oolmo....',
+          '..ogo..odmmdo...',
+          '..ogo...o.o.....',
+          '..oGgo..oo......',
+          '...ogooGGso.....',
+          '....osGGso......',
+          '.....oooo.......',
+          '................',
+          '................',
+        ],
+        { o, m, d, l, g, G, s }
+      );
+    } else if (itemId === 'flower_sunflower') {
+      // Girassol: Radiant golden-yellow petals around a rich dark-brown seed disk
+      drawPixelMatrix(
+        ctx,
+        [
+          '................',
+          '....oo.oo.oo....',
+          '..oolyyllyyllo..',
+          '.olybbbbbbbbylo.',
+          '.oybbddddddbbylo',
+          '.olbddddddddbylo',
+          '.oybbddddddbbylo',
+          '.olybbbbbbbbylo.',
+          '..oolyyllyyllo..',
+          '....oo.osgo.oo..',
+          '....oo.osgoGGso.',
+          '...oGGgosgGGso..',
+          '....osggsgso....',
+          '......osgo......',
+          '......oooo......',
+          '................',
+        ],
+        {
+          o: '#1c1008',
+          y: '#f59e0b',
+          l: '#fde047',
+          b: '#78350f',
+          d: '#451a03',
+          g: '#15803d',
+          G: '#22c55e',
+          s: '#052e16',
+        }
+      );
+    } else {
+      // Gota Solar (flower_solar_drop): Luminous golden-amber teardrop blossom with radiant core
+      drawPixelMatrix(
+        ctx,
+        [
+          '.......oo.......',
+          '......owwo......',
+          '.....oywwyo.....',
+          '....ooywwyoo....',
+          '...ooywwwwyoo...',
+          '...oyywwwwyyo...',
+          '...ooyyyyyyoo...',
+          '....oooooooo....',
+          '......osgo......',
+          '....ooosgooo....',
+          '...oGGgsgGGso...',
+          '....osggsgso....',
+          '......osgo......',
+          '......oooo......',
+          '................',
+          '................',
+        ],
+        {
+          o: '#78350f',
+          w: '#ffffff',
+          y: '#fde047',
+          g: '#15803d',
+          G: '#4ade80',
+          s: '#052e16',
+        }
+      );
+    }
+    return c;
+  }
+
+  private createDyeIconCanvas(
+    colorDef: ClothingColorDefinition
+  ): HTMLCanvasElement {
+    const c = createPixelCanvas(16, 16);
+    const ctx = c.getContext('2d')!;
+    const m = colorDef.hex;
+    const d = colorDef.darkHex;
+    const l = colorDef.lightHex;
+    // Corked glass pigment flask filled with vibrant dye
+    drawPixelMatrix(
+      ctx,
+      [
+        '................',
+        '......oooo......',
+        '.....occcco.....',
+        '.....obbbbo.....',
+        '....ooggggoo....',
+        '....og....go....',
+        '...oogllllgoo...',
+        '..ooglmmmmmdgo..',
+        '..oglmmmmmmdgo..',
+        '..oglmmmmmmdgo..',
+        '..ogddddddddgo..',
+        '...ooggggggoo...',
+        '....oooooooo....',
+        '................',
+        '................',
+        '................',
+      ],
+      {
+        o: '#0f172a',
+        c: '#d97706',
+        b: '#92400e',
+        g: '#cbd5e1',
+        m,
+        d,
+        l,
+      }
+    );
+    return c;
   }
 
   private createGarmentIconCanvas(
@@ -458,94 +663,76 @@ class SpriteAtlasManager {
   }
 
   private buildTiles(): void {
-    // 16x16 HD pixel-art tiles scaled to 32x32 in world with 3 progressive sub-zones per biome
+    // 32x32 Minimalist, Smooth, Anti-Serrilhado Tiles with 3 progressive sub-zones and 4 subtle variants per biome
     const plainsPalettes = [
-      // SubZone 0: Lush Emerald Clover Meadow
+      // SubZone 0: Lush Emerald Meadow
       {
-        base: '#2d6e36',
-        dark: '#22582a',
-        mid: '#398241',
-        light: '#4d9b52',
-        tip: '#6ec068',
-        soil: '#3e522c',
+        base: '#34783d',
+        soft: '#307038',
+        accent: '#3e8747',
+        tip: '#529e5a',
       },
       // SubZone 1: Sunlit Heartland Plains
       {
-        base: '#3a7b36',
-        dark: '#2c6329',
-        mid: '#478f40',
-        light: '#5ea850',
-        tip: '#80c665',
-        soil: '#4a5c2f',
+        base: '#41853c',
+        soft: '#3b7b36',
+        accent: '#4d9447',
+        tip: '#64ad5b',
       },
-      // SubZone 2: Warm Golden Steppe (Progressive Ecotone near Desert)
+      // SubZone 2: Warm Steppe Ecotone
       {
-        base: '#5c8434',
-        dark: '#486b27',
-        mid: '#72983c',
-        light: '#8eae49',
-        tip: '#b8c45e',
-        soil: '#787039',
+        base: '#618a39',
+        soft: '#598033',
+        accent: '#6f9943',
+        tip: '#86b055',
       },
     ];
 
     const desertPalettes = [
-      // SubZone 0: Savannah Scrub Border (Progressive Ecotone near Plains)
+      // SubZone 0: Savannah Scrub Border
       {
-        base: '#cba75b',
-        shadow: '#b08b42',
-        mid: '#d7b66b',
-        highlight: '#e8cc84',
-        pebble: '#8d733f',
-        tuft: '#76883b',
+        base: '#cfa95e',
+        soft: '#c7a055',
+        crest: '#d9b66c',
+        grain: '#b89047',
       },
-      // SubZone 1: Sculpted Golden Sand Dunes
+      // SubZone 1: Sculpted Golden Sand
       {
-        base: '#deb868',
-        shadow: '#c09648',
-        mid: '#e7c679',
-        highlight: '#f5dc96',
-        pebble: '#a37934',
-        tuft: '#988b42',
+        base: '#dfc072',
+        soft: '#d7b667',
+        crest: '#e8cc82',
+        grain: '#c9a455',
       },
-      // SubZone 2: Sunbaked Terracotta / Oasis Sandstone Basin
+      // SubZone 2: Warm Sandstone Basin
       {
-        base: '#d19f54',
-        shadow: '#b37e38',
-        mid: '#deaef60'.slice(0, 7) === '#deaef6' ? '#deae63' : '#deae63',
-        highlight: '#efd08b',
-        pebble: '#8c5828',
-        tuft: '#8a7238',
+        base: '#d4a459',
+        soft: '#cb9a4f',
+        crest: '#dfb268',
+        grain: '#bd8a42',
       },
     ];
 
     const oceanPalettes = [
-      // SubZone 0: Shallow Turquoise Crystal Lagoon (1 tile from shore)
+      // SubZone 0: Shallow Turquoise Lagoon
       {
-        base: '#1782a6',
-        trough: '#126b8c',
-        swell: '#229cc2',
-        crest: '#67e8f9',
-        foam: '#e0f2fe',
-        reef: '#1d96b3',
+        base: '#1986ab',
+        soft: '#167b9e',
+        swell: '#2398bf',
+        crest: '#7dd3fc',
       },
-      // SubZone 1: Coastal Azure Sea (2 tiles from shore)
+      // SubZone 1: Coastal Azure Sea
       {
-        base: '#146291',
-        trough: '#0f4e77',
-        swell: '#1d78ad',
+        base: '#156596',
+        soft: '#125b88',
+        swell: '#1e76ab',
         crest: '#38bdf8',
-        foam: '#bae6fd',
-        reef: '#175a85',
       },
       // SubZone 2: Deep Abyssal Ocean
       {
-        base: '#0d436b',
-        trough: '#082f4f',
-        swell: '#135585',
+        base: '#0e4670',
+        soft: '#0b3d63',
+        swell: '#145485',
         crest: '#0284c7',
-        foam: '#7dd3fc',
-        reef: '#0a385c',
       },
     ];
 
@@ -553,152 +740,98 @@ class SpriteAtlasManager {
       for (let v = 0; v < 4; v++) {
         for (let f = 0; f < 4; f++) {
           // =================================================================
-          // 1. PLAINS HD PIXEL TILE
+          // 1. PLAINS MINIMALIST 32x32 TILE (Clean, soft, un-cluttered)
           // =================================================================
           const pPal = plainsPalettes[z];
-          const pCanvas = createPixelCanvas(16, 16);
+          const pCanvas = createPixelCanvas(32, 32);
           const pCtx = pCanvas.getContext('2d')!;
           pCtx.fillStyle = pPal.base;
-          pCtx.fillRect(0, 0, 16, 16);
+          pCtx.fillRect(0, 0, 32, 32);
 
-          // Organic dithered ground patches (no harsh lines)
-          pCtx.fillStyle = pPal.soil;
-          for (let i = 0; i < 10; i++) {
-            const px = (i * 5 + v * 3 + z * 2) % 15;
-            const py = (i * 9 + v * 7 + z * 3) % 15;
-            pCtx.fillRect(px, py, 2, 1);
-          }
+          // Subtle soft tonal ground patches (keeps variability between v=0..3 without visual noise)
+          pCtx.fillStyle = pPal.soft;
+          const patchX1 = (v * 7 + z * 3) % 20 + 2;
+          const patchY1 = (v * 5 + z * 7) % 20 + 2;
+          pCtx.fillRect(patchX1, patchY1, 6, 3);
+          pCtx.fillRect(patchX1 + 1, patchY1 - 1, 4, 5);
 
-          // Multi-layered grass blades with dark base, mid body, and sunlit tips
-          for (let i = 0; i < 14; i++) {
-            const gx = (i * 7 + v * 5 + z * 3) % 14 + 1;
-            const gy = (i * 11 + v * 3 + z * 5) % 13 + 2;
-            const sway = (i + v) % 3 === 0 && (f === 1 || f === 2) ? 1 : 0;
+          const patchX2 = (patchX1 + 13) % 22 + 3;
+          const patchY2 = (patchY1 + 11) % 22 + 3;
+          pCtx.fillRect(patchX2, patchY2, 5, 2);
 
-            // Shadow root
-            pCtx.fillStyle = pPal.dark;
-            pCtx.fillRect(gx, gy, 2, 1);
-            // Mid blade
-            pCtx.fillStyle = i % 2 === 0 ? pPal.mid : pPal.light;
-            pCtx.fillRect(gx, gy - 1, 1, 1);
-            pCtx.fillRect(gx + 1, gy - 1, 1, 1);
-            // Sunlit grass tip
-            if (i % 3 === 0) {
+          // Minimalist 2-3 clean grass tuft accents per tile (varies by variant v)
+          const tuftCount = v === 0 ? 1 : v === 3 ? 3 : 2;
+          const sway = f === 1 ? 1 : 0;
+          for (let i = 0; i < tuftCount; i++) {
+            const gx = ((v * 9 + i * 13 + z * 5) % 24) + 4;
+            const gy = ((v * 11 + i * 15 + z * 3) % 24) + 5;
+            pCtx.fillStyle = pPal.accent;
+            pCtx.fillRect(gx, gy, 2, 2);
+            if (i === 0) {
               pCtx.fillStyle = pPal.tip;
-              pCtx.fillRect(gx + sway, gy - 2, 1, 1);
+              pCtx.fillRect(gx + sway, gy - 1, 1, 1);
             }
-          }
-
-          // Clover clusters & Wildflowers with gentle wind sway
-          const windSway = f === 1 ? 1 : f === 3 ? -1 : 0;
-          if (v === 1 || (z === 0 && v === 3)) {
-            const fx = 5 + v * 2;
-            const fy = 6 + (v % 2) * 3;
-            // Stem & Leaves
-            pCtx.fillStyle = pPal.dark;
-            pCtx.fillRect(fx, fy + 1, 2, 2);
-            // Blossom petals
-            pCtx.fillStyle = z === 0 ? '#e0f2fe' : '#fde047';
-            pCtx.fillRect(fx + windSway, fy - 1, 2, 2);
-            pCtx.fillStyle = z === 0 ? '#38bdf8' : '#f59e0b';
-            pCtx.fillRect(fx + windSway, fy, 1, 1);
-          } else if (v === 2) {
-            const fx = 9;
-            const fy = 8;
-            pCtx.fillStyle = pPal.dark;
-            pCtx.fillRect(fx, fy + 1, 2, 2);
-            pCtx.fillStyle = z === 2 ? '#fb923c' : '#f472b6';
-            pCtx.fillRect(fx + windSway, fy - 1, 2, 2);
-            pCtx.fillStyle = '#fef08a';
-            pCtx.fillRect(fx + windSway, fy, 1, 1);
           }
 
           this.tileSprites.set(`${BiomeType.PLAINS}_${z}_${v}_${f}`, pCanvas);
 
           // =================================================================
-          // 2. DESERT HD PIXEL TILE
+          // 2. DESERT MINIMALIST 32x32 TILE (Clean wind-swept sand)
           // =================================================================
           const dPal = desertPalettes[z];
-          const dCanvas = createPixelCanvas(16, 16);
+          const dCanvas = createPixelCanvas(32, 32);
           const dCtx = dCanvas.getContext('2d')!;
           dCtx.fillStyle = dPal.base;
-          dCtx.fillRect(0, 0, 16, 16);
+          dCtx.fillRect(0, 0, 32, 32);
 
-          // Sculpted horizontal wind-blown sand ripples across tile
-          for (let ry = 2; ry < 15; ry += 4) {
-            const rowOffset = (ry * 3 + v * 4 + z * 2) % 6;
-            // Shaded trough under dune ridge
-            dCtx.fillStyle = dPal.shadow;
-            dCtx.fillRect(rowOffset, ry + 1, 8, 1);
-            dCtx.fillRect((rowOffset + 9) % 14, ry + 2, 4, 1);
-            // Sunlit dune crest
-            dCtx.fillStyle = dPal.highlight;
-            dCtx.fillRect(rowOffset, ry, 7, 1);
-            dCtx.fillRect((rowOffset + 9) % 14, ry + 1, 4, 1);
-          }
+          // Smooth, understated sand ripple curve (varies by variant v)
+          const rippleX = (v * 6 + z * 4) % 16 + 3;
+          const rippleY = (v * 7 + z * 3) % 18 + 6;
+          dCtx.fillStyle = dPal.soft;
+          dCtx.fillRect(rippleX, rippleY + 1, 10, 2);
+          dCtx.fillStyle = dPal.crest;
+          dCtx.fillRect(rippleX + 1, rippleY, 8, 1);
 
-          // Micro sand grains & pebbles
-          for (let i = 0; i < 12; i++) {
-            const sx = (i * 7 + v * 3) % 15;
-            const sy = (i * 5 + v * 6) % 15;
-            dCtx.fillStyle = i % 3 === 0 ? dPal.pebble : dPal.mid;
-            dCtx.fillRect(sx, sy, 1, 1);
-          }
-
-          // Savannah scrub tuft in SubZone 0 or sparkling quartz in SubZone 1/2
-          if (z === 0 && (v === 1 || v === 3)) {
-            dCtx.fillStyle = dPal.tuft;
-            dCtx.fillRect(6 + v, 9, 2, 2);
-            dCtx.fillRect(5 + v + (f % 2), 8, 1, 1);
-            dCtx.fillRect(8 + v, 8, 1, 1);
-          } else if (v === 2 && f % 2 === 0) {
-            // Subtle sunlit sand sparkle
-            dCtx.fillStyle = '#fef9c3';
-            dCtx.fillRect(5 + f, 6, 1, 1);
+          if (v % 2 === 1) {
+            const r2x = (rippleX + 11) % 18 + 4;
+            const r2y = (rippleY + 11) % 20 + 5;
+            dCtx.fillStyle = dPal.grain;
+            dCtx.fillRect(r2x, r2y, 2, 1);
           }
 
           this.tileSprites.set(`${BiomeType.DESERT}_${z}_${v}_${f}`, dCanvas);
 
           // =================================================================
-          // 3. OCEAN HD PIXEL TILE
+          // 3. OCEAN MINIMALIST 32x32 TILE (Calm water swells)
           // =================================================================
           const oPal = oceanPalettes[z];
-          const oCanvas = createPixelCanvas(16, 16);
+          const oCanvas = createPixelCanvas(32, 32);
           const oCtx = oCanvas.getContext('2d')!;
           oCtx.fillStyle = oPal.base;
-          oCtx.fillRect(0, 0, 16, 16);
+          oCtx.fillRect(0, 0, 32, 32);
 
-          // Underwater reef/trough bands
-          oCtx.fillStyle = oPal.trough;
-          for (let wy = 1; wy < 15; wy += 4) {
-            const wx = (wy * 3 + v * 3 + f) % 12;
-            oCtx.fillRect(wx, wy + 1, 5, 1);
-          }
-
-          // Swell body
-          oCtx.fillStyle = oPal.swell;
-          for (let wy = 2; wy < 15; wy += 4) {
-            const wx = (wy * 2 + v * 4 + f) % 11;
-            oCtx.fillRect(wx, wy, 5, 1);
-          }
-
-          // Animated wave crests & caustic glints
           const waveShift = f;
-          oCtx.fillStyle = oPal.crest;
-          oCtx.fillRect((2 + waveShift + v * 3) % 12, 3 + (v % 2) * 2, 4, 1);
-          oCtx.fillRect((8 - waveShift + v * 2 + 12) % 12, 10 + (v % 2), 3, 1);
+          const wx1 = (4 + waveShift + v * 6) % 20 + 2;
+          const wy1 = 7 + (v % 2) * 5;
+          oCtx.fillStyle = oPal.soft;
+          oCtx.fillRect(wx1, wy1 + 1, 8, 2);
+          oCtx.fillStyle = oPal.swell;
+          oCtx.fillRect(wx1 + 1, wy1, 6, 1);
 
-          // Specular white-foam highlight
-          oCtx.fillStyle = oPal.foam;
-          oCtx.fillRect((3 + waveShift + v * 3) % 12, 3 + (v % 2) * 2, 2, 1);
-          if (z === 0 && (f + v) % 2 === 0) {
-            oCtx.fillRect((9 - waveShift + v * 2 + 12) % 12, 10 + (v % 2), 1, 1);
+          if (v % 2 === 0) {
+            oCtx.fillStyle = oPal.crest;
+            oCtx.fillRect(wx1 + 2, wy1, 3, 1);
           }
+
+          const wx2 = (14 - waveShift + v * 5 + 20) % 20 + 4;
+          const wy2 = 20 + (v % 2) * 4;
+          oCtx.fillStyle = oPal.swell;
+          oCtx.fillRect(wx2, wy2, 5, 1);
 
           this.tileSprites.set(`${BiomeType.OCEAN}_${z}_${v}_${f}`, oCanvas);
 
           // =================================================================
-          // 4. ISLAND HD PIXEL TILE (SubZone 0: Lush Island Green, SubZone 1: Golden Island Beach Sand, SubZone 2: Island Highland)
+          // 4. ISLAND MINIMALIST 32x32 TILE
           // =================================================================
           this.tileSprites.set(
             `${BiomeType.ISLAND}_${z}_${v}_${f}`,
@@ -3413,6 +3546,36 @@ class SpriteAtlasManager {
       { g: '#b45309', y: '#f59e0b', w: '#fef08a', z: '#ffffff', e: '#0284c7' }
     );
 
+    // Lula (Ocean-only Squid with mantle, fins, eyes, and tentacles)
+    registerItem(
+      'squid',
+      [
+        '......oooo......',
+        '....ooppppoo....',
+        '...opplllpppo...',
+        '..opplmmmmpppo..',
+        '...opmmmmmmpo...',
+        '....opmmmmpo....',
+        '....opwppwpo....',
+        '....ooppppoo....',
+        '...op.op.po.po..',
+        '..op..op.po..po.',
+        '..op..op.po..po.',
+        '...o..o...o..o..',
+        '................',
+        '................',
+        '................',
+        '................',
+      ],
+      {
+        o: '#0f172a',
+        p: '#312e81',
+        m: '#4f46e5',
+        l: '#818cf8',
+        w: '#fef08a',
+      }
+    );
+
     // Peixe Assado na Brasa (Cooked Fish)
     registerItem(
       'cooked_fish',
@@ -5774,6 +5937,7 @@ class SpriteAtlasManager {
     const hStyle = app.hairStyle || 'adventurer';
 
     const key = [
+      'v2_15x',
       dir,
       f,
       mountPose,
@@ -5797,9 +5961,13 @@ class SpriteAtlasManager {
       this.playerSprites.clear();
     }
 
-    // 32x32 HD Pixel Canvas (rendered into 30x30 world space by GameRenderer)
-    const c = createPixelCanvas(32, 32);
-    const ctx = c.getContext('2d')!;
+    // Separate Head (1.0x) and Body (1.5x) canvases so the head keeps its exact size while the body is 1.5x larger!
+    const bodyCanvas = createPixelCanvas(32, 32);
+    const bodyCtx = bodyCanvas.getContext('2d')!;
+    const headCanvas = createPixelCanvas(32, 32);
+    const headCtx = headCanvas.getContext('2d')!;
+    let ctx: CanvasRenderingContext2D = bodyCtx;
+
     const stepL = mountPose === 'none' ? (f === 1 ? -1 : f === 3 ? 1 : 0) : 0;
     const stepR = -stepL;
     const isFeminine = gender === 'feminino';
@@ -5833,13 +6001,15 @@ class SpriteAtlasManager {
     const feetId = eq.feet || null;
     const headId = eq.head || null;
 
-    // 1. Ground Shadow
+    // 1. Ground Shadow (on bodyCtx)
+    ctx = bodyCtx;
     if (mountPose === 'none') {
       ctx.fillStyle = 'rgba(0,0,0,0.32)';
       ctx.fillRect(8, 28, 16, 3);
     }
 
-    // 2. Back Hair Layer (drawn behind shoulders/head before silhouette)
+    // 2. Back Hair Layer (drawn on headCtx)
+    ctx = headCtx;
     if (!headId || headId === 'astral_crown') {
       if (hStyle === 'long_mane') {
         ctx.fillStyle = hairDeep;
@@ -5859,7 +6029,8 @@ class SpriteAtlasManager {
       }
     }
 
-    // Back Cape for Armors
+    // Back Cape for Armors (drawn on bodyCtx)
+    ctx = bodyCtx;
     if (capeColor && (dir === 'up' || dir === 'left' || dir === 'right')) {
       ctx.fillStyle = capeColor;
       const capeH = mountPose === 'boat' ? 8 : 12;
@@ -5873,12 +6044,14 @@ class SpriteAtlasManager {
     }
 
     // 3. Dark Character Silhouette Outline & Base Anatomy
-    ctx.fillStyle = '#0f172a';
-    // Head outline (x=9..22, y=2..13 -> 14x12)
-    ctx.fillRect(9, 2, 14, 12);
-    // Neck
-    ctx.fillRect(13, 13, 6, 2);
+    // Head & Neck outline on headCtx
+    headCtx.fillStyle = '#0f172a';
+    headCtx.fillRect(9, 2, 14, 12);
+    headCtx.fillRect(13, 13, 6, 2);
 
+    // Body silhouette outline on bodyCtx
+    ctx = bodyCtx;
+    ctx.fillStyle = '#0f172a';
     if (mountPose === 'boat') {
       // Seated in Boat: Upper torso & arms resting on gunwales
       ctx.fillRect(6, 14, 20, 9);
@@ -6691,7 +6864,8 @@ class SpriteAtlasManager {
       }
     }
 
-    // 8. Head, Ears & Multi-tone Facial Skin
+    // 8. Head, Ears & Multi-tone Facial Skin (drawn on headCtx so head stays 1.0x)
+    ctx = headCtx;
     ctx.fillStyle = skinBase;
     ctx.fillRect(10, 4, 12, 9);
     // Forehead highlight & jawline shadow
@@ -7245,32 +7419,34 @@ class SpriteAtlasManager {
       ctx.fillStyle = '#fbbf24';
       ctx.fillRect(15, 2, 2, 1);
     } else if (headBaseId === 'solar_necklace') {
-      // Colar Solar: Braided fiber cord around collar with glowing golden solar crystal pendants
+      // Colar Solar: Drawn on bodyCtx so it fits the 1.5x chest/collarbone seamlessly
+      ctx = bodyCtx;
       if (dir === 'down') {
         ctx.fillStyle = '#78350f';
-        ctx.fillRect(12, 13, 8, 1);
-        ctx.fillRect(11, 14, 2, 1);
-        ctx.fillRect(19, 14, 2, 1);
+        ctx.fillRect(12, 14, 8, 1);
+        ctx.fillRect(11, 15, 2, 1);
+        ctx.fillRect(19, 15, 2, 1);
         // Radiant solar crystals along chest neckline
         ctx.fillStyle = '#ea580c';
-        ctx.fillRect(13, 14, 6, 2);
+        ctx.fillRect(13, 15, 6, 2);
         ctx.fillStyle = '#fde047';
-        ctx.fillRect(13, 14, 1, 2);
-        ctx.fillRect(15, 14, 2, 2);
-        ctx.fillRect(18, 14, 1, 2);
+        ctx.fillRect(13, 15, 1, 2);
+        ctx.fillRect(15, 15, 2, 2);
+        ctx.fillRect(18, 15, 1, 2);
         ctx.fillStyle = '#ffffff';
-        ctx.fillRect(15, 14, 1, 1);
+        ctx.fillRect(15, 15, 1, 1);
       } else if (dir === 'up') {
         ctx.fillStyle = '#78350f';
-        ctx.fillRect(12, 13, 8, 2);
+        ctx.fillRect(12, 14, 8, 2);
         ctx.fillStyle = '#fbbf24';
-        ctx.fillRect(15, 13, 2, 2);
+        ctx.fillRect(15, 14, 2, 2);
       } else {
         ctx.fillStyle = '#78350f';
-        ctx.fillRect(13, 13, 6, 2);
+        ctx.fillRect(13, 14, 6, 2);
         ctx.fillStyle = '#fde047';
-        ctx.fillRect(dir === 'left' ? 12 : 18, 14, 2, 2);
+        ctx.fillRect(dir === 'left' ? 12 : 18, 15, 2, 2);
       }
+      ctx = headCtx;
     } else if (headId === 'leather_hood') {
       // Reinforced Ranger Leather Cowl with sheep-wool brow lining & brass rivets
       ctx.fillStyle = '#451a03';
@@ -7367,6 +7543,15 @@ class SpriteAtlasManager {
       ctx.fillStyle = '#ffffff';
       ctx.fillRect(15, 1, 1, 1);
     }
+
+    // Composite onto 48x42 canvas:
+    // - Body (rows y=13..31 of 32x32 bodyCanvas) is scaled 1.5x -> width 48, height 27 at (dx=0, dy=13)
+    // - Head (32x32 headCanvas) stays at 1.0x -> width 32, height 32 centered at (dx=8, dy=1)
+    const c = createPixelCanvas(48, 42);
+    const finalCtx = c.getContext('2d')!;
+    finalCtx.imageSmoothingEnabled = false;
+    finalCtx.drawImage(bodyCanvas, 0, 13, 32, 18, 0, 13, 48, 27);
+    finalCtx.drawImage(headCanvas, 0, 0, 32, 32, 8, 1, 32, 32);
 
     this.playerSprites.set(key, c);
     return c;

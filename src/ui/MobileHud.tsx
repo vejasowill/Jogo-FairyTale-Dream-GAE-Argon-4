@@ -949,7 +949,10 @@ export const MobileHud: React.FC<MobileHudProps> = ({
                   {slot && itemDef && (
                     <>
                       <img
-                        src={spriteAtlas.getItemIconUrl(slot.itemId)}
+                        src={spriteAtlas.getItemIconUrl(
+                          slot.itemId,
+                          slot.selectedColor
+                        )}
                         alt={itemDef.name}
                         className="w-6 h-6 sm:w-7 sm:h-7 pixelated"
                       />

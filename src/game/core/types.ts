@@ -118,6 +118,11 @@ export interface ItemDefinition {
   waterCharges?: number;
   maxWaterCharges?: number;
   basePrice?: number; // Official market reference price in Gold Coins (Moeda de Ouro Antiga)
+  isFlower?: boolean;
+  flowerSpecies?: 'tulip' | 'lily' | 'sunflower' | 'solar_drop';
+  allowedFlowerColors?: ClothingColorId[];
+  isDye?: boolean;
+  dyeColorId?: ClothingColorId;
 }
 
 export type BuildLayer = 'GROUND' | 'WALL' | 'FURNITURE';
@@ -200,6 +205,11 @@ export enum NatureNodeType {
   SUNSTONE_OBELISK = 'SUNSTONE_OBELISK',
   PEARL_CLAM = 'PEARL_CLAM',
   ANCIENT_WORLD_TREE = 'ANCIENT_WORLD_TREE',
+  // Wild Flowers (Perlin Noise Patches & 10% Bush Replacement)
+  FLOWER_TULIP = 'FLOWER_TULIP',
+  FLOWER_LILY = 'FLOWER_LILY',
+  FLOWER_SUNFLOWER = 'FLOWER_SUNFLOWER',
+  FLOWER_SOLAR_DROP = 'FLOWER_SOLAR_DROP',
 }
 
 export enum PlaceableType {
@@ -237,6 +247,10 @@ export enum PlaceableType {
   PALM_SAPLING = 'PALM_SAPLING',
   BED = 'BED',
   WEAVING_TABLE = 'WEAVING_TABLE',
+  FLOWER_TULIP = 'FLOWER_TULIP',
+  FLOWER_LILY = 'FLOWER_LILY',
+  FLOWER_SUNFLOWER = 'FLOWER_SUNFLOWER',
+  FLOWER_SOLAR_DROP = 'FLOWER_SOLAR_DROP',
 }
 
 export interface NatureNode {
@@ -252,6 +266,7 @@ export interface NatureNode {
   hitFlashTimer: number;
   breakIdleTimer?: number;
   animOffset: number;
+  flowerColor?: ClothingColorId;
 }
 
 export interface PlacedStructure {
@@ -310,8 +325,11 @@ export interface PlacedStructure {
   outputItemId?: string | null;
   outputCount?: number;
   weavingTargetItemId?: string | null;
+  weavingDyeItemId?: string | null;
   // Wall-mounted attachment (exclusively for PlaceableType.TORCH)
   attachedToWall?: boolean;
+  // Flower color variant when placed on the ground
+  flowerColor?: ClothingColorId;
 }
 
 export interface ChunkData {
@@ -468,6 +486,7 @@ export interface DroppedItem {
   pickupDelay: number;
   expiresTimer?: number;
   claimedBy?: string | null;
+  flowerColor?: ClothingColorId;
 }
 
 export interface FloatingText {
@@ -490,6 +509,8 @@ export const MOUNT_STORAGE_SIZE = 8; // 8 slots in a saddled Horse or Camel sadd
 export interface InventorySlot {
   itemId: string;
   count: number;
+  colorCounts?: Partial<Record<ClothingColorId, number>>;
+  selectedColor?: ClothingColorId;
 }
 
 export interface MarketStallSlot {

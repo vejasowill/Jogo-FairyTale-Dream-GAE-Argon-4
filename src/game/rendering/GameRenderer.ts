@@ -1,6 +1,7 @@
 import { CONSTRUCTION_BLUEPRINTS, ITEMS, NATURE_BLUEPRINTS } from '../core/ItemRegistry';
 import {
   BiomeType,
+  ClothingColorId,
   CreatureEntity,
   CreatureKind,
   DeathBag,
@@ -515,12 +516,12 @@ export class GameRenderer {
               tileAnimFrame,
               subZone
             );
-            ctx.drawImage(sprite, wx, wy, TILE_SIZE, TILE_SIZE);
+            ctx.drawImage(sprite, wx, wy, TILE_SIZE + 0.35, TILE_SIZE + 0.35);
 
             // Seamless Auto-Tiling Coastlines & Biome Ecotone Transitions
             this.drawSeamlessBiomeBorders(ctx, world, tx, ty, wx, wy, biome, globalTime);
 
-            // Procedural Ground Micro-Decorations (Clovers, Pebbles, Shells, Mushrooms, Lilypads)
+            // Procedural Ground Micro-Decorations (Minimalist)
             this.drawTileMicroDetails(ctx, world, tx, ty, wx, wy, biome, subZone, globalTime);
           }
         }
@@ -802,7 +803,7 @@ export class GameRenderer {
 
           c.fillStyle = 'rgba(0,0,0,0.35)';
           c.fillRect(drop.x - 7, drop.y + 5, 14, 3);
-          const icon = spriteAtlas.getItemCanvas(drop.itemId);
+          const icon = spriteAtlas.getItemCanvas(drop.itemId, drop.flowerColor);
           c.drawImage(icon, drop.x - 9, drop.y - 11 + bob, 18, 18);
 
           // Specular item sparkle
@@ -1137,10 +1138,10 @@ export class GameRenderer {
       ctx.fill();
       ctx.stroke();
 
-      // Compact floating pill showing ONLY the element name above the selector
+      // Floating pill showing the element name and owner ("Dono: {nome}") without truncation
       const shortLabel =
-        aimedTarget.label.length > 28
-          ? aimedTarget.label.slice(0, 27) + '…'
+        aimedTarget.label.length > 64
+          ? aimedTarget.label.slice(0, 63) + '…'
           : aimedTarget.label;
 
       ctx.font = 'bold 7.5px "Plus Jakarta Sans", sans-serif';
@@ -1293,6 +1294,8 @@ export class GameRenderer {
         return { radius: 300, strength: 0.8, color: '255, 220, 85' };
       case PlaceableType.VILLAGE_HOUSE:
         return { radius: 175, strength: 1.0, color: '255, 195, 95' };
+      case PlaceableType.FLOWER_SOLAR_DROP:
+        return { radius: 60, strength: 0.66, color: '255, 220, 85' };
       case PlaceableType.ROYAL_BANNER:
       case PlaceableType.EXPLORER_TENT:
       case PlaceableType.WOOD_WINDOW:
@@ -1310,6 +1313,8 @@ export class GameRenderer {
         return { radius: 80, strength: 0.33, color: '60, 225, 160' };
       case NatureNodeType.DESERT_CRYSTAL:
         return { radius: 60, strength: 0.11, color: '255, 200, 65' };
+      case NatureNodeType.FLOWER_SOLAR_DROP:
+        return { radius: 60, strength: 0.66, color: '255, 220, 85' };
       case NatureNodeType.SUNSTONE_OBELISK:
       case NatureNodeType.PEARL_CLAM:
       default:
@@ -1548,7 +1553,7 @@ export class GameRenderer {
     }
 
     // =========================================================================
-    // B. PLAINS / ISLAND <-> DESERT / SHORE ECOTONE AUTO-TILING (Organic Grass/Sand Blending)
+    // B. PLAINS / ISLAND <-> DESERT / SHORE ECOTONE AUTO-TILING (Smooth Anti-Serrilhado Blending)
     // =========================================================================
     if (
       biome === BiomeType.DESERT ||
@@ -1565,50 +1570,57 @@ export class GameRenderer {
       const ePlains = isGreenNeighbor(tx + 1, ty, e);
 
       if (nPlains || sPlains || wPlains || ePlains) {
-        // Draw encroaching pixel grass tufts & olive border over the sand edge
+        // Smooth, non-serrated progressive ecotone border strips (no sawtooth teeth)
         if (nPlains) {
-          ctx.fillStyle = '#486b27';
-          ctx.fillRect(wx, wy, TILE_SIZE, 3);
-          ctx.fillStyle = '#5c8434';
-          for (let px = 0; px < TILE_SIZE; px += 4) {
-            const h = 3 + ((px + tx * 3) % 5);
-            ctx.fillRect(wx + px, wy, 3, h);
-          }
+          ctx.fillStyle = '#598033';
+          ctx.fillRect(wx, wy, TILE_SIZE, 2);
+          ctx.fillStyle = 'rgba(97, 138, 57, 0.55)';
+          ctx.fillRect(wx, wy + 2, TILE_SIZE, 2);
         }
         if (sPlains) {
-          ctx.fillStyle = '#486b27';
-          ctx.fillRect(wx, wy + TILE_SIZE - 3, TILE_SIZE, 3);
-          ctx.fillStyle = '#5c8434';
-          for (let px = 0; px < TILE_SIZE; px += 4) {
-            const h = 3 + ((px + tx * 5) % 5);
-            ctx.fillRect(wx + px, wy + TILE_SIZE - h, 3, h);
-          }
+          ctx.fillStyle = '#598033';
+          ctx.fillRect(wx, wy + TILE_SIZE - 2, TILE_SIZE, 2);
+          ctx.fillStyle = 'rgba(97, 138, 57, 0.55)';
+          ctx.fillRect(wx, wy + TILE_SIZE - 4, TILE_SIZE, 2);
         }
         if (wPlains) {
-          ctx.fillStyle = '#486b27';
-          ctx.fillRect(wx, wy, 3, TILE_SIZE);
-          ctx.fillStyle = '#5c8434';
-          for (let py = 0; py < TILE_SIZE; py += 4) {
-            const wLen = 3 + ((py + ty * 3) % 5);
-            ctx.fillRect(wx, wy + py, wLen, 3);
-          }
+          ctx.fillStyle = '#598033';
+          ctx.fillRect(wx, wy, 2, TILE_SIZE);
+          ctx.fillStyle = 'rgba(97, 138, 57, 0.55)';
+          ctx.fillRect(wx + 2, wy, 2, TILE_SIZE);
         }
         if (ePlains) {
-          ctx.fillStyle = '#486b27';
-          ctx.fillRect(wx + TILE_SIZE - 3, wy, 3, TILE_SIZE);
-          ctx.fillStyle = '#5c8434';
-          for (let py = 0; py < TILE_SIZE; py += 4) {
-            const wLen = 3 + ((py + ty * 5) % 5);
-            ctx.fillRect(wx + TILE_SIZE - wLen, wy + py, wLen, 3);
-          }
+          ctx.fillStyle = '#598033';
+          ctx.fillRect(wx + TILE_SIZE - 2, wy, 2, TILE_SIZE);
+          ctx.fillStyle = 'rgba(97, 138, 57, 0.55)';
+          ctx.fillRect(wx + TILE_SIZE - 4, wy, 2, TILE_SIZE);
         }
+      }
+    } else if (biome === BiomeType.PLAINS || biome === BiomeType.ISLAND) {
+      // Smooth sub-zone transitions inside Plains/Island so adjacent sub-zones blend seamlessly
+      const mySub = world.getTileSubZone(tx, ty, biome);
+      if (mySub === 1 && n === biome && world.getTileSubZone(tx, ty - 1, biome) === 0) {
+        ctx.fillStyle = 'rgba(52, 120, 61, 0.45)';
+        ctx.fillRect(wx, wy, TILE_SIZE, 3);
+      }
+      if (mySub === 1 && s === biome && world.getTileSubZone(tx, ty + 1, biome) === 0) {
+        ctx.fillStyle = 'rgba(52, 120, 61, 0.45)';
+        ctx.fillRect(wx, wy + TILE_SIZE - 3, TILE_SIZE, 3);
+      }
+      if (mySub === 1 && w === biome && world.getTileSubZone(tx - 1, ty, biome) === 0) {
+        ctx.fillStyle = 'rgba(52, 120, 61, 0.45)';
+        ctx.fillRect(wx, wy, 3, TILE_SIZE);
+      }
+      if (mySub === 1 && e === biome && world.getTileSubZone(tx + 1, ty, biome) === 0) {
+        ctx.fillStyle = 'rgba(52, 120, 61, 0.45)';
+        ctx.fillRect(wx + TILE_SIZE - 3, wy, 3, TILE_SIZE);
       }
     }
   }
 
   /**
-   * Procedural Ground Micro-Decorations (Clovers, Flowers, Pebbles, Mushrooms, Shells)
-   * Adapts density and flora species to the tile's EcologicalZone in v2 worlds while keeping v1 saves unchanged.
+   * Minimalist Ground Micro-Decorations (sparse pebbles, shells, and subtle forest moss)
+   * Keeps the ground aesthetic clean and uncluttered while maintaining natural variety.
    */
   private drawTileMicroDetails(
     ctx: CanvasRenderingContext2D,
@@ -1622,167 +1634,38 @@ export class GameRenderer {
     globalTime: number
   ): void {
     const h = world.getTileDetailHash(tx, ty, 313);
-    const ox = Math.floor(world.getTileDetailHash(tx, ty, 509) * 18) + 6;
-    const oy = Math.floor(world.getTileDetailHash(tx, ty, 701) * 18) + 6;
-    const sway = Math.round(Math.sin(globalTime * 2.8 + tx + ty) * 1);
+    // Minimalist density: >92% of tiles have zero extra micro-clutter
+    if (h > 0.08) return;
 
-    if (world.worldGenVersion >= 2) {
-      const zone = world.getEcologicalZoneAtTile(tx, ty);
-
-      if (zone === EcologicalZone.MEADOW_CLEARING) {
-        // Clean, open grassland clearing (~91% bare grass, occasional tiny clover/flower)
-        if (h > 0.09) return;
-        ctx.fillStyle = '#4ade80';
-        ctx.fillRect(wx + ox, wy + oy, 3, 2);
-        ctx.fillStyle = '#fef08a';
-        ctx.fillRect(wx + ox + 1, wy + oy - 1, 2, 2);
-        return;
-      }
-
-      if (zone === EcologicalZone.OVERGROWN_SHRUBLAND) {
-        // Dense wild tall-grass & wildflower thicket (~58% of tiles have swaying grass tufts)
-        if (h > 0.58) return;
-        ctx.fillStyle = '#14532d';
-        ctx.fillRect(wx + ox - 1, wy + oy + 3, 7, 2);
-        ctx.fillStyle = '#22c55e';
-        ctx.fillRect(wx + ox + sway, wy + oy - 2, 2, 5);
-        ctx.fillRect(wx + ox + 3 + sway, wy + oy - 3, 2, 6);
-        ctx.fillRect(wx + ox - 2 + sway, wy + oy, 2, 3);
-        if (h < 0.22) {
-          ctx.fillStyle = h < 0.11 ? '#f472b6' : '#fde047';
-          ctx.fillRect(wx + ox + 2 + sway, wy + oy - 4, 2, 2);
-        }
-        return;
-      }
-
-      if (
-        zone === EcologicalZone.DENSE_WOODLAND ||
-        zone === EcologicalZone.ANCIENT_GROVE
-      ) {
-        if (h > 0.36) return;
-        if (h < 0.14) {
-          // Forest floor red-white fairy mushroom & moss
-          ctx.fillStyle = '#14532d';
-          ctx.fillRect(wx + ox - 1, wy + oy + 3, 6, 2);
-          ctx.fillStyle = '#fef3c7';
-          ctx.fillRect(wx + ox + 1, wy + oy + 1, 2, 3);
-          ctx.fillStyle =
-            zone === EcologicalZone.ANCIENT_GROVE ? '#38bdf8' : '#dc2626';
-          ctx.fillRect(wx + ox, wy + oy - 1, 4, 2);
-          ctx.fillStyle = '#ffffff';
-          ctx.fillRect(wx + ox + 1, wy + oy - 1, 1, 1);
-        } else {
-          // Woodland fern & moss patch
-          ctx.fillStyle = '#064e3b';
-          ctx.fillRect(wx + ox, wy + oy + 2, 6, 2);
-          ctx.fillStyle = '#10b981';
-          ctx.fillRect(wx + ox + 1 + sway, wy + oy - 1, 4, 3);
-        }
-        return;
-      }
-
-      if (zone === EcologicalZone.ROCKY_HIGHLANDS) {
-        if (h > 0.42) return;
-        ctx.fillStyle = '#334155';
-        ctx.fillRect(wx + ox, wy + oy + 1, 6, 3);
-        ctx.fillStyle = '#94a3b8';
-        ctx.fillRect(wx + ox + 1, wy + oy, 4, 2);
-        ctx.fillStyle = '#64748b';
-        ctx.fillRect(wx + ox + 6, wy + oy + 2, 3, 2);
-        return;
-      }
-
-      if (zone === EcologicalZone.COASTAL_TROPICS) {
-        // Wide golden sandy beach with occasional seashells & starfish
-        if (h > 0.16) return;
-        if (h < 0.06) {
-          // Coral-pink starfish on beach sand
-          ctx.fillStyle = '#fb7185';
-          ctx.fillRect(wx + ox, wy + oy, 3, 3);
-          ctx.fillStyle = '#fda4af';
-          ctx.fillRect(wx + ox + 1, wy + oy + 1, 1, 1);
-        } else {
-          // Pearl-white beach seashell
-          ctx.fillStyle = '#d97706';
-          ctx.fillRect(wx + ox, wy + oy + 1, 4, 2);
-          ctx.fillStyle = '#fef3c7';
-          ctx.fillRect(wx + ox, wy + oy, 3, 2);
-        }
-        return;
-      }
-
-      if (zone === EcologicalZone.OPEN_SAND_DUNES) {
-        // Very clean, sculpted wind-swept dunes (~93% bare sand)
-        if (h > 0.07) return;
-        ctx.fillStyle = '#b45309';
-        ctx.fillRect(wx + ox, wy + oy, 3, 2);
-        return;
-      }
-
-      if (zone === EcologicalZone.CRYSTAL_BADLANDS) {
-        if (h > 0.38) return;
-        ctx.fillStyle = '#78350f';
-        ctx.fillRect(wx + ox, wy + oy + 2, 6, 3);
-        ctx.fillStyle = '#d97706';
-        ctx.fillRect(wx + ox + 1, wy + oy, 4, 3);
-        if (h < 0.14) {
-          ctx.fillStyle = '#fde047';
-          ctx.fillRect(wx + ox + 2, wy + oy - 1, 2, 2);
-        }
-        return;
-      }
-    }
-
-    if (h > 0.28) return;
+    const ox = Math.floor(world.getTileDetailHash(tx, ty, 509) * 18) + 7;
+    const oy = Math.floor(world.getTileDetailHash(tx, ty, 701) * 18) + 7;
+    const sway = Math.round(Math.sin(globalTime * 2.4 + tx + ty) * 1);
 
     if (biome === BiomeType.PLAINS || biome === BiomeType.ISLAND) {
-      if (h < 0.09) {
-        ctx.fillStyle = '#14532d';
-        ctx.fillRect(wx + ox - 1, wy + oy + 3, 6, 2);
+      const zone = world.getEcologicalZoneAtTile(tx, ty);
+      if (zone === EcologicalZone.COASTAL_TROPICS) {
+        // Subtle beach seashell
         ctx.fillStyle = '#fef3c7';
-        ctx.fillRect(wx + ox + 1, wy + oy + 1, 2, 3);
-        ctx.fillStyle = '#dc2626';
-        ctx.fillRect(wx + ox, wy + oy - 1, 4, 2);
-        ctx.fillStyle = '#ffffff';
-        ctx.fillRect(wx + ox + 1, wy + oy - 1, 1, 1);
-      } else if (h < 0.18) {
-        ctx.fillStyle = '#475569';
-        ctx.fillRect(wx + ox, wy + oy, 5, 3);
-        ctx.fillStyle = '#94a3b8';
-        ctx.fillRect(wx + ox + 1, wy + oy, 3, 2);
+        ctx.fillRect(wx + ox, wy + oy, 3, 2);
+      } else if (zone === EcologicalZone.ROCKY_HIGHLANDS) {
+        // Small smooth pebble
         ctx.fillStyle = '#64748b';
-        ctx.fillRect(wx + ox + 6, wy + oy + 2, 3, 2);
+        ctx.fillRect(wx + ox, wy + oy, 4, 2);
       } else {
-        ctx.fillStyle = '#14532d';
-        ctx.fillRect(wx + ox, wy + oy + 2, 4, 2);
-        ctx.fillStyle = '#4ade80';
-        ctx.fillRect(wx + ox + sway, wy + oy - 1, 1, 3);
-        ctx.fillRect(wx + ox + 2 + sway, wy + oy - 2, 1, 4);
+        // Minimalist soft clover / blade accent
+        ctx.fillStyle = '#2e6b34';
+        ctx.fillRect(wx + ox, wy + oy + 1, 3, 2);
+        ctx.fillStyle = '#529e5a';
+        ctx.fillRect(wx + ox + sway, wy + oy, 2, 2);
       }
     } else if (biome === BiomeType.DESERT) {
-      if (h < 0.1) {
-        ctx.fillStyle = '#78350f';
-        ctx.fillRect(wx + ox, wy + oy + 2, 6, 3);
-        ctx.fillStyle = '#b45309';
-        ctx.fillRect(wx + ox + 1, wy + oy, 4, 3);
-        ctx.fillStyle = '#fcd34d';
-        ctx.fillRect(wx + ox + 1, wy + oy, 2, 1);
-      } else if (h < 0.19) {
-        ctx.fillStyle = '#713f12';
-        ctx.fillRect(wx + ox + 1, wy + oy + 1, 3, 2);
-        ctx.fillStyle = '#a16207';
-        ctx.fillRect(wx + ox + sway, wy + oy - 1, 1, 2);
-        ctx.fillRect(wx + ox + 3 + sway, wy + oy - 1, 1, 2);
-      }
-    } else if (biome === BiomeType.OCEAN && subZone === 0) {
-      if (h < 0.12) {
-        ctx.fillStyle = '#15803d';
-        ctx.fillRect(wx + ox + sway, wy + oy, 6, 5);
-        ctx.fillStyle = '#22c55e';
-        ctx.fillRect(wx + ox + 1 + sway, wy + oy + 1, 4, 3);
-        ctx.fillStyle = '#f472b6';
-        ctx.fillRect(wx + ox + 2 + sway, wy + oy, 2, 2);
-      }
+      ctx.fillStyle = '#b89047';
+      ctx.fillRect(wx + ox, wy + oy, 3, 2);
+    } else if (biome === BiomeType.OCEAN && subZone === 0 && h < 0.04) {
+      ctx.fillStyle = '#15803d';
+      ctx.fillRect(wx + ox + sway, wy + oy, 5, 4);
+      ctx.fillStyle = '#22c55e';
+      ctx.fillRect(wx + ox + 1 + sway, wy + oy + 1, 3, 2);
     }
   }
 
@@ -1807,10 +1690,42 @@ export class GameRenderer {
     const hNorm = hHash / 999; // 0.0 .. 1.0 independent height factor
     const mirrorX = (hVar & 1) === 1;
 
-    const animFrame = Math.floor(globalTime * 2.2 + node.animOffset) % 4;
-    const sprite = spriteAtlas.getNatureSprite(node.type, animFrame, variant);
     const wx = node.tileX * TILE_SIZE;
     const wy = node.tileY * TILE_SIZE;
+
+    if (
+      node.type === NatureNodeType.FLOWER_TULIP ||
+      node.type === NatureNodeType.FLOWER_LILY ||
+      node.type === NatureNodeType.FLOWER_SUNFLOWER ||
+      node.type === NatureNodeType.FLOWER_SOLAR_DROP
+    ) {
+      const itemId =
+        node.type === NatureNodeType.FLOWER_TULIP
+          ? 'flower_tulip'
+          : node.type === NatureNodeType.FLOWER_LILY
+          ? 'flower_lily'
+          : node.type === NatureNodeType.FLOWER_SUNFLOWER
+          ? 'flower_sunflower'
+          : 'flower_solar_drop';
+      this.drawFlowerInWorld(
+        ctx,
+        itemId,
+        node.flowerColor || 'amarelo',
+        wx,
+        wy,
+        node.tileX,
+        node.tileY,
+        globalTime,
+        node.hitFlashTimer > 0,
+        node.hp,
+        node.maxHp,
+        isAimed
+      );
+      return;
+    }
+
+    const animFrame = Math.floor(globalTime * 2.2 + node.animOffset) % 4;
+    const sprite = spriteAtlas.getNatureSprite(node.type, animFrame, variant);
 
     const isLargeTree =
       node.type === NatureNodeType.OAK_TREE ||
@@ -2984,6 +2899,30 @@ export class GameRenderer {
       if (st.hp < st.maxHp && !isAimed) {
         this.drawMiniBar(ctx, wx + TILE_SIZE / 2, wy - 16, st.hp / st.maxHp, '#38bdf8');
       }
+      return;
+    }
+
+    // Placed Flowers (Tulipa, Lírio-do-Vale, Girassol, Gota Solar)
+    if (
+      st.type === PlaceableType.FLOWER_TULIP ||
+      st.type === PlaceableType.FLOWER_LILY ||
+      st.type === PlaceableType.FLOWER_SUNFLOWER ||
+      st.type === PlaceableType.FLOWER_SOLAR_DROP
+    ) {
+      this.drawFlowerInWorld(
+        ctx,
+        st.itemId,
+        st.flowerColor || 'amarelo',
+        wx,
+        wy,
+        st.tileX,
+        st.tileY,
+        globalTime,
+        st.hitFlashTimer > 0,
+        st.hp,
+        st.maxHp,
+        isAimed
+      );
       return;
     }
 
@@ -5370,11 +5309,11 @@ export class GameRenderer {
 
     ctx.save();
     if (isSwimming || isBoatMount) {
-      // Half-sprite rendering: in water OR seated inside a boat hull!
-      const ratio = isBoatMount ? 0.54 : 0.5;
+      // Half-sprite rendering: in water OR seated inside a boat hull (head 1.0x, body 1.5x -> 48x42 canvas)
+      const ratio = isBoatMount ? 0.58 : 0.54;
       const srcHalfH = Math.max(1, Math.round(sprite.height * ratio));
-      const drawHalfH = isBoatMount ? 16 : 15;
-      const yAnchorOffset = isBoatMount ? 3 : 6;
+      const drawHalfH = isBoatMount ? 22 : 20;
+      const yAnchorOffset = isBoatMount ? 4 : 7;
       ctx.translate(drawX + hurtShakeX, drawY + yAnchorOffset - walkHop);
       ctx.scale(breathScaleX, breathScaleY);
       if (player.hitFlashTimer > 0) {
@@ -5386,9 +5325,9 @@ export class GameRenderer {
         0,
         sprite.width,
         srcHalfH,
-        -15,
+        -22.5,
         -drawHalfH,
-        30,
+        45,
         drawHalfH
       );
     } else {
@@ -5397,7 +5336,8 @@ export class GameRenderer {
       if (player.hitFlashTimer > 0) {
         ctx.filter = 'brightness(2.0) contrast(1.2)';
       }
-      ctx.drawImage(sprite, -15, -19, 30, 30);
+      // 48x42 composite sprite drawn at 45x39.375 so head stays 1.0x and body is 1.5x larger
+      ctx.drawImage(sprite, -22.5, -27.5, 45, 39.375);
     }
     ctx.restore();
 
@@ -5406,21 +5346,24 @@ export class GameRenderer {
       ctx.strokeStyle = 'rgba(224, 242, 254, 0.78)';
       ctx.lineWidth = 1.25;
       ctx.beginPath();
-      ctx.moveTo(player.x - 7.5, player.y + 6);
-      ctx.lineTo(player.x + 7.5, player.y + 6);
+      ctx.moveTo(player.x - 9.5, player.y + 6);
+      ctx.lineTo(player.x + 9.5, player.y + 6);
       ctx.stroke();
       ctx.restore();
     }
 
     const slot = player.inventory[player.selectedHotbarIndex];
     if (slot) {
-      const itemCanvas = spriteAtlas.getItemCanvas(slot.itemId);
+      const itemCanvas = spriteAtlas.getItemCanvas(
+        slot.itemId,
+        slot.selectedColor
+      );
       const isSwinging = player.swingTimer > 0;
       const swingProgress = isSwinging
         ? 1 - player.swingTimer / player.swingDuration
         : 0;
 
-      // Exact hand anchor coordinates synced with walking arm swing (stepL / stepR) and body hop (walkHop)
+      // Exact hand anchor coordinates synced with 1.5x body arms & walking arm swing
       const stepL = frame === 1 ? -2 : frame === 3 ? 2 : 0;
       const stepR = -stepL;
       const swimItemOffsetY = isSwimming ? 5 : isBoatMount ? 2 : 0;
@@ -5430,20 +5373,20 @@ export class GameRenderer {
       let handOffsetY = 0;
       if (player.direction === 'up') {
         baseAngle = -Math.PI / 2;
-        handOffsetX = 6.5;
-        handOffsetY = 0.5 + stepR * 0.9;
+        handOffsetX = 9.5;
+        handOffsetY = -1.5 + stepR * 1.1;
       } else if (player.direction === 'down') {
         baseAngle = Math.PI / 2;
-        handOffsetX = -6.5;
-        handOffsetY = 1.0 + stepL * 0.9;
+        handOffsetX = -9.5;
+        handOffsetY = -1.0 + stepL * 1.1;
       } else if (player.direction === 'left') {
         baseAngle = Math.PI;
-        handOffsetX = -1.5 - stepL * 0.45;
-        handOffsetY = 1.0 + stepL * 0.9;
+        handOffsetX = -2.2 - stepL * 0.6;
+        handOffsetY = -1.0 + stepL * 1.1;
       } else {
         baseAngle = 0;
-        handOffsetX = 1.5 + stepR * 0.45;
-        handOffsetY = 1.0 + stepR * 0.9;
+        handOffsetX = 2.2 + stepR * 0.6;
+        handOffsetY = -1.0 + stepR * 1.1;
       }
 
       ctx.save();
@@ -5697,10 +5640,10 @@ export class GameRenderer {
 
     ctx.save();
     if (isSwimming || isBoatMount) {
-      const ratio = isBoatMount ? 0.54 : 0.5;
+      const ratio = isBoatMount ? 0.58 : 0.54;
       const srcHalfH = Math.max(1, Math.round(sprite.height * ratio));
-      const drawHalfH = isBoatMount ? 16 : 15;
-      const yAnchorOffset = isBoatMount ? 3 : 6;
+      const drawHalfH = isBoatMount ? 22 : 20;
+      const yAnchorOffset = isBoatMount ? 4 : 7;
       ctx.translate(drawX + rpHurtShakeX, drawY + yAnchorOffset - walkHop);
       ctx.scale(breathScaleX, breathScaleY);
       if (rp.hitFlashTimer > 0) {
@@ -5712,9 +5655,9 @@ export class GameRenderer {
         0,
         sprite.width,
         srcHalfH,
-        -15,
+        -22.5,
         -drawHalfH,
-        30,
+        45,
         drawHalfH
       );
     } else {
@@ -5723,7 +5666,7 @@ export class GameRenderer {
       if (rp.hitFlashTimer > 0) {
         ctx.filter = 'brightness(2.0) contrast(1.2)';
       }
-      ctx.drawImage(sprite, -15, -19, 30, 30);
+      ctx.drawImage(sprite, -22.5, -27.5, 45, 39.375);
     }
     ctx.restore();
 
@@ -5732,8 +5675,8 @@ export class GameRenderer {
       ctx.strokeStyle = 'rgba(224, 242, 254, 0.78)';
       ctx.lineWidth = 1.25;
       ctx.beginPath();
-      ctx.moveTo(rp.x - 7.5, rp.y + 6);
-      ctx.lineTo(rp.x + 7.5, rp.y + 6);
+      ctx.moveTo(rp.x - 9.5, rp.y + 6);
+      ctx.lineTo(rp.x + 9.5, rp.y + 6);
       ctx.stroke();
       ctx.restore();
     }
@@ -5754,20 +5697,20 @@ export class GameRenderer {
       let handOffsetY = 0;
       if (rp.direction === 'up') {
         baseAngle = -Math.PI / 2;
-        handOffsetX = 6.5;
-        handOffsetY = 0.5 + stepR * 0.9;
+        handOffsetX = 9.5;
+        handOffsetY = -1.5 + stepR * 1.1;
       } else if (rp.direction === 'down') {
         baseAngle = Math.PI / 2;
-        handOffsetX = -6.5;
-        handOffsetY = 1.0 + stepL * 0.9;
+        handOffsetX = -9.5;
+        handOffsetY = -1.0 + stepL * 1.1;
       } else if (rp.direction === 'left') {
         baseAngle = Math.PI;
-        handOffsetX = -1.5 - stepL * 0.45;
-        handOffsetY = 1.0 + stepL * 0.9;
+        handOffsetX = -2.2 - stepL * 0.6;
+        handOffsetY = -1.0 + stepL * 1.1;
       } else {
         baseAngle = 0;
-        handOffsetX = 1.5 + stepR * 0.45;
-        handOffsetY = 1.0 + stepR * 0.9;
+        handOffsetX = 2.2 + stepR * 0.6;
+        handOffsetY = -1.0 + stepR * 1.1;
       }
 
       ctx.save();
@@ -6137,6 +6080,57 @@ export class GameRenderer {
     ctx.fillRect(cx - w / 2 + 1, cy + 1, fillW, h - 2);
     ctx.fillStyle = 'rgba(255, 255, 255, 0.35)';
     ctx.fillRect(cx - w / 2 + 1, cy + 1, fillW, 1);
+  }
+
+  private drawFlowerInWorld(
+    ctx: CanvasRenderingContext2D,
+    itemId: string,
+    flowerColor: ClothingColorId,
+    wx: number,
+    wy: number,
+    tileX: number,
+    tileY: number,
+    globalTime: number,
+    isHitFlashing: boolean,
+    hp: number,
+    maxHp: number,
+    isAimed: boolean
+  ): void {
+    const cx = wx + TILE_SIZE / 2;
+    const cy = wy + TILE_SIZE / 2 + 3;
+    const sway =
+      Math.sin(globalTime * 2.3 + tileX * 0.65 + tileY * 0.45) * 1.1;
+    const isSunflower = itemId === 'flower_sunflower';
+    const isSolarDrop = itemId === 'flower_solar_drop';
+    const size = isSunflower ? 22 : 19;
+
+    // Subtle ground shadow
+    ctx.fillStyle = 'rgba(8, 12, 18, 0.22)';
+    ctx.fillRect(Math.round(cx - 5), Math.round(cy + 4), 10, 3);
+
+    // Gota Solar warm golden ground aura
+    if (isSolarDrop) {
+      const pulse = Math.sin(globalTime * 4 + tileX + tileY) * 1.5;
+      ctx.save();
+      ctx.fillStyle = 'rgba(253, 224, 71, 0.22)';
+      ctx.beginPath();
+      ctx.ellipse(cx, cy + 2, 9 + pulse, 4.5 + pulse * 0.4, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+    }
+
+    const icon = spriteAtlas.getItemCanvas(itemId, flowerColor);
+    ctx.save();
+    ctx.translate(cx + sway, cy + 6);
+    if (isHitFlashing) {
+      ctx.filter = 'brightness(1.8)';
+    }
+    ctx.drawImage(icon, -size / 2, -size, size, size);
+    ctx.restore();
+
+    if (hp < maxHp && !isAimed) {
+      this.drawMiniBar(ctx, cx, wy - 8, hp / Math.max(1, maxHp), '#22c55e');
+    }
   }
 
   private renderDayNightOverlay(

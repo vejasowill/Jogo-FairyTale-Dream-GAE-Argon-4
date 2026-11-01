@@ -7,6 +7,7 @@ import {
   BiomeType,
   CHEST_STORAGE_SIZE,
   ChunkData,
+  ClothingColorId,
   CURRENT_WORLD_GEN_VERSION,
   EcologicalZone,
   GAME_VERSION,
@@ -23,6 +24,26 @@ import {
 export const TILE_SIZE = 32;
 export const CHUNK_SIZE = 16;
 export const CHUNK_WORLD_SIZE = TILE_SIZE * CHUNK_SIZE;
+
+const TULIP_FLOWER_COLORS: ClothingColorId[] = [
+  'branco',
+  'vermelho',
+  'laranja',
+  'amarelo',
+  'azul',
+  'roxo',
+  'magenta',
+  'rosa',
+];
+
+const LILY_FLOWER_COLORS: ClothingColorId[] = [
+  'branco',
+  'vermelho',
+  'laranja',
+  'amarelo',
+  'roxo',
+  'rosa',
+];
 
 const COMPACT_ZONE_LIST: EcologicalZone[] = [
   EcologicalZone.MEADOW_CLEARING,
@@ -43,6 +64,51 @@ function hash2D(x: number, y: number, seed: number): number {
   let n = Math.imul(x, 374761393) + Math.imul(y, 668265263) + Math.imul(seed, 1442695041);
   n = (n ^ (n >>> 13)) * 1274126177;
   return ((n ^ (n >>> 16)) >>> 0) / 4294967295;
+}
+
+const PERLIN_GRADIENTS_2D: readonly [number, number][] = [
+  [1, 0],
+  [-1, 0],
+  [0, 1],
+  [0, -1],
+  [0.70710678, 0.70710678],
+  [-0.70710678, 0.70710678],
+  [0.70710678, -0.70710678],
+  [-0.70710678, -0.70710678],
+];
+
+/**
+ * True 2D Gradient Perlin Noise in range [-1, 1] using quintic fade curve.
+ * Used to generate organic flowerbeds (peaks = one species, valleys = another, zero-crossings = open grass)
+ * and smooth low-frequency color dominance waves across flower patches.
+ */
+function perlin2D(x: number, y: number, seed: number): number {
+  const x0 = Math.floor(x);
+  const y0 = Math.floor(y);
+  const x1 = x0 + 1;
+  const y1 = y0 + 1;
+
+  const sx = x - x0;
+  const sy = y - y0;
+
+  // Quintic Perlin fade: 6t^5 - 15t^4 + 10t^3
+  const u = sx * sx * sx * (sx * (sx * 6 - 15) + 10);
+  const v = sy * sy * sy * (sy * (sy * 6 - 15) + 10);
+
+  const gradDot = (gx: number, gy: number, dx: number, dy: number): number => {
+    const h = Math.floor(hash2D(gx, gy, seed) * 8) & 7;
+    const g = PERLIN_GRADIENTS_2D[h];
+    return g[0] * dx + g[1] * dy;
+  };
+
+  const n00 = gradDot(x0, y0, sx, sy);
+  const n10 = gradDot(x1, y0, sx - 1, sy);
+  const n01 = gradDot(x0, y1, sx, sy - 1);
+  const n11 = gradDot(x1, y1, sx - 1, sy - 1);
+
+  const ix0 = n00 + u * (n10 - n00);
+  const ix1 = n01 + u * (n11 - n01);
+  return Math.max(-1, Math.min(1, (ix0 + v * (ix1 - ix0)) * 1.4142));
 }
 
 function smoothNoise(x: number, y: number, seed: number): number {
@@ -73,6 +139,7 @@ function fbm(x: number, y: number, seed: number, octaves = 3): number {
   }
   return value;
 }
+
 
 export const ECOLOGICAL_ZONE_LABELS: Record<EcologicalZone, string> = {
   [EcologicalZone.MEADOW_CLEARING]: 'Clareira dos Campos',
@@ -389,6 +456,19 @@ export class WorldManager {
           if (typeof n.animOffset !== 'number') {
             const r = hash2D(n.tileX, n.tileY, this.seed + 31);
             n.animOffset = Math.floor(r * 10);
+          }
+          if (
+            (n.type === NatureNodeType.FLOWER_TULIP ||
+              n.type === NatureNodeType.FLOWER_LILY ||
+              n.type === NatureNodeType.FLOWER_SUNFLOWER ||
+              n.type === NatureNodeType.FLOWER_SOLAR_DROP) &&
+            !n.flowerColor
+          ) {
+            n.flowerColor = this.resolveFlowerColorForSpecies(
+              n.type,
+              n.tileX,
+              n.tileY
+            );
           }
         }
       }
@@ -1512,8 +1592,40 @@ export class WorldManager {
           }
         }
 
+        // Regra 1: 10% de chance de, no lugar de um arbusto (BERRY_BUSH), ser gerada uma flor
+        let flowerColor: ClothingColorId | undefined;
+        if (nodeType === NatureNodeType.BERRY_BUSH) {
+          const bushFlowerRoll = hash2D(tx, ty, this.seed + 5381);
+          if (bushFlowerRoll < 0.1) {
+            const resolved = this.resolveFlowerAtTile(
+              tx,
+              ty,
+              biome,
+              zone,
+              true
+            );
+            if (resolved) {
+              nodeType = resolved.type;
+              flowerColor = resolved.flowerColor;
+            }
+          }
+        } else if (!nodeType && biome !== BiomeType.OCEAN) {
+          // Regra 2: Canteiros e manchas naturais controlados por Ruído de Perlin 2D (e 5% Gota Solar em qualquer bioma)
+          const resolved = this.resolveFlowerAtTile(
+            tx,
+            ty,
+            biome,
+            zone,
+            false
+          );
+          if (resolved) {
+            nodeType = resolved.type;
+            flowerColor = resolved.flowerColor;
+          }
+        }
+
         if (nodeType) {
-          nodes.push(this.createNatureNode(nodeType, tx, ty, r));
+          nodes.push(this.createNatureNode(nodeType, tx, ty, r, flowerColor));
         }
       }
     }
@@ -2661,11 +2773,143 @@ export class WorldManager {
     }
   }
 
+  public static isPassableGroundNode(type: NatureNodeType): boolean {
+    return (
+      type === NatureNodeType.BERRY_BUSH ||
+      type === NatureNodeType.SAND_DUNE ||
+      type === NatureNodeType.FLOWER_TULIP ||
+      type === NatureNodeType.FLOWER_LILY ||
+      type === NatureNodeType.FLOWER_SUNFLOWER ||
+      type === NatureNodeType.FLOWER_SOLAR_DROP
+    );
+  }
+
+  /**
+   * Resolves the predominant color of a flower at (tx, ty) using a low-frequency 2D Perlin wave
+   * so that each flowerbed patch has a single dominant color that smoothly shifts across space.
+   */
+  public resolveFlowerColorForSpecies(
+    species: NatureNodeType,
+    tx: number,
+    ty: number
+  ): ClothingColorId {
+    if (
+      species === NatureNodeType.FLOWER_SUNFLOWER ||
+      species === NatureNodeType.FLOWER_SOLAR_DROP
+    ) {
+      return 'amarelo';
+    }
+    const palette =
+      species === NatureNodeType.FLOWER_LILY
+        ? LILY_FLOWER_COLORS
+        : TULIP_FLOWER_COLORS;
+    // Low-frequency Perlin wave creates large contiguous color regions within a flowerbed
+    const wave = (perlin2D(tx * 0.042, ty * 0.042, this.seed + 4517) + 1) * 0.5;
+    // Tiny local jitter (±0.025) keeps ~90%+ of a patch the exact same predominant color
+    const jitter = (hash2D(tx, ty, this.seed + 4591) - 0.5) * 0.05;
+    const clamped = Math.max(0, Math.min(0.9999, wave + jitter));
+    const idx = Math.floor(clamped * palette.length);
+    return palette[idx] || 'branco';
+  }
+
+  /**
+   * Minecraft-inspired hierarchical Flower Generator:
+   * 1. Governed first by Biome & Temperature (including 5% Gota Solar across ANY land biome).
+   * 2. Spatial layout & density controlled by 2D Gradient Perlin Noise (`perlin2D`):
+   *    - Peaks of the wave spawn one species (Tulipa or Girassol in warm sunny meadows),
+   *    - Valleys of the wave spawn another species (Lírio-do-Vale),
+   *    - Transitions near zero remain open grass.
+   * 3. Within each flowerbed patch, color variety is low: one color dominates and transitions smoothly further ahead.
+   */
+  private resolveFlowerAtTile(
+    tx: number,
+    ty: number,
+    biome: BiomeType,
+    zone: EcologicalZone,
+    forceSpawn: boolean
+  ): { type: NatureNodeType; flowerColor: ClothingColorId } | null {
+    if (biome === BiomeType.OCEAN) return null;
+
+    // 2D Perlin wave that forms invisible hills/valleys for flowerbed patches
+    const patchWave = perlin2D(tx * 0.085, ty * 0.085, this.seed + 4337);
+    const speciesWave = perlin2D(tx * 0.055, ty * 0.055, this.seed + 4229);
+    const tempWave = perlin2D(tx * 0.028, ty * 0.028, this.seed + 4111);
+
+    if (!forceSpawn) {
+      const absWave = Math.abs(patchWave);
+      // Transitions between peaks and valleys remain open ground
+      const minWaveThreshold =
+        biome === BiomeType.DESERT
+          ? 0.48
+          : zone === EcologicalZone.MEADOW_CLEARING ||
+            zone === EcologicalZone.OVERGROWN_SHRUBLAND
+          ? 0.34
+          : 0.41;
+      if (absWave < minWaveThreshold) {
+        return null;
+      }
+
+      const intensity =
+        (absWave - minWaveThreshold) / (1 - minWaveThreshold);
+      const densityRoll = hash2D(tx, ty, this.seed + 5449);
+      const maxDensity =
+        biome === BiomeType.DESERT
+          ? 0.12
+          : zone === EcologicalZone.MEADOW_CLEARING
+          ? 0.28
+          : 0.22;
+      if (densityRoll > intensity * maxDensity) {
+        return null;
+      }
+    }
+
+    // Gota Solar: 5% chance to be the generated flower in ANY land biome (Plains, Desert, Island)
+    const solarRoll = hash2D(tx, ty, this.seed + 5779);
+    if (solarRoll < 0.05) {
+      return {
+        type: NatureNodeType.FLOWER_SOLAR_DROP,
+        flowerColor: 'amarelo',
+      };
+    }
+
+    // In Desert outside of Oasis, only Gota Solar (above) or oasis-edge flowers appear
+    if (
+      biome === BiomeType.DESERT &&
+      zone !== EcologicalZone.DESERT_OASIS &&
+      !forceSpawn
+    ) {
+      return null;
+    }
+
+    // Determine species from Biome + Temperature + Perlin wave crest/valley:
+    // - Peak of wave in warm/open meadows -> Girassol or Tulipa
+    // - Valley of wave -> Lírio-do-Vale
+    let species: NatureNodeType;
+    if (
+      patchWave > 0.22 &&
+      tempWave > 0.18 &&
+      speciesWave > 0.24 &&
+      (zone === EcologicalZone.MEADOW_CLEARING ||
+        zone === EcologicalZone.COASTAL_TROPICS ||
+        zone === EcologicalZone.DESERT_OASIS)
+    ) {
+      species = NatureNodeType.FLOWER_SUNFLOWER;
+    } else if (patchWave >= 0) {
+      species = NatureNodeType.FLOWER_TULIP;
+    } else {
+      species = NatureNodeType.FLOWER_LILY;
+    }
+
+    const flowerColor = this.resolveFlowerColorForSpecies(species, tx, ty);
+    return { type: species, flowerColor };
+  }
+
   private createNatureNode(
     nodeType: NatureNodeType,
     tx: number,
     ty: number,
-    r: number
+    r: number,
+    flowerColor?: ClothingColorId
   ): NatureNode {
     const bp = NATURE_BLUEPRINTS[nodeType];
     return {
@@ -2680,6 +2924,14 @@ export class WorldManager {
       requiredTier: bp.requiredTier,
       hitFlashTimer: 0,
       animOffset: Math.floor(r * 10),
+      flowerColor:
+        flowerColor ??
+        (nodeType === NatureNodeType.FLOWER_TULIP ||
+        nodeType === NatureNodeType.FLOWER_LILY ||
+        nodeType === NatureNodeType.FLOWER_SUNFLOWER ||
+        nodeType === NatureNodeType.FLOWER_SOLAR_DROP
+          ? this.resolveFlowerColorForSpecies(nodeType, tx, ty)
+          : undefined),
     };
   }
 
@@ -3219,13 +3471,12 @@ export class WorldManager {
     const bp = CONSTRUCTION_BLUEPRINTS[placeableType];
     if (!bp) return false;
 
-    // Cannot build on top of an unharvested Nature Node (except passable Berry Bushes and Sand Dunes can be cleared automatically when building!)
+    // Cannot build on top of an unharvested Nature Node (except passable Berry Bushes, Sand Dunes, and Flowers can be cleared automatically when building!)
     const hasBlockingNode = chunk.nodes.some(
       (n) =>
         n.tileX === tx &&
         n.tileY === ty &&
-        n.type !== NatureNodeType.BERRY_BUSH &&
-        n.type !== NatureNodeType.SAND_DUNE
+        !WorldManager.isPassableGroundNode(n.type)
     );
     if (hasBlockingNode) {
       return false;
@@ -3507,7 +3758,8 @@ export class WorldManager {
     ty: number,
     placeableType: PlaceableType,
     itemId: string,
-    orientation: 'auto' | 'horizontal' | 'vertical' = 'auto'
+    orientation: 'auto' | 'horizontal' | 'vertical' = 'auto',
+    flowerColor?: ClothingColorId
   ): { placed: boolean; replacedItemId?: string; attachedToWall?: boolean } {
     if (!this.canPlaceStructureAt(tx, ty, placeableType)) {
       return { placed: false };
@@ -3516,13 +3768,12 @@ export class WorldManager {
     const chunk = this.getOrCreateChunk(cx, cy);
     const bp = CONSTRUCTION_BLUEPRINTS[placeableType];
 
-    // If there is a passable Berry Bush or Sand Dune on the tile, clear it cleanly
+    // If there is a passable Berry Bush, Sand Dune, or natural Flower on the tile, clear it cleanly
     const bushIdx = chunk.nodes.findIndex(
       (n) =>
         n.tileX === tx &&
         n.tileY === ty &&
-        (n.type === NatureNodeType.BERRY_BUSH ||
-          n.type === NatureNodeType.SAND_DUNE)
+        WorldManager.isPassableGroundNode(n.type)
     );
     if (bushIdx !== -1) {
       chunk.nodes.splice(bushIdx, 1);
@@ -3593,6 +3844,7 @@ export class WorldManager {
       lightRadius: bp.lightRadius,
       hitFlashTimer: 0,
       attachedToWall: isMountingTorchOnWall ? true : undefined,
+      flowerColor,
       growthStage: WorldManager.isSaplingStructure(placeableType)
         ? 0
         : undefined,
@@ -3725,13 +3977,9 @@ export class WorldManager {
     const chunk = this.chunks[WorldManager.chunkKey(cx, cy)];
     if (!chunk) return true;
 
-    // Solid nature nodes prevent tilling (passable berry bushes and sand dunes are allowed to be cleared)
+    // Solid nature nodes prevent tilling (passable berry bushes, sand dunes, and flowers are allowed to be cleared)
     const node = chunk.nodes.find((n) => n.tileX === tx && n.tileY === ty);
-    if (
-      node &&
-      node.type !== NatureNodeType.BERRY_BUSH &&
-      node.type !== NatureNodeType.SAND_DUNE
-    ) {
+    if (node && !WorldManager.isPassableGroundNode(node.type)) {
       return false;
     }
 
@@ -3765,13 +4013,12 @@ export class WorldManager {
     const { cx, cy } = this.tileToChunk(tx, ty);
     const chunk = this.getOrCreateChunk(cx, cy);
 
-    // Clear any berry bush or sand dune on tile
+    // Clear any passable ground node (berry bush, sand dune, or flower) on tile
     const bushIdx = chunk.nodes.findIndex(
       (n) =>
         n.tileX === tx &&
         n.tileY === ty &&
-        (n.type === NatureNodeType.BERRY_BUSH ||
-          n.type === NatureNodeType.SAND_DUNE)
+        WorldManager.isPassableGroundNode(n.type)
     );
     if (bushIdx !== -1) {
       chunk.nodes.splice(bushIdx, 1);

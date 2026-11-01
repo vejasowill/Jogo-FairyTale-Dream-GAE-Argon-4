@@ -5,6 +5,8 @@ import {
   FUEL_ITEM_ORDER,
   FUEL_ITEMS,
   getDyedGarmentItemId,
+  getDyeItemIdForColor,
+  getFlowerColorLabel,
   getFuelBurnTimeSec,
   getItemBasePrice,
   getNatureBreakRequirement,
@@ -13,7 +15,11 @@ import {
   ITEMS,
   NATURE_BLUEPRINTS,
 } from '../core/ItemRegistry';
-import { CraftingRecipe, RECIPES } from '../core/RecipeRegistry';
+import {
+  CraftingRecipe,
+  RecipeIngredient,
+  RECIPES,
+} from '../core/RecipeRegistry';
 import { soundManager } from '../core/SoundManager';
 import {
   BiomeType,
@@ -143,6 +149,7 @@ export class GameEngine {
   private campfireRestCooldown = 0;
   private hungerDamageTimer = 0;
   public activeStationStructureId: string | null = null;
+  public weavingTableOpenedAtMs = 0;
   private fallbackThermalStations: Record<string, PlacedStructure> = {};
   private customTargetTile: { tx: number; ty: number } | null = null;
   // Multiplayer anti-duplication state locks
@@ -4757,14 +4764,22 @@ export class GameEngine {
           this.droppedItems.splice(i, 1);
           continue;
         }
-        const added = this.addItemToInventory(drop.itemId, drop.count);
+        const added = this.addItemToInventory(
+          drop.itemId,
+          drop.count,
+          drop.flowerColor
+        );
         if (added) {
           this.claimedDropIds.add(drop.id);
           soundManager.playPickup();
           this.renderer.spawnBurst(drop.x, drop.y, 'GOLD', 5);
           const itemDef = ITEMS[drop.itemId];
+          const colorSuffix =
+            itemDef?.isFlower && drop.flowerColor
+              ? ` (${getFlowerColorLabel(drop.flowerColor)})`
+              : '';
           this.addFloatingText(
-            `+${drop.count} ${itemDef ? itemDef.name : drop.itemId}`,
+            `+${drop.count} ${itemDef ? itemDef.name : drop.itemId}${colorSuffix}`,
             this.player.x,
             this.player.y - 18,
             '#4ade80'
@@ -5623,7 +5638,14 @@ export class GameEngine {
                   '#f43f5e'
                 );
               } else {
-                this.spawnDrop(st.itemId, 1, sx, sy);
+                this.spawnDrop(
+                  st.itemId,
+                  1,
+                  sx,
+                  sy,
+                  0.25,
+                  st.flowerColor
+                );
               }
               chunk.structures.splice(si, 1);
 
@@ -6054,6 +6076,9 @@ export class GameEngine {
         const stAtTile = this.world.getStructureAtTile(tx, ty);
         if (stAtTile) {
           this.activeStationStructureId = stAtTile.id;
+        }
+        if (target.stationType === PlaceableType.WEAVING_TABLE) {
+          this.weavingTableOpenedAtMs = performance.now();
         }
         soundManager.playPickup();
         this.renderer.spawnRipple(
@@ -6779,12 +6804,19 @@ export class GameEngine {
         }
       }
 
+      const placedFlowerColor: ClothingColorId | undefined = heldItem.isFlower
+        ? heldSlot?.selectedColor ||
+          heldItem.allowedFlowerColors?.[0] ||
+          'branco'
+        : undefined;
+
       const result = this.world.placeStructureWithUpgrade(
         target.tx,
         target.ty,
         heldItem.placeableType,
         heldItem.id,
-        this.buildOrientation
+        this.buildOrientation,
+        placedFlowerColor
       );
       if (result.placed) {
         const placedSt = this.world.getStructureAtTile(target.tx, target.ty);
@@ -6809,7 +6841,11 @@ export class GameEngine {
           // If a wall/window/door was placed and just closed a roofed contour, evaluate structure ownership from any rest point inside!
           this.getEnclosedBuildingOwnerInfo(target.tx, target.ty);
         }
-        this.consumeInventoryAt(this.player.selectedHotbarIndex, 1);
+        this.consumeInventoryAt(
+          this.player.selectedHotbarIndex,
+          1,
+          placedFlowerColor
+        );
         if (result.replacedItemId) {
           const refunded = this.addItemToInventory(result.replacedItemId, 1);
           if (!refunded) {
@@ -6994,19 +7030,48 @@ export class GameEngine {
     const fs = this.player.fishingState;
     if (fs && fs.active) {
       if (fs.phase === 'biting') {
+        const bobberTile = this.world.worldToTile(fs.bobberX, fs.bobberY);
+        const bobberBiome = this.world.getTileBiomeFast(
+          bobberTile.tx,
+          bobberTile.ty
+        );
+        const bobberHydro = this.world.getHydrologyAtTile(
+          bobberTile.tx,
+          bobberTile.ty
+        );
+        // Lula (squid) só pode ser pescada exclusivamente no Oceano!
+        const isOceanWater =
+          bobberBiome === BiomeType.OCEAN && bobberHydro.waterKind === 'ocean';
+
         const roll = Math.random();
         let fishId = 'fish_tilapia';
         let xpGain = 14;
         let textColor = '#38bdf8';
 
-        if (roll < 0.12) {
-          fishId = 'fish_golden';
-          xpGain = 55;
-          textColor = '#fde047';
-        } else if (roll < 0.4) {
-          fishId = 'fish_salmon';
-          xpGain = 26;
-          textColor = '#fb7185';
+        if (isOceanWater) {
+          if (roll < 0.12) {
+            fishId = 'fish_golden';
+            xpGain = 55;
+            textColor = '#fde047';
+          } else if (roll < 0.44) {
+            fishId = 'squid';
+            xpGain = 28;
+            textColor = '#818cf8';
+          } else if (roll < 0.7) {
+            fishId = 'fish_salmon';
+            xpGain = 26;
+            textColor = '#fb7185';
+          }
+        } else {
+          if (roll < 0.12) {
+            fishId = 'fish_golden';
+            xpGain = 55;
+            textColor = '#fde047';
+          } else if (roll < 0.4) {
+            fishId = 'fish_salmon';
+            xpGain = 26;
+            textColor = '#fb7185';
+          }
         }
 
         if (!this.addItemToInventory(fishId, 1)) {
@@ -7287,7 +7352,7 @@ export class GameEngine {
           score: computeDirectionalScore(bag.x, bag.y, -18),
           info: {
             kind: 'death_bag',
-            label: 'Bolsinha de Espólios',
+            label: `Bolsinha de Espólios · Dono: ${bag.ownerName || 'Você'}`,
             actionHint: 'Recuperar Todos os Itens 🎒',
             worldX: bag.x,
             worldY: bag.y,
@@ -7505,6 +7570,33 @@ export class GameEngine {
           }
 
           if (
+            st.type === PlaceableType.FLOWER_TULIP ||
+            st.type === PlaceableType.FLOWER_LILY ||
+            st.type === PlaceableType.FLOWER_SUNFLOWER ||
+            st.type === PlaceableType.FLOWER_SOLAR_DROP
+          ) {
+            if (distPlayer <= TILE_SIZE * 2.2) {
+              const itemDef = ITEMS[st.itemId];
+              const colorSuffix = st.flowerColor
+                ? ` (${getFlowerColorLabel(st.flowerColor)})`
+                : '';
+              candidates.push({
+                score: computeDirectionalScore(sx, sy, 6),
+                info: {
+                  kind: 'node',
+                  label: `${itemDef?.name || 'Flor'}${colorSuffix}`,
+                  actionHint: 'Colher Flor 🌸',
+                  worldX: sx,
+                  worldY: sy,
+                  iconItemId: st.itemId,
+                  structureId: st.id,
+                },
+              });
+            }
+            continue;
+          }
+
+          if (
             st.type !== PlaceableType.WORKBENCH &&
             st.type !== PlaceableType.WEAVING_TABLE &&
             st.type !== PlaceableType.FURNACE &&
@@ -7512,6 +7604,7 @@ export class GameEngine {
             st.type !== PlaceableType.CAMPFIRE &&
             st.type !== PlaceableType.BED &&
             st.type !== PlaceableType.EXPLORER_TENT &&
+            st.type !== PlaceableType.VILLAGE_HOUSE &&
             st.type !== PlaceableType.HEALING_FOUNTAIN &&
             st.type !== PlaceableType.CHEST &&
             st.type !== PlaceableType.VILLAGE_WELL &&
@@ -7550,9 +7643,8 @@ export class GameEngine {
             const canClaimRestPoint =
               isHouseStruct && this.canPlayerClaimRestPoint(st, enclosedInfo);
 
-            // Resolve displayed owner badge:
-            // - For doors or enclosed structures: shows the Enclosed Structure Owner (defined by the primary rest point inside, or "Sem Dono" if none/lost).
-            // - For standalone rest points: shows the rest point's owner.
+            // Resolve displayed owner for all structures that indicate ownership:
+            // - Doors/Gates, Beds, Explorer Tents, Village Houses, and Market Stalls always show "{Nome do Elemento} · Dono: {nome}"
             const effectiveOwnerType = enclosedInfo
               ? enclosedInfo.ownerType
               : st.ownerType || null;
@@ -7560,13 +7652,59 @@ export class GameEngine {
               ? enclosedInfo.ownerName
               : st.ownerName;
 
-            const houseOwnerBadge = isHouseStruct
-              ? effectiveOwnerType === 'PLAYER'
-                ? ` [🏠 Dono: ${effectiveOwnerName || 'Você'}]`
-                : effectiveOwnerType === 'VILLAGER'
-                ? ` [🏠 Dono: ${effectiveOwnerName || 'Aldeão'}]`
-                : ' [🏠 Sem Dono]'
-              : '';
+            const baseElementLabel =
+              st.customName ||
+              st.landmarkName ||
+              itemDef?.name ||
+              'Estação';
+
+            let resolvedOwnerText: string | null = null;
+            if (st.type === PlaceableType.MARKET_STALL) {
+              if (st.ownerType === 'PLAYER') {
+                resolvedOwnerText = st.ownerName || 'Você';
+              } else if (this.isVillagerStallOwnerAlive(st)) {
+                resolvedOwnerText = st.ownerName || 'Mercador';
+              } else {
+                resolvedOwnerText = 'Sem Dono';
+              }
+            } else if (
+              st.type === PlaceableType.BED ||
+              st.type === PlaceableType.EXPLORER_TENT ||
+              st.type === PlaceableType.VILLAGE_HOUSE
+            ) {
+              if (st.ownerType === 'PLAYER' && effectiveOwnerType === 'PLAYER') {
+                resolvedOwnerText = st.ownerName || effectiveOwnerName || 'Você';
+              } else if (houseResidents > 0) {
+                resolvedOwnerText =
+                  st.ownerName ||
+                  allHouseResidents.map((r) => r.name).join(' & ') ||
+                  'Aldeão';
+              } else if (effectiveOwnerType === 'PLAYER') {
+                resolvedOwnerText = effectiveOwnerName || 'Você';
+              } else if (effectiveOwnerType === 'VILLAGER') {
+                resolvedOwnerText = effectiveOwnerName || 'Aldeão';
+              } else {
+                resolvedOwnerText = 'Sem Dono';
+              }
+            } else if (
+              st.type === PlaceableType.WOOD_DOOR ||
+              st.type === PlaceableType.IRON_GATE
+            ) {
+              if (effectiveOwnerType === 'PLAYER') {
+                resolvedOwnerText = effectiveOwnerName || 'Você';
+              } else if (effectiveOwnerType === 'VILLAGER') {
+                resolvedOwnerText = effectiveOwnerName || 'Aldeão';
+              } else if (houseResidents > 0) {
+                resolvedOwnerText =
+                  allHouseResidents.map((r) => r.name).join(' & ') || 'Aldeão';
+              } else {
+                resolvedOwnerText = 'Sem Dono';
+              }
+            }
+
+            const stationLabel = resolvedOwnerText
+              ? `${baseElementLabel} · Dono: ${resolvedOwnerText}`
+              : baseElementLabel;
 
             const actionHint =
               isHoldingWateringCan &&
@@ -7581,9 +7719,7 @@ export class GameEngine {
                 ? `🚪 Bater na Porta (${insideNames}) 🏠`
                 : st.type === PlaceableType.WOOD_DOOR ||
                   st.type === PlaceableType.IRON_GATE
-                ? `${
-                    st.isOpen ? 'Fechar Passagem 🔒' : 'Abrir Passagem 🔓'
-                  }${houseOwnerBadge}`
+                ? `${st.isOpen ? 'Fechar Passagem 🔒' : 'Abrir Passagem 🔓'}`
                 : st.type === PlaceableType.CHEST
                 ? st.villageId
                   ? this.hasVillageChestPermission(st.villageId)
@@ -7607,16 +7743,16 @@ export class GameEngine {
                     } 🏪`
                   : this.isVillagerStallOwnerAlive(st)
                   ? this.isVillagerStallOwnerSleeping(st)
-                    ? `Tenda de ${st.ownerName || 'Mercador'} (🌙 Dormindo)`
-                    : `Tenda de ${st.ownerName || 'Mercador'} 🏪`
-                  : 'Tenda sem Dono · Tomar Posse 🏪'
+                    ? `Tenda Fechada (🌙 Dormindo)`
+                    : `Negociar na Tenda 🏪`
+                  : 'Tomar Posse da Tenda 🏪'
                 : st.type === PlaceableType.BED ||
                   st.type === PlaceableType.EXPLORER_TENT
                 ? st.ownerType === 'PLAYER' && effectiveOwnerType === 'PLAYER'
-                  ? `Dormir (Dono: ${st.ownerName || 'Você'}) 🛏️`
+                  ? `Dormir 🛏️`
                   : houseResidents > 0
-                  ? `Cama de ${st.ownerName || 'Aldeão'} 🛏️`
-                  : 'Sem Dono · Tomar Posse & Dormir 🛏️'
+                  ? `Ocupada por ${resolvedOwnerText} 🛏️`
+                  : 'Tomar Posse & Dormir 🛏️'
                 : st.type === PlaceableType.CAMPFIRE
                 ? st.outputCount && st.outputCount > 0
                   ? `Pronto: ${st.outputCount}x ${
@@ -7627,7 +7763,7 @@ export class GameEngine {
                   : 'Abrir Fogueira 🔥'
                 : st.type === PlaceableType.HEALING_FOUNTAIN
                 ? this.player.lastFountainUseDay === this.metadata.dayCount
-                  ? 'Fonte de Cura (Já usada hoje · 1x/dia)'
+                  ? 'Fonte de Cura (Já usado hoje · 1x/dia)'
                   : 'Bênção de Cura (1x por dia)'
                 : st.type === PlaceableType.WORKBENCH
                 ? 'Abrir Bancada 🔨'
@@ -7653,11 +7789,7 @@ export class GameEngine {
               score: computeDirectionalScore(sx, sy, -5),
               info: {
                 kind: 'station',
-                label:
-                  st.customName ||
-                  st.landmarkName ||
-                  itemDef?.name ||
-                  'Estação',
+                label: stationLabel,
                 actionHint,
                 worldX: sx,
                 worldY: sy,
@@ -7749,16 +7881,24 @@ export class GameEngine {
 
         const isOwnedByLocal = this.isCreatureOwnedByLocalPlayer(cr);
         const isOccupiedByOther = this.isMountOccupiedByOtherPlayer(cr);
+        const petOwnerLabel =
+          cr.ownerName ||
+          (isOwnedByLocal
+            ? this.multiplayer.localPlayerName ||
+              this.settings.playerName ||
+              'Você'
+            : 'Outro Jogador');
+        const petFullLabel = `${cr.name} · Dono: ${petOwnerLabel}`;
 
         if (!isOwnedByLocal) {
           candidates.push({
             score: computeDirectionalScore(cr.x, cr.y, 4),
             info: {
               kind: 'tamed_animal',
-              label: cr.name,
+              label: petFullLabel,
               actionHint: isOccupiedByOther
                 ? '🔒 Assento ocupado'
-                : `🔒 Pet de ${cr.ownerName || 'outro jogador'}`,
+                : `🔒 Pet de ${petOwnerLabel}`,
               worldX: cr.x,
               worldY: cr.y,
               creatureId: cr.id,
@@ -7773,7 +7913,7 @@ export class GameEngine {
             score: computeDirectionalScore(cr.x, cr.y, -5),
             info: {
               kind: 'tamed_animal',
-              label: cr.name,
+              label: petFullLabel,
               actionHint:
                 cr.hp < cr.maxHp
                   ? `Curar Pet ♥ (${ITEMS[heldSlot.itemId]?.name || 'Comida'})`
@@ -7793,7 +7933,7 @@ export class GameEngine {
             score: computeDirectionalScore(cr.x, cr.y, -5),
             info: {
               kind: 'tamed_animal',
-              label: cr.name,
+              label: petFullLabel,
               actionHint: 'Equipar Alforje/Sela 鞍',
               worldX: cr.x,
               worldY: cr.y,
@@ -7809,7 +7949,7 @@ export class GameEngine {
             score: computeDirectionalScore(cr.x, cr.y, -4),
             info: {
               kind: 'tamed_animal',
-              label: cr.name,
+              label: petFullLabel,
               actionHint: isOccupiedByOther
                 ? '🔒 Assento ocupado!'
                 : 'Retirar Alforje 鞍 (Use Cavalgar p/ montar)',
@@ -7826,7 +7966,7 @@ export class GameEngine {
           score: computeDirectionalScore(cr.x, cr.y, -2),
           info: {
             kind: 'tamed_animal',
-            label: cr.name,
+            label: petFullLabel,
             actionHint: 'Alternar (Seguindo / Base / Pastar)',
             worldX: cr.x,
             worldY: cr.y,
@@ -7871,11 +8011,20 @@ export class GameEngine {
         : `🔒 ${evalBreak.blockReason}`;
       const nx = node.tileX * TILE_SIZE + TILE_SIZE / 2;
       const ny = node.tileY * TILE_SIZE + TILE_SIZE / 2;
+      const isFlowerNode =
+        node.type === NatureNodeType.FLOWER_TULIP ||
+        node.type === NatureNodeType.FLOWER_LILY ||
+        node.type === NatureNodeType.FLOWER_SUNFLOWER ||
+        node.type === NatureNodeType.FLOWER_SOLAR_DROP;
+      const flowerLabelSuffix =
+        isFlowerNode && node.flowerColor
+          ? ` (${getFlowerColorLabel(node.flowerColor)})`
+          : '';
       candidates.push({
         score: computeDirectionalScore(nx, ny, 6),
         info: {
           kind: 'node',
-          label: bp.name,
+          label: `${bp.name}${flowerLabelSuffix}`,
           actionHint: forceHint,
           worldX: nx,
           worldY: ny,
@@ -7966,7 +8115,9 @@ export class GameEngine {
             drop.itemId,
             count,
             nx + (Math.random() - 0.5) * 14,
-            ny + (Math.random() - 0.5) * 14
+            ny + (Math.random() - 0.5) * 14,
+            0.25,
+            node.flowerColor
           );
         }
       }
@@ -9723,17 +9874,67 @@ export class GameEngine {
 
     // If moving an item (slotA) onto an identical item (slotB), stack them up to maxStack first!
     if (slotA && slotB && slotA.itemId === slotB.itemId) {
-      const maxStack = ITEMS[slotB.itemId]?.maxStack || 99;
+      const def = ITEMS[slotB.itemId];
+      const maxStack = def?.maxStack || 99;
       if (maxStack > 1 && slotB.count < maxStack) {
         const transfer = Math.min(slotA.count, maxStack - slotB.count);
         const newDstCount = slotB.count + transfer;
         const newSrcCount = slotA.count - transfer;
-        this.player.inventory[indexB] = {
-          ...slotB,
-          count: newDstCount,
-        };
-        this.player.inventory[indexA] =
-          newSrcCount > 0 ? { ...slotA, count: newSrcCount } : null;
+
+        if (def?.isFlower) {
+          const srcCounts: Partial<Record<ClothingColorId, number>> = {
+            ...(slotA.colorCounts || {
+              [slotA.selectedColor || def.allowedFlowerColors?.[0] || 'branco']:
+                slotA.count,
+            }),
+          };
+          const dstCounts: Partial<Record<ClothingColorId, number>> = {
+            ...(slotB.colorCounts || {
+              [slotB.selectedColor || def.allowedFlowerColors?.[0] || 'branco']:
+                slotB.count,
+            }),
+          };
+          let rem = transfer;
+          for (const cKey of Object.keys(srcCounts) as ClothingColorId[]) {
+            if (rem <= 0) break;
+            const avail = srcCounts[cKey] || 0;
+            if (avail > 0) {
+              const mv = Math.min(avail, rem);
+              dstCounts[cKey] = (dstCounts[cKey] || 0) + mv;
+              srcCounts[cKey] = avail - mv;
+              if ((srcCounts[cKey] || 0) <= 0) delete srcCounts[cKey];
+              rem -= mv;
+            }
+          }
+          const nextSrcSelected =
+            slotA.selectedColor && (srcCounts[slotA.selectedColor] || 0) > 0
+              ? slotA.selectedColor
+              : (Object.keys(srcCounts)[0] as ClothingColorId | undefined);
+          this.player.inventory[indexB] = {
+            ...slotB,
+            count: newDstCount,
+            colorCounts: dstCounts,
+            selectedColor:
+              slotB.selectedColor ||
+              (Object.keys(dstCounts)[0] as ClothingColorId | undefined),
+          };
+          this.player.inventory[indexA] =
+            newSrcCount > 0
+              ? {
+                  ...slotA,
+                  count: newSrcCount,
+                  colorCounts: srcCounts,
+                  selectedColor: nextSrcSelected,
+                }
+              : null;
+        } else {
+          this.player.inventory[indexB] = {
+            ...slotB,
+            count: newDstCount,
+          };
+          this.player.inventory[indexA] =
+            newSrcCount > 0 ? { ...slotA, count: newSrcCount } : null;
+        }
         soundManager.playPickup();
         this.emitUiSnapshot();
         return;
@@ -9746,11 +9947,51 @@ export class GameEngine {
     this.emitUiSnapshot();
   }
 
+  public selectInventoryFlowerColor(
+    slotIndex: number,
+    color: ClothingColorId
+  ): void {
+    const slot = this.player.inventory[slotIndex];
+    if (!slot) return;
+    const def = ITEMS[slot.itemId];
+    if (!def?.isFlower) return;
+    if (slot.colorCounts && (slot.colorCounts[color] || 0) <= 0) return;
+    slot.selectedColor = color;
+    soundManager.playPickup();
+    this.emitUiSnapshot();
+  }
+
   public splitInventorySlot(index: number): void {
     const slot = this.player.inventory[index];
     if (!slot || slot.count <= 1) return;
     const emptyIdx = this.player.inventory.findIndex((s) => s === null);
     if (emptyIdx === -1) return;
+
+    const def = ITEMS[slot.itemId];
+    if (def?.isFlower && slot.colorCounts) {
+      const activeColor =
+        slot.selectedColor ||
+        (Object.keys(slot.colorCounts)[0] as ClothingColorId) ||
+        'branco';
+      const activeColorCount = slot.colorCounts[activeColor] || 0;
+      const splitAmt =
+        activeColorCount > 1
+          ? Math.floor(activeColorCount / 2)
+          : activeColorCount >= 1
+          ? 1
+          : 0;
+      if (splitAmt <= 0) return;
+      this.consumeInventoryAt(index, splitAmt, activeColor);
+      this.player.inventory[emptyIdx] = {
+        itemId: slot.itemId,
+        count: splitAmt,
+        colorCounts: { [activeColor]: splitAmt },
+        selectedColor: activeColor,
+      };
+      soundManager.playPickup();
+      this.emitUiSnapshot();
+      return;
+    }
 
     const half = Math.floor(slot.count / 2);
     slot.count -= half;
@@ -9765,8 +10006,45 @@ export class GameEngine {
   public dropInventorySlot(index: number, dropAll = true): void {
     const slot = this.player.inventory[index];
     if (!slot) return;
-    const amount = dropAll ? slot.count : 1;
+    const def = ITEMS[slot.itemId];
     const dirVec = this.getDirectionOffset(this.player.direction);
+
+    if (def?.isFlower && slot.colorCounts) {
+      if (!dropAll) {
+        const dropColor =
+          slot.selectedColor ||
+          (Object.keys(slot.colorCounts)[0] as ClothingColorId) ||
+          'branco';
+        this.spawnDrop(
+          slot.itemId,
+          1,
+          this.player.x + dirVec.x * 26,
+          this.player.y + dirVec.y * 26,
+          6.0,
+          dropColor
+        );
+        this.consumeInventoryAt(index, 1, dropColor);
+      } else {
+        for (const [colorKey, colorAmt] of Object.entries(slot.colorCounts)) {
+          if (colorAmt && colorAmt > 0) {
+            this.spawnDrop(
+              slot.itemId,
+              colorAmt,
+              this.player.x + dirVec.x * 26 + (Math.random() - 0.5) * 8,
+              this.player.y + dirVec.y * 26 + (Math.random() - 0.5) * 8,
+              6.0,
+              colorKey as ClothingColorId
+            );
+          }
+        }
+        this.player.inventory[index] = null;
+      }
+      soundManager.playSwing();
+      this.emitUiSnapshot();
+      return;
+    }
+
+    const amount = dropAll ? slot.count : 1;
     // Se um jogador soltar um item, tem um intervalo de 6 segundos até ele ficar habilitado para coletar o item que soltou
     this.spawnDrop(
       slot.itemId,
@@ -10002,9 +10280,16 @@ export class GameEngine {
       }
     }
 
-    const added = this.addItemToInventory(st.itemId, 1);
+    const added = this.addItemToInventory(st.itemId, 1, st.flowerColor);
     if (!added) {
-      this.spawnDrop(st.itemId, 1, tx * TILE_SIZE + 16, ty * TILE_SIZE + 16);
+      this.spawnDrop(
+        st.itemId,
+        1,
+        tx * TILE_SIZE + 16,
+        ty * TILE_SIZE + 16,
+        0.25,
+        st.flowerColor
+      );
     }
     soundManager.playHitWood();
     this.renderer.spawnBurst(tx * TILE_SIZE + 16, ty * TILE_SIZE + 16, 'BUILD', 10);
@@ -11874,10 +12159,112 @@ export class GameEngine {
     return total;
   }
 
-  public getMaxCraftableCount(recipe: CraftingRecipe): number {
+  public getIngredientAvailableCount(ing: RecipeIngredient): number {
+    if (ing.flowerColor && ITEMS[ing.itemId]?.isFlower) {
+      let total = 0;
+      for (const slot of this.player.inventory) {
+        if (slot && slot.itemId === ing.itemId) {
+          if (slot.colorCounts) {
+            total += slot.colorCounts[ing.flowerColor] || 0;
+          } else {
+            const fallbackColor =
+              slot.selectedColor ||
+              ITEMS[ing.itemId]?.allowedFlowerColors?.[0] ||
+              'branco';
+            if (fallbackColor === ing.flowerColor) {
+              total += slot.count;
+            }
+          }
+        }
+      }
+      return total;
+    }
+    return this.getItemCount(ing.itemId);
+  }
+
+  public removeIngredientFromInventory(
+    ing: RecipeIngredient,
+    multiplier = 1
+  ): void {
+    const totalNeeded = ing.count * multiplier;
+    if (ing.flowerColor && ITEMS[ing.itemId]?.isFlower) {
+      let remaining = totalNeeded;
+      for (
+        let i = 0;
+        i < this.player.inventory.length && remaining > 0;
+        i++
+      ) {
+        const slot = this.player.inventory[i];
+        if (!slot || slot.itemId !== ing.itemId) continue;
+        const availInSlot = slot.colorCounts
+          ? slot.colorCounts[ing.flowerColor] || 0
+          : (slot.selectedColor ||
+              ITEMS[ing.itemId]?.allowedFlowerColors?.[0] ||
+              'branco') === ing.flowerColor
+          ? slot.count
+          : 0;
+        if (availInSlot > 0) {
+          const take = Math.min(availInSlot, remaining);
+          this.consumeInventoryAt(i, take, ing.flowerColor);
+          remaining -= take;
+        }
+      }
+      return;
+    }
+    this.removeItemFromInventory(ing.itemId, totalNeeded);
+  }
+
+  public getRecipeActiveIngredients(
+    recipe: CraftingRecipe,
+    materialOptionId?: string
+  ): RecipeIngredient[] {
+    if (recipe.materialOptions && recipe.materialOptions.length > 0) {
+      if (materialOptionId) {
+        const found = recipe.materialOptions.find(
+          (o) => o.id === materialOptionId
+        );
+        if (found) return found.ingredients;
+      }
+      for (const opt of recipe.materialOptions) {
+        const canAll = opt.ingredients.every(
+          (ing) => this.getIngredientAvailableCount(ing) >= ing.count
+        );
+        if (canAll) return opt.ingredients;
+      }
+      return recipe.materialOptions[0].ingredients;
+    }
+    return recipe.ingredients;
+  }
+
+  public getMaxCraftableCount(
+    recipe: CraftingRecipe,
+    materialOptionId?: string
+  ): number {
+    if (
+      recipe.materialOptions &&
+      recipe.materialOptions.length > 0 &&
+      !materialOptionId
+    ) {
+      let best = 0;
+      for (const opt of recipe.materialOptions) {
+        let optMax = 99;
+        for (const ing of opt.ingredients) {
+          const have = this.getIngredientAvailableCount(ing);
+          const possible = Math.floor(have / ing.count);
+          if (possible < optMax) optMax = possible;
+        }
+        if (optMax > best) best = optMax;
+      }
+      return Math.max(0, best);
+    }
+
+    const activeIngredients = this.getRecipeActiveIngredients(
+      recipe,
+      materialOptionId
+    );
     let maxTimes = 99;
-    for (const ing of recipe.ingredients) {
-      const have = this.getItemCount(ing.itemId);
+    for (const ing of activeIngredients) {
+      const have = this.getIngredientAvailableCount(ing);
       const possible = Math.floor(have / ing.count);
       if (possible < maxTimes) maxTimes = possible;
     }
@@ -11886,22 +12273,26 @@ export class GameEngine {
 
   public canCraftRecipe(
     recipe: CraftingRecipe,
-    activeStation: PlaceableType | null
+    activeStation: PlaceableType | null,
+    materialOptionId?: string
   ): boolean {
     if (recipe.requiredStation !== activeStation) {
       return false;
     }
-    return this.getMaxCraftableCount(recipe) >= 1;
+    return this.getMaxCraftableCount(recipe, materialOptionId) >= 1;
   }
 
   public craftRecipe(
     recipeId: string,
     activeStation: PlaceableType | null,
-    times = 1
+    times = 1,
+    materialOptionId?: string
   ): boolean {
     const recipe = RECIPES.find((r) => r.id === recipeId);
     if (!recipe) return false;
-    if (!this.canCraftRecipe(recipe, activeStation)) return false;
+    if (!this.canCraftRecipe(recipe, activeStation, materialOptionId)) {
+      return false;
+    }
 
     // If this recipe belongs to a Thermal Station (CAMPFIRE or FURNACE) with preparation time, queue it in the station!
     if (
@@ -11912,12 +12303,16 @@ export class GameEngine {
       return this.queueThermalStationRecipe(activeStation, recipeId, times);
     }
 
-    const maxPossible = this.getMaxCraftableCount(recipe);
+    const maxPossible = this.getMaxCraftableCount(recipe, materialOptionId);
     const actualTimes = Math.min(times, maxPossible);
     if (actualTimes <= 0) return false;
 
-    for (const ing of recipe.ingredients) {
-      this.removeItemFromInventory(ing.itemId, ing.count * actualTimes);
+    const activeIngredients = this.getRecipeActiveIngredients(
+      recipe,
+      materialOptionId
+    );
+    for (const ing of activeIngredients) {
+      this.removeIngredientFromInventory(ing, actualTimes);
     }
 
     const totalOut = recipe.resultCount * actualTimes;
@@ -12284,6 +12679,10 @@ export class GameEngine {
           emitOrGive(ing.itemId, ing.count * st.cookingInputCount!);
         }
       }
+      if (st.weavingDyeItemId) {
+        emitOrGive(st.weavingDyeItemId, 1);
+        st.weavingDyeItemId = null;
+      }
       st.cookingRecipeId = null;
       st.cookingInputCount = 0;
       st.cookingProgress = 0;
@@ -12363,6 +12762,9 @@ export class GameEngine {
     recipeId: string,
     colorId?: ClothingColorId
   ): { ok: boolean; message: string } {
+    if (performance.now() - this.weavingTableOpenedAtMs < 200) {
+      return { ok: false, message: '' };
+    }
     const recipe = RECIPES.find((r) => r.id === recipeId);
     if (!recipe || recipe.requiredStation !== PlaceableType.WEAVING_TABLE) {
       return { ok: false, message: 'Receita inválida para a Mesa de Tecelagem.' };
@@ -12384,6 +12786,24 @@ export class GameEngine {
     }
 
     const baseItem = ITEMS[recipe.resultItemId];
+    const defaultColorId: ClothingColorId =
+      baseItem?.garmentColorId || 'branco';
+    const effectiveColorId: ClothingColorId =
+      baseItem?.canBeDyed && colorId ? colorId : defaultColorId;
+    const requiresDye =
+      Boolean(baseItem?.canBeDyed) && effectiveColorId !== defaultColorId;
+    const requiredDyeItemId = requiresDye
+      ? getDyeItemIdForColor(effectiveColorId)
+      : null;
+
+    if (requiredDyeItemId && this.getItemCount(requiredDyeItemId) < 1) {
+      const dyeName = ITEMS[requiredDyeItemId]?.name || 'Corante';
+      return {
+        ok: false,
+        message: `Você precisa de 1x ${dyeName} para confeccionar fora da cor padrão.`,
+      };
+    }
+
     let targetItemId = recipe.resultItemId;
     if (baseItem?.canBeDyed && colorId) {
       targetItemId = getDyedGarmentItemId(recipe.resultItemId, colorId);
@@ -12401,9 +12821,13 @@ export class GameEngine {
     for (const ing of recipe.ingredients) {
       this.removeItemFromInventory(ing.itemId, ing.count);
     }
+    if (requiredDyeItemId) {
+      this.removeItemFromInventory(requiredDyeItemId, 1);
+    }
 
     st.cookingRecipeId = recipe.id;
     st.weavingTargetItemId = targetItemId;
+    st.weavingDyeItemId = requiredDyeItemId;
     st.cookingInputCount = 1;
     st.cookingDuration = Math.max(1, recipe.craftTimeSec || 120);
     st.cookingProgress = 0;
@@ -12430,8 +12854,10 @@ export class GameEngine {
 
     const recipe = RECIPES.find((r) => r.id === st.cookingRecipeId);
     const batches = st.cookingInputCount;
+    const refundDyeId = st.weavingDyeItemId || null;
     st.cookingRecipeId = null;
     st.weavingTargetItemId = null;
+    st.weavingDyeItemId = null;
     st.cookingInputCount = 0;
     st.cookingProgress = 0;
 
@@ -12440,6 +12866,9 @@ export class GameEngine {
         const refundCount = ing.count * batches;
         this.addItemOrDropOnGround(ing.itemId, refundCount);
       }
+    }
+    if (refundDyeId) {
+      this.addItemOrDropOnGround(refundDyeId, 1);
     }
 
     soundManager.playPickup();
@@ -12485,6 +12914,12 @@ export class GameEngine {
       | { kind: 'equipped'; equipSlot: EquipmentSlot },
     targetColorId: ClothingColorId
   ): { ok: boolean; message: string } {
+    if (performance.now() - this.weavingTableOpenedAtMs < 200) {
+      return { ok: false, message: '' };
+    }
+    const requiredDyeItemId = getDyeItemIdForColor(targetColorId);
+    const requiredDyeDef = ITEMS[requiredDyeItemId];
+
     if (source.kind === 'inventory') {
       const slot = this.player.inventory[source.slotIndex];
       if (!slot || slot.count <= 0) {
@@ -12505,6 +12940,16 @@ export class GameEngine {
       if (dyedId === slot.itemId) {
         return { ok: false, message: 'A peça já está nesta cor.' };
       }
+      if (this.getItemCount(requiredDyeItemId) < 1) {
+        return {
+          ok: false,
+          message: `Você precisa de 1x ${
+            requiredDyeDef?.name || 'Corante'
+          } na mochila para tingir nesta cor.`,
+        };
+      }
+
+      this.removeItemFromInventory(requiredDyeItemId, 1);
 
       if (slot.count === 1) {
         slot.itemId = dyedId;
@@ -12546,6 +12991,16 @@ export class GameEngine {
       if (dyedId === currentId) {
         return { ok: false, message: 'A peça já está nesta cor.' };
       }
+      if (this.getItemCount(requiredDyeItemId) < 1) {
+        return {
+          ok: false,
+          message: `Você precisa de 1x ${
+            requiredDyeDef?.name || 'Corante'
+          } na mochila para tingir nesta cor.`,
+        };
+      }
+
+      this.removeItemFromInventory(requiredDyeItemId, 1);
 
       this.player.equippedBySlot[source.equipSlot] = dyedId;
       this.player.equippedArmorId = this.player.equippedBySlot.body;
@@ -12639,6 +13094,7 @@ export class GameEngine {
         if (st.cookingInputCount <= 0) {
           st.cookingRecipeId = null;
           st.weavingTargetItemId = null;
+          st.weavingDyeItemId = null;
           st.cookingInputCount = 0;
           st.cookingProgress = 0;
         }
@@ -12705,7 +13161,11 @@ export class GameEngine {
     }
   }
 
-  public addItemToInventory(itemId: string, count: number): boolean {
+  public addItemToInventory(
+    itemId: string,
+    count: number,
+    flowerColor?: ClothingColorId
+  ): boolean {
     const def = ITEMS[itemId];
     if (!def) return false;
     if (itemId === 'gold_coin') {
@@ -12718,13 +13178,32 @@ export class GameEngine {
       return true;
     }
     let remaining = count;
+    const isFlower = Boolean(def.isFlower);
+    const resolvedFlowerColor: ClothingColorId =
+      flowerColor || def.allowedFlowerColors?.[0] || 'branco';
 
+    // Flores da mesma espécie agrupam no mesmo slot (mantendo a contagem de cada cor em colorCounts).
+    // Flores de espécies diferentes têm itemIds distintos e nunca agrupam juntas.
     for (let i = 0; i < this.player.inventory.length; i++) {
       const slot = this.player.inventory[i];
       if (slot && slot.itemId === itemId && slot.count < def.maxStack) {
         const space = def.maxStack - slot.count;
         const take = Math.min(space, remaining);
         slot.count += take;
+        if (isFlower) {
+          const counts: Partial<Record<ClothingColorId, number>> = {
+            ...(slot.colorCounts || {}),
+          };
+          counts[resolvedFlowerColor] =
+            (counts[resolvedFlowerColor] || 0) + take;
+          slot.colorCounts = counts;
+          if (
+            !slot.selectedColor ||
+            (counts[slot.selectedColor] || 0) <= 0
+          ) {
+            slot.selectedColor = resolvedFlowerColor;
+          }
+        }
         remaining -= take;
         if (remaining <= 0) return true;
       }
@@ -12733,7 +13212,16 @@ export class GameEngine {
     for (let i = 0; i < this.player.inventory.length; i++) {
       if (this.player.inventory[i] === null) {
         const take = Math.min(def.maxStack, remaining);
-        this.player.inventory[i] = { itemId, count: take };
+        if (isFlower) {
+          this.player.inventory[i] = {
+            itemId,
+            count: take,
+            colorCounts: { [resolvedFlowerColor]: take },
+            selectedColor: resolvedFlowerColor,
+          };
+        } else {
+          this.player.inventory[i] = { itemId, count: take };
+        }
         remaining -= take;
         if (remaining <= 0) return true;
       }
@@ -12749,7 +13237,8 @@ export class GameEngine {
     itemId: string,
     count: number,
     wx = this.player.x,
-    wy = this.player.y + 12
+    wy = this.player.y + 12,
+    flowerColor?: ClothingColorId
   ): number {
     const def = ITEMS[itemId];
     if (!def || count <= 0) return 0;
@@ -12759,24 +13248,51 @@ export class GameEngine {
     }
 
     let remaining = count;
+    const isFlower = Boolean(def.isFlower);
+    const resolvedFlowerColor: ClothingColorId =
+      flowerColor || def.allowedFlowerColors?.[0] || 'branco';
+
     for (let i = 0; i < this.player.inventory.length && remaining > 0; i++) {
       const slot = this.player.inventory[i];
       if (slot && slot.itemId === itemId && slot.count < def.maxStack) {
         const take = Math.min(def.maxStack - slot.count, remaining);
         slot.count += take;
+        if (isFlower) {
+          const counts: Partial<Record<ClothingColorId, number>> = {
+            ...(slot.colorCounts || {}),
+          };
+          counts[resolvedFlowerColor] =
+            (counts[resolvedFlowerColor] || 0) + take;
+          slot.colorCounts = counts;
+          if (
+            !slot.selectedColor ||
+            (counts[slot.selectedColor] || 0) <= 0
+          ) {
+            slot.selectedColor = resolvedFlowerColor;
+          }
+        }
         remaining -= take;
       }
     }
     for (let i = 0; i < this.player.inventory.length && remaining > 0; i++) {
       if (this.player.inventory[i] === null) {
         const take = Math.min(def.maxStack, remaining);
-        this.player.inventory[i] = { itemId, count: take };
+        if (isFlower) {
+          this.player.inventory[i] = {
+            itemId,
+            count: take,
+            colorCounts: { [resolvedFlowerColor]: take },
+            selectedColor: resolvedFlowerColor,
+          };
+        } else {
+          this.player.inventory[i] = { itemId, count: take };
+        }
         remaining -= take;
       }
     }
 
     if (remaining > 0) {
-      this.spawnDrop(itemId, remaining, wx, wy);
+      this.spawnDrop(itemId, remaining, wx, wy, 0.25, flowerColor);
     }
     return count - remaining;
   }
@@ -12794,19 +13310,48 @@ export class GameEngine {
       const slot = this.player.inventory[i];
       if (slot && slot.itemId === itemId) {
         const take = Math.min(slot.count, remaining);
-        slot.count -= take;
+        this.consumeInventoryAt(i, take);
         remaining -= take;
-        if (slot.count <= 0) {
-          this.player.inventory[i] = null;
-        }
         if (remaining <= 0) return;
       }
     }
   }
 
-  private consumeInventoryAt(slotIndex: number, count: number): void {
+  private consumeInventoryAt(
+    slotIndex: number,
+    count: number,
+    preferredColor?: ClothingColorId
+  ): void {
     const slot = this.player.inventory[slotIndex];
     if (!slot) return;
+    if (slot.colorCounts) {
+      let remToDeduct = count;
+      const counts: Partial<Record<ClothingColorId, number>> = {
+        ...slot.colorCounts,
+      };
+      const primaryColor = preferredColor || slot.selectedColor;
+      if (primaryColor && (counts[primaryColor] || 0) > 0) {
+        const d = Math.min(counts[primaryColor]!, remToDeduct);
+        counts[primaryColor]! -= d;
+        if (counts[primaryColor]! <= 0) delete counts[primaryColor];
+        remToDeduct -= d;
+      }
+      for (const cKey of Object.keys(counts) as ClothingColorId[]) {
+        if (remToDeduct <= 0) break;
+        const avail = counts[cKey] || 0;
+        if (avail > 0) {
+          const d = Math.min(avail, remToDeduct);
+          counts[cKey] = avail - d;
+          if (counts[cKey]! <= 0) delete counts[cKey];
+          remToDeduct -= d;
+        }
+      }
+      slot.colorCounts = counts;
+      if (!slot.selectedColor || (counts[slot.selectedColor] || 0) <= 0) {
+        const remainingColors = Object.keys(counts) as ClothingColorId[];
+        slot.selectedColor = remainingColors[0] || undefined;
+      }
+    }
     slot.count -= count;
     if (slot.count <= 0) {
       this.player.inventory[slotIndex] = null;
@@ -12879,13 +13424,19 @@ export class GameEngine {
     count: number,
     x: number,
     y: number,
-    pickupDelay = 0.25
+    pickupDelay = 0.25,
+    flowerColor?: ClothingColorId
   ): void {
     if (itemId === 'tilled_soil' || itemId === 'dirt_path') return;
+    const def = ITEMS[itemId];
+    const resolvedFlowerColor: ClothingColorId | undefined = def?.isFlower
+      ? flowerColor || def.allowedFlowerColors?.[0] || 'branco'
+      : undefined;
     const drop: DroppedItem = {
       id: `drop_${Date.now()}_${Math.floor(Math.random() * 100000)}`,
       itemId,
       count,
+      flowerColor: resolvedFlowerColor,
       x,
       y,
       bobTimer: Math.random() * 5,
@@ -14900,6 +15451,7 @@ export class GameEngine {
           winnerPeerId: peerId,
           itemId: drop.itemId,
           count: drop.count,
+          flowerColor: drop.flowerColor,
           x: drop.x,
           y: drop.y,
         });
@@ -15224,7 +15776,11 @@ export class GameEngine {
           }
         }
         if (result.winnerPeerId === myPeerId && result.itemId && result.count) {
-          const added = this.addItemToInventory(result.itemId, result.count);
+          const added = this.addItemToInventory(
+            result.itemId,
+            result.count,
+            result.flowerColor
+          );
           if (added) {
             soundManager.playPickup();
             this.renderer.spawnBurst(
@@ -15246,7 +15802,9 @@ export class GameEngine {
               result.itemId,
               result.count,
               this.player.x,
-              this.player.y
+              this.player.y,
+              0.25,
+              result.flowerColor
             );
           }
         }

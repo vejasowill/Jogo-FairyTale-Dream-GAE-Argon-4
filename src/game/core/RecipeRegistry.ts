@@ -1,4 +1,16 @@
-import { PlaceableType, RarityTier } from './types';
+import { ClothingColorId, PlaceableType, RarityTier } from './types';
+
+export interface RecipeIngredient {
+  itemId: string;
+  count: number;
+  flowerColor?: ClothingColorId;
+}
+
+export interface RecipeMaterialOption {
+  id: string;
+  label: string;
+  ingredients: RecipeIngredient[];
+}
 
 export interface CraftingRecipe {
   id: string;
@@ -7,8 +19,10 @@ export interface CraftingRecipe {
   requiredStation: PlaceableType | null; // null = Mão Livre | WORKBENCH = Bancada | CAMPFIRE = Fogueira | FURNACE = Fornalha | SOLAR_ALTAR = Altar Solar
   craftTimeSec?: number; // 0 / undefined = Instantâneo (Mão / Bancada / Altar Solar) | > 0 = Tempo de preparo com Lenha (Fogueira / Fornalha)
   rarity: RarityTier;
-  ingredients: { itemId: string; count: number }[];
+  ingredients: RecipeIngredient[];
+  materialOptions?: RecipeMaterialOption[];
 }
+
 
 export const RECIPES: CraftingRecipe[] = [
   // ==========================================================================
@@ -698,6 +712,259 @@ export const RECIPES: CraftingRecipe[] = [
     ingredients: [
       { itemId: 'iron_bar', count: 1 },
       { itemId: 'solar_crystal', count: 1 },
+    ],
+  },
+
+  // --- CORANTES (BANCADA DE TRABALHO) ---
+  {
+    id: 'craft_dye_preto',
+    resultItemId: 'dye_preto',
+    resultCount: 1,
+    requiredStation: PlaceableType.WORKBENCH,
+    craftTimeSec: 0,
+    rarity: RarityTier.BASIC,
+    ingredients: [{ itemId: 'squid', count: 1 }],
+  },
+  {
+    id: 'craft_dye_cinza',
+    resultItemId: 'dye_cinza',
+    resultCount: 1,
+    requiredStation: PlaceableType.WORKBENCH,
+    craftTimeSec: 0,
+    rarity: RarityTier.BASIC,
+    ingredients: [
+      { itemId: 'dye_preto', count: 1 },
+      { itemId: 'dye_branco', count: 1 },
+    ],
+  },
+  {
+    id: 'craft_dye_cinza_claro',
+    resultItemId: 'dye_cinza_claro',
+    resultCount: 1,
+    requiredStation: PlaceableType.WORKBENCH,
+    craftTimeSec: 0,
+    rarity: RarityTier.BASIC,
+    ingredients: [
+      { itemId: 'dye_cinza', count: 1 },
+      { itemId: 'dye_branco', count: 1 },
+    ],
+  },
+  {
+    id: 'craft_dye_branco',
+    resultItemId: 'dye_branco',
+    resultCount: 1,
+    requiredStation: PlaceableType.WORKBENCH,
+    craftTimeSec: 0,
+    rarity: RarityTier.BASIC,
+    ingredients: [{ itemId: 'flower_tulip', count: 1, flowerColor: 'branco' }],
+    materialOptions: [
+      {
+        id: 'tulip_branco',
+        label: 'Tulipa Branca',
+        ingredients: [{ itemId: 'flower_tulip', count: 1, flowerColor: 'branco' }],
+      },
+      {
+        id: 'lily_branco',
+        label: 'Lírio-do-Vale Branco',
+        ingredients: [{ itemId: 'flower_lily', count: 1, flowerColor: 'branco' }],
+      },
+    ],
+  },
+  {
+    id: 'craft_dye_vermelho',
+    resultItemId: 'dye_vermelho',
+    resultCount: 1,
+    requiredStation: PlaceableType.WORKBENCH,
+    craftTimeSec: 0,
+    rarity: RarityTier.BASIC,
+    ingredients: [{ itemId: 'flower_tulip', count: 1, flowerColor: 'vermelho' }],
+    materialOptions: [
+      {
+        id: 'tulip_vermelho',
+        label: 'Tulipa Vermelha',
+        ingredients: [{ itemId: 'flower_tulip', count: 1, flowerColor: 'vermelho' }],
+      },
+      {
+        id: 'lily_vermelho',
+        label: 'Lírio-do-Vale Vermelho',
+        ingredients: [{ itemId: 'flower_lily', count: 1, flowerColor: 'vermelho' }],
+      },
+    ],
+  },
+  {
+    id: 'craft_dye_laranja',
+    resultItemId: 'dye_laranja',
+    resultCount: 1,
+    requiredStation: PlaceableType.WORKBENCH,
+    craftTimeSec: 0,
+    rarity: RarityTier.BASIC,
+    ingredients: [{ itemId: 'flower_tulip', count: 1, flowerColor: 'laranja' }],
+    materialOptions: [
+      {
+        id: 'tulip_laranja',
+        label: 'Tulipa Laranja',
+        ingredients: [{ itemId: 'flower_tulip', count: 1, flowerColor: 'laranja' }],
+      },
+      {
+        id: 'lily_laranja',
+        label: 'Lírio-do-Vale Laranja',
+        ingredients: [{ itemId: 'flower_lily', count: 1, flowerColor: 'laranja' }],
+      },
+    ],
+  },
+  {
+    id: 'craft_dye_amarelo',
+    resultItemId: 'dye_amarelo',
+    resultCount: 1,
+    requiredStation: PlaceableType.WORKBENCH,
+    craftTimeSec: 0,
+    rarity: RarityTier.BASIC,
+    ingredients: [{ itemId: 'flower_sunflower', count: 1, flowerColor: 'amarelo' }],
+    materialOptions: [
+      {
+        id: 'sunflower',
+        label: 'Girassol',
+        ingredients: [{ itemId: 'flower_sunflower', count: 1, flowerColor: 'amarelo' }],
+      },
+      {
+        id: 'tulip_amarelo',
+        label: 'Tulipa Amarela',
+        ingredients: [{ itemId: 'flower_tulip', count: 1, flowerColor: 'amarelo' }],
+      },
+      {
+        id: 'lily_amarelo',
+        label: 'Lírio-do-Vale Amarelo',
+        ingredients: [{ itemId: 'flower_lily', count: 1, flowerColor: 'amarelo' }],
+      },
+    ],
+  },
+  {
+    id: 'craft_dye_verde_lima',
+    resultItemId: 'dye_verde_lima',
+    resultCount: 1,
+    requiredStation: PlaceableType.WORKBENCH,
+    craftTimeSec: 0,
+    rarity: RarityTier.BASIC,
+    ingredients: [
+      { itemId: 'dye_verde', count: 1 },
+      { itemId: 'dye_branco', count: 1 },
+    ],
+  },
+  {
+    id: 'craft_dye_verde',
+    resultItemId: 'dye_verde',
+    resultCount: 1,
+    requiredStation: PlaceableType.WORKBENCH,
+    craftTimeSec: 0,
+    rarity: RarityTier.BASIC,
+    ingredients: [{ itemId: 'fiber', count: 1 }],
+  },
+  {
+    id: 'craft_dye_ciano',
+    resultItemId: 'dye_ciano',
+    resultCount: 1,
+    requiredStation: PlaceableType.WORKBENCH,
+    craftTimeSec: 0,
+    rarity: RarityTier.BASIC,
+    ingredients: [
+      { itemId: 'dye_verde', count: 1 },
+      { itemId: 'dye_azul', count: 1 },
+    ],
+  },
+  {
+    id: 'craft_dye_azul_claro',
+    resultItemId: 'dye_azul_claro',
+    resultCount: 1,
+    requiredStation: PlaceableType.WORKBENCH,
+    craftTimeSec: 0,
+    rarity: RarityTier.BASIC,
+    ingredients: [
+      { itemId: 'dye_azul', count: 1 },
+      { itemId: 'dye_branco', count: 1 },
+    ],
+  },
+  {
+    id: 'craft_dye_azul',
+    resultItemId: 'dye_azul',
+    resultCount: 1,
+    requiredStation: PlaceableType.WORKBENCH,
+    craftTimeSec: 0,
+    rarity: RarityTier.BASIC,
+    ingredients: [{ itemId: 'flower_tulip', count: 1, flowerColor: 'azul' }],
+  },
+  {
+    id: 'craft_dye_roxo',
+    resultItemId: 'dye_roxo',
+    resultCount: 1,
+    requiredStation: PlaceableType.WORKBENCH,
+    craftTimeSec: 0,
+    rarity: RarityTier.BASIC,
+    ingredients: [{ itemId: 'flower_tulip', count: 1, flowerColor: 'roxo' }],
+    materialOptions: [
+      {
+        id: 'tulip_roxo',
+        label: 'Tulipa Roxa',
+        ingredients: [{ itemId: 'flower_tulip', count: 1, flowerColor: 'roxo' }],
+      },
+      {
+        id: 'lily_roxo',
+        label: 'Lírio-do-Vale Roxo',
+        ingredients: [{ itemId: 'flower_lily', count: 1, flowerColor: 'roxo' }],
+      },
+    ],
+  },
+  {
+    id: 'craft_dye_magenta',
+    resultItemId: 'dye_magenta',
+    resultCount: 1,
+    requiredStation: PlaceableType.WORKBENCH,
+    craftTimeSec: 0,
+    rarity: RarityTier.BASIC,
+    ingredients: [{ itemId: 'flower_tulip', count: 1, flowerColor: 'magenta' }],
+  },
+  {
+    id: 'craft_dye_rosa',
+    resultItemId: 'dye_rosa',
+    resultCount: 1,
+    requiredStation: PlaceableType.WORKBENCH,
+    craftTimeSec: 0,
+    rarity: RarityTier.BASIC,
+    ingredients: [{ itemId: 'flower_lily', count: 1, flowerColor: 'rosa' }],
+    materialOptions: [
+      {
+        id: 'lily_rosa',
+        label: 'Lírio-do-Vale Rosa',
+        ingredients: [{ itemId: 'flower_lily', count: 1, flowerColor: 'rosa' }],
+      },
+      {
+        id: 'tulip_rosa',
+        label: 'Tulipa Rosa',
+        ingredients: [{ itemId: 'flower_tulip', count: 1, flowerColor: 'rosa' }],
+      },
+    ],
+  },
+  {
+    id: 'craft_dye_marrom',
+    resultItemId: 'dye_marrom',
+    resultCount: 1,
+    requiredStation: PlaceableType.WORKBENCH,
+    craftTimeSec: 0,
+    rarity: RarityTier.BASIC,
+    ingredients: [
+      { itemId: 'dye_laranja', count: 1 },
+      { itemId: 'dye_preto', count: 1 },
+    ],
+  },
+  {
+    id: 'craft_dye_bege',
+    resultItemId: 'dye_bege',
+    resultCount: 1,
+    requiredStation: PlaceableType.WORKBENCH,
+    craftTimeSec: 0,
+    rarity: RarityTier.BASIC,
+    ingredients: [
+      { itemId: 'dye_marrom', count: 1 },
+      { itemId: 'dye_branco', count: 1 },
     ],
   },
 
