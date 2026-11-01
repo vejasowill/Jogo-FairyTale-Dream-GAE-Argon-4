@@ -837,6 +837,84 @@ class SpriteAtlasManager {
             `${BiomeType.ISLAND}_${z}_${v}_${f}`,
             z === 1 ? dCanvas : pCanvas
           );
+
+          // =================================================================
+          // 5. FOREST (Floresta Comum) MINIMALIST 32x32 TILE (Mossy woodland floor)
+          // =================================================================
+          const forestPalettes = [
+            { base: '#3d7a37', soft: '#356d30', accent: '#2c5c27', leaf: '#7c5329' },
+            { base: '#43833c', soft: '#3a7534', accent: '#30642b', leaf: '#8a5d2e' },
+            { base: '#498b42', soft: '#3f7c39', accent: '#346b2f', leaf: '#6e4923' },
+          ];
+          const fPal = forestPalettes[z];
+          const fCanvas = createPixelCanvas(32, 32);
+          const fCtx = fCanvas.getContext('2d')!;
+          fCtx.fillStyle = fPal.base;
+          fCtx.fillRect(0, 0, 32, 32);
+          fCtx.fillStyle = fPal.soft;
+          fCtx.fillRect(patchX1, patchY1, 7, 3);
+          fCtx.fillRect(patchX2, patchY2, 5, 3);
+          for (let i = 0; i < 2; i++) {
+            const lx = ((v * 9 + i * 13 + z * 5) % 24) + 4;
+            const ly = ((v * 11 + i * 15 + z * 3) % 24) + 5;
+            fCtx.fillStyle = i === 0 ? fPal.accent : fPal.leaf;
+            fCtx.fillRect(lx, ly, 2, 2);
+          }
+          this.tileSprites.set(`${BiomeType.FOREST}_${z}_${v}_${f}`, fCanvas);
+
+          // =================================================================
+          // 6. TEMPERATE_FOREST (Floresta Temperada) 32x32 TILE (Dark deep forest floor)
+          // =================================================================
+          const tempForestPalettes = [
+            { base: '#275332', soft: '#20472a', accent: '#193b21', humus: '#3b2b1d' },
+            { base: '#2b5b37', soft: '#244e2e', accent: '#1c4025', humus: '#423020' },
+            { base: '#31643d', soft: '#295634', accent: '#20462a', humus: '#493624' },
+          ];
+          const tfPal = tempForestPalettes[z];
+          const tfCanvas = createPixelCanvas(32, 32);
+          const tfCtx = tfCanvas.getContext('2d')!;
+          tfCtx.fillStyle = tfPal.base;
+          tfCtx.fillRect(0, 0, 32, 32);
+          tfCtx.fillStyle = tfPal.soft;
+          tfCtx.fillRect(patchX1, patchY1, 7, 4);
+          tfCtx.fillRect(patchX2, patchY2, 6, 3);
+          for (let i = 0; i < 2; i++) {
+            const gx = ((v * 7 + i * 15 + z * 5) % 24) + 4;
+            const gy = ((v * 13 + i * 11 + z * 3) % 24) + 5;
+            tfCtx.fillStyle = i === 0 ? tfPal.accent : tfPal.humus;
+            tfCtx.fillRect(gx, gy, 2, 2);
+          }
+          this.tileSprites.set(
+            `${BiomeType.TEMPERATE_FOREST}_${z}_${v}_${f}`,
+            tfCanvas
+          );
+
+          // =================================================================
+          // 7. TAIGA_FOREST (Floresta de Taiga) 32x32 TILE (Boreal pine-needle & cool moss floor)
+          // =================================================================
+          const taigaPalettes = [
+            { base: '#2d574c', soft: '#264b41', accent: '#1e3e36', needle: '#4e3b29' },
+            { base: '#325f53', soft: '#2a5247', accent: '#22443b', needle: '#57422e' },
+            { base: '#38685b', soft: '#305a4f', accent: '#264b41', needle: '#614a34' },
+          ];
+          const tgPal = taigaPalettes[z];
+          const tgCanvas = createPixelCanvas(32, 32);
+          const tgCtx = tgCanvas.getContext('2d')!;
+          tgCtx.fillStyle = tgPal.base;
+          tgCtx.fillRect(0, 0, 32, 32);
+          tgCtx.fillStyle = tgPal.soft;
+          tgCtx.fillRect(patchX1, patchY1, 6, 3);
+          tgCtx.fillRect(patchX2, patchY2, 6, 3);
+          for (let i = 0; i < 2; i++) {
+            const nx = ((v * 11 + i * 13 + z * 7) % 24) + 4;
+            const ny = ((v * 9 + i * 17 + z * 5) % 24) + 5;
+            tgCtx.fillStyle = i === 0 ? tgPal.needle : tgPal.accent;
+            tgCtx.fillRect(nx, ny, 3, 1);
+          }
+          this.tileSprites.set(
+            `${BiomeType.TAIGA_FOREST}_${z}_${v}_${f}`,
+            tgCanvas
+          );
         }
       }
     }
@@ -3742,6 +3820,54 @@ class SpriteAtlasManager {
       { d: '#2a1205', y: '#f59e0b', l: '#b45309', b: '#78350f', s: '#e2e8f0' }
     );
 
+    // Carne Bovina Crua (raw_beef) — Thick T-bone / sirloin red beef cut with white marbling
+    registerItem(
+      'raw_beef',
+      [
+        '................',
+        '....dddddddd....',
+        '..ddrrrrrrrrdd..',
+        '.drrRwwwwwwRrrd.',
+        '.drrRwwRRwwRrrd.',
+        '.drrRRRRRRRRrrd.',
+        '.drrRRwwwwRRrrd.',
+        '..ddrrrrrrrrdd..',
+        '....dddddddd....',
+        '................',
+        '................',
+        '................',
+        '................',
+        '................',
+        '................',
+        '................',
+      ],
+      { d: '#3b0707', r: '#991b1b', R: '#dc2626', w: '#fecdd3' }
+    );
+
+    // Carne Bovina Assada (cooked_beef) — Char-grilled juicy steak with sear marks
+    registerItem(
+      'cooked_beef',
+      [
+        '....ss....ss....',
+        '.....ss..ss.....',
+        '....dddddddd....',
+        '..ddbbbbbbbbdd..',
+        '.dbbmddmmddmbbd.',
+        '.dbbmmddddmmbbd.',
+        '.dbbmddmmddmbbd.',
+        '..ddbbbbbbbbdd..',
+        '....dddddddd....',
+        '................',
+        '................',
+        '................',
+        '................',
+        '................',
+        '................',
+        '................',
+      ],
+      { d: '#1c0a04', b: '#5c2d16', m: '#9a3412', s: '#e2e8f0' }
+    );
+
     // Muda de Árvore (oak_sapling) — Young oak sprout with bright green leaves & root ball
     registerItem(
       'oak_sapling',
@@ -4670,6 +4796,133 @@ class SpriteAtlasManager {
       ctx.fillRect(8, 8 - open, 32, 7);
       ctx.fillStyle = '#7dd3fc';
       ctx.fillRect(11, 9 - open, 26, 3);
+    });
+
+    // 12. TEMPERATE_TREE (72x96 canvas — Large, tall, dark-colored Temperate Forest tree)
+    registerNatureVariants(
+      NatureNodeType.TEMPERATE_TREE,
+      72,
+      96,
+      (ctx, f, v) => {
+        const sway = f === 1 ? 1 : f === 3 ? -1 : 0;
+        const darkForestColors = {
+          outline: '#05140b',
+          deep: '#0b2e19',
+          mid: '#114627',
+          bright: '#186036',
+          spec: '#27824c',
+        };
+
+        // Ground shadow
+        ctx.fillStyle = 'rgba(5, 12, 8, 0.42)';
+        ctx.fillRect(16, 87, 40, 6);
+
+        // Tall, thick dark-bark trunk (anchored at y=90)
+        const trunkW = v === 2 ? 14 : 12;
+        const trunkTop = 36;
+        const tx = 36 - Math.floor(trunkW / 2);
+
+        ctx.fillStyle = '#140b06';
+        ctx.fillRect(tx - 1, trunkTop, trunkW + 2, 91 - trunkTop);
+        ctx.fillRect(tx - 5, 85, trunkW + 10, 6);
+        ctx.fillRect(tx - 7, 88, trunkW + 14, 3);
+
+        ctx.fillStyle = '#3b2313';
+        ctx.fillRect(tx, trunkTop, trunkW, 90 - trunkTop);
+        ctx.fillRect(tx - 3, 86, trunkW + 6, 4);
+
+        ctx.fillStyle = '#52321b';
+        ctx.fillRect(tx + 2, trunkTop + 2, Math.max(3, trunkW - 5), 88 - trunkTop);
+        ctx.fillStyle = '#29170b';
+        ctx.fillRect(tx + trunkW - 3, trunkTop + 8, 2, 32);
+
+        // Massive, tall, dark-foliage tiered crown
+        drawFoliageLobe(ctx, 20 + sway, 46, 15, 13, darkForestColors);
+        drawFoliageLobe(ctx, 52 + sway, 46, 15, 13, darkForestColors);
+        drawFoliageLobe(ctx, 36 + sway, 48, 21, 15, darkForestColors);
+        drawFoliageLobe(ctx, 23 + sway, 32, 16, 14, darkForestColors);
+        drawFoliageLobe(ctx, 49 + sway, 32, 16, 14, darkForestColors);
+        drawFoliageLobe(ctx, 36 + sway, 28, 19, 16, darkForestColors);
+        drawFoliageLobe(ctx, 36 + sway, 15, 14, 12, darkForestColors);
+      }
+    );
+
+    // 13. PINE_TREE (64x92 canvas — Taiga Conifer: v=0,2 Tall Pine; v=1 Small Pine)
+    registerNatureVariants(NatureNodeType.PINE_TREE, 64, 92, (ctx, f, v) => {
+      const sway = f === 1 ? 1 : f === 3 ? -1 : 0;
+      const isSmall = v === 1;
+
+      // Ground shadow
+      ctx.fillStyle = 'rgba(6, 14, 12, 0.38)';
+      if (isSmall) {
+        ctx.fillRect(20, 84, 24, 5);
+      } else {
+        ctx.fillRect(15, 84, 34, 6);
+      }
+
+      // Conifer Trunk
+      const trunkW = isSmall ? 6 : 8;
+      const trunkTop = isSmall ? 54 : 28;
+      const tx = 32 - Math.floor(trunkW / 2);
+      ctx.fillStyle = '#170d07';
+      ctx.fillRect(tx - 1, trunkTop, trunkW + 2, 88 - trunkTop);
+      ctx.fillRect(tx - 3, 84, trunkW + 6, 4);
+      ctx.fillStyle = '#472916';
+      ctx.fillRect(tx, trunkTop, trunkW, 87 - trunkTop);
+      ctx.fillStyle = '#633a20';
+      ctx.fillRect(tx + 1, trunkTop + 2, 2, 84 - trunkTop);
+
+      // Helper for conical pine tier
+      const drawPineTier = (
+        cy: number,
+        halfW: number,
+        tierH: number,
+        shiftX: number
+      ) => {
+        const cx = 32 + shiftX;
+        // Outer dark boreal needle silhouette
+        ctx.fillStyle = '#071c18';
+        for (let row = 0; row < tierH; row++) {
+          const t = row / Math.max(1, tierH - 1);
+          const rw = Math.max(2, Math.round(2 + t * (halfW * 2)));
+          ctx.fillRect(cx - Math.floor(rw / 2), cy + row, rw, 1);
+        }
+        // Deep spruce body
+        ctx.fillStyle = '#0f3930';
+        for (let row = 1; row < tierH - 1; row++) {
+          const t = row / Math.max(1, tierH - 1);
+          const rw = Math.max(2, Math.round(1 + t * (halfW * 2 - 2)));
+          ctx.fillRect(cx - Math.floor(rw / 2), cy + row, rw, 1);
+        }
+        // Mid boreal pine needle tone
+        ctx.fillStyle = '#185447';
+        for (let row = 1; row < tierH - 2; row++) {
+          const t = row / Math.max(1, tierH - 1);
+          const rw = Math.max(2, Math.round(1 + t * (halfW * 2 - 5)));
+          ctx.fillRect(cx - Math.floor(rw / 2), cy + row, rw, 1);
+        }
+        // Sunlit upper needle ridges
+        ctx.fillStyle = '#257362';
+        for (let row = 2; row < Math.max(3, Math.floor(tierH * 0.65)); row++) {
+          const t = row / Math.max(1, tierH - 1);
+          const rw = Math.max(1, Math.round(t * (halfW * 1.3)));
+          ctx.fillRect(cx - Math.floor(rw / 2), cy + row, rw, 1);
+        }
+      };
+
+      if (isSmall) {
+        // Pinheiro Pequeno (compact young taiga pine)
+        drawPineTier(52, 14, 18, sway);
+        drawPineTier(41, 11, 16, sway);
+        drawPineTier(31, 8, 14, sway);
+      } else {
+        // Pinheiro Alto (towering multi-tiered boreal conifer)
+        drawPineTier(52, 21, 20, sway);
+        drawPineTier(39, 18, 18, sway);
+        drawPineTier(27, 15, 16, sway);
+        drawPineTier(16, 11, 14, sway);
+        drawPineTier(6, 7, 12, sway);
+      }
     });
   }
 
@@ -5937,7 +6190,7 @@ class SpriteAtlasManager {
     const hStyle = app.hairStyle || 'adventurer';
 
     const key = [
-      'v2_15x',
+      'v3_slim',
       dir,
       f,
       mountPose,
@@ -7545,12 +7798,15 @@ class SpriteAtlasManager {
     }
 
     // Composite onto 48x42 canvas:
-    // - Body (rows y=13..31 of 32x32 bodyCanvas) is scaled 1.5x -> width 48, height 27 at (dx=0, dy=13)
+    // - Body height stays 1.5x (27px), while body width is reduced by 1.5x in front/back (48 / 1.5 = 32px) and by 2x in side view (48 / 2 = 24px)
     // - Head (32x32 headCanvas) stays at 1.0x -> width 32, height 32 centered at (dx=8, dy=1)
     const c = createPixelCanvas(48, 42);
     const finalCtx = c.getContext('2d')!;
     finalCtx.imageSmoothingEnabled = false;
-    finalCtx.drawImage(bodyCanvas, 0, 13, 32, 18, 0, 13, 48, 27);
+    const isSideView = dir === 'left' || dir === 'right';
+    const bodyDrawW = isSideView ? 24 : 32;
+    const bodyDrawX = Math.round((48 - bodyDrawW) / 2);
+    finalCtx.drawImage(bodyCanvas, 0, 13, 32, 18, bodyDrawX, 13, bodyDrawW, 27);
     finalCtx.drawImage(headCanvas, 0, 0, 32, 32, 8, 1, 32, 32);
 
     this.playerSprites.set(key, c);
@@ -7602,6 +7858,57 @@ class SpriteAtlasManager {
       ctx.fillRect(16, 6, 2, 2);
       ctx.fillStyle = '#ffffff';
       ctx.fillRect(21, 6, 1, 1);
+    });
+
+    // COW (30x22 — Pasture Dairy Cow with black/brown spots, horns, pink muzzle, udder & hooves)
+    buildCreature(CreatureKind.COW, 30, 22, (ctx, f) => {
+      const leg = f % 2;
+      ctx.fillStyle = 'rgba(0,0,0,0.30)';
+      ctx.fillRect(3, 18, 23, 3);
+      // Dark outline
+      ctx.fillStyle = '#0f172a';
+      ctx.fillRect(3, 4, 19, 12);
+      ctx.fillRect(20, 3, 8, 10);
+      // Tail
+      ctx.fillRect(1, 6, 2, 7);
+      // Four Legs & Dark Hooves
+      ctx.fillStyle = '#e2e8f0';
+      ctx.fillRect(5, 15 + leg, 3, 4);
+      ctx.fillRect(10, 16 - leg, 2, 3);
+      ctx.fillRect(15, 15 + leg, 2, 3);
+      ctx.fillRect(18, 16 - leg, 3, 4);
+      ctx.fillStyle = '#1e293b';
+      ctx.fillRect(5, 18 + leg, 3, 2);
+      ctx.fillRect(18, 18 - leg, 3, 2);
+      // Pink Udder
+      ctx.fillStyle = '#f472b6';
+      ctx.fillRect(11, 15, 4, 2);
+      // White Coat Body
+      ctx.fillStyle = '#f8fafc';
+      ctx.fillRect(4, 5, 17, 10);
+      // Classic Dark Holstein/Pasture Patches
+      ctx.fillStyle = '#1e293b';
+      ctx.fillRect(5, 5, 6, 5);
+      ctx.fillRect(13, 6, 5, 6);
+      ctx.fillRect(9, 11, 4, 3);
+      // Head, Horns, Ears & Pink Muzzle
+      ctx.fillStyle = '#f8fafc';
+      ctx.fillRect(21, 4, 6, 7);
+      ctx.fillStyle = '#1e293b';
+      ctx.fillRect(21, 4, 4, 4);
+      ctx.fillRect(19, 4, 2, 2); // Ear
+      // Small Curved Ivory Horns
+      ctx.fillStyle = '#fef3c7';
+      ctx.fillRect(21, 2, 2, 2);
+      ctx.fillRect(24, 2, 2, 2);
+      // Pink Snout / Muzzle
+      ctx.fillStyle = '#fda4af';
+      ctx.fillRect(25, 8, 3, 4);
+      ctx.fillStyle = '#881337';
+      ctx.fillRect(27, 9, 1, 1);
+      // Eye
+      ctx.fillStyle = '#0f172a';
+      ctx.fillRect(24, 6, 1, 2);
     });
 
     // BOAR (28x20 — Low, stocky muscular forest boar with hunched shoulders & curved ivory tusks)

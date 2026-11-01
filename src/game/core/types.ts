@@ -3,6 +3,9 @@ export enum BiomeType {
   PLAINS = 'PLAINS',
   DESERT = 'DESERT',
   ISLAND = 'ISLAND',
+  FOREST = 'FOREST',
+  TEMPERATE_FOREST = 'TEMPERATE_FOREST',
+  TAIGA_FOREST = 'TAIGA_FOREST',
 }
 
 export enum EcologicalZone {
@@ -205,6 +208,9 @@ export enum NatureNodeType {
   SUNSTONE_OBELISK = 'SUNSTONE_OBELISK',
   PEARL_CLAM = 'PEARL_CLAM',
   ANCIENT_WORLD_TREE = 'ANCIENT_WORLD_TREE',
+  // Forest Biomes (Temperate & Taiga)
+  TEMPERATE_TREE = 'TEMPERATE_TREE',
+  PINE_TREE = 'PINE_TREE',
   // Wild Flowers (Perlin Noise Patches & 10% Bush Replacement)
   FLOWER_TULIP = 'FLOWER_TULIP',
   FLOWER_LILY = 'FLOWER_LILY',
@@ -267,6 +273,7 @@ export interface NatureNode {
   breakIdleTimer?: number;
   animOffset: number;
   flowerColor?: ClothingColorId;
+  variant?: number; // 0 = tall pine / standard, 1 = small pine
 }
 
 export interface PlacedStructure {
@@ -358,6 +365,7 @@ export enum CreatureKind {
   // Animals (Domesticable & Mountable)
   SHEEP = 'SHEEP',
   BOAR = 'BOAR',
+  COW = 'COW',
   CAMEL = 'CAMEL',
   HORSE = 'HORSE',
   // Water Mount / Vessel
@@ -746,7 +754,7 @@ export interface OnlineActivationStep {
 }
 
 // REGRA PERMANENTE: A cada nova atualização do jogo, incremente a versão para o número seguinte da beta (ex: 0.4.4-beta -> 0.4.5-beta).
-export const GAME_VERSION = '0.6.3-beta';
+export const GAME_VERSION = '0.6.4-beta';
 export const CURRENT_WORLD_GEN_VERSION = 3;
 
 export interface OnlineSessionInfo {

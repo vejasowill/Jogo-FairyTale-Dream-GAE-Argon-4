@@ -1027,6 +1027,15 @@ export const RECIPES: CraftingRecipe[] = [
     ingredients: [{ itemId: 'raw_pork', count: 1 }],
   },
   {
+    id: 'cook_beef_campfire',
+    resultItemId: 'cooked_beef',
+    resultCount: 1,
+    requiredStation: PlaceableType.CAMPFIRE,
+    craftTimeSec: 6,
+    rarity: RarityTier.BASIC,
+    ingredients: [{ itemId: 'raw_beef', count: 1 }],
+  },
+  {
     id: 'cook_vegetable_stew',
     resultItemId: 'vegetable_stew',
     resultCount: 1,
@@ -1251,6 +1260,15 @@ export const RECIPES: CraftingRecipe[] = [
     craftTimeSec: 5,
     rarity: RarityTier.BASIC,
     ingredients: [{ itemId: 'raw_pork', count: 1 }],
+  },
+  {
+    id: 'cook_beef_furnace',
+    resultItemId: 'cooked_beef',
+    resultCount: 1,
+    requiredStation: PlaceableType.FURNACE,
+    craftTimeSec: 5,
+    rarity: RarityTier.BASIC,
+    ingredients: [{ itemId: 'raw_beef', count: 1 }],
   },
 
   // ==========================================================================

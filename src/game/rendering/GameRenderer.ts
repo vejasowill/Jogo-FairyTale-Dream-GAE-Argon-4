@@ -1562,6 +1562,9 @@ export class GameRenderer {
     ) {
       const isGreenNeighbor = (nx: number, ny: number, nb: BiomeType) =>
         nb === BiomeType.PLAINS ||
+        nb === BiomeType.FOREST ||
+        nb === BiomeType.TEMPERATE_FOREST ||
+        nb === BiomeType.TAIGA_FOREST ||
         (nb === BiomeType.ISLAND &&
           world.getTileSubZone(nx, ny, BiomeType.ISLAND) !== 1);
       const nPlains = isGreenNeighbor(tx, ty - 1, n);
@@ -1597,7 +1600,7 @@ export class GameRenderer {
         }
       }
     } else if (biome === BiomeType.PLAINS || biome === BiomeType.ISLAND) {
-      // Smooth sub-zone transitions inside Plains/Island so adjacent sub-zones blend seamlessly
+      // Smooth sub-zone transitions inside Plains/Island and at Forest borders
       const mySub = world.getTileSubZone(tx, ty, biome);
       if (mySub === 1 && n === biome && world.getTileSubZone(tx, ty - 1, biome) === 0) {
         ctx.fillStyle = 'rgba(52, 120, 61, 0.45)';
@@ -1613,6 +1616,26 @@ export class GameRenderer {
       }
       if (mySub === 1 && e === biome && world.getTileSubZone(tx + 1, ty, biome) === 0) {
         ctx.fillStyle = 'rgba(52, 120, 61, 0.45)';
+        ctx.fillRect(wx + TILE_SIZE - 3, wy, 3, TILE_SIZE);
+      }
+      const isForestNeighbor = (nb: BiomeType) =>
+        nb === BiomeType.FOREST ||
+        nb === BiomeType.TEMPERATE_FOREST ||
+        nb === BiomeType.TAIGA_FOREST;
+      if (isForestNeighbor(n)) {
+        ctx.fillStyle = 'rgba(42, 92, 48, 0.42)';
+        ctx.fillRect(wx, wy, TILE_SIZE, 3);
+      }
+      if (isForestNeighbor(s)) {
+        ctx.fillStyle = 'rgba(42, 92, 48, 0.42)';
+        ctx.fillRect(wx, wy + TILE_SIZE - 3, TILE_SIZE, 3);
+      }
+      if (isForestNeighbor(w)) {
+        ctx.fillStyle = 'rgba(42, 92, 48, 0.42)';
+        ctx.fillRect(wx, wy, 3, TILE_SIZE);
+      }
+      if (isForestNeighbor(e)) {
+        ctx.fillStyle = 'rgba(42, 92, 48, 0.42)';
         ctx.fillRect(wx + TILE_SIZE - 3, wy, 3, TILE_SIZE);
       }
     }
@@ -1685,7 +1708,10 @@ export class GameRenderer {
     const hHash =
       (((node.tileX * 214013 + node.tileY * 2531011) ^ 0x85ebca6b) >>> 0) % 1000;
 
-    const variant = hVar % 3; // 0, 1, or 2 morphological silhouette
+    const variant =
+      node.type === NatureNodeType.PINE_TREE && node.variant !== undefined
+        ? node.variant & 1
+        : hVar % 3; // 0, 1, or 2 morphological silhouette
     const wNorm = wHash / 999; // 0.0 .. 1.0 independent width factor
     const hNorm = hHash / 999; // 0.0 .. 1.0 independent height factor
     const mirrorX = (hVar & 1) === 1;
@@ -1730,6 +1756,8 @@ export class GameRenderer {
     const isLargeTree =
       node.type === NatureNodeType.OAK_TREE ||
       node.type === NatureNodeType.HARDWOOD_TREE ||
+      node.type === NatureNodeType.TEMPERATE_TREE ||
+      node.type === NatureNodeType.PINE_TREE ||
       node.type === NatureNodeType.ANCIENT_WORLD_TREE ||
       node.type === NatureNodeType.PALM_TREE;
     const isFoliage =
@@ -1758,6 +1786,27 @@ export class GameRenderer {
           drawH = Math.round(84 + hNorm * 14);
         }
         groundPadY = 4;
+        break;
+
+      case NatureNodeType.TEMPERATE_TREE:
+        // Grandes e altas árvores de Floresta Temperada (cor mais escura)
+        drawW = Math.round(76 + wNorm * 18);
+        drawH = Math.round(94 + hNorm * 20);
+        groundPadY = 5;
+        break;
+
+      case NatureNodeType.PINE_TREE:
+        if (variant === 1) {
+          // Pinheiro Pequeno de Taiga
+          drawW = Math.round(38 + wNorm * 8);
+          drawH = Math.round(52 + hNorm * 10);
+          groundPadY = 3;
+        } else {
+          // Pinheiro Alto de Taiga
+          drawW = Math.round(56 + wNorm * 12);
+          drawH = Math.round(88 + hNorm * 18);
+          groundPadY = 4;
+        }
         break;
 
       case NatureNodeType.HARDWOOD_TREE:
@@ -2909,9 +2958,18 @@ export class GameRenderer {
       st.type === PlaceableType.FLOWER_SUNFLOWER ||
       st.type === PlaceableType.FLOWER_SOLAR_DROP
     ) {
+      const resolvedFlowerItemId =
+        st.itemId ||
+        (st.type === PlaceableType.FLOWER_TULIP
+          ? 'flower_tulip'
+          : st.type === PlaceableType.FLOWER_LILY
+          ? 'flower_lily'
+          : st.type === PlaceableType.FLOWER_SUNFLOWER
+          ? 'flower_sunflower'
+          : 'flower_solar_drop');
       this.drawFlowerInWorld(
         ctx,
-        st.itemId,
+        resolvedFlowerItemId,
         st.flowerColor || 'amarelo',
         wx,
         wy,
@@ -4156,10 +4214,22 @@ export class GameRenderer {
 
     // Draw ghost of the structure with live continuity connections!
     ctx.globalAlpha = 0.68;
+    const heldSlot = player.inventory[player.selectedHotbarIndex];
+    const ghostItemId =
+      heldSlot?.itemId ||
+      (placeableType === PlaceableType.FLOWER_TULIP
+        ? 'flower_tulip'
+        : placeableType === PlaceableType.FLOWER_LILY
+        ? 'flower_lily'
+        : placeableType === PlaceableType.FLOWER_SUNFLOWER
+        ? 'flower_sunflower'
+        : placeableType === PlaceableType.FLOWER_SOLAR_DROP
+        ? 'flower_solar_drop'
+        : '');
     const ghostSt: PlacedStructure = {
       id: 'ghost_preview',
       type: placeableType,
-      itemId: '',
+      itemId: ghostItemId,
       tileX: targetBuildTile.tx,
       tileY: targetBuildTile.ty,
       hp: bp?.maxHp || 100,
@@ -4169,6 +4239,7 @@ export class GameRenderer {
       orientation: buildOptions?.orientation || 'auto',
       isOpen: false,
       attachedToWall: isWallMountTorch,
+      flowerColor: heldSlot?.selectedColor || 'amarelo',
     };
 
     if (bp?.layer === 'GROUND' || placeableType === PlaceableType.SPIKE_TRAP) {
@@ -4397,6 +4468,11 @@ export class GameRenderer {
         // Stocky, low-slung muscular forest boar
         baseW = 33;
         baseH = 23;
+        break;
+      case 'COW':
+        // Pasture dairy cow
+        baseW = 36;
+        baseH = 26;
         break;
       case 'HORSE':
         // Sleek plains mount
@@ -5373,11 +5449,11 @@ export class GameRenderer {
       let handOffsetY = 0;
       if (player.direction === 'up') {
         baseAngle = -Math.PI / 2;
-        handOffsetX = 9.5;
+        handOffsetX = 6.5;
         handOffsetY = -1.5 + stepR * 1.1;
       } else if (player.direction === 'down') {
         baseAngle = Math.PI / 2;
-        handOffsetX = -9.5;
+        handOffsetX = -6.5;
         handOffsetY = -1.0 + stepL * 1.1;
       } else if (player.direction === 'left') {
         baseAngle = Math.PI;
@@ -5697,11 +5773,11 @@ export class GameRenderer {
       let handOffsetY = 0;
       if (rp.direction === 'up') {
         baseAngle = -Math.PI / 2;
-        handOffsetX = 9.5;
+        handOffsetX = 6.5;
         handOffsetY = -1.5 + stepR * 1.1;
       } else if (rp.direction === 'down') {
         baseAngle = Math.PI / 2;
-        handOffsetX = -9.5;
+        handOffsetX = -6.5;
         handOffsetY = -1.0 + stepL * 1.1;
       } else if (rp.direction === 'left') {
         baseAngle = Math.PI;

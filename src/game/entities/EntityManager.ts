@@ -392,6 +392,7 @@ export class EntityManager {
     return (
       kind === CreatureKind.HORSE ||
       kind === CreatureKind.SHEEP ||
+      kind === CreatureKind.COW ||
       kind === CreatureKind.BOAT
     );
   }
@@ -400,6 +401,7 @@ export class EntityManager {
     return (
       kind === CreatureKind.SHEEP ||
       kind === CreatureKind.BOAR ||
+      kind === CreatureKind.COW ||
       kind === CreatureKind.CAMEL ||
       kind === CreatureKind.HORSE
     );
@@ -457,6 +459,8 @@ export class EntityManager {
     switch (cr.kind) {
       case CreatureKind.SHEEP:
         return 22;
+      case CreatureKind.COW:
+        return 26;
       case CreatureKind.BOAR:
         return 32;
       case CreatureKind.CAMEL:
@@ -487,12 +491,12 @@ export class EntityManager {
   public spawnInitialAroundPlayer(world: WorldManager, px: number, py: number): void {
     if (this.creatures.length > 0) return;
 
-    // Spawn a small flock of Sheep, a Horse in the starter plains, and a Boar near the shrubland edge
+    // Spawn a small flock of Sheep, a Cow, a Horse in the starter plains, and a Boar near the shrubland edge
     this.trySpawnCreatureAt(world, CreatureKind.SHEEP, px + 135, py + 85);
-    this.trySpawnCreatureAt(world, CreatureKind.SHEEP, px + 165, py + 105);
+    this.trySpawnCreatureAt(world, CreatureKind.COW, px + 165, py + 105);
     this.trySpawnCreatureAt(world, CreatureKind.HORSE, px - 135, py - 115);
     this.trySpawnCreatureAt(world, CreatureKind.BOAR, px - 175, py + 115);
-    this.trySpawnCreatureAt(world, CreatureKind.SHEEP, px + 105, py - 155);
+    this.trySpawnCreatureAt(world, CreatureKind.COW, px + 105, py - 155);
 
     // Spawn a friendly Wanderer traveling near the starter area so the player can meet them or build a house for them
     this.trySpawnCreatureAt(world, CreatureKind.WANDERER, px - 190, py - 95, {
@@ -600,6 +604,18 @@ export class EntityManager {
             moveSpeed: 52,
             swimSpeed: 32,
             favoriteFoodIds: ['apple', 'coconut', 'taming_treat'],
+          };
+        case CreatureKind.COW:
+          return {
+            kind,
+            name: options?.customName || 'Vaca da Planície',
+            isHostile: false,
+            hp: 70,
+            maxHp: 70,
+            attackDamage: 8,
+            moveSpeed: 36,
+            swimSpeed: 26,
+            favoriteFoodIds: ['wheat', 'apple', 'carrot', 'taming_treat'],
           };
         case CreatureKind.CAMEL:
           return {
@@ -1345,10 +1361,13 @@ export class EntityManager {
       switch (zone) {
         case EcologicalZone.MEADOW_CLEARING:
         case EcologicalZone.COASTAL_TROPICS: {
-          if (roll < 0.54) {
+          if (roll < 0.36) {
             kind = CreatureKind.SHEEP;
             groupSize = Math.random() < 0.55 ? 2 : 1;
-          } else if (roll < 0.78) {
+          } else if (roll < 0.64) {
+            kind = CreatureKind.COW;
+            groupSize = Math.random() < 0.45 ? 2 : 1;
+          } else if (roll < 0.82) {
             kind = CreatureKind.HORSE;
             groupSize = Math.random() < 0.25 ? 2 : 1;
           } else if (roll < 0.95 || distFromOriginTiles < 18) {
@@ -1360,12 +1379,14 @@ export class EntityManager {
         }
 
         case EcologicalZone.OVERGROWN_SHRUBLAND: {
-          if (roll < 0.42) {
+          if (roll < 0.36) {
             kind = CreatureKind.BOAR;
             groupSize = Math.random() < 0.4 ? 2 : 1;
-          } else if (roll < 0.64) {
+          } else if (roll < 0.54) {
             kind = CreatureKind.SHEEP;
-          } else if (roll < 0.78) {
+          } else if (roll < 0.7) {
+            kind = CreatureKind.COW;
+          } else if (roll < 0.8) {
             kind = CreatureKind.HORSE;
           } else if (roll < 0.9 && distFromOriginTiles > 14) {
             kind = CreatureKind.FOREST_STALKER;
@@ -1538,9 +1559,11 @@ export class EntityManager {
       if (roll < animalRollThreshold) {
         const subRoll = Math.random();
         const animalKind =
-          subRoll < 0.42
+          subRoll < 0.3
             ? CreatureKind.SHEEP
-            : subRoll < 0.76
+            : subRoll < 0.56
+            ? CreatureKind.COW
+            : subRoll < 0.8
             ? CreatureKind.BOAR
             : subRoll < 0.94
             ? CreatureKind.HORSE

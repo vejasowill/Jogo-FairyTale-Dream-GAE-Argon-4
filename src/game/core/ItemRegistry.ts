@@ -139,9 +139,9 @@ export const ITEMS: Record<string, ItemDefinition> = {
     id: 'leather',
     name: 'Couro',
     description:
-      'Couro curtido resistente e flexível obtido ao caçar Javalis (15% de chance). Matéria-prima essencial para chapéus de couro, macacões, sandálias e botas na Mesa de Tecelagem.',
+      'Couro curtido resistente e flexível obtido ao caçar Vacas (80% de chance) ou Javalis (50% de chance). Matéria-prima essencial para chapéus de couro, macacões, sandálias e botas na Mesa de Tecelagem.',
     purposeSummary:
-      'Obtido de Javalis (15%): Usado na Mesa de Tecelagem para produzir Chapéu de Couro, Macacão, Sandália e Bota de Vaqueiro.',
+      'Obtido de Vacas (80%) e Javalis (50%): Usado na Mesa de Tecelagem para produzir Chapéu de Couro, Macacão, Sandália e Bota de Vaqueiro.',
     category: ItemCategory.RESOURCE,
     rarity: RarityTier.BASIC,
     maxStack: 99,
@@ -2002,6 +2002,34 @@ export const ITEMS: Record<string, ItemDefinition> = {
     hungerRestore: 48,
     staminaRestore: 35,
   },
+  raw_beef: {
+    id: 'raw_beef',
+    name: 'Carne Bovina Crua',
+    description:
+      'Corte nobre e suculento de carne bovina obtido de vacas da planície. Pode ser assado na Fogueira ou Fornalha para uma refeição altamente nutritiva.',
+    purposeSummary:
+      'Alimento Cru (+18 Fome, +7 HP, +14 Energia): Asse na Fogueira ou Fornalha para preparar Carne Bovina Assada!',
+    category: ItemCategory.CONSUMABLE,
+    rarity: RarityTier.BASIC,
+    maxStack: 50,
+    hpRestore: 7,
+    hungerRestore: 18,
+    staminaRestore: 14,
+  },
+  cooked_beef: {
+    id: 'cooked_beef',
+    name: 'Carne Bovina Assada',
+    description:
+      'Bife bovino grelhado no ponto ideal na brasa, suculento e revigorante para grandes jornadas.',
+    purposeSummary:
+      'Refeição Assada (+54 Fome, +34 HP, +38 Energia): Sustento robusto preparado na Fogueira ou Fornalha.',
+    category: ItemCategory.CONSUMABLE,
+    rarity: RarityTier.BASIC,
+    maxStack: 50,
+    hpRestore: 34,
+    hungerRestore: 54,
+    staminaRestore: 38,
+  },
   oak_sapling: {
     id: 'oak_sapling',
     name: 'Muda de Árvore',
@@ -3340,6 +3368,39 @@ export const NATURE_BLUEPRINTS: Record<NatureNodeType, NatureNodeBlueprint> = {
     hitboxRadius: 0,
     drops: [{ itemId: 'flower_solar_drop', min: 1, max: 1, chance: 1.0 }],
   },
+  [NatureNodeType.TEMPERATE_TREE]: {
+    type: NatureNodeType.TEMPERATE_TREE,
+    name: 'Árvore de Floresta Temperada',
+    rarity: RarityTier.BASIC,
+    maxHp: 95,
+    materialKind: 'SOFT_WOOD',
+    requiredTool: ToolType.AXE,
+    requiredTier: 0,
+    xpReward: 14,
+    hasHitbox: true,
+    hitboxRadius: 8,
+    drops: [
+      { itemId: 'wood', min: 4, max: 6, chance: 1.0 },
+      { itemId: 'hardwood', min: 1, max: 2, chance: 0.35 },
+      { itemId: 'oak_sapling', min: 1, max: 2, chance: 0.85 },
+    ],
+  },
+  [NatureNodeType.PINE_TREE]: {
+    type: NatureNodeType.PINE_TREE,
+    name: 'Pinheiro de Taiga',
+    rarity: RarityTier.BASIC,
+    maxHp: 80,
+    materialKind: 'SOFT_WOOD',
+    requiredTool: ToolType.AXE,
+    requiredTier: 0,
+    xpReward: 12,
+    hasHitbox: true,
+    hitboxRadius: 7,
+    drops: [
+      { itemId: 'wood', min: 3, max: 5, chance: 1.0 },
+      { itemId: 'oak_sapling', min: 1, max: 2, chance: 0.85 },
+    ],
+  },
 };
 
 /**
@@ -3382,8 +3443,10 @@ export const ITEM_BASE_PRICES: Record<string, number> = {
   dye_bege: 28,
   raw_lamb: 7,
   raw_pork: 8,
+  raw_beef: 9,
   cooked_lamb: 15,
   cooked_pork: 16,
+  cooked_beef: 18,
 
   // === TIER 1.5: SEMENTES INICIAIS, FRUTAS DE BIOMA, SAFRA AGRÍCOLA & SUBPRODUTOS ===
   wheat_seeds: 3,

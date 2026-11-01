@@ -233,6 +233,12 @@ export class WorldManager {
           ? 'D'
           : t === BiomeType.ISLAND
           ? 'I'
+          : t === BiomeType.FOREST
+          ? 'F'
+          : t === BiomeType.TEMPERATE_FOREST
+          ? 'T'
+          : t === BiomeType.TAIGA_FOREST
+          ? 'G'
           : 'P';
     }
     return out;
@@ -251,6 +257,12 @@ export class WorldManager {
           ? BiomeType.DESERT
           : ch === 'I'
           ? BiomeType.ISLAND
+          : ch === 'F'
+          ? BiomeType.FOREST
+          : ch === 'T'
+          ? BiomeType.TEMPERATE_FOREST
+          : ch === 'G'
+          ? BiomeType.TAIGA_FOREST
           : BiomeType.PLAINS;
     }
     return tiles;
@@ -646,7 +658,7 @@ export class WorldManager {
     }
 
     // 3. Localized Inland Lakes & Desert Oases (keeping dry land strongly predominant)
-    if (climate < 0.445) {
+    if (climate < 0.275) {
       const oasisPotential = smoothNoise(
         tx * 0.065,
         ty * 0.065,
@@ -910,7 +922,7 @@ export class WorldManager {
 
   private computeBiomeAtTileV2(tx: number, ty: number): BiomeType {
     const distFromOrigin = Math.hypot(tx, ty);
-    if (distFromOrigin < 11) {
+    if (distFromOrigin < 14) {
       return BiomeType.PLAINS;
     }
 
@@ -929,8 +941,8 @@ export class WorldManager {
       return BiomeType.DESERT;
     }
 
-    // Arid Desert Continent with fertile Oasis Springs
-    if (hydro.climate < 0.445) {
+    // Deserto é o bioma mais raro do mundo (clima extremamente árido < 0.275)
+    if (hydro.climate < 0.275) {
       const oasisPotential = smoothNoise(
         tx * 0.065,
         ty * 0.065,
@@ -946,6 +958,32 @@ export class WorldManager {
       return BiomeType.DESERT;
     }
 
+    // Florestas são raras (Floresta Comum, Floresta Temperada, Floresta de Taiga)
+    if (distFromOrigin >= 15 && hydro.climate >= 0.34) {
+      const forestMacro = fbm(
+        tx * 0.014 - 220,
+        ty * 0.014 + 190,
+        this.seed + 6211,
+        3
+      );
+      if (forestMacro > 0.625) {
+        const forestTypeNoise = fbm(
+          tx * 0.009 + 340,
+          ty * 0.009 - 280,
+          this.seed + 8191,
+          3
+        );
+        if (forestTypeNoise < 0.37) {
+          return BiomeType.TAIGA_FOREST;
+        }
+        if (forestTypeNoise < 0.63) {
+          return BiomeType.FOREST;
+        }
+        return BiomeType.TEMPERATE_FOREST;
+      }
+    }
+
+    // Planície é o bioma mais comum e padrão do mundo
     return BiomeType.PLAINS;
   }
 
@@ -1007,6 +1045,14 @@ export class WorldManager {
       s === BiomeType.OCEAN ||
       e === BiomeType.OCEAN ||
       w === BiomeType.OCEAN;
+
+    if (
+      b === BiomeType.FOREST ||
+      b === BiomeType.TEMPERATE_FOREST ||
+      b === BiomeType.TAIGA_FOREST
+    ) {
+      return EcologicalZone.DENSE_WOODLAND;
+    }
 
     if (b === BiomeType.PLAINS || b === BiomeType.ISLAND) {
       if (b === BiomeType.ISLAND && nearWater) {
@@ -1154,6 +1200,20 @@ export class WorldManager {
           return 2; // Island Rocky Highland
         }
         return 0; // Lush Tropical Island Interior
+      }
+
+      if (
+        biome === BiomeType.FOREST ||
+        biome === BiomeType.TEMPERATE_FOREST ||
+        biome === BiomeType.TAIGA_FOREST
+      ) {
+        const borderDiff =
+          n !== biome || s !== biome || e !== biome || w !== biome;
+        if (borderDiff) {
+          return 2; // Forest edge transition tone
+        }
+        const canopyMicro = smoothNoise(tx * 0.14, ty * 0.14, this.seed + 709);
+        return canopyMicro > 0.5 ? 0 : 1;
       }
 
       if (biome === BiomeType.PLAINS) {
@@ -1379,18 +1439,47 @@ export class WorldManager {
         const clusterNoise = smoothNoise(tx * 0.22, ty * 0.22, this.seed + 1291);
 
         let nodeType: NatureNodeType | null = null;
+        let nodeVariant: number | undefined;
 
-        switch (zone) {
-          case EcologicalZone.MEADOW_CLEARING: {
-            // Very clean, open grassland with occasional berry bush or lone oak tree
-            if (spawnRoll < 0.022) {
-              nodeType =
-                rarityRoll < 0.65
-                  ? NatureNodeType.BERRY_BUSH
-                  : NatureNodeType.OAK_TREE;
+        if (
+          biome === BiomeType.FOREST ||
+          biome === BiomeType.TEMPERATE_FOREST ||
+          biome === BiomeType.TAIGA_FOREST
+        ) {
+          // Florestas densas: alta densidade de árvores próprias de cada floresta, sem novos ecossistemas
+          const forestDensity = clusterNoise > 0.42 ? 0.42 : 0.28;
+          if (spawnRoll < forestDensity) {
+            if (biome === BiomeType.FOREST) {
+              if (
+                distFromSpawn > 18 &&
+                rareCountInChunk < 4 &&
+                rarityRoll < 0.14
+              ) {
+                nodeType = NatureNodeType.HARDWOOD_TREE;
+                rareCountInChunk++;
+              } else {
+                nodeType = NatureNodeType.OAK_TREE;
+              }
+            } else if (biome === BiomeType.TEMPERATE_FOREST) {
+              nodeType = NatureNodeType.TEMPERATE_TREE;
+            } else {
+              nodeType = NatureNodeType.PINE_TREE;
+              // Pinheiros altos (variant 0) e pequenos (variant 1)
+              nodeVariant = rarityRoll < 0.55 ? 0 : 1;
             }
-            break;
           }
+        } else {
+          switch (zone) {
+            case EcologicalZone.MEADOW_CLEARING: {
+              // Very clean, open grassland with occasional berry bush or lone oak tree
+              if (spawnRoll < 0.022) {
+                nodeType =
+                  rarityRoll < 0.65
+                    ? NatureNodeType.BERRY_BUSH
+                    : NatureNodeType.OAK_TREE;
+              }
+              break;
+            }
 
           case EcologicalZone.OVERGROWN_SHRUBLAND: {
             // Lush thicket with abundant berry bushes, fibers, and scattered oaks
@@ -1575,6 +1664,7 @@ export class WorldManager {
           case EcologicalZone.DEEP_OCEAN:
           default:
             break;
+          }
         }
 
         // Duna de Areia: elemento natural sem hitbox, tão comum quanto arbustos, exclusivo de solo de areia
@@ -1594,7 +1684,11 @@ export class WorldManager {
 
         // Regra 1: 10% de chance de, no lugar de um arbusto (BERRY_BUSH), ser gerada uma flor
         let flowerColor: ClothingColorId | undefined;
-        if (nodeType === NatureNodeType.BERRY_BUSH) {
+        const isForestBiome =
+          biome === BiomeType.FOREST ||
+          biome === BiomeType.TEMPERATE_FOREST ||
+          biome === BiomeType.TAIGA_FOREST;
+        if (!isForestBiome && nodeType === NatureNodeType.BERRY_BUSH) {
           const bushFlowerRoll = hash2D(tx, ty, this.seed + 5381);
           if (bushFlowerRoll < 0.1) {
             const resolved = this.resolveFlowerAtTile(
@@ -1609,7 +1703,7 @@ export class WorldManager {
               flowerColor = resolved.flowerColor;
             }
           }
-        } else if (!nodeType && biome !== BiomeType.OCEAN) {
+        } else if (!isForestBiome && !nodeType && biome !== BiomeType.OCEAN) {
           // Regra 2: Canteiros e manchas naturais controlados por Ruído de Perlin 2D (e 5% Gota Solar em qualquer bioma)
           const resolved = this.resolveFlowerAtTile(
             tx,
@@ -1625,7 +1719,16 @@ export class WorldManager {
         }
 
         if (nodeType) {
-          nodes.push(this.createNatureNode(nodeType, tx, ty, r, flowerColor));
+          nodes.push(
+            this.createNatureNode(
+              nodeType,
+              tx,
+              ty,
+              r,
+              flowerColor,
+              nodeVariant
+            )
+          );
         }
       }
     }
@@ -2909,7 +3012,8 @@ export class WorldManager {
     tx: number,
     ty: number,
     r: number,
-    flowerColor?: ClothingColorId
+    flowerColor?: ClothingColorId,
+    variant?: number
   ): NatureNode {
     const bp = NATURE_BLUEPRINTS[nodeType];
     return {
@@ -2931,6 +3035,11 @@ export class WorldManager {
         nodeType === NatureNodeType.FLOWER_SUNFLOWER ||
         nodeType === NatureNodeType.FLOWER_SOLAR_DROP
           ? this.resolveFlowerColorForSpecies(nodeType, tx, ty)
+          : undefined),
+      variant:
+        variant ??
+        (nodeType === NatureNodeType.PINE_TREE
+          ? Math.abs(tx * 31 + ty * 17) % 2
           : undefined),
     };
   }

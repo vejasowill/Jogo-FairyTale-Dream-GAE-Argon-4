@@ -2093,6 +2093,7 @@ export class GameEngine {
       { itemId: 'cooked_fish', count: 3 },
       { itemId: 'cooked_lamb', count: 3 },
       { itemId: 'cooked_pork', count: 3 },
+      { itemId: 'cooked_beef', count: 3 },
       { itemId: 'vegetable_stew', count: 2 },
       { itemId: 'taming_treat', count: 3 },
       { itemId: 'farm_feed', count: 4 },
@@ -8250,8 +8251,12 @@ export class GameEngine {
       cr.provokedTimer = 25;
     }
 
-    // Peaceful animals (Sheep, Horse) flee when attacked to maintain a minimum safe distance from the author of the attack
-    if (cr.kind === CreatureKind.SHEEP || cr.kind === CreatureKind.HORSE) {
+    // Peaceful animals (Sheep, Cow, Horse) flee when attacked to maintain a minimum safe distance from the author of the attack
+    if (
+      cr.kind === CreatureKind.SHEEP ||
+      cr.kind === CreatureKind.COW ||
+      cr.kind === CreatureKind.HORSE
+    ) {
       cr.fleeTargetId = attackerCreature ? attackerCreature.id : 'PLAYER';
       cr.fleeFromX = sourceX;
       cr.fleeFromY = sourceY;
@@ -8580,17 +8585,29 @@ export class GameEngine {
         this.spawnDrop('raw_lamb', 1, cr.x + 6, cr.y);
         grantPlayerXp(15);
       } else if (cr.kind === CreatureKind.BOAR) {
-        // Javali (1 a 2 carnes suínas + 15% de chance de dropar 1 couro)
+        // Javali (1 a 2 carnes suínas + 50% de chance de dropar 1 couro)
         this.spawnDrop(
           'raw_pork',
           1 + Math.floor(Math.random() * 2),
           cr.x,
           cr.y
         );
-        if (Math.random() < 0.15) {
+        if (Math.random() < 0.5) {
           this.spawnDrop('leather', 1, cr.x + 6, cr.y);
         }
         grantPlayerXp(20);
+      } else if (cr.kind === CreatureKind.COW) {
+        // Vaca (1 a 2 carnes bovinas + 80% de chance de dropar 1 couro)
+        this.spawnDrop(
+          'raw_beef',
+          1 + Math.floor(Math.random() * 2),
+          cr.x,
+          cr.y
+        );
+        if (Math.random() < 0.8) {
+          this.spawnDrop('leather', 1, cr.x + 6, cr.y);
+        }
+        grantPlayerXp(18);
       } else if (cr.kind === CreatureKind.CAMEL) {
         // Camelo (nada)
         grantPlayerXp(25);
