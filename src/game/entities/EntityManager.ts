@@ -1272,36 +1272,60 @@ export class EntityManager {
     world: WorldManager,
     playerX: number,
     playerY: number,
-    isNight: boolean
+    isNight: boolean,
+    additionalPlayerPositions?: Array<{ x: number; y: number }>
   ): void {
+    const activePlayers: Array<{ x: number; y: number }> = [
+      { x: playerX, y: playerY },
+      ...(Array.isArray(additionalPlayerPositions)
+        ? additionalPlayerPositions
+        : []),
+    ];
+
     this.landmarkCheckTimer -= dt;
     if (this.landmarkCheckTimer <= 0) {
       this.landmarkCheckTimer = 0.45;
-      // Populate any newly revealed Landmark/Village chunks near the player
-      this.populateNearbyLandmarkChunks(world, playerX, playerY);
+      // Populate any newly revealed Landmark/Village chunks near any active player
+      for (const pPos of activePlayers) {
+        this.populateNearbyLandmarkChunks(world, pPos.x, pPos.y);
+      }
     }
 
     this.spawnTimer -= dt;
     if (this.spawnTimer > 0) return;
     this.spawnTimer = isNight ? 2.8 : 3.5;
 
-    // Despawn untamed non-villager creatures very far from player to keep mobile memory low
+    // Despawn untamed non-villager creatures very far from ALL active players to keep memory low
     this.creatures = this.creatures.filter((c) => {
-      if (c.tamed || c.kind === CreatureKind.VILLAGER || c.kind === CreatureKind.BOAT) return true;
-      const dist = Math.hypot(c.x - playerX, c.y - playerY);
-      return dist < 1480;
+      if (
+        c.tamed ||
+        c.kind === CreatureKind.VILLAGER ||
+        c.kind === CreatureKind.BOAT
+      ) {
+        return true;
+      }
+      return activePlayers.some(
+        (pPos) => Math.hypot(c.x - pPos.x, c.y - pPos.y) < 1480
+      );
     });
 
     const wildCount = this.creatures.filter(
-      (c) => !c.tamed && c.kind !== CreatureKind.VILLAGER && c.kind !== CreatureKind.BOAT
+      (c) =>
+        !c.tamed &&
+        c.kind !== CreatureKind.VILLAGER &&
+        c.kind !== CreatureKind.BOAT
     ).length;
-    const maxWild = isNight ? 24 : 19;
+    const maxWildPerPlayer = isNight ? 24 : 19;
+    const maxWild = Math.min(48, maxWildPerPlayer * activePlayers.length);
     if (wildCount >= maxWild) return;
 
+    const chosenAnchor =
+      activePlayers[Math.floor(Math.random() * activePlayers.length)] ||
+      activePlayers[0];
     const angle = Math.random() * Math.PI * 2;
     const dist = 330 + Math.random() * 440;
-    const sx = playerX + Math.cos(angle) * dist;
-    const sy = playerY + Math.sin(angle) * dist;
+    const sx = chosenAnchor.x + Math.cos(angle) * dist;
+    const sy = chosenAnchor.y + Math.sin(angle) * dist;
 
     const biome = world.getBiomeAtWorld(sx, sy);
     // Ilha (BiomeType.ISLAND) só possui spawn de mobs/animais no momento de sua descoberta

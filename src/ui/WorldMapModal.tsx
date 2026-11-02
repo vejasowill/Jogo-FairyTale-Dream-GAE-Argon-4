@@ -46,6 +46,15 @@ export const WorldMapModal: React.FC<WorldMapModalProps> = ({
   const [showPets, setShowPets] = useState(true);
   const [newWaypointName, setNewWaypointName] = useState('');
   const [showHelp, setShowHelp] = useState(false);
+  const [remoteTick, setRemoteTick] = useState(0);
+
+  useEffect(() => {
+    if (!engine.multiplayer.isOnline) return;
+    const id = window.setInterval(() => {
+      setRemoteTick((t) => t + 1);
+    }, 250);
+    return () => window.clearInterval(id);
+  }, [engine.multiplayer.isOnline]);
 
   const dragRef = useRef<{ active: boolean; startX: number; startY: number }>({
     active: false,
@@ -55,6 +64,7 @@ export const WorldMapModal: React.FC<WorldMapModalProps> = ({
 
   const playerTx = Math.floor(player.x / TILE_SIZE);
   const playerTy = Math.floor(player.y / TILE_SIZE);
+  const remotePlayersList = Array.from(engine.multiplayer.remotePlayers.values());
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -242,6 +252,32 @@ export const WorldMapModal: React.FC<WorldMapModalProps> = ({
       }
     }
 
+    // Remote Online Players on the World Map
+    const remoteList = Array.from(engine.multiplayer.remotePlayers.values());
+    for (const rp of remoteList) {
+      const rpTx = rp.x / TILE_SIZE;
+      const rpTy = rp.y / TILE_SIZE;
+      const sx = centerX + (rpTx - playerTx) * zoom;
+      const sy = centerY + (rpTy - playerTy) * zoom;
+
+      ctx.fillStyle = rp.isHost ? '#fde047' : '#38bdf8';
+      ctx.beginPath();
+      ctx.arc(sx, sy, 5, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = '#090d16';
+      ctx.lineWidth = 1.8;
+      ctx.stroke();
+
+      ctx.font = 'bold 9px "Plus Jakarta Sans", sans-serif';
+      const label = `${rp.isHost ? '👑 ' : ''}${rp.name}`;
+      ctx.fillStyle = 'rgba(9, 13, 22, 0.82)';
+      const textW = ctx.measureText(label).width;
+      ctx.fillRect(sx + 6, sy - 6, textW + 6, 12);
+      ctx.fillStyle = rp.isHost ? '#fde047' : '#7dd3fc';
+      ctx.fillText(label, sx + 9, sy + 3);
+    }
+
+    // Local Player marker
     ctx.fillStyle = '#ffffff';
     ctx.beginPath();
     ctx.arc(centerX, centerY, 5, 0, Math.PI * 2);
@@ -250,6 +286,7 @@ export const WorldMapModal: React.FC<WorldMapModalProps> = ({
     ctx.lineWidth = 2;
     ctx.stroke();
   }, [
+    engine,
     world,
     player,
     tamedAnimals,
@@ -261,6 +298,7 @@ export const WorldMapModal: React.FC<WorldMapModalProps> = ({
     showPets,
     playerTx,
     playerTy,
+    remoteTick,
   ]);
 
   const handlePointerDown = (e: React.PointerEvent) => {
@@ -397,9 +435,47 @@ export const WorldMapModal: React.FC<WorldMapModalProps> = ({
             </div>
           </div>
 
-          {/* Right Sidebar: Waypoints */}
+          {/* Right Sidebar: Online Players & Waypoints */}
           <div className="sm:col-span-4 medieval-inset p-2.5 flex flex-col justify-between gap-2">
             <div className="space-y-2 flex-1 flex flex-col min-h-0">
+              {remotePlayersList.length > 0 && (
+                <div className="space-y-1 border-b border-[#3d281a] pb-2 shrink-0">
+                  <div className="flex items-center justify-between text-[10px] font-pixel font-bold text-sky-300">
+                    <span>JOGADORES ({remotePlayersList.length + 1})</span>
+                  </div>
+                  <div className="space-y-1 max-h-[82px] overflow-y-auto pr-0.5">
+                    {remotePlayersList.map((rp) => {
+                      const rpTx = Math.floor(rp.x / TILE_SIZE);
+                      const rpTy = Math.floor(rp.y / TILE_SIZE);
+                      return (
+                        <button
+                          key={rp.peerId}
+                          onClick={() =>
+                            setPan({
+                              x: (playerTx - rpTx) * zoom,
+                              y: (playerTy - rpTy) * zoom,
+                            })
+                          }
+                          className="w-full mc-slot px-2 py-1 flex items-center justify-between gap-1.5 text-[10px] hover:border-sky-400/60 text-left"
+                        >
+                          <span
+                            className={`font-bold truncate ${
+                              rp.isHost ? 'text-amber-300' : 'text-sky-300'
+                            }`}
+                          >
+                            {rp.isHost ? '👑 ' : '🌐 '}
+                            {rp.name}
+                          </span>
+                          <span className="text-[9px] font-mono-tabular text-[#c4ab7d] shrink-0">
+                            ({rpTx}, {rpTy})
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
               <div className="flex items-center gap-1.5 border-b border-[#3d281a] pb-1.5 shrink-0">
                 <MapPin className="w-3.5 h-3.5 text-amber-400" />
                 <h3 className="font-pixel text-[10px] font-bold text-amber-400">

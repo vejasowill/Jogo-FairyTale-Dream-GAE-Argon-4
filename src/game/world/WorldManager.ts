@@ -2098,7 +2098,7 @@ export class WorldManager {
       }
 
       // Central Village Well at (8, 8)
-      addStruct(
+      const wellSt = addStruct(
         8,
         8,
         PlaceableType.VILLAGE_WELL,
@@ -2357,7 +2357,7 @@ export class WorldManager {
       merchantStall.ownerName = merchantHouse.primaryOwnerName;
 
       // 3. CASA DO ANCIÃO (South-West: lx 1..4, ly 11..14) — Baú da Vila dentro + Fogueira na frente
-      buildCompactVillageHouse({
+      const elderHouse = buildCompactVillageHouse({
         houseIdx: 2,
         role: 'anciao',
         houseTitle: 'Casa do Ancião',
@@ -2380,6 +2380,11 @@ export class WorldManager {
         bed2Coord: [2, 12],
         carpetCoord: [3, 12],
       });
+      // Em vilas geradas naturalmente, apenas o Ancião é o líder da vila e dono do Poço Central
+      wellSt.ownerType = 'VILLAGER';
+      wellSt.ownerId = elderHouse.primaryOwnerId;
+      wellSt.ownerName = elderHouse.primaryOwnerName;
+      wellSt.npcRole = 'anciao';
       // Village Chest inside the Elder's House at (3, 13)
       addStruct(
         3,

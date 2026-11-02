@@ -8,6 +8,7 @@ import {
   HOTBAR_SIZE,
   NatureNode,
   PlaceableType,
+  PlayerAppearance,
   PlayerState,
   TOTAL_INVENTORY_SIZE,
   WorldMetadata,
@@ -72,6 +73,16 @@ export function seedFromText(text: string): number {
   return (h >>> 0) % 99999999;
 }
 
+export const DEFAULT_ACCOUNT_APPEARANCE: PlayerAppearance = {
+  gender: 'masculino',
+  skinColor: '#fdba74',
+  skinMark: 'none',
+  hairColor: '#451a03',
+  hairStyle: 'adventurer',
+  eyeStyle: 'classic',
+  eyeColor: '#0f172a',
+};
+
 export function createInitialPlayerState(): PlayerState {
   // Ao iniciar o jogo, o jogador começa sem nenhum item
   const inventory = new Array(TOTAL_INVENTORY_SIZE).fill(null);
@@ -111,15 +122,7 @@ export function createInitialPlayerState(): PlayerState {
       legs: 'brown_shorts',
       feet: null,
     },
-    appearance: {
-      gender: 'masculino',
-      skinColor: '#fdba74',
-      skinMark: 'none',
-      hairColor: '#451a03',
-      hairStyle: 'adventurer',
-      eyeStyle: 'classic',
-      eyeColor: '#0f172a',
-    },
+    appearance: SaveManager.getAccountAppearance(),
     respawnX: 16,
     respawnY: 16,
     respawnLabel: 'Acampamento Inicial',
@@ -238,10 +241,11 @@ export function migrateSaveData(rawSave: WorldSaveData): WorldSaveData {
   }
   migrated.player.equippedArmorId = migrated.player.equippedBySlot.body;
 
-  const defaultApp = createInitialPlayerState().appearance;
+  // Universal Account Appearance: all worlds point to the account's universal appearance
+  const universalApp = SaveManager.getAccountAppearance(migrated.player.appearance);
   migrated.player.appearance = {
-    ...defaultApp,
-    ...(migrated.player.appearance || {}),
+    ...DEFAULT_ACCOUNT_APPEARANCE,
+    ...universalApp,
   };
 
   if (!migrated.player.inventory || !Array.isArray(migrated.player.inventory)) {
@@ -464,6 +468,95 @@ export class SaveManager {
     } catch {
       // ignore storage quota errors
     }
+  }
+
+  /**
+   * Returns the universal account appearance shared across all worlds and the start screen.
+   * If not yet initialized in settings, migrates from `fallbackWorldAppearance` or the most recent saved world.
+   */
+  public static getAccountAppearance(
+    fallbackWorldAppearance?: Partial<PlayerAppearance>
+  ): PlayerAppearance {
+    try {
+      const settings = this.loadSettings();
+      if (settings.accountAppearance && settings.accountAppearance.skinColor) {
+        return {
+          ...DEFAULT_ACCOUNT_APPEARANCE,
+          ...settings.accountAppearance,
+        };
+      }
+      if (fallbackWorldAppearance && fallbackWorldAppearance.skinColor) {
+        const adopted: PlayerAppearance = {
+          ...DEFAULT_ACCOUNT_APPEARANCE,
+          ...fallbackWorldAppearance,
+        };
+        this.saveSettings({
+          ...settings,
+          accountAppearance: adopted,
+        });
+        return adopted;
+      }
+      const worlds = this.listWorlds();
+      if (worlds.length > 0) {
+        const raw = localStorage.getItem(`${WORLD_PREFIX}${worlds[0].id}`);
+        if (raw) {
+          const env = JSON.parse(raw) as SaveEnvelope;
+          const worldApp = env?.data?.player?.appearance;
+          if (worldApp && worldApp.skinColor) {
+            const adopted: PlayerAppearance = {
+              ...DEFAULT_ACCOUNT_APPEARANCE,
+              ...worldApp,
+            };
+            this.saveSettings({
+              ...settings,
+              accountAppearance: adopted,
+            });
+            return adopted;
+          }
+        }
+      }
+    } catch {
+      // ignore
+    }
+    return { ...DEFAULT_ACCOUNT_APPEARANCE };
+  }
+
+  /**
+   * Updates and persists the universal account appearance in settings and propagates it to saved guest profiles.
+   */
+  public static saveAccountAppearance(
+    partial: Partial<PlayerAppearance>
+  ): PlayerAppearance {
+    const current = this.getAccountAppearance();
+    const updated: PlayerAppearance = {
+      ...DEFAULT_ACCOUNT_APPEARANCE,
+      ...current,
+      ...partial,
+    };
+    const settings = this.loadSettings();
+    this.saveSettings({
+      ...settings,
+      accountAppearance: updated,
+    });
+    // Also update any cached guest profiles so online sessions reflect the universal appearance
+    try {
+      for (let i = 0; i < localStorage.length; i++) {
+        const key = localStorage.key(i);
+        if (key && key.startsWith('wildborn_guest_player_')) {
+          const raw = localStorage.getItem(key);
+          if (raw) {
+            const p = JSON.parse(raw);
+            if (p && typeof p === 'object') {
+              p.appearance = { ...updated };
+              localStorage.setItem(key, JSON.stringify(p));
+            }
+          }
+        }
+      }
+    } catch {
+      // ignore
+    }
+    return updated;
   }
 
   public static listWorlds(): WorldMetadata[] {

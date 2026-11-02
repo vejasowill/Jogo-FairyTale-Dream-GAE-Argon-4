@@ -20,12 +20,14 @@ import {
   EyeStyleId,
   HairStyleId,
   ItemCategory,
+  PlayerAppearance,
   PlayerAttributes,
   PlayerGender,
   PlayerState,
   SkinMarkId,
 } from '../game/core/types';
 import { GameEngine } from '../game/loop/GameEngine';
+import { SaveManager } from '../game/persistence/SaveManager';
 import {
   DEFAULT_PLAYER_APPEARANCE,
   spriteAtlas,
@@ -600,7 +602,7 @@ export const CharacterPetsModal: React.FC<CharacterPetsModalProps> = ({
             <div className="sm:col-span-6 medieval-inset p-2.5 flex flex-col gap-2">
               <div className="flex items-center justify-between border-b border-[#3d281a] pb-1.5">
                 <h3 className="font-pixel text-[10px] font-bold text-amber-400">
-                  APARÊNCIA DO PERSONAGEM
+                  APARÊNCIA UNIVERSAL DA CONTA
                 </h3>
                 <button
                   onClick={() =>
@@ -1311,8 +1313,8 @@ export const CharacterPetsModal: React.FC<CharacterPetsModalProps> = ({
           onClose={() => setShowHelp(false)}
           sections={[
             {
-              title: '1. Trajes & Aparência (4 Slots)',
-              body: 'Equipe peças de Cabeça, Superior, Inferior e Pés para reduzir o dano recebido e ganhar velocidade. Tudo altera o visual do seu personagem em tempo real.',
+              title: '1. Trajes & Aparência Universal',
+              body: 'A aparência do seu personagem é universal para todos os seus mundos. Equipe peças de Cabeça, Superior, Inferior e Pés para reduzir o dano recebido e ganhar velocidade.',
             },
             {
               title: '2. Atributos RPG (Nv. 0+)',
@@ -1332,3 +1334,568 @@ export const CharacterPetsModal: React.FC<CharacterPetsModalProps> = ({
     </div>
   );
 };
+
+interface AccountAppearanceModalProps {
+  onClose: () => void;
+  onAppearanceSaved?: (updated: PlayerAppearance) => void;
+}
+
+export const AccountAppearanceModal: React.FC<AccountAppearanceModalProps> = ({
+  onClose,
+  onAppearanceSaved,
+}) => {
+  const [app, setApp] = useState<PlayerAppearance>(() =>
+    SaveManager.getAccountAppearance()
+  );
+  const [appearanceCat, setAppearanceCat] = useState<'skin' | 'hair' | 'eyes'>(
+    'skin'
+  );
+  const [previewDir, setPreviewDir] = useState<Direction>('down');
+
+  const updateAccountAppearance = (partial: Partial<PlayerAppearance>) => {
+    const updated = SaveManager.saveAccountAppearance(partial);
+    setApp({ ...updated });
+    onAppearanceSaved?.(updated);
+  };
+
+  const previewPlayerState = {
+    x: 0,
+    y: 0,
+    vx: 0,
+    vy: 0,
+    hp: 100,
+    maxHp: 100,
+    stamina: 100,
+    maxStamina: 100,
+    hunger: 100,
+    maxHunger: 100,
+    level: 1,
+    xp: 0,
+    xpToNext: 100,
+    attributePoints: 0,
+    attributes: {
+      vitality: 0,
+      strength: 0,
+      agility: 0,
+      survival: 0,
+      attackSpeed: 0,
+      defense: 0,
+    },
+    equippedArmorId: 'white_tank_top',
+    equippedBySlot: {
+      head: null,
+      body: 'white_tank_top',
+      legs: 'brown_shorts',
+      feet: null,
+    },
+    equippedColorsBySlot: {
+      head: null,
+      body: 'white',
+      legs: 'brown',
+      feet: null,
+    },
+    appearance: app,
+    goldCoins: 0,
+    direction: previewDir,
+    isMoving: false,
+    animFrame: 0,
+    animTimer: 0,
+    selectedHotbarIndex: 0,
+    inventory: [],
+    swingTimer: 0,
+    swingDuration: 0.25,
+    hitFlashTimer: 0,
+  } as unknown as PlayerState;
+
+  const playerPreviewUrl = (() => {
+    const c = spriteAtlas.getPlayerSprite(previewDir, 0, previewPlayerState);
+    return c.toDataURL();
+  })();
+
+  const cyclePreviewDir = () => {
+    const order: Direction[] = ['down', 'right', 'up', 'left'];
+    const idx = order.indexOf(previewDir);
+    setPreviewDir(order[(idx + 1) % order.length]);
+  };
+
+  return (
+    <div
+      className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-2 sm:p-4"
+      onClick={onClose}
+    >
+      <div
+        className="w-full max-w-2xl medieval-panel flex flex-col max-h-[94dvh] overflow-hidden"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between gap-2 px-3 py-2 bg-[#1a110b] border-b-2 border-[#4a301e] shrink-0">
+          <div className="flex items-center gap-2">
+            <Palette className="w-4 h-4 text-amber-400" />
+            <div>
+              <h2 className="font-pixel text-xs font-bold text-amber-400 uppercase">
+                Aparência do Personagem
+              </h2>
+              <p className="text-[10px] text-[#c4ab7d]">
+                Aparência universal da sua conta para todos os mundos
+              </p>
+            </div>
+          </div>
+          <button
+            onClick={onClose}
+            className="min-h-[34px] min-w-[34px] medieval-btn-crimson flex items-center justify-center"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+
+        <div className="flex-1 overflow-y-auto p-3 grid grid-cols-1 sm:grid-cols-12 gap-3 items-start">
+          {/* Preview Column */}
+          <div className="sm:col-span-4 medieval-inset p-3 flex flex-col items-center justify-center gap-2.5">
+            <span className="px-2 py-0.5 bg-[#2a1b10] border border-[#6e4930] text-[10px] font-bold text-amber-300 rounded">
+              {(app.gender ?? 'masculino') === 'feminino'
+                ? '♀ Feminino'
+                : '♂ Masculino'}
+            </span>
+            <div className="w-28 h-28 bg-[#120b07] border-2 border-[#6e4930] flex items-center justify-center relative shadow-inner">
+              <img
+                src={playerPreviewUrl}
+                alt="Herói"
+                className="w-24 h-24 pixelated"
+              />
+            </div>
+            <button
+              onClick={cyclePreviewDir}
+              className="w-full py-1.5 medieval-btn-wood text-[10px] font-bold flex items-center justify-center gap-1.5"
+            >
+              <RotateCw className="w-3.5 h-3.5 text-amber-300" />
+              <span>Girar Direção</span>
+            </button>
+            <button
+              onClick={() => updateAccountAppearance(DEFAULT_PLAYER_APPEARANCE)}
+              className="text-[10px] text-[#c4ab7d] hover:text-amber-300 underline pt-1"
+            >
+              Restaurar Padrão
+            </button>
+          </div>
+
+          {/* Customization Controls Column */}
+          <div className="sm:col-span-8 medieval-inset p-2.5 flex flex-col gap-2">
+            {/* Gender Toggle Row */}
+            <div className="grid grid-cols-2 gap-1.5">
+              {GENDERS.map((g) => {
+                const isSelected = (app.gender ?? 'masculino') === g.id;
+                return (
+                  <button
+                    key={g.id}
+                    onClick={() => updateAccountAppearance({ gender: g.id })}
+                    className={`py-1.5 px-2 text-[10px] font-bold flex items-center justify-center gap-1.5 ${
+                      isSelected ? 'medieval-btn-gold' : 'medieval-btn-wood'
+                    }`}
+                  >
+                    <span>{g.symbol}</span>
+                    <span>{g.label}</span>
+                  </button>
+                );
+              })}
+            </div>
+
+            {/* Category Tabs: Pele | Cabelos | Olhos */}
+            <div className="grid grid-cols-3 gap-1.5 bg-[#120b07] p-1 border border-[#4a301e]">
+              <button
+                onClick={() => setAppearanceCat('skin')}
+                className={`py-1.5 px-2 text-[10px] font-pixel font-bold transition-colors ${
+                  appearanceCat === 'skin'
+                    ? 'medieval-btn-gold'
+                    : 'medieval-btn-wood'
+                }`}
+              >
+                Pele
+              </button>
+              <button
+                onClick={() => setAppearanceCat('hair')}
+                className={`py-1.5 px-2 text-[10px] font-pixel font-bold transition-colors ${
+                  appearanceCat === 'hair'
+                    ? 'medieval-btn-gold'
+                    : 'medieval-btn-wood'
+                }`}
+              >
+                Cabelos
+              </button>
+              <button
+                onClick={() => setAppearanceCat('eyes')}
+                className={`py-1.5 px-2 text-[10px] font-pixel font-bold transition-colors ${
+                  appearanceCat === 'eyes'
+                    ? 'medieval-btn-gold'
+                    : 'medieval-btn-wood'
+                }`}
+              >
+                Olhos
+              </button>
+            </div>
+
+            <div className="max-h-[305px] overflow-y-auto pr-1 space-y-2.5">
+              {appearanceCat === 'skin' && (
+                <>
+                  <div className="bg-[#120b07] p-2 border border-[#4a301e] space-y-1.5">
+                    <div className="flex items-center justify-between">
+                      <span className="font-pixel text-[9px] text-amber-400 uppercase">
+                        Marcas de Pele (1 ativa)
+                      </span>
+                      <span className="text-[9px] text-[#c4ab7d]">
+                        {SKIN_MARKS.find(
+                          (m) => m.id === (app.skinMark || 'none')
+                        )?.label || 'Sem Marcas'}
+                      </span>
+                    </div>
+                    <div className="grid grid-cols-4 gap-1.5">
+                      {SKIN_MARKS.map((mark) => {
+                        const isSelected = (app.skinMark || 'none') === mark.id;
+                        return (
+                          <button
+                            key={mark.id}
+                            onClick={() =>
+                              updateAccountAppearance({ skinMark: mark.id })
+                            }
+                            title={`${mark.label} — ${mark.desc}`}
+                            className={`mc-slot p-1.5 flex flex-col items-center justify-center gap-1 transition-transform ${
+                              isSelected
+                                ? 'mc-slot-active ring-1 ring-amber-400'
+                                : 'hover:border-[#8c6d46]'
+                            }`}
+                          >
+                            <img
+                              src={spriteAtlas.getSkinMarkPreviewUrl(
+                                mark.id,
+                                app.skinColor
+                              )}
+                              alt={mark.label}
+                              className="w-7 h-7 pixelated"
+                            />
+                            <span className="text-[8px] font-bold text-[#e5d5b5] truncate w-full text-center">
+                              {mark.label}
+                            </span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  <div className="bg-[#120b07] p-2 border border-[#4a301e] space-y-1.5">
+                    <div className="flex items-center justify-between">
+                      <span className="font-pixel text-[9px] text-amber-400 uppercase">
+                        Cor & Sub-tonalidades ({SKIN_TONES.length})
+                      </span>
+                      <span className="text-[9px] text-[#c4ab7d]">
+                        {SKIN_TONES.find((t) => t.color === app.skinColor)
+                          ?.label || 'Personalizada'}
+                      </span>
+                    </div>
+                    <div className="grid grid-cols-4 gap-1.5">
+                      {SKIN_TONES.map((tone) => {
+                        const isSelected = app.skinColor === tone.color;
+                        return (
+                          <button
+                            key={tone.color}
+                            onClick={() =>
+                              updateAccountAppearance({ skinColor: tone.color })
+                            }
+                            title={`${tone.label} (${tone.group})`}
+                            className={`mc-slot p-1.5 flex flex-col items-center justify-center gap-1 ${
+                              isSelected
+                                ? 'mc-slot-active ring-1 ring-amber-400'
+                                : 'hover:border-[#8c6d46]'
+                            }`}
+                          >
+                            <svg
+                              viewBox="0 0 16 16"
+                              className="w-6 h-6 pixelated shrink-0"
+                            >
+                              <rect
+                                x="1"
+                                y="1"
+                                width="14"
+                                height="14"
+                                fill="#0f172a"
+                              />
+                              <rect
+                                x="2"
+                                y="2"
+                                width="12"
+                                height="12"
+                                fill={tone.color}
+                              />
+                              <rect
+                                x="2"
+                                y="9"
+                                width="12"
+                                height="5"
+                                fill={tone.subTone}
+                              />
+                              <rect
+                                x="3"
+                                y="3"
+                                width="5"
+                                height="2"
+                                fill="#ffffff"
+                                fillOpacity="0.35"
+                              />
+                            </svg>
+                            <span className="text-[8px] font-bold text-[#e5d5b5] truncate w-full text-center">
+                              {tone.label}
+                            </span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                </>
+              )}
+
+              {appearanceCat === 'hair' && (
+                <>
+                  <div className="bg-[#120b07] p-2 border border-[#4a301e] space-y-1.5">
+                    <div className="flex items-center justify-between">
+                      <span className="font-pixel text-[9px] text-amber-400 uppercase">
+                        Tipos de Cabelo ({HAIR_STYLES.length})
+                      </span>
+                      <span className="text-[9px] text-[#c4ab7d]">
+                        {HAIR_STYLES.find((h) => h.id === app.hairStyle)
+                          ?.label || 'Aventureiro'}
+                      </span>
+                    </div>
+                    <div className="grid grid-cols-5 gap-1.5">
+                      {HAIR_STYLES.map((st) => {
+                        const isSelected = app.hairStyle === st.id;
+                        return (
+                          <button
+                            key={st.id}
+                            onClick={() =>
+                              updateAccountAppearance({ hairStyle: st.id })
+                            }
+                            title={st.label}
+                            className={`mc-slot p-1 flex flex-col items-center justify-center gap-0.5 ${
+                              isSelected
+                                ? 'mc-slot-active ring-1 ring-amber-400'
+                                : 'hover:border-[#8c6d46]'
+                            }`}
+                          >
+                            <img
+                              src={spriteAtlas.getHairStylePreviewUrl(
+                                st.id,
+                                app.hairColor,
+                                app.skinColor
+                              )}
+                              alt={st.label}
+                              className="w-7 h-7 pixelated"
+                            />
+                            <span className="text-[8px] font-bold text-[#e5d5b5] truncate w-full text-center">
+                              {st.label}
+                            </span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  <div className="bg-[#120b07] p-2 border border-[#4a301e] space-y-1.5">
+                    <div className="flex items-center justify-between">
+                      <span className="font-pixel text-[9px] text-amber-400 uppercase">
+                        Cores & Sub-tonalidades ({HAIR_COLORS.length})
+                      </span>
+                      <span className="text-[9px] text-[#c4ab7d]">
+                        {HAIR_COLORS.find((hc) => hc.color === app.hairColor)
+                          ?.label || 'Personalizada'}
+                      </span>
+                    </div>
+                    <div className="grid grid-cols-5 gap-1.5">
+                      {HAIR_COLORS.map((hc) => {
+                        const isSelected = app.hairColor === hc.color;
+                        return (
+                          <button
+                            key={hc.color}
+                            onClick={() =>
+                              updateAccountAppearance({ hairColor: hc.color })
+                            }
+                            title={`${hc.label} (${hc.group})`}
+                            className={`mc-slot p-1 flex flex-col items-center justify-center gap-0.5 ${
+                              isSelected
+                                ? 'mc-slot-active ring-1 ring-amber-400'
+                                : 'hover:border-[#8c6d46]'
+                            }`}
+                          >
+                            <svg
+                              viewBox="0 0 16 16"
+                              className="w-6 h-6 pixelated shrink-0"
+                            >
+                              <rect
+                                x="1"
+                                y="1"
+                                width="14"
+                                height="14"
+                                fill="#0f172a"
+                              />
+                              <rect
+                                x="2"
+                                y="2"
+                                width="12"
+                                height="12"
+                                fill={hc.color}
+                              />
+                              <rect
+                                x="2"
+                                y="9"
+                                width="12"
+                                height="5"
+                                fill={hc.subTone}
+                              />
+                              <rect
+                                x="3"
+                                y="3"
+                                width="8"
+                                height="2"
+                                fill="#ffffff"
+                                fillOpacity="0.28"
+                              />
+                            </svg>
+                            <span className="text-[8px] font-bold text-[#e5d5b5] truncate w-full text-center">
+                              {hc.label}
+                            </span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                </>
+              )}
+
+              {appearanceCat === 'eyes' && (
+                <>
+                  <div className="bg-[#120b07] p-2 border border-[#4a301e] space-y-1.5">
+                    <div className="flex items-center justify-between">
+                      <span className="font-pixel text-[9px] text-amber-400 uppercase">
+                        Formatos de Olhos (6 Variantes)
+                      </span>
+                      <span className="text-[9px] text-[#c4ab7d]">
+                        {EYE_STYLES.find(
+                          (es) => es.id === (app.eyeStyle || 'classic')
+                        )?.label || 'Clássico'}
+                      </span>
+                    </div>
+                    <div className="grid grid-cols-3 sm:grid-cols-6 gap-1.5">
+                      {EYE_STYLES.map((es) => {
+                        const isSelected =
+                          (app.eyeStyle || 'classic') === es.id;
+                        return (
+                          <button
+                            key={es.id}
+                            onClick={() =>
+                              updateAccountAppearance({ eyeStyle: es.id })
+                            }
+                            title={`${es.label} — ${es.desc}`}
+                            className={`mc-slot p-1.5 flex flex-col items-center justify-center gap-1 ${
+                              isSelected
+                                ? 'mc-slot-active ring-1 ring-amber-400'
+                                : 'hover:border-[#8c6d46]'
+                            }`}
+                          >
+                            <img
+                              src={spriteAtlas.getEyeStylePreviewUrl(
+                                es.id,
+                                app.eyeColor,
+                                app.skinColor
+                              )}
+                              alt={es.label}
+                              className="w-7 h-7 pixelated"
+                            />
+                            <span className="text-[8px] font-bold text-[#e5d5b5] truncate w-full text-center">
+                              {es.label}
+                            </span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  <div className="bg-[#120b07] p-2 border border-[#4a301e] space-y-1.5">
+                    <div className="flex items-center justify-between">
+                      <span className="font-pixel text-[9px] text-amber-400 uppercase">
+                        Cores & Sub-tonalidades ({EYE_COLORS.length})
+                      </span>
+                      <span className="text-[9px] text-[#c4ab7d]">
+                        {EYE_COLORS.find((ec) => ec.color === app.eyeColor)
+                          ?.label || 'Personalizada'}
+                      </span>
+                    </div>
+                    <div className="grid grid-cols-4 gap-1.5">
+                      {EYE_COLORS.map((ec) => {
+                        const isSelected = app.eyeColor === ec.color;
+                        return (
+                          <button
+                            key={ec.color}
+                            onClick={() =>
+                              updateAccountAppearance({ eyeColor: ec.color })
+                            }
+                            title={`${ec.label} (${ec.group})`}
+                            className={`mc-slot p-1.5 flex flex-col items-center justify-center gap-1 ${
+                              isSelected
+                                ? 'mc-slot-active ring-1 ring-amber-400'
+                                : 'hover:border-[#8c6d46]'
+                            }`}
+                          >
+                            <svg
+                              viewBox="0 0 16 16"
+                              className="w-6 h-6 pixelated shrink-0"
+                            >
+                              <rect
+                                x="1"
+                                y="1"
+                                width="14"
+                                height="14"
+                                fill="#0f172a"
+                              />
+                              <rect
+                                x="2"
+                                y="2"
+                                width="12"
+                                height="12"
+                                fill={ec.color}
+                              />
+                              <rect
+                                x="4"
+                                y="8"
+                                width="8"
+                                height="5"
+                                fill={ec.subTone}
+                              />
+                              <rect
+                                x="5"
+                                y="5"
+                                width="4"
+                                height="4"
+                                fill="#020617"
+                              />
+                              <rect
+                                x="3"
+                                y="3"
+                                width="3"
+                                height="3"
+                                fill="#ffffff"
+                              />
+                            </svg>
+                            <span className="text-[8px] font-bold text-[#e5d5b5] truncate w-full text-center">
+                              {ec.label}
+                            </span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                </>
+              )}
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+

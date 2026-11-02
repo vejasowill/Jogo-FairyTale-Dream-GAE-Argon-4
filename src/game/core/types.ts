@@ -337,6 +337,9 @@ export interface PlacedStructure {
   attachedToWall?: boolean;
   // Flower color variant when placed on the ground
   flowerColor?: ClothingColorId;
+  // Village Well community management (segregates which houses and residents in radius belong to the village)
+  wellExcludedStructureIds?: string[];
+  wellExcludedResidentIds?: string[];
 }
 
 export interface ChunkData {
@@ -425,9 +428,9 @@ export interface CreatureEntity {
   mountStamina?: number; // Current gallop stamina for Horse (max 100) & Camel (max 165)
   mountMaxStamina?: number;
   mountInventory?: (InventorySlot | null)[]; // 8-slot saddlebag inventory when equipped with a saddle
-  riderPlayerId?: string | null; // Primary driver/rider ID ('LOCAL' or peerId)
-  passengerPlayerId?: string | null; // 2nd seat player ID on a Boat ('LOCAL' or peerId)
-  passengerPetId?: string | null; // 2nd seat following pet ID on a Boat
+  riderPlayerId?: string | null; // Seat 1 (index 0) pilot/driver ID ('LOCAL' or peerId)
+  passengerPlayerId?: string | null; // Seat 2 (index 1) passenger player ID on a Boat ('LOCAL' or peerId)
+  passengerPetId?: string | null; // Seat 2 pet ID on a Boat
   ownerId?: string | null; // Persistent owner player ID for tamed pets/mounts (Horse, Camel, Sheep, Boar)
   ownerName?: string | null; // Display name of the unique player who tamed/owns this pet/mount
   // Animation states
@@ -482,6 +485,92 @@ export interface CreatureEntity {
   stallInspectionsToday?: Record<string, number>;
   // Hostility Forgiveness Debt (in Gold Coins) demanded when player holds the Peace Item
   peaceDebtCoins?: number;
+  // Village Elder permission state for Wanderer seeking a village rest point
+  elderApprovedHouseId?: string;
+}
+
+export type TransportSeatRole = 'pilot' | 'passenger';
+
+export interface TransportSeatOffset {
+  x: number;
+  y: number;
+  ySortDelta: number;
+}
+
+export interface TransportSeatSpec {
+  seatIndex: number; // 0 = Assento 1 (Piloto), 1 = Assento 2 (Passageiro), etc.
+  role: TransportSeatRole;
+  label: string;
+  canSteer: boolean;
+  getOffset: (direction: Direction) => TransportSeatOffset;
+}
+
+/**
+ * Modelo padronizado de assentos para meios de transporte atuais e futuros.
+ * - Assento 0 (Assento 1): Piloto (controla a direção e locomoção do transporte)
+ * - Assento 1+ (Assento 2+): Passageiro (viaja no transporte em assento separado sem pilotar)
+ */
+export const TRANSPORT_SEAT_MODELS: Partial<Record<CreatureKind, TransportSeatSpec[]>> = {
+  [CreatureKind.BOAT]: [
+    {
+      seatIndex: 0,
+      role: 'pilot',
+      label: '1º Assento (Piloto)',
+      canSteer: true,
+      getOffset: (direction: Direction) => {
+        const dirSign = direction === 'left' ? -1 : 1;
+        return { x: 9 * dirSign, y: -5, ySortDelta: 0.28 };
+      },
+    },
+    {
+      seatIndex: 1,
+      role: 'passenger',
+      label: '2º Assento (Passageiro)',
+      canSteer: false,
+      getOffset: (direction: Direction) => {
+        const dirSign = direction === 'left' ? -1 : 1;
+        return { x: -10 * dirSign, y: -5, ySortDelta: 0.18 };
+      },
+    },
+  ],
+  [CreatureKind.HORSE]: [
+    {
+      seatIndex: 0,
+      role: 'pilot',
+      label: '1º Assento (Sela)',
+      canSteer: true,
+      getOffset: (direction: Direction) => {
+        const dirSign = direction === 'left' ? -1 : 1;
+        return { x: -1 * dirSign, y: -11, ySortDelta: 0.25 };
+      },
+    },
+  ],
+  [CreatureKind.CAMEL]: [
+    {
+      seatIndex: 0,
+      role: 'pilot',
+      label: '1º Assento (Sela)',
+      canSteer: true,
+      getOffset: (direction: Direction) => {
+        const dirSign = direction === 'left' ? -1 : 1;
+        return { x: -1 * dirSign, y: -15, ySortDelta: 0.25 };
+      },
+    },
+  ],
+};
+
+export function getTransportSeatOffset(
+  kind: CreatureKind,
+  seatIndex: number,
+  direction: Direction
+): TransportSeatOffset {
+  const specs = TRANSPORT_SEAT_MODELS[kind];
+  if (specs && specs.length > 0) {
+    const clampedIdx = Math.max(0, Math.min(specs.length - 1, seatIndex));
+    return specs[clampedIdx].getOffset(direction);
+  }
+  const dirSign = direction === 'left' ? -1 : 1;
+  return { x: -1 * dirSign, y: -11, ySortDelta: 0.25 };
 }
 
 export interface DroppedItem {
@@ -679,6 +768,7 @@ export interface PlayerState {
   statusEffects?: PlayerStatusEffect[];
   fishingState?: FishingState | null;
   mountedEntityId?: string | null;
+  mountedSeatIndex?: number | null;
   mountedCreatureData?: CreatureEntity | null;
   isGalloping?: boolean;
   // Respawn point defined by the last rest point interacted with or used
@@ -723,6 +813,7 @@ export interface RemotePlayerState {
   isMoving: boolean;
   isSwimming?: boolean;
   mountedEntityId?: string | null;
+  mountedSeatIndex?: number | null;
   mountedCreatureData?: CreatureEntity | null;
   isGalloping?: boolean;
   isSleeping?: boolean;
@@ -754,7 +845,7 @@ export interface OnlineActivationStep {
 }
 
 // REGRA PERMANENTE: A cada nova atualização do jogo, incremente a versão para o número seguinte da beta (ex: 0.4.4-beta -> 0.4.5-beta).
-export const GAME_VERSION = '0.6.4-beta';
+export const GAME_VERSION = '0.6.6-beta';
 export const CURRENT_WORLD_GEN_VERSION = 3;
 
 export interface OnlineSessionInfo {
@@ -824,6 +915,7 @@ export type HudControlLayout = Record<HudElementKey, HudElementPlacement>;
 
 export interface GameSettings {
   playerName?: string;
+  accountAppearance?: PlayerAppearance;
   soundEnabled: boolean;
   soundVolume: number;
   musicVolume: number;

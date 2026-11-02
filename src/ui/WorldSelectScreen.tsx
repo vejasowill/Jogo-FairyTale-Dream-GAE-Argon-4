@@ -7,6 +7,7 @@ import {
   Globe,
   Maximize2,
   Minimize2,
+  Palette,
   Play,
   Plus,
   RefreshCw,
@@ -29,6 +30,7 @@ import {
 import { MultiplayerManager } from '../game/network/MultiplayerManager';
 import { SaveManager } from '../game/persistence/SaveManager';
 import { spriteAtlas } from '../game/rendering/SpriteAtlas';
+import { AccountAppearanceModal } from './CharacterPetsModal';
 
 interface WorldSelectScreenProps {
   settings: GameSettings;
@@ -65,6 +67,7 @@ export const WorldSelectScreen: React.FC<WorldSelectScreenProps> = ({
   const [editingWorld, setEditingWorld] = useState<WorldMetadata | null>(null);
   const [deletingWorldId, setDeletingWorldId] = useState<string | null>(null);
   const [showServerModal, setShowServerModal] = useState(false);
+  const [showAppearanceModal, setShowAppearanceModal] = useState(false);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
 
   // Online Join by Invite Code states
@@ -302,11 +305,20 @@ export const WorldSelectScreen: React.FC<WorldSelectScreenProps> = ({
           </button>
 
           <button
+            onClick={() => setShowAppearanceModal(true)}
+            className="min-h-[38px] px-2.5 py-1.5 medieval-btn-gold text-xs font-bold flex items-center gap-1.5 whitespace-nowrap"
+            title="Personalizar Aparência Universal do Personagem"
+          >
+            <Palette className="w-4 h-4 text-[#1c1008]" />
+            <span>Aparência</span>
+          </button>
+
+          <button
             onClick={() => fileInputRef.current?.click()}
             className="min-h-[38px] px-2.5 py-1.5 medieval-btn-wood text-xs font-bold flex items-center gap-1.5 whitespace-nowrap"
           >
             <FolderUp className="w-4 h-4 text-amber-400" />
-            <span>Importar Save</span>
+            <span className="hidden sm:inline">Importar Save</span>
           </button>
           <input
             ref={fileInputRef}
@@ -1023,6 +1035,18 @@ export const WorldSelectScreen: React.FC<WorldSelectScreenProps> = ({
             </button>
           </div>
         </div>
+      )}
+
+      {showAppearanceModal && (
+        <AccountAppearanceModal
+          onClose={() => setShowAppearanceModal(false)}
+          onAppearanceSaved={(updated) => {
+            onUpdateSettings({
+              ...settings,
+              accountAppearance: updated,
+            });
+          }}
+        />
       )}
     </div>
   );

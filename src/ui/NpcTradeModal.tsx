@@ -93,21 +93,10 @@ export const NpcTradeModal: React.FC<NpcTradeModalProps> = ({
   };
 
   const handleSettleWanderer = () => {
-    const found =
-      engine.findAvailableHouseNear(npc.x, npc.y, 420) ||
-      engine.findAvailableHouseNear(engine.player.x, engine.player.y, 420);
-    if (!found) {
-      setFeedback({
-        ok: false,
-        text: 'Nenhuma casa com vaga por perto!',
-      });
-      return;
-    }
-    engine.settleWandererIntoHouse(npc, found.house);
-    const residents = engine.getHouseResidents(found.house.id).length;
+    const res = engine.inviteWandererToRestPoint(npc.id);
     setFeedback({
-      ok: true,
-      text: `🏠 ${npc.name} fixou moradia (${residents}/2)!`,
+      ok: res.ok,
+      text: res.message,
     });
   };
 
@@ -138,8 +127,12 @@ export const NpcTradeModal: React.FC<NpcTradeModalProps> = ({
     ? engine.getHouseResidents(npc.homeHouseId).length
     : 0;
   const nearbyOpenHouse = isWanderer
-    ? engine.findAvailableHouseNear(npc.x, npc.y, 420) ||
-      engine.findAvailableHouseNear(engine.player.x, engine.player.y, 420)
+    ? engine.findVacantRestPointForInviteNear(npc.x, npc.y, 420) ||
+      engine.findVacantRestPointForInviteNear(
+        engine.player.x,
+        engine.player.y,
+        420
+      )
     : null;
 
   return (
@@ -224,14 +217,14 @@ export const NpcTradeModal: React.FC<NpcTradeModalProps> = ({
           {isWanderer && !isHostile && nearbyOpenHouse && (
             <div className="flex items-center justify-between gap-2 pt-1">
               <span className="text-[10px] text-sky-200">
-                Casa disponível por perto:
+                Ponto de descanso desocupado por perto:
               </span>
               <button
                 type="button"
                 onClick={handleSettleWanderer}
                 className="px-2.5 min-h-[28px] medieval-btn-emerald font-pixel text-[9px] font-bold"
               >
-                Convidar
+                Convidar para Morar
               </button>
             </div>
           )}

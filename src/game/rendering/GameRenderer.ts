@@ -15,6 +15,7 @@ import {
   PlacedStructure,
   PlayerState,
   RemotePlayerState,
+  getTransportSeatOffset,
 } from '../core/types';
 import {
   CHUNK_SIZE,
@@ -957,18 +958,28 @@ export class GameRenderer {
 
     // 4B. Remote Online Players
     for (const rp of remotePlayers) {
+      const existingRpMount = rp.mountedEntityId
+        ? creatures.find((c) => c.id === rp.mountedEntityId) || null
+        : creatures.find(
+            (c) =>
+              c.kind === 'BOAT' &&
+              (c.riderPlayerId === rp.peerId ||
+                c.passengerPlayerId === rp.peerId ||
+                (Boolean(rp.persistentPlayerId) &&
+                  (c.riderPlayerId === rp.persistentPlayerId ||
+                    c.passengerPlayerId === rp.persistentPlayerId)))
+          ) || null;
+      const rpMount = existingRpMount || rp.mountedCreatureData || null;
+      const cullX = existingRpMount ? existingRpMount.x : rp.x;
+      const cullY = existingRpMount ? existingRpMount.y : rp.y;
       if (
-        rp.x < camera.x - halfW ||
-        rp.x > camera.x + halfW ||
-        rp.y < camera.y - halfH ||
-        rp.y > camera.y + halfH
+        cullX < camera.x - halfW ||
+        cullX > camera.x + halfW ||
+        cullY < camera.y - halfH ||
+        cullY > camera.y + halfH
       ) {
         continue;
       }
-      const existingRpMount = rp.mountedEntityId
-        ? creatures.find((c) => c.id === rp.mountedEntityId) || null
-        : null;
-      const rpMount = existingRpMount || rp.mountedCreatureData || null;
       if (rpMount && !existingRpMount) {
         const syncedRpMount: CreatureEntity = {
           ...rpMount,
@@ -5249,33 +5260,29 @@ export class GameRenderer {
       eq.legs === 'astral_leggings' ||
       eq.feet === 'astral_boots';
 
-    // Compute seat offset when mounted on Horse, Camel, or Boat
+    // Compute seat offset using the reusable Transport Seat Model (Seat 1 = Pilot, Seat 2 = Passenger)
     let mountOffsetX = 0;
     let mountOffsetY = 0;
     let isBoatPassengerSeat = false;
     if (mountEntity) {
-      const dirSign = mountEntity.direction === 'left' ? -1 : 1;
       if (mountEntity.kind === 'BOAT') {
         const pUid = player.persistentPlayerId || '';
         const isExplicitPassenger =
-          mountEntity.passengerPlayerId === 'LOCAL' ||
-          (Boolean(pUid) && mountEntity.passengerPlayerId === pUid);
-        const isHelmTakenByOther =
-          Boolean(mountEntity.riderPlayerId) &&
-          mountEntity.riderPlayerId !== 'LOCAL' &&
-          (!pUid || mountEntity.riderPlayerId !== pUid) &&
-          isExplicitPassenger;
-        isBoatPassengerSeat = isExplicitPassenger || isHelmTakenByOther;
-        // Seat 1 (Helm/Driver): front of boat (+8px along heading); Seat 2 (Passenger): rear of boat (-9px along heading)
-        mountOffsetX = isBoatPassengerSeat ? -9 * dirSign : 8 * dirSign;
-        mountOffsetY = -5;
-      } else if (mountEntity.kind === 'CAMEL') {
-        mountOffsetX = -1 * dirSign;
-        mountOffsetY = -15;
-      } else {
-        mountOffsetX = -1 * dirSign;
-        mountOffsetY = -11;
+          player.mountedSeatIndex === 1 ||
+          (Boolean(pUid) && mountEntity.passengerPlayerId === pUid) ||
+          (Boolean(mountEntity.passengerPlayerId) &&
+            mountEntity.riderPlayerId !== pUid &&
+            player.mountedSeatIndex !== 0);
+        isBoatPassengerSeat = isExplicitPassenger;
       }
+      const seatIndex = isBoatPassengerSeat ? 1 : 0;
+      const seatOffset = getTransportSeatOffset(
+        mountEntity.kind,
+        seatIndex,
+        mountEntity.direction
+      );
+      mountOffsetX = seatOffset.x;
+      mountOffsetY = seatOffset.y;
     }
 
     const baseMountX = mountEntity ? mountEntity.x : player.x;
@@ -5635,43 +5642,45 @@ export class GameRenderer {
     let mountOffsetY = 0;
     let isRpBoatPassenger = false;
     if (mountEntity) {
-      const dirSign = mountEntity.direction === 'left' ? -1 : 1;
       if (mountEntity.kind === 'BOAT') {
         const rpUid = rp.persistentPlayerId || '';
         const matchesPassenger =
+          rp.mountedSeatIndex === 1 ||
           mountEntity.passengerPlayerId === rp.peerId ||
           (Boolean(rpUid) && mountEntity.passengerPlayerId === rpUid);
         const matchesHelm =
+          rp.mountedSeatIndex === 0 ||
           mountEntity.riderPlayerId === rp.peerId ||
           (Boolean(rpUid) && mountEntity.riderPlayerId === rpUid);
         isRpBoatPassenger =
           matchesPassenger || (Boolean(mountEntity.riderPlayerId) && !matchesHelm);
-        // Seat 1 (Helm/Driver): front (+8px); Seat 2 (Passenger): rear (-9px)
-        mountOffsetX = isRpBoatPassenger ? -9 * dirSign : 8 * dirSign;
-        mountOffsetY = -5;
-      } else if (mountEntity.kind === 'CAMEL') {
-        mountOffsetX = -1 * dirSign;
-        mountOffsetY = -15;
-      } else {
-        mountOffsetX = -1 * dirSign;
-        mountOffsetY = -11;
       }
+      const seatIndex = isRpBoatPassenger ? 1 : 0;
+      const seatOffset = getTransportSeatOffset(
+        mountEntity.kind,
+        seatIndex,
+        mountEntity.direction
+      );
+      mountOffsetX = seatOffset.x;
+      mountOffsetY = seatOffset.y;
     }
     const baseRpMountX = mountEntity ? mountEntity.x : rp.x;
     const baseRpMountY = mountEntity ? mountEntity.y : rp.y;
     const drawX = baseRpMountX + mountOffsetX;
     const drawY = baseRpMountY + mountOffsetY;
 
-    // Subtle allied player ground aura ring
-    ctx.save();
-    ctx.strokeStyle = rp.isHost
-      ? 'rgba(251, 191, 36, 0.5)'
-      : 'rgba(56, 189, 248, 0.5)';
-    ctx.lineWidth = 1.2;
-    ctx.beginPath();
-    ctx.ellipse(rp.x, isSwimming ? rp.y + 6 : rp.y + 8, 10, 4, 0, 0, Math.PI * 2);
-    ctx.stroke();
-    ctx.restore();
+    // Subtle allied player ground aura ring (hidden when seated inside a Boat)
+    if (!isBoatMount) {
+      ctx.save();
+      ctx.strokeStyle = rp.isHost
+        ? 'rgba(251, 191, 36, 0.5)'
+        : 'rgba(56, 189, 248, 0.5)';
+      ctx.lineWidth = 1.2;
+      ctx.beginPath();
+      ctx.ellipse(drawX, isSwimming ? drawY + 6 : drawY + 8, 10, 4, 0, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.restore();
+    }
 
     if (isSwimming) {
       const ripplePulse = Math.sin(globalTime * (rp.isMoving ? 7.5 : 3.5)) * 1.5;
@@ -5833,8 +5842,8 @@ export class GameRenderer {
     ctx.font = 'bold 7px "Plus Jakarta Sans", sans-serif';
     const seatSuffix = isBoatMount
       ? isRpBoatPassenger
-        ? ' · 2º Assento'
-        : ' · Leme'
+        ? ' · Assento 2'
+        : ' · Piloto'
       : '';
     const badgeText = `${rp.isHost ? '👑 ' : '🌐 '}${rp.name} [NV.${rp.level || 1}${seatSuffix}]`;
     const boxW = Math.max(66, badgeText.length * 4.4 + 10);

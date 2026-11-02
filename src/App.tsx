@@ -37,6 +37,7 @@ type ActiveModal =
   | 'NPC_TRADE'
   | 'CHEST'
   | 'MARKET_STALL'
+  | 'VILLAGE_WELL'
   | 'ONLINE_INVITE'
   | 'STATUS_EFFECTS';
 
@@ -100,6 +101,8 @@ export default function App() {
   const [activeNpcId, setActiveNpcId] = useState<string | null>(null);
   const [activeChestId, setActiveChestId] = useState<string | null>(null);
   const [activeStallId, setActiveStallId] = useState<string | null>(null);
+  const [activeWellId, setActiveWellId] = useState<string | null>(null);
+  const [wellFeedback, setWellFeedback] = useState<string | null>(null);
   const [craftInitialTab, setCraftInitialTab] = useState<'craft' | 'inventory'>(
     'craft'
   );
@@ -402,6 +405,12 @@ export default function App() {
             showToast(reason);
           }, 380);
         });
+      },
+      (interactedWell) => {
+        setActiveWellId(interactedWell.id);
+        setWellFeedback(null);
+        setActiveModal('VILLAGE_WELL');
+        engine.setUiPauseRequested(true);
       }
     );
     guestMultiplayerRef.current = null;
@@ -475,13 +484,24 @@ export default function App() {
 
   const handleSaveAndExitToMenu = async () => {
     if (transitionState?.active) return;
+    const isHostOnline = Boolean(
+      engineRef.current?.multiplayer.isOnline &&
+        engineRef.current?.multiplayer.role === 'HOST'
+    );
+    // Immediately close any open modal and go directly to the saving loading screen
+    setActiveModal('NONE');
+    setIsEditingHud(false);
+    setIsMountSaddlebagOpen(false);
     setTransitionState({
       active: true,
       title: 'SALVANDO E SAINDO PARA O MENU',
-      subtitle:
-        'Preservando inventário, construções e montaria integrada ao personagem...',
-      stepLabel: 'Gravando dados locais e encerrando sessão...',
-      progress: 60,
+      subtitle: isHostOnline
+        ? 'Desconectando jogadores convidados e salvando o mundo...'
+        : 'Preservando inventário, construções e montaria integrada ao personagem...',
+      stepLabel: isHostOnline
+        ? 'Notificando e desconectando convidados da sessão...'
+        : 'Gravando dados locais e encerrando sessão...',
+      progress: 45,
     });
 
     try {
@@ -489,6 +509,18 @@ export default function App() {
         engineRef.current.closeChest(activeChestId);
       }
       if (engineRef.current) {
+        if (engineRef.current.multiplayer.isOnline) {
+          await engineRef.current.multiplayer.disconnectAndCloseRoom();
+        }
+        setTransitionState((prev) =>
+          prev
+            ? {
+                ...prev,
+                stepLabel: 'Gravando dados do mundo com segurança...',
+                progress: 80,
+              }
+            : null
+        );
         await engineRef.current.saveGame(false);
       }
     } catch {
@@ -499,23 +531,20 @@ export default function App() {
       prev
         ? {
             ...prev,
-            stepLabel: 'Transição concluída!',
+            stepLabel: 'Salvamento concluído!',
             progress: 100,
           }
         : null
     );
 
     window.setTimeout(() => {
-      setActiveModal('NONE');
       setStationContext(null);
       setActiveChestId(null);
       setActiveStallId(null);
-      setIsEditingHud(false);
-      setIsMountSaddlebagOpen(false);
       setActiveWorldSave(null);
       setSnapshot(null);
       setTransitionState(null);
-    }, 320);
+    }, 280);
   };
 
   const openModal = (modal: ActiveModal) => {
@@ -896,6 +925,304 @@ export default function App() {
                 onClose={closeModal}
               />
             )}
+
+          {/* Poço da Vila — Gerenciador de Casas, Moradores e Líder da Vila */}
+          {activeModal === 'VILLAGE_WELL' &&
+            engineRef.current &&
+            snapshot &&
+            activeWellId &&
+            (() => {
+              const engine = engineRef.current;
+              const wellData = engine.getVillageWellManagementData(activeWellId);
+              if (!wellData) return null;
+              const {
+                well,
+                isPlayerLeader,
+                isElderLeader,
+                isUnowned,
+                leaderName,
+                canDrinkToday,
+                housesInRadius,
+                residentsInRadius,
+              } = wellData;
+              const radiusPx = GameEngine.WELL_VILLAGE_RADIUS;
+
+              return (
+                <div
+                  className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-2 sm:p-4 select-none"
+                  onClick={closeModal}
+                >
+                  <div
+                    className="w-full max-w-2xl max-h-[92dvh] medieval-panel flex flex-col overflow-hidden"
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    {/* Header */}
+                    <div className="px-3.5 py-2.5 bg-[#1c110a] border-b-2 border-[#4a301e] flex items-center justify-between gap-2 shrink-0">
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <h2 className="font-pixel text-xs sm:text-sm font-bold text-amber-300 truncate">
+                            {well.customName || 'Poço da Vila'}
+                          </h2>
+                          <span
+                            className={`text-[9px] font-bold px-1.5 py-0.5 border ${
+                              isPlayerLeader
+                                ? 'bg-emerald-950/70 border-emerald-500/60 text-emerald-300'
+                                : isUnowned
+                                  ? 'bg-amber-950/70 border-amber-500/60 text-amber-300'
+                                  : 'bg-sky-950/70 border-sky-500/60 text-sky-300'
+                            }`}
+                          >
+                            Dono: {leaderName}
+                          </span>
+                        </div>
+                        <p className="text-[10px] text-[#c4ab7d] font-mono-tabular">
+                          Gerenciador de Vila · Raio de Comunidade: {radiusPx}px
+                        </p>
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={closeModal}
+                        className="min-h-[34px] min-w-[34px] medieval-btn-crimson flex items-center justify-center shrink-0"
+                      >
+                        <X className="w-4 h-4" />
+                      </button>
+                    </div>
+
+                    {wellFeedback && (
+                      <div className="px-3.5 py-1.5 bg-amber-950/70 border-b border-amber-500/50 text-[11px] font-bold text-amber-200 shrink-0">
+                        {wellFeedback}
+                      </div>
+                    )}
+
+                    {/* Body */}
+                    <div className="p-3 sm:p-4 overflow-y-auto space-y-3 flex-1">
+                      {/* 1. Água Fresca do Poço (1x por dia) */}
+                      <div className="medieval-inset p-3 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
+                        <div>
+                          <div className="font-pixel text-[11px] font-bold text-sky-300">
+                            ÁGUA FRESCA DO POÇO (1x POR DIA)
+                          </div>
+                          <div className="text-[11px] text-[#d8c4a0]">
+                            Restaura +22 Vida, +35 Fôlego e +10 Saciedade.
+                          </div>
+                        </div>
+                        <button
+                          type="button"
+                          disabled={!canDrinkToday}
+                          onClick={() => {
+                            const res = engine.drinkFromVillageWell(activeWellId);
+                            setWellFeedback(res.message);
+                          }}
+                          className={`min-h-[36px] px-3.5 font-pixel text-[10px] font-bold shrink-0 ${
+                            canDrinkToday
+                              ? 'medieval-btn-emerald'
+                              : 'medieval-btn-wood opacity-50 cursor-not-allowed'
+                          }`}
+                        >
+                          {canDrinkToday ? 'Beber Água do Poço' : 'Já Usado Hoje'}
+                        </button>
+                      </div>
+
+                      {/* 2. Liderança / Dono do Poço */}
+                      <div className="medieval-inset p-3 space-y-2">
+                        <div className="flex items-center justify-between gap-2 flex-wrap">
+                          <div>
+                            <div className="font-pixel text-[11px] font-bold text-amber-300">
+                              LÍDER DA VILA (DONO DO POÇO)
+                            </div>
+                            <div className="text-[11px] text-[#d8c4a0]">
+                              {isElderLeader
+                                ? `Em vilas naturais, o ${leaderName} é o Líder da Vila enquanto estiver vivo.`
+                                : isPlayerLeader
+                                  ? 'Você é o Líder da Vila e pode adicionar ou remover casas e moradores.'
+                                  : 'Este poço está Sem Dono. Assuma a posse para gerenciar as casas e moradores no raio.'}
+                            </div>
+                          </div>
+
+                          {isUnowned && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const res = engine.setVillageWellOwner(
+                                  activeWellId,
+                                  'PLAYER'
+                                );
+                                setWellFeedback(res.message);
+                              }}
+                              className="min-h-[34px] px-3 medieval-btn-gold font-pixel text-[10px] font-bold shrink-0"
+                            >
+                              Tomar Posse (Ser Líder)
+                            </button>
+                          )}
+
+                          {isPlayerLeader && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const res = engine.setVillageWellOwner(
+                                  activeWellId,
+                                  'NONE'
+                                );
+                                setWellFeedback(res.message);
+                              }}
+                              className="min-h-[32px] px-2.5 medieval-btn-wood font-pixel text-[10px] font-bold shrink-0"
+                            >
+                              Deixar Liderança
+                            </button>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* 3. Casas / Pontos de Descanso no Raio */}
+                      <div className="medieval-inset p-3 space-y-2">
+                        <div className="flex items-center justify-between">
+                          <span className="font-pixel text-[11px] font-bold text-amber-400">
+                            CASAS E PONTOS DE DESCANSO NO RAIO ({housesInRadius.length})
+                          </span>
+                          <span className="text-[10px] text-[#c4ab7d]">
+                            {isPlayerLeader
+                              ? 'Toque para incluir ou remover da vila'
+                              : 'Apenas o Líder da Vila pode alterar'}
+                          </span>
+                        </div>
+
+                        {housesInRadius.length === 0 ? (
+                          <div className="text-[11px] text-[#9c8462] italic py-2">
+                            Nenhuma casa ou ponto de descanso dentro do raio deste poço.
+                          </div>
+                        ) : (
+                          <div className="space-y-1.5 max-h-44 overflow-y-auto pr-1">
+                            {housesInRadius.map((h) => (
+                              <div
+                                key={h.id}
+                                className="px-2.5 py-2 bg-[#140c07] border border-[#3b2516] flex items-center justify-between gap-2"
+                              >
+                                <div className="min-w-0">
+                                  <div className="flex items-center gap-1.5 flex-wrap">
+                                    <span className="font-pixel text-[10px] font-bold text-[#f5e7c6]">
+                                      {h.label}
+                                    </span>
+                                    <span
+                                      className={`text-[9px] px-1.5 py-0.5 font-bold border ${
+                                        h.isMember
+                                          ? 'bg-emerald-950/70 border-emerald-500/60 text-emerald-300'
+                                          : 'bg-stone-900 border-stone-600 text-stone-300'
+                                      }`}
+                                    >
+                                      {h.isMember ? 'Integrante da Vila' : 'Casa Independente'}
+                                    </span>
+                                  </div>
+                                  <div className="text-[10px] text-[#c4ab7d]">
+                                    Dono: <strong>{h.ownerLabel}</strong> · Moradores:{' '}
+                                    {h.residentNames.length > 0
+                                      ? h.residentNames.join(', ')
+                                      : 'Nenhum'}{' '}
+                                    · {h.dist}px
+                                  </div>
+                                </div>
+
+                                <button
+                                  type="button"
+                                  disabled={!isPlayerLeader}
+                                  onClick={() => {
+                                    const res = engine.toggleVillageWellHouseMembership(
+                                      activeWellId,
+                                      h.id
+                                    );
+                                    setWellFeedback(res.message);
+                                  }}
+                                  className={`min-h-[30px] px-2.5 font-pixel text-[9px] font-bold shrink-0 ${
+                                    !isPlayerLeader
+                                      ? 'medieval-btn-wood opacity-45 cursor-not-allowed'
+                                      : h.isMember
+                                        ? 'medieval-btn-crimson'
+                                        : 'medieval-btn-emerald'
+                                  }`}
+                                >
+                                  {h.isMember ? 'Remover da Vila' : 'Adicionar à Vila'}
+                                </button>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+
+                      {/* 4. Moradores no Raio */}
+                      <div className="medieval-inset p-3 space-y-2">
+                        <div className="flex items-center justify-between">
+                          <span className="font-pixel text-[11px] font-bold text-amber-400">
+                            MORADORES NO RAIO ({residentsInRadius.length})
+                          </span>
+                          <span className="text-[10px] text-[#c4ab7d]">
+                            Comunidade da Vila
+                          </span>
+                        </div>
+
+                        {residentsInRadius.length === 0 ? (
+                          <div className="text-[11px] text-[#9c8462] italic py-2">
+                            Nenhum aldeão próximo ao raio deste poço no momento.
+                          </div>
+                        ) : (
+                          <div className="space-y-1.5 max-h-44 overflow-y-auto pr-1">
+                            {residentsInRadius.map((r) => (
+                              <div
+                                key={r.id}
+                                className="px-2.5 py-2 bg-[#140c07] border border-[#3b2516] flex items-center justify-between gap-2"
+                              >
+                                <div className="min-w-0">
+                                  <div className="flex items-center gap-1.5 flex-wrap">
+                                    <span className="font-pixel text-[10px] font-bold text-[#f5e7c6]">
+                                      {r.name}
+                                    </span>
+                                    <span className="text-[9px] px-1.5 py-0.5 bg-amber-950/60 border border-amber-500/40 text-amber-200 font-bold">
+                                      {r.profession}
+                                    </span>
+                                    <span
+                                      className={`text-[9px] px-1.5 py-0.5 font-bold border ${
+                                        r.isMember
+                                          ? 'bg-emerald-950/70 border-emerald-500/60 text-emerald-300'
+                                          : 'bg-stone-900 border-stone-600 text-stone-300'
+                                      }`}
+                                    >
+                                      {r.isMember ? 'Na Comunidade' : 'Independente'}
+                                    </span>
+                                  </div>
+                                  <div className="text-[10px] text-[#c4ab7d]">
+                                    Residência: {r.houseLabel} · {r.dist}px
+                                  </div>
+                                </div>
+
+                                <button
+                                  type="button"
+                                  disabled={!isPlayerLeader}
+                                  onClick={() => {
+                                    const res = engine.toggleVillageWellResidentMembership(
+                                      activeWellId,
+                                      r.id
+                                    );
+                                    setWellFeedback(res.message);
+                                  }}
+                                  className={`min-h-[30px] px-2.5 font-pixel text-[9px] font-bold shrink-0 ${
+                                    !isPlayerLeader
+                                      ? 'medieval-btn-wood opacity-45 cursor-not-allowed'
+                                      : r.isMember
+                                        ? 'medieval-btn-crimson'
+                                        : 'medieval-btn-emerald'
+                                  }`}
+                                >
+                                  {r.isMember ? 'Remover' : 'Adicionar'}
+                                </button>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              );
+            })()}
 
           {/* RPG Character Attributes & Tamed Animals Modal */}
           {activeModal === 'CHARACTER' && engineRef.current && snapshot && (

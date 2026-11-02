@@ -160,11 +160,29 @@ export class GameEngine {
   private claimedWorldActionKeys = new Map<string, number>();
   private pendingContainerWithdraws = new Set<string>();
   private stallCustomerSpawnTimer = 3.5;
+  public static readonly WELL_VILLAGE_RADIUS = 380;
+  private buildingOwnerCache = new Map<
+    string,
+    {
+      timestamp: number;
+      result: {
+        interiorRestPoints: PlacedStructure[];
+        primaryRestPoint: PlacedStructure | null;
+        ownerType: 'PLAYER' | 'VILLAGER' | null;
+        ownerId?: string;
+        ownerName?: string;
+        villageId?: string;
+        clearedAfterLoss: boolean;
+      };
+    }
+  >();
   private onUiChange: ((snapshot: HudSnapshot) => void) | null = null;
   private onStationInteract: ((station: PlaceableType) => void) | null = null;
   private onNpcInteract: ((npc: CreatureEntity) => void) | null = null;
   private onChestInteract: ((chest: PlacedStructure) => void) | null = null;
   private onMarketStallInteract: ((stall: PlacedStructure) => void) | null =
+    null;
+  private onVillageWellInteract: ((well: PlacedStructure) => void) | null =
     null;
   private onHostClosedRoom: ((reason: string) => void) | null = null;
 
@@ -177,7 +195,8 @@ export class GameEngine {
     onChestInteract?: (chest: PlacedStructure) => void,
     onMarketStallInteract?: (stall: PlacedStructure) => void,
     existingMultiplayer?: MultiplayerManager | null,
-    onHostClosedRoom?: (reason: string) => void
+    onHostClosedRoom?: (reason: string) => void,
+    onVillageWellInteract?: (well: PlacedStructure) => void
   ) {
     const saveData = migrateSaveData(rawSaveData);
     this.metadata = { ...saveData.metadata };
@@ -224,6 +243,11 @@ export class GameEngine {
       this.player.persistentPlayerId = getOrCreatePersistentPlayerUid();
     }
 
+    // Universal Account Appearance: always link player's appearance to the account appearance
+    this.player.appearance = SaveManager.getAccountAppearance(
+      this.player.appearance
+    );
+
     this.player.goldCoins =
       typeof this.player.goldCoins === 'number' &&
       Number.isFinite(this.player.goldCoins)
@@ -267,6 +291,7 @@ export class GameEngine {
     this.onNpcInteract = onNpcInteract || null;
     this.onChestInteract = onChestInteract || null;
     this.onMarketStallInteract = onMarketStallInteract || null;
+    this.onVillageWellInteract = onVillageWellInteract || null;
     this.onHostClosedRoom = onHostClosedRoom || null;
 
     this.multiplayer =
@@ -519,17 +544,21 @@ export class GameEngine {
     this.camera.zoom = this.settings.cameraZoom;
     this.camera.follow(this.player.x, this.player.y, dt);
 
-    // Update Creatures & Combat AI (Host/Offline simulates full AI; Guest interpolates synced state)
+    // Update Creatures & Combat AI (Host/Offline simulates full AI around all connected players; Guest interpolates synced state)
     if (this.multiplayer.isOnline && this.multiplayer.role === 'GUEST') {
       this.updateGuestCreatures(dt);
     } else {
       this.updateCreatures(dt);
+      const remotePlayerCoords = this.remotePlayersList
+        .filter((rp) => rp.hp > 0)
+        .map((rp) => ({ x: rp.x, y: rp.y }));
       this.entities.updateSpawning(
         dt,
         this.world,
         this.player.x,
         this.player.y,
-        isNight
+        isNight,
+        remotePlayerCoords
       );
     }
 
@@ -915,7 +944,8 @@ export class GameEngine {
       this.updateSleepingState(dt);
     }
 
-    // If the local player is a 2nd-seat passenger on a Boat driven by another online player, follow the boat
+    // If the local player is seated in Seat 2 (Passenger) of a Boat, they never steer the Boat!
+    // Even if Seat 1 (Pilot) is empty, the Passenger remains stationary in Seat 2 until exiting and re-boarding Seat 1.
     const isBoatPassengerOnly =
       isBoatMount &&
       activeMount !== null &&
@@ -927,12 +957,27 @@ export class GameEngine {
       this.player.isMoving = false;
       this.player.animFrame = 0;
     } else if (isBoatPassengerOnly && activeMount) {
+      if (!activeMount.riderPlayerId) {
+        activeMount.vx = 0;
+        activeMount.vy = 0;
+      }
       this.player.x = activeMount.x;
       this.player.y = activeMount.y;
       this.player.vx = activeMount.vx;
       this.player.vy = activeMount.vy;
       this.player.direction = activeMount.direction;
       this.player.isMoving = Math.hypot(activeMount.vx, activeMount.vy) > 2;
+      if (this.player.isMoving) {
+        const revealRad = Math.max(
+          10,
+          Math.min(20, Math.round(13 / Math.max(0.55, this.camera.zoom)))
+        );
+        this.revealWorldAndPopulateIslands(
+          this.player.x,
+          this.player.y,
+          revealRad
+        );
+      }
       if (activeMount.passengerPetId) {
         const pet = this.entities.creatures.find(
           (c) => c.id === activeMount.passengerPetId
@@ -1344,6 +1389,10 @@ export class GameEngine {
    *   even if there is another rest point inside that has an owner (`structureOwnerClearedAfterLoss = true`),
    *   and a new owner is ONLY defined when someone subsequently takes ownership ("tomar posse") of a rest point inside the structure!
    */
+  public invalidateBuildingOwnerCache(): void {
+    this.buildingOwnerCache.clear();
+  }
+
   public getEnclosedBuildingOwnerInfo(
     tx: number,
     ty: number
@@ -1358,6 +1407,28 @@ export class GameEngine {
   } | null {
     const building = this.renderer.getBuildingAtTile(this.world, tx, ty);
     if (!building) return null;
+
+    const nowMs = performance.now();
+    const cached = this.buildingOwnerCache.get(building.id);
+    if (cached && nowMs - cached.timestamp < 450) {
+      return cached.result;
+    }
+
+    const cacheAndReturn = (res: {
+      interiorRestPoints: PlacedStructure[];
+      primaryRestPoint: PlacedStructure | null;
+      ownerType: 'PLAYER' | 'VILLAGER' | null;
+      ownerId?: string;
+      ownerName?: string;
+      villageId?: string;
+      clearedAfterLoss: boolean;
+    }) => {
+      this.buildingOwnerCache.set(building.id, {
+        timestamp: nowMs,
+        result: res,
+      });
+      return res;
+    };
 
     const minCx = Math.floor(building.minTx / 16);
     const maxCx = Math.floor(building.maxTx / 16);
@@ -1379,12 +1450,12 @@ export class GameEngine {
     }
 
     if (interiorRestPoints.length === 0) {
-      return {
+      return cacheAndReturn({
         interiorRestPoints: [],
         primaryRestPoint: null,
         ownerType: null,
         clearedAfterLoss: false,
-      };
+      });
     }
 
     const isRestPointOwnerAlive = (rp: PlacedStructure): boolean => {
@@ -1416,14 +1487,14 @@ export class GameEngine {
       if (!isRestPointOwnerAlive(primary)) {
         // The primary owner died! Clear structure ownership so the structure becomes unowned even if another bed inside has an owner.
         this.clearEnclosedBuildingOwnershipOnLoss(tx, ty, primary.id);
-        return {
+        return cacheAndReturn({
           interiorRestPoints,
           primaryRestPoint: null,
           ownerType: null,
           clearedAfterLoss: true,
-        };
+        });
       }
-      return {
+      return cacheAndReturn({
         interiorRestPoints,
         primaryRestPoint: primary,
         ownerType: primary.ownerType || null,
@@ -1431,7 +1502,7 @@ export class GameEngine {
         ownerName: primary.ownerName,
         villageId: primary.villageId,
         clearedAfterLoss: false,
-      };
+      });
     }
 
     // 2. If any rest point inside is marked `structureOwnerClearedAfterLoss`, the structure stays UNOWNED until someone claims a rest point inside!
@@ -1439,12 +1510,12 @@ export class GameEngine {
       (rp) => rp.structureOwnerClearedAfterLoss
     );
     if (clearedAfterLoss) {
-      return {
+      return cacheAndReturn({
         interiorRestPoints,
         primaryRestPoint: null,
         ownerType: null,
         clearedAfterLoss: true,
-      };
+      });
     }
 
     // 3. Otherwise (e.g., player just finished closing walls around existing rest point(s)),
@@ -1460,7 +1531,7 @@ export class GameEngine {
     if (validOwned.length > 0) {
       primary = validOwned[0];
       primary.isPrimaryStructureOwner = true;
-      return {
+      return cacheAndReturn({
         interiorRestPoints,
         primaryRestPoint: primary,
         ownerType: primary.ownerType || null,
@@ -1468,15 +1539,15 @@ export class GameEngine {
         ownerName: primary.ownerName,
         villageId: primary.villageId,
         clearedAfterLoss: false,
-      };
+      });
     }
 
-    return {
+    return cacheAndReturn({
       interiorRestPoints,
       primaryRestPoint: null,
       ownerType: null,
       clearedAfterLoss: false,
-    };
+    });
   }
 
   /**
@@ -1489,6 +1560,7 @@ export class GameEngine {
     ty: number,
     lostRestPointId?: string
   ): void {
+    this.invalidateBuildingOwnerCache();
     const building = this.renderer.getBuildingAtTile(this.world, tx, ty);
     if (!building) return;
 
@@ -1516,6 +1588,7 @@ export class GameEngine {
           } else if (
             st.type === PlaceableType.WOOD_WALL ||
             st.type === PlaceableType.STONE_WALL ||
+            st.type === PlaceableType.BRICK_WALL ||
             st.type === PlaceableType.WOOD_WINDOW ||
             st.type === PlaceableType.STONE_WINDOW ||
             st.type === PlaceableType.WOOD_DOOR ||
@@ -1536,6 +1609,7 @@ export class GameEngine {
    * and defines the owner of the entire enclosed structure!
    */
   public assignEnclosedBuildingPrimaryOwner(restPointSt: PlacedStructure): void {
+    this.invalidateBuildingOwnerCache();
     if (!this.isRestPointStructure(restPointSt) || !restPointSt.ownerType) {
       return;
     }
@@ -1602,6 +1676,7 @@ export class GameEngine {
           } else if (
             st.type === PlaceableType.WOOD_WALL ||
             st.type === PlaceableType.STONE_WALL ||
+            st.type === PlaceableType.BRICK_WALL ||
             st.type === PlaceableType.WOOD_WINDOW ||
             st.type === PlaceableType.STONE_WINDOW ||
             st.type === PlaceableType.WOOD_DOOR ||
@@ -1803,66 +1878,123 @@ export class GameEngine {
 
   /**
    * Synchronizes village bed/house assignments, protects player-owned structures from NPC invasion,
-   * and enforces enclosed structure ownership rules if a villager resident dies.
+   * enforces Village Well community membership & Elder leadership, and updates NPC Market Stalls.
+   * Scans only the active 7x7 chunk neighborhood around the player to avoid global O(chunks) lag spikes.
    */
   private syncVillageHouseAssignments(): void {
     const validNpcHouseIds = new Set<string>();
     const npcHouses: PlacedStructure[] = [];
-    const ownerName =
-      this.multiplayer.localPlayerName ||
-      this.settings.playerName ||
-      'Aventureiro';
+    const activeWells: PlacedStructure[] = [];
+    const allRestPointsInRegion: PlacedStructure[] = [];
 
-    for (const chunk of Object.values(this.world.chunks)) {
-      if (!chunk) continue;
-      for (const st of chunk.structures) {
-        if (!this.isRestPointStructure(st)) continue;
+    const pTile = this.world.worldToTile(this.player.x, this.player.y);
+    const pChunk = this.world.tileToChunk(pTile.tx, pTile.ty);
 
-        // Any bed/tent/house placed by a player (not generated as a world landmark structure) belongs to the player!
-        if (
-          !st.id.startsWith('world_struct_') &&
-          !st.villageId &&
-          !st.ownerType &&
-          !st.structureOwnerClearedAfterLoss
+    for (let dy = -3; dy <= 3; dy++) {
+      for (let dx = -3; dx <= 3; dx++) {
+        const chunk =
+          this.world.chunks[
+            WorldManager.chunkKey(pChunk.cx + dx, pChunk.cy + dy)
+          ];
+        if (!chunk) continue;
+        for (const st of chunk.structures) {
+          if (st.type === PlaceableType.VILLAGE_WELL) {
+            this.ensureVillageWellInitialized(st);
+            activeWells.push(st);
+          } else if (this.isRestPointStructure(st)) {
+            allRestPointsInRegion.push(st);
+          }
+        }
+      }
+    }
+
+    // 1. Segregate which houses/rest points belong to a village community based on active Village Wells in range!
+    // Without a Village Well within WELL_VILLAGE_RADIUS (or if removed from the well), houses are independent (no villageId).
+    for (const st of allRestPointsInRegion) {
+      const sx = st.tileX * TILE_SIZE + TILE_SIZE / 2;
+      const sy = st.tileY * TILE_SIZE + TILE_SIZE / 2;
+      let governingWell: PlacedStructure | null = null;
+      let bestWellDist = GameEngine.WELL_VILLAGE_RADIUS;
+
+      for (const well of activeWells) {
+        const wx = well.tileX * TILE_SIZE + TILE_SIZE / 2;
+        const wy = well.tileY * TILE_SIZE + TILE_SIZE / 2;
+        const d = Math.hypot(sx - wx, sy - wy);
+        if (d <= bestWellDist) {
+          bestWellDist = d;
+          governingWell = well;
+        }
+      }
+
+      if (!governingWell) {
+        // No Village Well within range -> independent house outside any village community
+        if (st.villageId) {
+          st.villageId = undefined;
+          this.syncEnclosedBuildingVillageId(st.tileX, st.tileY, undefined);
+        }
+      } else {
+        const wellVid =
+          governingWell.villageId ||
+          `village_well_${governingWell.tileX}_${governingWell.tileY}`;
+        governingWell.villageId = wellVid;
+        const excluded =
+          Array.isArray(governingWell.wellExcludedStructureIds) &&
+          governingWell.wellExcludedStructureIds.includes(st.id);
+
+        if (excluded) {
+          if (st.villageId === wellVid) {
+            st.villageId = undefined;
+            this.syncEnclosedBuildingVillageId(st.tileX, st.tileY, undefined);
+          }
+        } else if (
+          st.villageId === wellVid ||
+          (!st.villageId && st.id.startsWith('world_struct_'))
         ) {
-          st.ownerType = 'PLAYER';
-          st.ownerId = this.getLocalOwnerId();
-          st.ownerName = ownerName;
-          st.ownerAssignedAt = st.ownerAssignedAt || Date.now();
+          st.villageId = wellVid;
         }
+      }
 
-        if (this.canNpcOccupyHouse(st)) {
-          validNpcHouseIds.add(st.id);
-          npcHouses.push(st);
-        }
+      // IMPORTANT: Player-placed rest points NEVER become player-owned automatically on placement!
+      // They remain unowned (!st.ownerType) until the player interacts with them or invites a Wanderer.
+      if (this.canNpcOccupyHouse(st)) {
+        validNpcHouseIds.add(st.id);
+        npcHouses.push(st);
       }
     }
 
-    // Clear homeHouseId if a bed/house was dismantled OR if it belongs to a Player (NPCs cannot invade player houses!)
+    // Clear homeHouseId if a bed/house in the active region was dismantled OR if it belongs to a Player
     for (const cr of this.entities.creatures) {
+      if (Math.hypot(cr.x - this.player.x, cr.y - this.player.y) > 950) {
+        continue;
+      }
       if (cr.homeHouseId && !validNpcHouseIds.has(cr.homeHouseId)) {
-        if (cr.isInsideHouse) {
-          this.exitVillagerFromHouse(cr, false);
+        // Verify if the house is simply in an unloaded/distant chunk before clearing
+        const homeSt = this.getRestPointById(cr.homeHouseId);
+        if (!homeSt || !this.canNpcOccupyHouse(homeSt)) {
+          if (cr.isInsideHouse) {
+            this.exitVillagerFromHouse(cr, false);
+          }
+          cr.homeHouseId = undefined;
+          cr.homeX = undefined;
+          cr.homeY = undefined;
+          cr.isInsideHouse = false;
+          cr.outsideNightTimer = 0;
         }
-        cr.homeHouseId = undefined;
-        cr.homeX = undefined;
-        cr.homeY = undefined;
-        cr.isInsideHouse = false;
-        cr.outsideNightTimer = 0;
       }
     }
 
-    // Bind unbound village NPCs ONLY to valid non-player village beds/houses (1 villager per BED, up to 2 per legacy VILLAGE_HOUSE)
+    // Bind unbound village NPCs ONLY to valid non-player village beds/houses that belong to a village (h.villageId)
     for (const cr of this.entities.creatures) {
       if (
         cr.kind === CreatureKind.VILLAGER &&
         cr.hp > 0 &&
-        !cr.homeHouseId
+        !cr.homeHouseId &&
+        Math.hypot(cr.x - this.player.x, cr.y - this.player.y) <= 950
       ) {
         let bestHouse: PlacedStructure | null = null;
         let bestDist = 190;
         for (const h of npcHouses) {
-          if (!this.canNpcOccupyHouse(h)) continue;
+          if (!h.villageId || !this.canNpcOccupyHouse(h)) continue;
           const maxCap =
             h.type === PlaceableType.BED ? 1 : MAX_VILLAGERS_PER_HOUSE;
           if (this.getHouseResidents(h.id).length >= maxCap) {
@@ -1880,12 +2012,35 @@ export class GameEngine {
           cr.homeHouseId = bestHouse.id;
           cr.homeX = bestHouse.tileX * TILE_SIZE + TILE_SIZE / 2;
           cr.homeY = bestHouse.tileY * TILE_SIZE + TILE_SIZE / 2;
+          cr.villageId = bestHouse.villageId;
           if (!bestHouse.ownerType) {
             bestHouse.ownerType = 'VILLAGER';
             bestHouse.ownerId = cr.id;
             bestHouse.ownerName = cr.name;
             this.assignEnclosedBuildingPrimaryOwner(bestHouse);
           }
+        }
+      }
+    }
+
+    // Sync Villager community membership (`cr.villageId`) with their house and governing Village Well exclusions
+    for (const cr of this.entities.creatures) {
+      if (
+        cr.kind === CreatureKind.VILLAGER &&
+        cr.hp > 0 &&
+        cr.homeHouseId &&
+        Math.hypot(cr.x - this.player.x, cr.y - this.player.y) <= 950
+      ) {
+        const homeSt = this.getRestPointById(cr.homeHouseId);
+        if (homeSt) {
+          const well = homeSt.villageId
+            ? activeWells.find((w) => w.villageId === homeSt.villageId)
+            : null;
+          const isExcludedResident =
+            well &&
+            Array.isArray(well.wellExcludedResidentIds) &&
+            well.wellExcludedResidentIds.includes(cr.id);
+          cr.villageId = isExcludedResident ? undefined : homeSt.villageId;
         }
       }
     }
@@ -1929,69 +2084,78 @@ export class GameEngine {
       }
     }
 
-    // Also ensure every MARKET_STALL has a defined owner (Villager for village stalls, Player for player-placed stalls)
-    for (const chunk of Object.values(this.world.chunks)) {
-      if (!chunk) continue;
-      for (const st of chunk.structures) {
-        if (st.type !== PlaceableType.MARKET_STALL) continue;
-        this.ensureMarketStallInitialized(st);
+    // Synchronize MARKET_STALLs in the active 7x7 chunk neighborhood
+    for (let dy = -3; dy <= 3; dy++) {
+      for (let dx = -3; dx <= 3; dx++) {
+        const chunk =
+          this.world.chunks[
+            WorldManager.chunkKey(pChunk.cx + dx, pChunk.cy + dy)
+          ];
+        if (!chunk) continue;
+        for (const st of chunk.structures) {
+          if (st.type !== PlaceableType.MARKET_STALL) continue;
+          this.ensureMarketStallInitialized(st);
 
-        if (st.ownerType === 'VILLAGER') {
-          const currentOwnerAlive =
-            st.ownerId &&
-            this.entities.creatures.some(
-              (c) =>
-                c.id === st.ownerId &&
-                (c.kind === CreatureKind.VILLAGER ||
-                  c.kind === CreatureKind.WANDERER) &&
-                c.hp > 0
-            );
+          if (st.ownerType === 'VILLAGER') {
+            const currentOwnerAlive =
+              st.ownerId &&
+              this.entities.creatures.some(
+                (c) =>
+                  c.id === st.ownerId &&
+                  (c.kind === CreatureKind.VILLAGER ||
+                    c.kind === CreatureKind.WANDERER) &&
+                  c.hp > 0
+              );
 
-          if (!currentOwnerAlive) {
-            const sx = st.tileX * TILE_SIZE + TILE_SIZE / 2;
-            const sy = st.tileY * TILE_SIZE + TILE_SIZE / 2;
-            let bestMerchant: CreatureEntity | null = null;
-            let bestScore = Infinity;
+            if (!currentOwnerAlive) {
+              const sx = st.tileX * TILE_SIZE + TILE_SIZE / 2;
+              const sy = st.tileY * TILE_SIZE + TILE_SIZE / 2;
+              let bestMerchant: CreatureEntity | null = null;
+              let bestScore = Infinity;
 
-            for (const cr of this.entities.creatures) {
-              if (cr.kind !== CreatureKind.VILLAGER || cr.hp <= 0) continue;
-              const d = Math.hypot(cr.x - sx, cr.y - sy);
-              if (d > 380 && (!st.villageId || cr.villageId !== st.villageId)) {
-                continue;
+              for (const cr of this.entities.creatures) {
+                if (cr.kind !== CreatureKind.VILLAGER || cr.hp <= 0) continue;
+                const d = Math.hypot(cr.x - sx, cr.y - sy);
+                if (
+                  d > 380 &&
+                  (!st.villageId || cr.villageId !== st.villageId)
+                ) {
+                  continue;
+                }
+                const roleBonus = cr.npcRole === 'mercador' ? -220 : 0;
+                const villageBonus =
+                  st.villageId && cr.villageId === st.villageId ? -120 : 0;
+                const score = d + roleBonus + villageBonus;
+                if (score < bestScore) {
+                  bestScore = score;
+                  bestMerchant = cr;
+                }
               }
-              const roleBonus = cr.npcRole === 'mercador' ? -220 : 0;
-              const villageBonus =
-                st.villageId && cr.villageId === st.villageId ? -120 : 0;
-              const score = d + roleBonus + villageBonus;
-              if (score < bestScore) {
-                bestScore = score;
-                bestMerchant = cr;
+
+              if (bestMerchant) {
+                st.ownerId = bestMerchant.id;
+                st.ownerName = `${bestMerchant.name} (${
+                  bestMerchant.npcProfessionLabel || 'Mercador'
+                })`;
+              } else if (!st.ownerName) {
+                st.ownerName = 'Mercador da Vila';
               }
             }
 
-            if (bestMerchant) {
-              st.ownerId = bestMerchant.id;
-              st.ownerName = `${bestMerchant.name} (${
-                bestMerchant.npcProfessionLabel || 'Mercador'
-              })`;
-            } else if (!st.ownerName) {
-              st.ownerName = 'Mercador da Vila';
+            if (this.isVillagerStallOwnerAlive(st)) {
+              const hasGoods =
+                Array.isArray(st.stallSlots) &&
+                st.stallSlots.some((s) => s !== null && s.count > 0);
+              const needsDailyRefresh =
+                st.stallLastRefreshDay !== this.metadata.dayCount;
+              if (!hasGoods || needsDailyRefresh) {
+                this.populateVillagerStallMerchandise(st);
+              }
+              st.ownerSleeping = this.isVillagerStallOwnerSleeping(st);
+              st.stallOpen = !st.ownerSleeping;
+            } else {
+              st.ownerSleeping = false;
             }
-          }
-
-          if (this.isVillagerStallOwnerAlive(st)) {
-            const hasGoods =
-              Array.isArray(st.stallSlots) &&
-              st.stallSlots.some((s) => s !== null && s.count > 0);
-            const needsDailyRefresh =
-              st.stallLastRefreshDay !== this.metadata.dayCount;
-            if (!hasGoods || needsDailyRefresh) {
-              this.populateVillagerStallMerchandise(st);
-            }
-            st.ownerSleeping = this.isVillagerStallOwnerSleeping(st);
-            st.stallOpen = !st.ownerSleeping;
-          } else {
-            st.ownerSleeping = false;
           }
         }
       }
@@ -2199,7 +2363,626 @@ export class GameEngine {
   }
 
   /**
-   * Finds the nearest House (village house or player-built house) within `maxRadius` that has `< 2` residents.
+   * Finds a Rest Point structure (`BED`, `EXPLORER_TENT`, `VILLAGE_HOUSE`) by its `structureId`.
+   */
+  public getRestPointById(structureId: string): PlacedStructure | null {
+    for (const chunk of Object.values(this.world.chunks)) {
+      if (!chunk) continue;
+      const found = chunk.structures.find(
+        (s) => s.id === structureId && this.isRestPointStructure(s)
+      );
+      if (found) return found;
+    }
+    return null;
+  }
+
+  /**
+   * Synchronizes the `villageId` on all perimeter walls/doors/windows of an enclosed building at `(tx, ty)`.
+   */
+  private syncEnclosedBuildingVillageId(
+    tx: number,
+    ty: number,
+    villageId: string | undefined
+  ): void {
+    this.invalidateBuildingOwnerCache();
+    const building = this.renderer.getBuildingAtTile(this.world, tx, ty);
+    if (!building) return;
+    const minCx = Math.floor(building.minTx / 16);
+    const maxCx = Math.floor(building.maxTx / 16);
+    const minCy = Math.floor(building.minTy / 16);
+    const maxCy = Math.floor(building.maxTy / 16);
+    for (let cy = minCy; cy <= maxCy; cy++) {
+      for (let cx = minCx; cx <= maxCx; cx++) {
+        const chunk = this.world.chunks[WorldManager.chunkKey(cx, cy)];
+        if (!chunk) continue;
+        for (const st of chunk.structures) {
+          if (building.footprintSet.has(`${st.tileX},${st.tileY}`)) {
+            st.villageId = villageId;
+          }
+        }
+      }
+    }
+  }
+
+  // =========================================================================
+  // VILLAGE WELL ("POÇO DA VILA") — COMMUNITY & LEADER MANAGEMENT API
+  // =========================================================================
+
+  public getVillageWellById(wellId: string): PlacedStructure | null {
+    for (const chunk of Object.values(this.world.chunks)) {
+      if (!chunk) continue;
+      const found = chunk.structures.find(
+        (s) => s.id === wellId && s.type === PlaceableType.VILLAGE_WELL
+      );
+      if (found) return this.ensureVillageWellInitialized(found);
+    }
+    return null;
+  }
+
+  /**
+   * Finds the living Elder (`npcRole === 'anciao'`) who leads a naturally generated village well.
+   * In naturally generated villages, ONLY the Elder (`anciao`) is the leader of the village, unless they die.
+   */
+  public getVillageWellElderEntity(
+    well: PlacedStructure
+  ): CreatureEntity | null {
+    if (well.ownerType !== 'VILLAGER') return null;
+    const wx = well.tileX * TILE_SIZE + TILE_SIZE / 2;
+    const wy = well.tileY * TILE_SIZE + TILE_SIZE / 2;
+
+    if (well.ownerId) {
+      const directElder = this.entities.creatures.find(
+        (c) =>
+          c.id === well.ownerId &&
+          c.kind === CreatureKind.VILLAGER &&
+          c.hp > 0 &&
+          c.npcRole === 'anciao'
+      );
+      if (directElder) return directElder;
+    }
+
+    const villageElder = this.entities.creatures.find(
+      (c) =>
+        c.kind === CreatureKind.VILLAGER &&
+        c.hp > 0 &&
+        c.npcRole === 'anciao' &&
+        ((well.villageId && c.villageId === well.villageId) ||
+          Math.hypot(c.x - wx, c.y - wy) <= GameEngine.WELL_VILLAGE_RADIUS)
+    );
+    return villageElder || null;
+  }
+
+  /**
+   * Checks whether the NPC Leader (the Village Elder / `anciao`) of a Village Well is still alive.
+   * If the Elder dies, the well loses its NPC leader and becomes unowned (`Sem Dono`), allowing the player to claim it.
+   */
+  public isVillageWellLeaderAlive(well: PlacedStructure): boolean {
+    if (well.ownerType !== 'VILLAGER') return false;
+    if (this.getVillageWellElderEntity(well)) {
+      return true;
+    }
+    const { cx, cy } = this.world.tileToChunk(well.tileX, well.tileY);
+    const chunk = this.world.chunks[WorldManager.chunkKey(cx, cy)];
+    if (chunk && !chunk.mobsPopulated && well.villageId) {
+      return true;
+    }
+    return false;
+  }
+
+  public ensureVillageWellInitialized(well: PlacedStructure): PlacedStructure {
+    if (!Array.isArray(well.wellExcludedStructureIds)) {
+      well.wellExcludedStructureIds = [];
+    }
+    if (!Array.isArray(well.wellExcludedResidentIds)) {
+      well.wellExcludedResidentIds = [];
+    }
+
+    // For naturally generated village wells (`world_struct_` or `villageId` from worldGen) before the Elder dies:
+    if (
+      !well.ownerType &&
+      !well.structureOwnerClearedAfterLoss &&
+      (well.id.startsWith('world_struct_') || well.villageId)
+    ) {
+      well.ownerType = 'VILLAGER';
+      well.npcRole = 'anciao';
+      if (!well.ownerName) well.ownerName = 'Ancião da Vila';
+    }
+
+    if (well.ownerType === 'VILLAGER') {
+      const livingElder = this.getVillageWellElderEntity(well);
+      if (livingElder) {
+        well.ownerId = livingElder.id;
+        well.ownerName = livingElder.name;
+        well.npcRole = 'anciao';
+      } else if (!this.isVillageWellLeaderAlive(well)) {
+        // The Village Elder died! The well becomes Unowned ("Sem Dono") until the player claims leadership
+        well.ownerType = undefined;
+        well.ownerId = undefined;
+        well.ownerName = undefined;
+        well.structureOwnerClearedAfterLoss = true;
+      }
+    }
+
+    return well;
+  }
+
+  /**
+   * Drinks fresh water from a Village Well (1x per day: +20 HP, +20 Hunger, +55 Stamina).
+   */
+  public drinkFromVillageWell(wellId?: string): {
+    ok: boolean;
+    message: string;
+  } {
+    const well = wellId ? this.getVillageWellById(wellId) : null;
+    const wx = well
+      ? well.tileX * TILE_SIZE + TILE_SIZE / 2
+      : this.player.x;
+    const wy = well
+      ? well.tileY * TILE_SIZE + TILE_SIZE / 2
+      : this.player.y;
+
+    if (this.player.lastWellUseDay === this.metadata.dayCount) {
+      soundManager.playHitStone(wx, wy);
+      this.renderer.spawnRipple(wx, wy, '#94a3b8', 22, 0.4);
+      const msg = '⏳ Poço já usado hoje! (Disponível 1x por dia)';
+      this.addFloatingText(msg, this.player.x, this.player.y - 22, '#fbbf24');
+      this.emitUiSnapshot();
+      return { ok: false, message: msg };
+    }
+
+    this.player.lastWellUseDay = this.metadata.dayCount;
+    this.player.hp = Math.min(this.player.maxHp, this.player.hp + 20);
+    this.player.hunger = Math.min(
+      this.player.maxHunger,
+      this.player.hunger + 20
+    );
+    this.player.stamina = Math.min(
+      this.player.maxStamina,
+      this.player.stamina + 55
+    );
+    soundManager.playTameSuccess(wx, wy);
+    this.renderer.spawnBurst(wx, wy - 4, 'WATER', 12);
+    this.renderer.spawnBurst(this.player.x, this.player.y, 'HEAL', 10);
+    this.renderer.spawnRipple(wx, wy, '#38bdf8', 28, 0.55);
+    const msg =
+      '💧 Água Fresca do Poço (+20 HP / +20 Fome / +55 Energia · 1x/dia)';
+    this.addFloatingText(msg, this.player.x, this.player.y - 22, '#38bdf8');
+    this.emitUiSnapshot();
+    return { ok: true, message: msg };
+  }
+
+  /**
+   * Defines or relinquishes ownership (Village Leadership) of a Village Well (`PlaceableType.VILLAGE_WELL`).
+   * The player is never owner automatically; they must explicitly claim ownership when the well is unowned.
+   */
+  public setVillageWellOwner(
+    wellId: string,
+    targetOwner: 'PLAYER' | 'NONE'
+  ): { ok: boolean; message: string } {
+    const well = this.getVillageWellById(wellId);
+    if (!well) return { ok: false, message: 'Poço não encontrado.' };
+
+    const wx = well.tileX * TILE_SIZE + TILE_SIZE / 2;
+    const wy = well.tileY * TILE_SIZE + TILE_SIZE / 2;
+
+    if (targetOwner === 'PLAYER') {
+      if (well.ownerType === 'VILLAGER' && this.isVillageWellLeaderAlive(well)) {
+        soundManager.playHitStone(wx, wy);
+        return {
+          ok: false,
+          message: `🔒 ${
+            well.ownerName || 'O Ancião'
+          } é o Líder desta vila! Enquanto o Ancião viver, o poço pertence a ele.`,
+        };
+      }
+
+      const ownerName =
+        this.multiplayer.localPlayerName ||
+        this.settings.playerName ||
+        'Aventureiro';
+      well.ownerType = 'PLAYER';
+      well.ownerId = this.getLocalOwnerId();
+      well.ownerName = ownerName;
+      well.ownerAssignedAt = Date.now();
+      well.structureOwnerClearedAfterLoss = false;
+      if (!well.villageId) {
+        well.villageId = `village_well_${well.tileX}_${well.tileY}`;
+      }
+
+      soundManager.playLevelUp();
+      this.renderer.spawnBurst(wx, wy - 6, 'GOLD', 16);
+      this.renderer.spawnRipple(wx, wy, '#4ade80', 30, 0.55);
+      this.addFloatingText(
+        `👑 Líder da Vila! Agora você gerencia este Poço!`,
+        wx,
+        wy - 24,
+        '#4ade80'
+      );
+      this.syncVillageHouseAssignments();
+      this.syncChunkAtTile(well.tileX, well.tileY);
+      void this.saveGame(true);
+      this.emitUiSnapshot();
+      return {
+        ok: true,
+        message: `Você assumiu a posse do poço e tornou-se o Líder da Vila!`,
+      };
+    } else {
+      if (well.ownerType !== 'PLAYER') {
+        return {
+          ok: false,
+          message: 'Apenas o líder atual pode abrir mão da posse.',
+        };
+      }
+      well.ownerType = undefined;
+      well.ownerId = undefined;
+      well.ownerName = undefined;
+      well.structureOwnerClearedAfterLoss = true;
+      soundManager.playPickup(wx, wy);
+      this.syncChunkAtTile(well.tileX, well.tileY);
+      void this.saveGame(true);
+      this.emitUiSnapshot();
+      return {
+        ok: true,
+        message: 'O poço agora está Sem Dono.',
+      };
+    }
+  }
+
+  public renameVillageWell(wellId: string, newName: string): void {
+    const well = this.getVillageWellById(wellId);
+    if (!well || well.ownerType !== 'PLAYER') return;
+    const trimmed = newName.trim().slice(0, 28);
+    well.customName = trimmed || undefined;
+    soundManager.playPickup();
+    this.syncChunkAtTile(well.tileX, well.tileY);
+    this.emitUiSnapshot();
+  }
+
+  /**
+   * Returns complete Village Well management data:
+   * - Owner/Leader status (Player, Living Elder, or Unowned)
+   * - All houses/rest points within `WELL_VILLAGE_RADIUS` and whether they are active members of the village
+   * - All villagers within `WELL_VILLAGE_RADIUS` and whether they are active members of the village
+   */
+  public getVillageWellManagementData(wellId: string): {
+    well: PlacedStructure;
+    villageId: string;
+    isPlayerLeader: boolean;
+    isElderLeader: boolean;
+    isUnowned: boolean;
+    leaderName: string;
+    canDrinkToday: boolean;
+    housesInRadius: Array<{
+      id: string;
+      label: string;
+      tileX: number;
+      tileY: number;
+      dist: number;
+      ownerLabel: string;
+      residentNames: string[];
+      isMember: boolean;
+    }>;
+    residentsInRadius: Array<{
+      id: string;
+      name: string;
+      profession: string;
+      houseLabel: string;
+      dist: number;
+      isMember: boolean;
+    }>;
+  } | null {
+    const well = this.getVillageWellById(wellId);
+    if (!well) return null;
+
+    const villageId =
+      well.villageId || `village_well_${well.tileX}_${well.tileY}`;
+    well.villageId = villageId;
+
+    const isPlayerLeader = well.ownerType === 'PLAYER';
+    const isElderLeader =
+      well.ownerType === 'VILLAGER' && this.isVillageWellLeaderAlive(well);
+    const isUnowned = !isPlayerLeader && !isElderLeader;
+    const leaderName = isPlayerLeader
+      ? well.ownerName || 'Você (Líder da Vila)'
+      : isElderLeader
+      ? `${well.ownerName || 'Ancião'} (Ancião Líder)`
+      : 'Sem Dono';
+
+    const wx = well.tileX * TILE_SIZE + TILE_SIZE / 2;
+    const wy = well.tileY * TILE_SIZE + TILE_SIZE / 2;
+    const wChunk = this.world.tileToChunk(well.tileX, well.tileY);
+
+    const excludedStructs = new Set(well.wellExcludedStructureIds || []);
+    const excludedResidents = new Set(well.wellExcludedResidentIds || []);
+
+    const housesInRadius: Array<{
+      id: string;
+      label: string;
+      tileX: number;
+      tileY: number;
+      dist: number;
+      ownerLabel: string;
+      residentNames: string[];
+      isMember: boolean;
+    }> = [];
+
+    for (let dy = -2; dy <= 2; dy++) {
+      for (let dx = -2; dx <= 2; dx++) {
+        const chunk =
+          this.world.chunks[
+            WorldManager.chunkKey(wChunk.cx + dx, wChunk.cy + dy)
+          ];
+        if (!chunk) continue;
+        for (const st of chunk.structures) {
+          if (!this.isRestPointStructure(st)) continue;
+          const sx = st.tileX * TILE_SIZE + TILE_SIZE / 2;
+          const sy = st.tileY * TILE_SIZE + TILE_SIZE / 2;
+          const dist = Math.round(Math.hypot(sx - wx, sy - wy));
+          if (dist > GameEngine.WELL_VILLAGE_RADIUS) continue;
+
+          const residents = this.getHouseResidents(st.id);
+          const residentNames = residents.map((r) => r.name);
+          const enclosed = this.getEnclosedBuildingOwnerInfo(
+            st.tileX,
+            st.tileY
+          );
+          const typeLabel =
+            st.type === PlaceableType.EXPLORER_TENT
+              ? 'Tenda de Explorador'
+              : enclosed
+              ? 'Casa / Cama'
+              : 'Cama';
+          const label = st.customName || st.landmarkName || typeLabel;
+          const ownerLabel =
+            st.ownerType === 'PLAYER'
+              ? st.ownerName || 'Você'
+              : residentNames.length > 0
+              ? residentNames.join(' & ')
+              : st.ownerName || 'Sem Dono';
+
+          const isMember =
+            !excludedStructs.has(st.id) && st.villageId === villageId;
+
+          housesInRadius.push({
+            id: st.id,
+            label,
+            tileX: st.tileX,
+            tileY: st.tileY,
+            dist,
+            ownerLabel,
+            residentNames,
+            isMember,
+          });
+        }
+      }
+    }
+
+    housesInRadius.sort((a, b) => a.dist - b.dist);
+
+    const residentsInRadius: Array<{
+      id: string;
+      name: string;
+      profession: string;
+      houseLabel: string;
+      dist: number;
+      isMember: boolean;
+    }> = [];
+
+    for (const cr of this.entities.creatures) {
+      if (cr.kind !== CreatureKind.VILLAGER || cr.hp <= 0) continue;
+      const anchorX = cr.homeX ?? cr.x;
+      const anchorY = cr.homeY ?? cr.y;
+      const dist = Math.round(
+        Math.min(
+          Math.hypot(cr.x - wx, cr.y - wy),
+          Math.hypot(anchorX - wx, anchorY - wy)
+        )
+      );
+      if (
+        dist > GameEngine.WELL_VILLAGE_RADIUS &&
+        cr.villageId !== villageId
+      ) {
+        continue;
+      }
+      const homeSt = cr.homeHouseId
+        ? this.getRestPointById(cr.homeHouseId)
+        : null;
+      const houseLabel = homeSt
+        ? homeSt.customName || homeSt.landmarkName || `Casa (${homeSt.tileX}, ${homeSt.tileY})`
+        : 'Sem Casa';
+      const isMember =
+        !excludedResidents.has(cr.id) && cr.villageId === villageId;
+
+      residentsInRadius.push({
+        id: cr.id,
+        name: cr.name,
+        profession: cr.npcProfessionLabel || cr.npcRole || 'Aldeão',
+        houseLabel,
+        dist,
+        isMember,
+      });
+    }
+
+    residentsInRadius.sort((a, b) => a.dist - b.dist);
+
+    return {
+      well,
+      villageId,
+      isPlayerLeader,
+      isElderLeader,
+      isUnowned,
+      leaderName,
+      canDrinkToday: this.player.lastWellUseDay !== this.metadata.dayCount,
+      housesInRadius,
+      residentsInRadius,
+    };
+  }
+
+  /**
+   * Adds or removes a house/rest point within the Village Well's radius from the village community.
+   * Only allowed when the Player is the Leader (owner) of the well.
+   */
+  public toggleVillageWellHouseMembership(
+    wellId: string,
+    houseId: string
+  ): { ok: boolean; message: string } {
+    const well = this.getVillageWellById(wellId);
+    if (!well) return { ok: false, message: 'Poço não encontrado.' };
+    if (well.ownerType !== 'PLAYER') {
+      return {
+        ok: false,
+        message: 'Apenas o Líder da Vila (dono do poço) pode gerenciar as casas da vila!',
+      };
+    }
+
+    const house = this.getRestPointById(houseId);
+    if (!house) {
+      return { ok: false, message: 'Casa ou ponto de descanso não encontrado.' };
+    }
+
+    const wx = well.tileX * TILE_SIZE + TILE_SIZE / 2;
+    const wy = well.tileY * TILE_SIZE + TILE_SIZE / 2;
+    const hx = house.tileX * TILE_SIZE + TILE_SIZE / 2;
+    const hy = house.tileY * TILE_SIZE + TILE_SIZE / 2;
+    if (Math.hypot(hx - wx, hy - wy) > GameEngine.WELL_VILLAGE_RADIUS) {
+      return {
+        ok: false,
+        message: 'Esta estrutura está fora do raio de alcance do poço.',
+      };
+    }
+
+    const villageId =
+      well.villageId || `village_well_${well.tileX}_${well.tileY}`;
+    well.villageId = villageId;
+    if (!Array.isArray(well.wellExcludedStructureIds)) {
+      well.wellExcludedStructureIds = [];
+    }
+    if (!Array.isArray(well.wellExcludedResidentIds)) {
+      well.wellExcludedResidentIds = [];
+    }
+
+    const isCurrentlyMember =
+      !well.wellExcludedStructureIds.includes(house.id) &&
+      house.villageId === villageId;
+
+    if (isCurrentlyMember) {
+      // Remove house & its residents from the village community
+      if (!well.wellExcludedStructureIds.includes(house.id)) {
+        well.wellExcludedStructureIds.push(house.id);
+      }
+      house.villageId = undefined;
+      this.syncEnclosedBuildingVillageId(house.tileX, house.tileY, undefined);
+      for (const res of this.getHouseResidents(house.id)) {
+        res.villageId = undefined;
+      }
+      soundManager.playPickup();
+      this.syncChunkAtTile(well.tileX, well.tileY);
+      this.syncChunkAtTile(house.tileX, house.tileY);
+      this.emitUiSnapshot();
+      return {
+        ok: true,
+        message: 'Casa removida da vila (agora é uma casa independente).',
+      };
+    } else {
+      // Add house & its residents into the village community
+      well.wellExcludedStructureIds = well.wellExcludedStructureIds.filter(
+        (id) => id !== house.id
+      );
+      house.villageId = villageId;
+      this.syncEnclosedBuildingVillageId(house.tileX, house.tileY, villageId);
+      for (const res of this.getHouseResidents(house.id)) {
+        well.wellExcludedResidentIds = well.wellExcludedResidentIds.filter(
+          (id) => id !== res.id
+        );
+        res.villageId = villageId;
+      }
+      soundManager.playTameSuccess();
+      this.syncChunkAtTile(well.tileX, well.tileY);
+      this.syncChunkAtTile(house.tileX, house.tileY);
+      this.emitUiSnapshot();
+      return {
+        ok: true,
+        message: 'Casa adicionada como integrante da vila!',
+      };
+    }
+  }
+
+  /**
+   * Adds or removes an individual Villager resident within the Village Well's radius from the village community.
+   * Only allowed when the Player is the Leader (owner) of the well.
+   */
+  public toggleVillageWellResidentMembership(
+    wellId: string,
+    residentId: string
+  ): { ok: boolean; message: string } {
+    const well = this.getVillageWellById(wellId);
+    if (!well) return { ok: false, message: 'Poço não encontrado.' };
+    if (well.ownerType !== 'PLAYER') {
+      return {
+        ok: false,
+        message: 'Apenas o Líder da Vila (dono do poço) pode gerenciar os moradores!',
+      };
+    }
+
+    const resident = this.entities.creatures.find(
+      (c) => c.id === residentId && c.kind === CreatureKind.VILLAGER && c.hp > 0
+    );
+    if (!resident) {
+      return { ok: false, message: 'Morador não encontrado.' };
+    }
+
+    const villageId =
+      well.villageId || `village_well_${well.tileX}_${well.tileY}`;
+    well.villageId = villageId;
+    if (!Array.isArray(well.wellExcludedResidentIds)) {
+      well.wellExcludedResidentIds = [];
+    }
+    if (!Array.isArray(well.wellExcludedStructureIds)) {
+      well.wellExcludedStructureIds = [];
+    }
+
+    const isCurrentlyMember =
+      !well.wellExcludedResidentIds.includes(resident.id) &&
+      resident.villageId === villageId;
+
+    if (isCurrentlyMember) {
+      if (!well.wellExcludedResidentIds.includes(resident.id)) {
+        well.wellExcludedResidentIds.push(resident.id);
+      }
+      resident.villageId = undefined;
+      soundManager.playPickup();
+      this.syncChunkAtTile(well.tileX, well.tileY);
+      this.emitUiSnapshot();
+      return {
+        ok: true,
+        message: `${resident.name} foi removido(a) da comunidade da vila.`,
+      };
+    } else {
+      well.wellExcludedResidentIds = well.wellExcludedResidentIds.filter(
+        (id) => id !== resident.id
+      );
+      resident.villageId = villageId;
+      if (resident.homeHouseId) {
+        const homeSt = this.getRestPointById(resident.homeHouseId);
+        if (homeSt) {
+          well.wellExcludedStructureIds = well.wellExcludedStructureIds.filter(
+            (id) => id !== homeSt.id
+          );
+          homeSt.villageId = villageId;
+        }
+      }
+      soundManager.playTameSuccess();
+      this.syncChunkAtTile(well.tileX, well.tileY);
+      this.emitUiSnapshot();
+      return {
+        ok: true,
+        message: `${resident.name} agora faz parte da comunidade da vila!`,
+      };
+    }
+  }
+
+  /**
+   * Finds the nearest House (village house or rest point) within `maxRadius` that has `< maxCap` residents.
    */
   public findAvailableHouseNear(
     wx: number,
@@ -2244,15 +3027,168 @@ export class GameEngine {
   }
 
   /**
-   * Settles a Wanderer NPC into a specific non-player Village Bed/House, converting them into a Villager.
+   * Spontaneous Wanderer Settlement Rule:
+   * A Wanderer can ONLY spontaneously claim a rest point in a village if:
+   * 1. The village has a spare unoccupied rest point (`st.villageId`, `!st.ownerType`, `residents === 0`), AND
+   * 2. The village has a living, awake Elder (`npcRole === 'anciao'`) so the Wanderer can go talk to the Elder to ask permission!
+   */
+  public findAvailableVillageHouseWithElderNear(
+    wx: number,
+    wy: number,
+    maxRadius = 280
+  ): {
+    house: PlacedStructure;
+    wx: number;
+    wy: number;
+    dist: number;
+    elder: CreatureEntity;
+  } | null {
+    const centerTile = this.world.worldToTile(wx, wy);
+    const centerChunk = this.world.tileToChunk(centerTile.tx, centerTile.ty);
+    let best: {
+      house: PlacedStructure;
+      wx: number;
+      wy: number;
+      dist: number;
+      elder: CreatureEntity;
+    } | null = null;
+
+    for (let dy = -1; dy <= 1; dy++) {
+      for (let dx = -1; dx <= 1; dx++) {
+        const chunk =
+          this.world.chunks[
+            WorldManager.chunkKey(centerChunk.cx + dx, centerChunk.cy + dy)
+          ];
+        if (!chunk) continue;
+
+        for (const st of chunk.structures) {
+          if (!this.isRestPointStructure(st)) continue;
+          if (!st.villageId || st.ownerType) continue;
+          if (this.getHouseResidents(st.id).length > 0) continue;
+
+          const elder = this.entities.creatures.find(
+            (c) =>
+              c.kind === CreatureKind.VILLAGER &&
+              c.hp > 0 &&
+              !c.isInsideHouse &&
+              !c.isHostile &&
+              c.npcRole === 'anciao' &&
+              c.villageId === st.villageId
+          );
+          if (!elder) continue;
+
+          const hx = st.tileX * TILE_SIZE + TILE_SIZE / 2;
+          const hy = st.tileY * TILE_SIZE + TILE_SIZE / 2;
+          const dist = Math.hypot(wx - hx, wy - hy);
+          if (dist <= maxRadius && (!best || dist < best.dist)) {
+            best = { house: st, wx: hx, wy: hy, dist, elder };
+          }
+        }
+      }
+    }
+
+    return best;
+  }
+
+  /**
+   * Player Invite Rule:
+   * Finds any unoccupied rest point (`!st.ownerType` and `0` residents) within `maxRadius` (e.g., 420px)
+   * so the player can invite a Wanderer to occupy it — whether it's an independent house or a village rest point!
+   */
+  public findVacantRestPointForInviteNear(
+    wx: number,
+    wy: number,
+    maxRadius = 420
+  ): { house: PlacedStructure; wx: number; wy: number; dist: number } | null {
+    const centerTile = this.world.worldToTile(wx, wy);
+    const centerChunk = this.world.tileToChunk(centerTile.tx, centerTile.ty);
+    let best: {
+      house: PlacedStructure;
+      wx: number;
+      wy: number;
+      dist: number;
+    } | null = null;
+
+    for (let dy = -2; dy <= 2; dy++) {
+      for (let dx = -2; dx <= 2; dx++) {
+        const chunk =
+          this.world.chunks[
+            WorldManager.chunkKey(centerChunk.cx + dx, centerChunk.cy + dy)
+          ];
+        if (!chunk) continue;
+
+        for (const st of chunk.structures) {
+          if (!this.isRestPointStructure(st)) continue;
+          if (st.ownerType) continue;
+          if (this.getHouseResidents(st.id).length > 0) continue;
+
+          const hx = st.tileX * TILE_SIZE + TILE_SIZE / 2;
+          const hy = st.tileY * TILE_SIZE + TILE_SIZE / 2;
+          const dist = Math.hypot(wx - hx, wy - hy);
+          if (dist <= maxRadius && (!best || dist < best.dist)) {
+            best = { house: st, wx: hx, wy: hy, dist };
+          }
+        }
+      }
+    }
+
+    return best;
+  }
+
+  /**
+   * Invites a Wanderer (`npcId`) to occupy a nearby unoccupied rest point.
+   */
+  public inviteWandererToRestPoint(npcId: string): {
+    ok: boolean;
+    message: string;
+  } {
+    const wanderer = this.entities.creatures.find(
+      (c) => c.id === npcId && c.kind === CreatureKind.WANDERER && c.hp > 0
+    );
+    if (!wanderer) {
+      return { ok: false, message: 'Andarilho não encontrado.' };
+    }
+
+    const found =
+      this.findVacantRestPointForInviteNear(wanderer.x, wanderer.y, 420) ||
+      this.findVacantRestPointForInviteNear(this.player.x, this.player.y, 420);
+    if (!found) {
+      return {
+        ok: false,
+        message:
+          'Nenhum ponto de descanso desocupado (sem dono) encontrado por perto!',
+      };
+    }
+
+    const ok = this.settleWandererIntoHouse(wanderer, found.house, true);
+    if (!ok) {
+      return {
+        ok: false,
+        message: 'Não foi possível instalar o andarilho neste ponto de descanso.',
+      };
+    }
+
+    return {
+      ok: true,
+      message: `🏠 Você convidou ${wanderer.name} para morar no ponto de descanso próximo!`,
+    };
+  }
+
+  /**
+   * Settles a Wanderer NPC into a specific non-player Bed/Rest Point, converting them into a Villager.
    * If the enclosing structure currently has no owner, taking ownership of this rest point defines the new owner of the structure!
    */
   public settleWandererIntoHouse(
     wanderer: CreatureEntity,
-    house: PlacedStructure
+    house: PlacedStructure,
+    invitedByPlayer = false
   ): boolean {
     if (wanderer.kind !== CreatureKind.WANDERER) return false;
-    if (!this.canNpcOccupyHouse(house)) return false;
+    if (!this.isRestPointStructure(house) || house.ownerType === 'PLAYER') {
+      return false;
+    }
+    if (!invitedByPlayer && !this.canNpcOccupyHouse(house)) return false;
+
     const maxCap =
       house.type === PlaceableType.BED ? 1 : MAX_VILLAGERS_PER_HOUSE;
     const currentResidents = this.getHouseResidents(house.id).length;
@@ -2260,6 +3196,40 @@ export class GameEngine {
 
     const hx = house.tileX * TILE_SIZE + TILE_SIZE / 2;
     const hy = house.tileY * TILE_SIZE + TILE_SIZE / 2;
+
+    // Check if this rest point is inside the radius of an active Village Well (and not excluded)
+    if (!house.villageId) {
+      const hChunk = this.world.tileToChunk(house.tileX, house.tileY);
+      for (let dy = -2; dy <= 2; dy++) {
+        for (let dx = -2; dx <= 2; dx++) {
+          const ch =
+            this.world.chunks[
+              WorldManager.chunkKey(hChunk.cx + dx, hChunk.cy + dy)
+            ];
+          if (!ch) continue;
+          for (const st of ch.structures) {
+            if (st.type === PlaceableType.VILLAGE_WELL) {
+              const wx = st.tileX * TILE_SIZE + TILE_SIZE / 2;
+              const wy = st.tileY * TILE_SIZE + TILE_SIZE / 2;
+              if (
+                Math.hypot(hx - wx, hy - wy) <= GameEngine.WELL_VILLAGE_RADIUS &&
+                !(
+                  Array.isArray(st.wellExcludedStructureIds) &&
+                  st.wellExcludedStructureIds.includes(house.id)
+                )
+              ) {
+                const wellVid =
+                  st.villageId || `village_well_${st.tileX}_${st.tileY}`;
+                st.villageId = wellVid;
+                house.villageId = wellVid;
+                break;
+              }
+            }
+          }
+        }
+      }
+    }
+
     this.entities.convertWandererToVillager(
       wanderer,
       house.id,
@@ -2267,6 +3237,7 @@ export class GameEngine {
       hy,
       house.villageId
     );
+    wanderer.elderApprovedHouseId = undefined;
     house.ownerType = 'VILLAGER';
     house.ownerId = wanderer.id;
     house.ownerName = wanderer.name;
@@ -2275,16 +3246,17 @@ export class GameEngine {
 
     const newCount = this.getHouseResidents(house.id).length;
 
-    soundManager.playTameSuccess();
+    soundManager.playTameSuccess(hx, hy);
     this.renderer.spawnBurst(wanderer.x, wanderer.y - 6, 'GOLD', 16);
     this.renderer.spawnBurst(hx, hy - 6, 'TAME', 12);
     this.renderer.spawnRipple(hx, hy, '#4ade80', 30, 0.55);
     this.addFloatingText(
-      `🏠 ${wanderer.name} virou Aldeão! (${newCount}/${maxCap})`,
+      `🏠 ${wanderer.name} virou Morador! (${newCount}/${maxCap})`,
       wanderer.x,
       wanderer.y - 24,
       '#4ade80'
     );
+    this.syncChunkAtTile(house.tileX, house.tileY);
     this.emitUiSnapshot();
     return true;
   }
@@ -2433,12 +3405,21 @@ export class GameEngine {
         this.player.x - cr.x,
         this.player.y - cr.y
       );
+      let minDistToAnyPlayer = distToPlayer;
+      for (const rp of this.remotePlayersList) {
+        if (rp.hp > 0) {
+          const dRp = Math.hypot(rp.x - cr.x, rp.y - cr.y);
+          if (dRp < minDistToAnyPlayer) {
+            minDistToAnyPlayer = dRp;
+          }
+        }
+      }
 
       // If Villager is currently inside their house:
       // - Stay invisible/safe inside until dawn (05:30), or until the player knocks on the door.
-      // - At dawn, automatically step outside to resume daily village life (when within active range of the player)!
+      // - At dawn, automatically step outside to resume daily village life (when within active range of any player)!
       if (cr.isInsideHouse) {
-        if (!isSunsetOrNight && distToPlayer <= 820) {
+        if (!isSunsetOrNight && minDistToAnyPlayer <= 820) {
           this.exitVillagerFromHouse(cr, false);
           this.addFloatingText(
             `☀️ ${cr.name} saiu de casa`,
@@ -2471,16 +3452,18 @@ export class GameEngine {
           cr.hitFlashTimer = Math.max(0, cr.hitFlashTimer - dt);
         }
         if (cr.kind === CreatureKind.BOAT) {
-          cr.vx = 0;
-          cr.vy = 0;
+          if (!cr.riderPlayerId) {
+            cr.vx = 0;
+            cr.vy = 0;
+          }
           cr.isSwimming = true;
         }
         continue;
       }
 
-      // Skip expensive per-frame raycast steering & world queries for creatures far outside the active simulation radius
+      // Skip expensive per-frame raycast steering & world queries for creatures far outside the active simulation radius of ALL players
       const isFollowingPet = Boolean(cr.tamed && cr.aiState === 'follow');
-      if (!isFollowingPet && distToPlayer > 780) {
+      if (!isFollowingPet && minDistToAnyPlayer > 780) {
         cr.vx = 0;
         cr.vy = 0;
         cr.animFrame = 0;
@@ -2852,27 +3835,65 @@ export class GameEngine {
           if (!isSunsetOrNight && this.updateNpcMarketStallShopping(cr, dt)) {
             // Wanderer is currently inspecting or walking to a Player Market Stall
           } else {
-            // Throttle available-house scans using specialCooldown so Wanderers don't scan 9 chunks 60 times/sec
-            let availableHouse: ReturnType<typeof this.findAvailableHouseNear> =
-              null;
+            // A Wanderer can only spontaneously claim a village rest point if the village has a spare rest point
+            // AND they first walk up to the living Village Elder (`anciao`) to ask permission!
+            let villageTarget: ReturnType<
+              typeof this.findAvailableVillageHouseWithElderNear
+            > = null;
             if ((cr.specialCooldown ?? 0) <= 0) {
-              availableHouse = this.findAvailableHouseNear(cr.x, cr.y, 235);
-              if (!availableHouse) {
+              villageTarget = this.findAvailableVillageHouseWithElderNear(
+                cr.x,
+                cr.y,
+                280
+              );
+              if (!villageTarget) {
                 cr.specialCooldown = 2.0 + Math.random() * 1.0;
               }
             }
-            if (availableHouse) {
-              if (availableHouse.dist <= 52) {
-                this.settleWandererIntoHouse(cr, availableHouse.house);
-              } else {
-                this.steerCreatureToward(
-                  cr,
-                  availableHouse.wx,
-                  availableHouse.wy,
-                  cr.moveSpeed * 0.95,
-                  dt,
-                  true
+            if (villageTarget) {
+              if (cr.elderApprovedHouseId !== villageTarget.house.id) {
+                const distToElder = Math.hypot(
+                  villageTarget.elder.x - cr.x,
+                  villageTarget.elder.y - cr.y
                 );
+                if (distToElder <= 46) {
+                  cr.elderApprovedHouseId = villageTarget.house.id;
+                  this.renderer.spawnRipple(
+                    villageTarget.elder.x,
+                    villageTarget.elder.y,
+                    '#fde047',
+                    22,
+                    0.4
+                  );
+                  this.addFloatingText(
+                    `📜 ${cr.name} pediu permissão a ${villageTarget.elder.name}!`,
+                    cr.x,
+                    cr.y - 24,
+                    '#38bdf8'
+                  );
+                } else {
+                  this.steerCreatureToward(
+                    cr,
+                    villageTarget.elder.x,
+                    villageTarget.elder.y,
+                    cr.moveSpeed * 0.95,
+                    dt,
+                    true
+                  );
+                }
+              } else {
+                if (villageTarget.dist <= 52) {
+                  this.settleWandererIntoHouse(cr, villageTarget.house);
+                } else {
+                  this.steerCreatureToward(
+                    cr,
+                    villageTarget.wx,
+                    villageTarget.wy,
+                    cr.moveSpeed * 0.95,
+                    dt,
+                    true
+                  );
+                }
               }
             } else {
               this.updateDirectionalWandererAi(cr, dt);
@@ -2913,10 +3934,12 @@ export class GameEngine {
             ? 38
             : 27;
 
-        // Evaluate all rival enemies (Player + Villagers + Wanderers + Tamed Pets) and pick the closest one!
+        // Evaluate all rival enemies (Local Player + Remote Players + Villagers + Wanderers + Tamed Pets) and pick the closest one!
         let bestEnemyDist = aggroRadius;
-        let closestEnemyType: 'none' | 'player' | 'creature' = 'none';
+        let closestEnemyType: 'none' | 'player' | 'remote_player' | 'creature' =
+          'none';
         let closestEnemyCreature: CreatureEntity | null = null;
+        let closestRemotePlayer: RemotePlayerState | null = null;
 
         if (
           this.player.hp > 0 &&
@@ -2930,6 +3953,19 @@ export class GameEngine {
         ) {
           bestEnemyDist = distToPlayer;
           closestEnemyType = 'player';
+        }
+
+        for (const rp of this.remotePlayersList) {
+          if (rp.hp <= 0) continue;
+          const dRp = Math.hypot(rp.x - cr.x, rp.y - cr.y);
+          if (
+            dRp < bestEnemyDist &&
+            !this.isTargetHiddenInClosedStructureFrom(rp.x, rp.y, cr.x, cr.y)
+          ) {
+            bestEnemyDist = dRp;
+            closestEnemyType = 'remote_player';
+            closestRemotePlayer = rp;
+          }
         }
 
         for (const other of this.entities.creatures) {
@@ -3067,10 +4103,14 @@ export class GameEngine {
           const targetX =
             closestEnemyType === 'player'
               ? this.player.x
+              : closestEnemyType === 'remote_player'
+              ? closestRemotePlayer!.x
               : closestEnemyCreature!.x;
           const targetY =
             closestEnemyType === 'player'
               ? this.player.y
+              : closestEnemyType === 'remote_player'
+              ? closestRemotePlayer!.y
               : closestEnemyCreature!.y;
           const distToTarget = Math.max(1, bestEnemyDist);
 
@@ -4826,8 +5866,27 @@ export class GameEngine {
     // Advance active Campfire & Furnace smelting/cooking queues
     this.updateThermalStations(dt);
 
-    const pTile = this.world.worldToTile(this.player.x, this.player.y);
-    const pChunk = this.world.tileToChunk(pTile.tx, pTile.ty);
+    const activePlayerChunks = new Map<string, { cx: number; cy: number }>();
+    const addChunksAround = (wx: number, wy: number) => {
+      const t = this.world.worldToTile(wx, wy);
+      const ch = this.world.tileToChunk(t.tx, t.ty);
+      for (let dy = -2; dy <= 2; dy++) {
+        for (let dx = -2; dx <= 2; dx++) {
+          const cx = ch.cx + dx;
+          const cy = ch.cy + dy;
+          const k = WorldManager.chunkKey(cx, cy);
+          if (!activePlayerChunks.has(k)) {
+            activePlayerChunks.set(k, { cx, cy });
+          }
+        }
+      }
+    };
+    addChunksAround(this.player.x, this.player.y);
+    for (const rp of this.remotePlayersList) {
+      if (rp.hp > 0) {
+        addChunksAround(rp.x, rp.y);
+      }
+    }
 
     this.totemZapTimer += dt;
     const canZap = this.totemZapTimer >= 1.8;
@@ -4839,9 +5898,8 @@ export class GameEngine {
 
     let regeneratedAnyBreakable = false;
 
-    for (let dy = -2; dy <= 2; dy++) {
-      for (let dx = -2; dx <= 2; dx++) {
-        const key = WorldManager.chunkKey(pChunk.cx + dx, pChunk.cy + dy);
+    for (const key of activePlayerChunks.keys()) {
+      {
         const chunk = this.world.chunks[key];
         if (!chunk) continue;
 
@@ -6096,51 +7154,31 @@ export class GameEngine {
       }
 
       if (target.stationType === PlaceableType.VILLAGE_WELL) {
-        if (this.player.lastWellUseDay === this.metadata.dayCount) {
-          soundManager.playHitStone(target.worldX, target.worldY);
+        const { tx, ty } = this.world.worldToTile(target.worldX, target.worldY);
+        const { cx, cy } = this.world.tileToChunk(tx, ty);
+        const chunk = this.world.chunks[WorldManager.chunkKey(cx, cy)];
+        const wellSt = chunk?.structures.find(
+          (s) =>
+            (target.structureId ? s.id === target.structureId : true) &&
+            s.tileX === tx &&
+            s.tileY === ty &&
+            s.type === PlaceableType.VILLAGE_WELL
+        );
+        if (wellSt && this.onVillageWellInteract) {
+          this.ensureVillageWellInitialized(wellSt);
+          soundManager.playPickup(target.worldX, target.worldY);
           this.renderer.spawnRipple(
             target.worldX,
             target.worldY,
-            '#94a3b8',
-            22,
-            0.4
+            '#38bdf8',
+            24,
+            0.45
           );
-          this.addFloatingText(
-            '⏳ Poço já usado hoje! (Disponível 1x por dia)',
-            this.player.x,
-            this.player.y - 22,
-            '#fbbf24'
-          );
+          this.onVillageWellInteract(wellSt);
           this.emitUiSnapshot();
           return;
         }
-        this.player.lastWellUseDay = this.metadata.dayCount;
-        this.player.hp = Math.min(this.player.maxHp, this.player.hp + 20);
-        this.player.hunger = Math.min(
-          this.player.maxHunger,
-          this.player.hunger + 20
-        );
-        this.player.stamina = Math.min(
-          this.player.maxStamina,
-          this.player.stamina + 55
-        );
-        soundManager.playTameSuccess(target.worldX, target.worldY);
-        this.renderer.spawnBurst(target.worldX, target.worldY - 4, 'WATER', 12);
-        this.renderer.spawnBurst(this.player.x, this.player.y, 'HEAL', 10);
-        this.renderer.spawnRipple(
-          target.worldX,
-          target.worldY,
-          '#38bdf8',
-          28,
-          0.55
-        );
-        this.addFloatingText(
-          'Água Fresca do Poço (+20 HP / +20 Fome / +55 Energia · 1x/dia)',
-          this.player.x,
-          this.player.y - 22,
-          '#38bdf8'
-        );
-        this.emitUiSnapshot();
+        this.drinkFromVillageWell(wellSt?.id);
         return;
       }
 
@@ -6166,6 +7204,7 @@ export class GameEngine {
       ) {
         const { tx, ty } = this.world.worldToTile(target.worldX, target.worldY);
         const houseSt = this.world.getStructureAtTile(tx, ty);
+        let claimedJustNow = false;
         if (houseSt) {
           const allResidents = this.getHouseResidents(houseSt.id);
           const insideResidents = allResidents.filter((r) => r.isInsideHouse);
@@ -6197,9 +7236,9 @@ export class GameEngine {
             return;
           }
 
-          // If the rest point (or its enclosing structure) has NO owner, automatically claim ownership ("Tomar Posse") for the player!
+          // O jogador só se torna dono ao interagir com um ponto de descanso sem dono!
           if (this.canPlayerClaimRestPoint(houseSt)) {
-            this.claimRestPointOwnership(houseSt.id);
+            claimedJustNow = this.claimRestPointOwnership(houseSt.id);
           }
         }
 
@@ -6207,20 +7246,22 @@ export class GameEngine {
         const isNightTime =
           this.metadata.timeOfDay >= 18 || this.metadata.timeOfDay < 6;
         if (!isNightTime) {
-          soundManager.playHitWood();
-          this.renderer.spawnRipple(
-            target.worldX,
-            target.worldY,
-            '#fbbf24',
-            20,
-            0.35
-          );
-          this.addFloatingText(
-            '☀️ Só é permitido dormir à noite!',
-            this.player.x,
-            this.player.y - 22,
-            '#fde047'
-          );
+          if (!claimedJustNow) {
+            soundManager.playHitWood();
+            this.renderer.spawnRipple(
+              target.worldX,
+              target.worldY,
+              '#fbbf24',
+              20,
+              0.35
+            );
+            this.addFloatingText(
+              '☀️ Só é permitido dormir à noite!',
+              this.player.x,
+              this.player.y - 22,
+              '#fde047'
+            );
+          }
           this.emitUiSnapshot();
           return;
         }
@@ -6821,25 +7862,15 @@ export class GameEngine {
       );
       if (result.placed) {
         const placedSt = this.world.getStructureAtTile(target.tx, target.ty);
-        if (
-          placedSt &&
-          (placedSt.type === PlaceableType.BED ||
-            placedSt.type === PlaceableType.EXPLORER_TENT ||
-            placedSt.type === PlaceableType.MARKET_STALL)
-        ) {
-          placedSt.ownerType = 'PLAYER';
-          placedSt.ownerId = this.getLocalOwnerId();
-          placedSt.ownerName =
-            this.multiplayer.localPlayerName ||
-            this.settings.playerName ||
-            'Aventureiro';
-          placedSt.ownerAssignedAt = Date.now();
+        this.invalidateBuildingOwnerCache();
+        if (placedSt) {
+          // Quando o jogador coloca um ponto de descanso, tenda de vendas ou poço, ele NÃO se torna dono automaticamente!
+          // Ele só se torna dono ao interagir. Se não interagir, fica sem dono.
+          placedSt.ownerType = undefined;
+          placedSt.ownerId = undefined;
+          placedSt.ownerName = undefined;
           placedSt.villageId = undefined;
-          if (this.isRestPointStructure(placedSt)) {
-            this.assignEnclosedBuildingPrimaryOwner(placedSt);
-          }
-        } else if (placedSt) {
-          // If a wall/window/door was placed and just closed a roofed contour, evaluate structure ownership from any rest point inside!
+          // If a wall/window/door was placed and just closed a roofed contour, evaluate structure ownership from any owned rest point inside!
           this.getEnclosedBuildingOwnerInfo(target.tx, target.ty);
         }
         this.consumeInventoryAt(
@@ -7660,7 +8691,16 @@ export class GameEngine {
               'Estação';
 
             let resolvedOwnerText: string | null = null;
-            if (st.type === PlaceableType.MARKET_STALL) {
+            if (st.type === PlaceableType.VILLAGE_WELL) {
+              this.ensureVillageWellInitialized(st);
+              if (st.ownerType === 'PLAYER') {
+                resolvedOwnerText = st.ownerName || 'Você';
+              } else if (this.isVillageWellLeaderAlive(st)) {
+                resolvedOwnerText = st.ownerName || 'Ancião da Vila';
+              } else {
+                resolvedOwnerText = 'Sem Dono';
+              }
+            } else if (st.type === PlaceableType.MARKET_STALL) {
               if (st.ownerType === 'PLAYER') {
                 resolvedOwnerText = st.ownerName || 'Você';
               } else if (this.isVillagerStallOwnerAlive(st)) {
@@ -7673,7 +8713,7 @@ export class GameEngine {
               st.type === PlaceableType.EXPLORER_TENT ||
               st.type === PlaceableType.VILLAGE_HOUSE
             ) {
-              if (st.ownerType === 'PLAYER' && effectiveOwnerType === 'PLAYER') {
+              if (st.ownerType === 'PLAYER') {
                 resolvedOwnerText = st.ownerName || effectiveOwnerName || 'Você';
               } else if (houseResidents > 0) {
                 resolvedOwnerText =
@@ -7732,9 +8772,13 @@ export class GameEngine {
                   ? `Abrir Baú (${occupiedChestSlots}/${CHEST_STORAGE_SIZE}) 📦`
                   : 'Abrir Baú 📦'
                 : st.type === PlaceableType.VILLAGE_WELL
-                ? this.player.lastWellUseDay === this.metadata.dayCount
-                  ? 'Poço da Vila (Já usado hoje · 1x/dia)'
-                  : 'Beber Água (+HP/Energia · 1x/dia)'
+                ? st.ownerType === 'PLAYER'
+                  ? 'Gerenciar Vila & Beber Água 💧'
+                  : !this.isVillageWellLeaderAlive(st)
+                  ? 'Abrir Poço (Sem Líder · Tomar Posse) 💧'
+                  : this.player.lastWellUseDay === this.metadata.dayCount
+                  ? 'Ver Vila no Poço (Água já usada hoje) 💧'
+                  : 'Beber Água / Ver Vila 💧'
                 : st.type === PlaceableType.MARKET_STALL
                 ? st.ownerType === 'PLAYER'
                   ? `Gerenciar Tenda${
@@ -7749,11 +8793,11 @@ export class GameEngine {
                   : 'Tomar Posse da Tenda 🏪'
                 : st.type === PlaceableType.BED ||
                   st.type === PlaceableType.EXPLORER_TENT
-                ? st.ownerType === 'PLAYER' && effectiveOwnerType === 'PLAYER'
+                ? st.ownerType === 'PLAYER'
                   ? `Dormir 🛏️`
                   : houseResidents > 0
                   ? `Ocupada por ${resolvedOwnerText} 🛏️`
-                  : 'Tomar Posse & Dormir 🛏️'
+                  : 'Tomar Posse / Dormir 🛏️'
                 : st.type === PlaceableType.CAMPFIRE
                 ? st.outputCount && st.outputCount > 0
                   ? `Pronto: ${st.outputCount}x ${
@@ -9853,18 +10897,16 @@ export class GameEngine {
   }
 
   public updatePlayerAppearance(partial: Partial<PlayerAppearance>): void {
-    this.player.appearance = {
-      ...(this.player.appearance || {
-        gender: 'masculino',
-        skinColor: '#fdba74',
-        skinMark: 'none',
-        hairColor: '#451a03',
-        hairStyle: 'adventurer',
-        eyeStyle: 'classic',
-        eyeColor: '#0f172a',
-      }),
+    const updatedUniversal = SaveManager.saveAccountAppearance({
+      ...(this.player.appearance || {}),
       ...partial,
-    };
+    });
+    this.player.appearance = { ...updatedUniversal };
+    this.settings.accountAppearance = { ...updatedUniversal };
+    if (this.multiplayer.isOnline) {
+      this.multiplayer.sendPlayerState(this.player);
+    }
+    void this.saveGame(true);
     soundManager.playPickup();
     this.emitUiSnapshot();
   }
@@ -10438,15 +11480,127 @@ export class GameEngine {
     this.emitUiSnapshot();
   }
 
+  private lastLocalChunkEditAt = new Map<string, number>();
+
+  private markLocalChunkModified(tx: number, ty: number): void {
+    const { cx, cy } = this.world.tileToChunk(tx, ty);
+    const key = WorldManager.chunkKey(cx, cy);
+    this.lastLocalChunkEditAt.set(key, Date.now());
+  }
+
+  private mergeFlowerColorCountsIntoSlot(
+    targetSlot: InventorySlot,
+    sourceSlot: InventorySlot,
+    transferAmount: number,
+    defaultColor: ClothingColorId = 'branco'
+  ): {
+    updatedTarget: InventorySlot;
+    updatedSource: InventorySlot | null;
+  } {
+    const srcCounts: Partial<Record<ClothingColorId, number>> = {
+      ...(sourceSlot.colorCounts || {
+        [sourceSlot.selectedColor || defaultColor]: sourceSlot.count,
+      }),
+    };
+    const dstCounts: Partial<Record<ClothingColorId, number>> = {
+      ...(targetSlot.colorCounts || {
+        [targetSlot.selectedColor || defaultColor]: targetSlot.count,
+      }),
+    };
+    let rem = transferAmount;
+    for (const cKey of Object.keys(srcCounts) as ClothingColorId[]) {
+      if (rem <= 0) break;
+      const avail = srcCounts[cKey] || 0;
+      if (avail > 0) {
+        const mv = Math.min(avail, rem);
+        dstCounts[cKey] = (dstCounts[cKey] || 0) + mv;
+        srcCounts[cKey] = avail - mv;
+        if ((srcCounts[cKey] || 0) <= 0) delete srcCounts[cKey];
+        rem -= mv;
+      }
+    }
+    const newDstCount = targetSlot.count + transferAmount;
+    const newSrcCount = sourceSlot.count - transferAmount;
+    const nextSrcSelected =
+      sourceSlot.selectedColor && (srcCounts[sourceSlot.selectedColor] || 0) > 0
+        ? sourceSlot.selectedColor
+        : (Object.keys(srcCounts)[0] as ClothingColorId | undefined);
+    const updatedTarget: InventorySlot = {
+      ...targetSlot,
+      count: newDstCount,
+      colorCounts: dstCounts,
+      selectedColor:
+        targetSlot.selectedColor ||
+        (Object.keys(dstCounts)[0] as ClothingColorId | undefined),
+    };
+    const updatedSource: InventorySlot | null =
+      newSrcCount > 0
+        ? {
+            ...sourceSlot,
+            count: newSrcCount,
+            colorCounts: srcCounts,
+            selectedColor: nextSrcSelected,
+          }
+        : null;
+    return { updatedTarget, updatedSource };
+  }
+
   private addItemToChestStorage(
     slots: (InventorySlot | null)[],
     itemId: string,
     count: number,
-    preferredSlotIdx?: number
+    preferredSlotIdx?: number,
+    sourceSlotMeta?: InventorySlot
   ): number {
     const def = ITEMS[itemId];
     if (!def || count <= 0) return 0;
     let remaining = count;
+    let workingSource: InventorySlot = sourceSlotMeta
+      ? {
+          ...sourceSlotMeta,
+          count,
+          colorCounts: sourceSlotMeta.colorCounts
+            ? { ...sourceSlotMeta.colorCounts }
+            : undefined,
+        }
+      : { itemId, count };
+    const defaultFlowerColor: ClothingColorId =
+      def.allowedFlowerColors?.[0] || 'branco';
+
+    const applyTransferToSlot = (slotIdx: number, take: number) => {
+      const target = slots[slotIdx];
+      if (!target) {
+        if (def.isFlower) {
+          const emptyDst: InventorySlot = {
+            itemId,
+            count: 0,
+            colorCounts: {},
+            selectedColor: workingSource.selectedColor || defaultFlowerColor,
+          };
+          const merged = this.mergeFlowerColorCountsIntoSlot(
+            emptyDst,
+            workingSource,
+            take,
+            defaultFlowerColor
+          );
+          slots[slotIdx] = merged.updatedTarget;
+          if (merged.updatedSource) workingSource = merged.updatedSource;
+        } else {
+          slots[slotIdx] = { itemId, count: take };
+        }
+      } else if (def.isFlower) {
+        const merged = this.mergeFlowerColorCountsIntoSlot(
+          target,
+          workingSource,
+          take,
+          defaultFlowerColor
+        );
+        slots[slotIdx] = merged.updatedTarget;
+        if (merged.updatedSource) workingSource = merged.updatedSource;
+      } else {
+        target.count += take;
+      }
+    };
 
     // 1. If a specific target slot was chosen, try placing/stacking there first
     if (
@@ -10457,11 +11611,11 @@ export class GameEngine {
       const target = slots[preferredSlotIdx];
       if (!target) {
         const take = Math.min(def.maxStack, remaining);
-        slots[preferredSlotIdx] = { itemId, count: take };
+        applyTransferToSlot(preferredSlotIdx, take);
         remaining -= take;
       } else if (target.itemId === itemId && target.count < def.maxStack) {
         const take = Math.min(def.maxStack - target.count, remaining);
-        target.count += take;
+        applyTransferToSlot(preferredSlotIdx, take);
         remaining -= take;
       }
       if (remaining <= 0) return count;
@@ -10472,7 +11626,7 @@ export class GameEngine {
       const sl = slots[i];
       if (sl && sl.itemId === itemId && sl.count < def.maxStack) {
         const take = Math.min(def.maxStack - sl.count, remaining);
-        sl.count += take;
+        applyTransferToSlot(i, take);
         remaining -= take;
         if (remaining <= 0) return count;
       }
@@ -10482,7 +11636,7 @@ export class GameEngine {
     for (let i = 0; i < slots.length; i++) {
       if (slots[i] === null) {
         const take = Math.min(def.maxStack, remaining);
-        slots[i] = { itemId, count: take };
+        applyTransferToSlot(i, take);
         remaining -= take;
         if (remaining <= 0) return count;
       }
@@ -10512,7 +11666,8 @@ export class GameEngine {
       slots,
       pSlot.itemId,
       amountToMove,
-      targetChestSlotIdx
+      targetChestSlotIdx,
+      pSlot
     );
     if (moved <= 0) {
       this.addFloatingText('Baú cheio!', this.player.x, this.player.y - 20, '#f43f5e');
@@ -10520,8 +11675,10 @@ export class GameEngine {
     }
 
     this.consumeInventoryAt(playerSlotIdx, moved);
+    this.markLocalChunkModified(chest.tileX, chest.tileY);
     soundManager.playPickup();
     this.syncChunkAtTile(chest.tileX, chest.tileY);
+    void this.saveGame(true);
     this.emitUiSnapshot();
     return true;
   }
@@ -10546,35 +11703,66 @@ export class GameEngine {
       Math.min(cSlot.count, typeof count === 'number' ? count : cSlot.count)
     );
 
-    // In Guest multiplayer mode, route chest withdrawal through Host atomic lock to prevent 2 players taking the same item
-    if (this.multiplayer.isOnline && this.multiplayer.role === 'GUEST') {
-      const withdrawKey = `chest:${chestId}:${chestSlotIdx}`;
-      if (this.pendingContainerWithdraws.has(withdrawKey)) return false;
-      this.pendingContainerWithdraws.add(withdrawKey);
-      this.multiplayer.sendWorldInteractRequest({
-        action: 'container_withdraw',
-        containerKind: 'chest',
-        structureId: chestId,
-        slotIndex: chestSlotIdx,
-        count: amountToMove,
-        targetPlayerSlotIdx,
-      });
-      return true;
-    }
-
     if (cSlot.itemId === 'gold_coin') {
       this.addItemToInventory('gold_coin', amountToMove);
       cSlot.count -= amountToMove;
       if (cSlot.count <= 0) {
         slots[chestSlotIdx] = null;
       }
+      this.markLocalChunkModified(chest.tileX, chest.tileY);
       soundManager.playPickup();
       this.syncChunkAtTile(chest.tileX, chest.tileY);
+      void this.saveGame(true);
       this.emitUiSnapshot();
       return true;
     }
 
     let remaining = amountToMove;
+    let workingChestSource: InventorySlot = {
+      ...cSlot,
+      colorCounts: cSlot.colorCounts ? { ...cSlot.colorCounts } : undefined,
+    };
+    const defaultFlowerColor: ClothingColorId =
+      def.allowedFlowerColors?.[0] || 'branco';
+
+    const applyToPlayerSlot = (pIdx: number, take: number) => {
+      const pTarget = this.player.inventory[pIdx];
+      if (!pTarget) {
+        if (def.isFlower) {
+          const emptyPlayerSlot: InventorySlot = {
+            itemId: cSlot.itemId,
+            count: 0,
+            colorCounts: {},
+            selectedColor:
+              workingChestSource.selectedColor || defaultFlowerColor,
+          };
+          const merged = this.mergeFlowerColorCountsIntoSlot(
+            emptyPlayerSlot,
+            workingChestSource,
+            take,
+            defaultFlowerColor
+          );
+          this.player.inventory[pIdx] = merged.updatedTarget;
+          if (merged.updatedSource) workingChestSource = merged.updatedSource;
+        } else {
+          this.player.inventory[pIdx] = {
+            itemId: cSlot.itemId,
+            count: take,
+          };
+        }
+      } else if (def.isFlower) {
+        const merged = this.mergeFlowerColorCountsIntoSlot(
+          pTarget,
+          workingChestSource,
+          take,
+          defaultFlowerColor
+        );
+        this.player.inventory[pIdx] = merged.updatedTarget;
+        if (merged.updatedSource) workingChestSource = merged.updatedSource;
+      } else {
+        pTarget.count += take;
+      }
+    };
 
     // 1. If a specific player slot was targeted, try there first
     if (
@@ -10585,14 +11773,14 @@ export class GameEngine {
       const pTarget = this.player.inventory[targetPlayerSlotIdx];
       if (!pTarget) {
         const take = Math.min(def.maxStack, remaining);
-        this.player.inventory[targetPlayerSlotIdx] = {
-          itemId: cSlot.itemId,
-          count: take,
-        };
+        applyToPlayerSlot(targetPlayerSlotIdx, take);
         remaining -= take;
-      } else if (pTarget.itemId === cSlot.itemId && pTarget.count < def.maxStack) {
+      } else if (
+        pTarget.itemId === cSlot.itemId &&
+        pTarget.count < def.maxStack
+      ) {
         const take = Math.min(def.maxStack - pTarget.count, remaining);
-        pTarget.count += take;
+        applyToPlayerSlot(targetPlayerSlotIdx, take);
         remaining -= take;
       }
     }
@@ -10602,7 +11790,7 @@ export class GameEngine {
       const pSlot = this.player.inventory[i];
       if (pSlot && pSlot.itemId === cSlot.itemId && pSlot.count < def.maxStack) {
         const take = Math.min(def.maxStack - pSlot.count, remaining);
-        pSlot.count += take;
+        applyToPlayerSlot(i, take);
         remaining -= take;
       }
     }
@@ -10611,7 +11799,7 @@ export class GameEngine {
     for (let i = 0; i < this.player.inventory.length && remaining > 0; i++) {
       if (this.player.inventory[i] === null) {
         const take = Math.min(def.maxStack, remaining);
-        this.player.inventory[i] = { itemId: cSlot.itemId, count: take };
+        applyToPlayerSlot(i, take);
         remaining -= take;
       }
     }
@@ -10626,12 +11814,23 @@ export class GameEngine {
       );
     }
 
-    cSlot.count -= amountToMove;
-    if (cSlot.count <= 0) {
-      slots[chestSlotIdx] = null;
+    if (def.isFlower) {
+      const leftInChest = cSlot.count - amountToMove;
+      slots[chestSlotIdx] =
+        leftInChest > 0 && workingChestSource
+          ? { ...workingChestSource, count: leftInChest }
+          : null;
+    } else {
+      cSlot.count -= amountToMove;
+      if (cSlot.count <= 0) {
+        slots[chestSlotIdx] = null;
+      }
     }
+
+    this.markLocalChunkModified(chest.tileX, chest.tileY);
     soundManager.playPickup();
     this.syncChunkAtTile(chest.tileX, chest.tileY);
+    void this.saveGame(true);
     this.emitUiSnapshot();
     return true;
   }
@@ -10654,16 +11853,30 @@ export class GameEngine {
     const slotB = slots[indexB];
 
     if (slotA && slotB && slotA.itemId === slotB.itemId) {
-      const maxStack = ITEMS[slotB.itemId]?.maxStack || 99;
+      const def = ITEMS[slotB.itemId];
+      const maxStack = def?.maxStack || 99;
       if (maxStack > 1 && slotB.count < maxStack) {
         const transfer = Math.min(slotA.count, maxStack - slotB.count);
-        const newDstCount = slotB.count + transfer;
-        const newSrcCount = slotA.count - transfer;
-        slots[indexB] = { ...slotB, count: newDstCount };
-        slots[indexA] =
-          newSrcCount > 0 ? { ...slotA, count: newSrcCount } : null;
+        if (def?.isFlower) {
+          const merged = this.mergeFlowerColorCountsIntoSlot(
+            slotB,
+            slotA,
+            transfer,
+            def.allowedFlowerColors?.[0] || 'branco'
+          );
+          slots[indexB] = merged.updatedTarget;
+          slots[indexA] = merged.updatedSource;
+        } else {
+          const newDstCount = slotB.count + transfer;
+          const newSrcCount = slotA.count - transfer;
+          slots[indexB] = { ...slotB, count: newDstCount };
+          slots[indexA] =
+            newSrcCount > 0 ? { ...slotA, count: newSrcCount } : null;
+        }
+        this.markLocalChunkModified(chest.tileX, chest.tileY);
         soundManager.playPickup();
         this.syncChunkAtTile(chest.tileX, chest.tileY);
+        void this.saveGame(true);
         this.emitUiSnapshot();
         return;
       }
@@ -10671,8 +11884,10 @@ export class GameEngine {
 
     slots[indexA] = slotB ? { ...slotB } : null;
     slots[indexB] = slotA ? { ...slotA } : null;
+    this.markLocalChunkModified(chest.tileX, chest.tileY);
     soundManager.playPickup();
     this.syncChunkAtTile(chest.tileX, chest.tileY);
+    void this.saveGame(true);
     this.emitUiSnapshot();
   }
 
@@ -10681,7 +11896,7 @@ export class GameEngine {
    * - Click 1 selects the item slot (`source`).
    * - Click 2 clicks the destination slot (`dest`).
    * - If `dest` is empty, moves the item there.
-   * - If `dest` has the same item and is not full, stacks them up to `maxStack`.
+   * - If `dest` has the same item and is not full, stacks them up to `maxStack` without losing items or flower colors.
    * - Otherwise swaps their positions directly.
    */
   public moveOrSwapChestAndPlayerSlot(
@@ -10719,11 +11934,21 @@ export class GameEngine {
     ): void => {
       if (loc.container === 'chest') {
         if (loc.index >= 0 && loc.index < chestSlots.length) {
-          chestSlots[loc.index] = val ? { ...val } : null;
+          chestSlots[loc.index] = val
+            ? {
+                ...val,
+                colorCounts: val.colorCounts ? { ...val.colorCounts } : undefined,
+              }
+            : null;
         }
       } else {
         if (loc.index >= 0 && loc.index < this.player.inventory.length) {
-          this.player.inventory[loc.index] = val ? { ...val } : null;
+          this.player.inventory[loc.index] = val
+            ? {
+                ...val,
+                colorCounts: val.colorCounts ? { ...val.colorCounts } : undefined,
+              }
+            : null;
         }
       }
     };
@@ -10732,37 +11957,52 @@ export class GameEngine {
     if (!srcSlot || srcSlot.count <= 0) return false;
     const dstSlot = getSlot(dest);
 
-    // Special case: moving gold_coin from a treasure chest into a player slot adds to gold purse
+    // Special case: moving gold_coin from a treasure chest into a player slot adds to gold purse without deleting dstSlot!
     if (
       source.container === 'chest' &&
       dest.container === 'player' &&
       srcSlot.itemId === 'gold_coin'
     ) {
       this.addItemToInventory('gold_coin', srcSlot.count);
-      setSlot(source, dstSlot);
-      setSlot(dest, null);
+      setSlot(source, null);
+      this.markLocalChunkModified(chest.tileX, chest.tileY);
       soundManager.playPickup();
       this.syncChunkAtTile(chest.tileX, chest.tileY);
+      void this.saveGame(true);
       this.emitUiSnapshot();
       return true;
     }
 
     // Stack identical items if destination stack has room
     if (dstSlot && dstSlot.itemId === srcSlot.itemId) {
-      const maxStack = ITEMS[dstSlot.itemId]?.maxStack || 99;
+      const def = ITEMS[dstSlot.itemId];
+      const maxStack = def?.maxStack || 99;
       if (maxStack > 1 && dstSlot.count < maxStack) {
         const transfer = Math.min(srcSlot.count, maxStack - dstSlot.count);
-        const newDstCount = dstSlot.count + transfer;
-        const newSrcCount = srcSlot.count - transfer;
-        setSlot(dest, { ...dstSlot, count: newDstCount });
-        setSlot(
-          source,
-          newSrcCount > 0 ? { ...srcSlot, count: newSrcCount } : null
-        );
+        if (def?.isFlower) {
+          const merged = this.mergeFlowerColorCountsIntoSlot(
+            dstSlot,
+            srcSlot,
+            transfer,
+            def.allowedFlowerColors?.[0] || 'branco'
+          );
+          setSlot(dest, merged.updatedTarget);
+          setSlot(source, merged.updatedSource);
+        } else {
+          const newDstCount = dstSlot.count + transfer;
+          const newSrcCount = srcSlot.count - transfer;
+          setSlot(dest, { ...dstSlot, count: newDstCount });
+          setSlot(
+            source,
+            newSrcCount > 0 ? { ...srcSlot, count: newSrcCount } : null
+          );
+        }
+        this.markLocalChunkModified(chest.tileX, chest.tileY);
         soundManager.playPickup();
         if (source.container === 'chest' || dest.container === 'chest') {
           this.syncChunkAtTile(chest.tileX, chest.tileY);
         }
+        void this.saveGame(true);
         this.emitUiSnapshot();
         return true;
       }
@@ -10771,10 +12011,12 @@ export class GameEngine {
     setSlot(source, dstSlot);
     setSlot(dest, srcSlot);
 
+    this.markLocalChunkModified(chest.tileX, chest.tileY);
     soundManager.playPickup();
     if (source.container === 'chest' || dest.container === 'chest') {
       this.syncChunkAtTile(chest.tileX, chest.tileY);
     }
+    void this.saveGame(true);
     this.emitUiSnapshot();
     return true;
   }
@@ -10803,7 +12045,13 @@ export class GameEngine {
       const def = ITEMS[pSlot.itemId];
       if (i < HOTBAR_SIZE && def && def.maxStack === 1) continue;
 
-      const moved = this.addItemToChestStorage(slots, pSlot.itemId, pSlot.count);
+      const moved = this.addItemToChestStorage(
+        slots,
+        pSlot.itemId,
+        pSlot.count,
+        undefined,
+        pSlot
+      );
       if (moved > 0) {
         this.consumeInventoryAt(i, moved);
         totalMoved += moved;
@@ -10811,6 +12059,7 @@ export class GameEngine {
     }
 
     if (totalMoved > 0) {
+      this.markLocalChunkModified(chest.tileX, chest.tileY);
       soundManager.playCraft();
       this.addFloatingText(
         `Empilhado no Baú (${totalMoved} itens)`,
@@ -10819,6 +12068,7 @@ export class GameEngine {
         '#4ade80'
       );
       this.syncChunkAtTile(chest.tileX, chest.tileY);
+      void this.saveGame(true);
       this.emitUiSnapshot();
     }
     return totalMoved;
@@ -10837,7 +12087,13 @@ export class GameEngine {
     for (let i = HOTBAR_SIZE; i < this.player.inventory.length; i++) {
       const pSlot = this.player.inventory[i];
       if (!pSlot || pSlot.count <= 0) continue;
-      const moved = this.addItemToChestStorage(slots, pSlot.itemId, pSlot.count);
+      const moved = this.addItemToChestStorage(
+        slots,
+        pSlot.itemId,
+        pSlot.count,
+        undefined,
+        pSlot
+      );
       if (moved > 0) {
         this.consumeInventoryAt(i, moved);
         totalMoved += moved;
@@ -10856,7 +12112,13 @@ export class GameEngine {
       ) {
         continue;
       }
-      const moved = this.addItemToChestStorage(slots, pSlot.itemId, pSlot.count);
+      const moved = this.addItemToChestStorage(
+        slots,
+        pSlot.itemId,
+        pSlot.count,
+        undefined,
+        pSlot
+      );
       if (moved > 0) {
         this.consumeInventoryAt(i, moved);
         totalMoved += moved;
@@ -10864,6 +12126,7 @@ export class GameEngine {
     }
 
     if (totalMoved > 0) {
+      this.markLocalChunkModified(chest.tileX, chest.tileY);
       soundManager.playCraft();
       this.addFloatingText(
         `Guardado no Baú (${totalMoved} itens)`,
@@ -10872,6 +12135,7 @@ export class GameEngine {
         '#38bdf8'
       );
       this.syncChunkAtTile(chest.tileX, chest.tileY);
+      void this.saveGame(true);
       this.emitUiSnapshot();
     }
     return totalMoved;
@@ -10896,6 +12160,7 @@ export class GameEngine {
     }
 
     if (totalTaken > 0) {
+      this.markLocalChunkModified(chest.tileX, chest.tileY);
       soundManager.playCraft();
       this.addFloatingText(
         `Retirado do Baú (${totalTaken} itens)`,
@@ -10904,6 +12169,7 @@ export class GameEngine {
         '#fde047'
       );
       this.syncChunkAtTile(chest.tileX, chest.tileY);
+      void this.saveGame(true);
       this.emitUiSnapshot();
     }
     return totalTaken;
@@ -10984,14 +12250,10 @@ export class GameEngine {
   public ensureMarketStallInitialized(
     stall: PlacedStructure
   ): (MarketStallSlot | null)[] {
-    if (!stall.ownerType) {
+    if (!stall.ownerType && !stall.structureOwnerClearedAfterLoss) {
       if (stall.villageId || stall.id.startsWith('world_struct_')) {
         stall.ownerType = 'VILLAGER';
         if (!stall.ownerName) stall.ownerName = 'Mercador da Vila';
-      } else {
-        stall.ownerType = 'PLAYER';
-        stall.ownerId = 'player';
-        if (!stall.ownerName) stall.ownerName = 'Você (Mercador)';
       }
     }
     if (stall.stallOpen === undefined) {
@@ -13144,20 +14406,44 @@ export class GameEngine {
 
   private updateThermalStations(dt: number): void {
     let anyChanged = false;
-    for (const chunk of Object.values(this.world.chunks)) {
-      if (!chunk || !Array.isArray(chunk.structures)) continue;
-      for (const st of chunk.structures) {
-        if (
-          st.type === PlaceableType.CAMPFIRE ||
-          st.type === PlaceableType.FURNACE ||
-          st.type === PlaceableType.WEAVING_TABLE
-        ) {
-          if (
-            (st.fuelBurnRemaining || 0) > 0 ||
-            (st.cookingInputCount || 0) > 0
-          ) {
-            if (this.tickSingleThermalStation(st, dt)) {
-              anyChanged = true;
+    const processedChunks = new Set<string>();
+    const activePlayerPoints: Array<{ x: number; y: number }> = [
+      { x: this.player.x, y: this.player.y },
+    ];
+    if (this.multiplayer.isOnline) {
+      for (const rp of this.remotePlayersList) {
+        if (rp.hp > 0) {
+          activePlayerPoints.push({ x: rp.x, y: rp.y });
+        }
+      }
+    }
+
+    for (const pt of activePlayerPoints) {
+      const pTile = this.world.worldToTile(pt.x, pt.y);
+      const pChunk = this.world.tileToChunk(pTile.tx, pTile.ty);
+
+      for (let dy = -3; dy <= 3; dy++) {
+        for (let dx = -3; dx <= 3; dx++) {
+          const cKey = WorldManager.chunkKey(pChunk.cx + dx, pChunk.cy + dy);
+          if (processedChunks.has(cKey)) continue;
+          processedChunks.add(cKey);
+
+          const chunk = this.world.chunks[cKey];
+          if (!chunk || !Array.isArray(chunk.structures)) continue;
+          for (const st of chunk.structures) {
+            if (
+              st.type === PlaceableType.CAMPFIRE ||
+              st.type === PlaceableType.FURNACE ||
+              st.type === PlaceableType.WEAVING_TABLE
+            ) {
+              if (
+                (st.fuelBurnRemaining || 0) > 0 ||
+                (st.cookingInputCount || 0) > 0
+              ) {
+                if (this.tickSingleThermalStation(st, dt)) {
+                  anyChanged = true;
+                }
+              }
             }
           }
         }
@@ -13574,7 +14860,9 @@ export class GameEngine {
   // =========================================================================
 
   private getLocalRiderId(): string {
-    return this.multiplayer.isOnline ? this.multiplayer.peerId : 'LOCAL';
+    return this.multiplayer.isOnline
+      ? this.multiplayer.peerId
+      : this.getLocalOwnerId();
   }
 
   public getLocalOwnerId(): string {
@@ -13587,39 +14875,47 @@ export class GameEngine {
   public isIdMatchingLocalPlayer(id: string | null | undefined): boolean {
     if (!id) return false;
     return (
-      id === 'LOCAL' ||
       id === this.multiplayer.peerId ||
-      id === this.getLocalOwnerId()
+      id === this.getLocalOwnerId() ||
+      (!this.multiplayer.isOnline && id === 'LOCAL')
     );
   }
 
   /**
-   * Returns true if the local player is seated in Seat 1 (Leme / Driver) of the given Boat and has steering control.
+   * Returns true if the local player is seated in Seat 1 (Pilot / Driver, `seatIndex === 0`) of the given Boat and has steering control.
+   * Note: A player in Seat 2 (Passenger, `seatIndex === 1`) NEVER becomes Pilot automatically when Seat 1 vacates;
+   * they must exit and re-enter the Boat to take Seat 1.
    */
   public isLocalPlayerBoatDriver(boat: CreatureEntity): boolean {
     if (boat.kind !== CreatureKind.BOAT || this.player.mountedEntityId !== boat.id) {
       return false;
     }
-    if (this.isIdMatchingLocalPlayer(boat.riderPlayerId)) {
-      return true;
+    if (this.player.mountedSeatIndex === 1) {
+      return false;
     }
-    if (!boat.riderPlayerId && !this.isIdMatchingLocalPlayer(boat.passengerPlayerId)) {
+    if (this.isIdMatchingLocalPlayer(boat.passengerPlayerId)) {
+      return false;
+    }
+    if (this.player.mountedSeatIndex === 0 || this.isIdMatchingLocalPlayer(boat.riderPlayerId)) {
       return true;
     }
     return false;
   }
 
   /**
-   * Returns true if the local player is seated in Seat 2 (Passenger) of the given Boat while another player steers.
+   * Returns true if the local player is seated in Seat 2 (Passenger, `seatIndex === 1`) of the given Boat.
+   * Even if Seat 1 (Pilot) becomes empty, the passenger stays in Seat 2 until they exit and re-board.
    */
   public isLocalPlayerBoatPassenger(boat: CreatureEntity): boolean {
     if (boat.kind !== CreatureKind.BOAT || this.player.mountedEntityId !== boat.id) {
       return false;
     }
+    if (this.player.mountedSeatIndex === 1) {
+      return true;
+    }
     return (
       this.isIdMatchingLocalPlayer(boat.passengerPlayerId) &&
-      !this.isIdMatchingLocalPlayer(boat.riderPlayerId) &&
-      Boolean(boat.riderPlayerId)
+      !this.isIdMatchingLocalPlayer(boat.riderPlayerId)
     );
   }
 
@@ -13952,6 +15248,7 @@ export class GameEngine {
   public restoreIntegratedPlayerMount(): CreatureEntity | null {
     if (!this.player.mountedEntityId) {
       this.player.mountedCreatureData = null;
+      this.player.mountedSeatIndex = null;
       return null;
     }
 
@@ -13975,6 +15272,7 @@ export class GameEngine {
     ) {
       this.player.mountedEntityId = null;
       this.player.mountedCreatureData = null;
+      this.player.mountedSeatIndex = null;
       this.player.isGalloping = false;
       return null;
     }
@@ -13983,6 +15281,8 @@ export class GameEngine {
       const savedMount: CreatureEntity = JSON.parse(
         JSON.stringify(this.player.mountedCreatureData)
       );
+      const isBoat = savedMount.kind === CreatureKind.BOAT;
+      const isPassenger = isBoat && this.player.mountedSeatIndex === 1;
       savedMount.id = this.player.mountedEntityId;
       savedMount.x = this.player.x;
       savedMount.y = this.player.y;
@@ -13991,8 +15291,13 @@ export class GameEngine {
       savedMount.direction = this.player.direction;
       savedMount.hp = Math.max(1, savedMount.hp || savedMount.maxHp || 100);
       savedMount.tamed = true;
-      savedMount.riderPlayerId = riderId;
-      if (savedMount.kind !== CreatureKind.BOAT) {
+      if (isPassenger) {
+        savedMount.passengerPlayerId = riderId;
+      } else {
+        savedMount.riderPlayerId = riderId;
+        this.player.mountedSeatIndex = 0;
+      }
+      if (!isBoat) {
         savedMount.ownerId = savedMount.ownerId || ownerId;
         savedMount.ownerName = savedMount.ownerName || ownerName;
       }
@@ -14006,19 +15311,26 @@ export class GameEngine {
       this.entities.creatures.push(savedMount);
       mount = savedMount;
     } else if (mount) {
-      mount.x = this.player.x;
-      mount.y = this.player.y;
-      mount.direction = this.player.direction;
-      if (mount.kind !== CreatureKind.BOAT && !mount.ownerId) {
+      const isBoat = mount.kind === CreatureKind.BOAT;
+      const isPassenger =
+        isBoat &&
+        (this.player.mountedSeatIndex === 1 ||
+          this.isIdMatchingLocalPlayer(mount.passengerPlayerId));
+      if (!isPassenger) {
+        mount.x = this.player.x;
+        mount.y = this.player.y;
+        mount.direction = this.player.direction;
+        mount.riderPlayerId = riderId;
+        this.player.mountedSeatIndex = 0;
+      } else {
+        mount.passengerPlayerId = riderId;
+        this.player.mountedSeatIndex = 1;
+        this.player.x = mount.x;
+        this.player.y = mount.y;
+      }
+      if (!isBoat && !mount.ownerId) {
         mount.ownerId = ownerId;
         mount.ownerName = ownerName;
-      }
-      if (
-        !mount.riderPlayerId ||
-        mount.riderPlayerId === 'LOCAL' ||
-        mount.riderPlayerId === riderId
-      ) {
-        mount.riderPlayerId = riderId;
       }
       if (this.player.mountedCreatureData) {
         if (this.player.mountedCreatureData.hasSaddle) {
@@ -14060,6 +15372,7 @@ export class GameEngine {
   private syncPlayerMountedCreatureData(): void {
     if (!this.player.mountedEntityId) {
       this.player.mountedCreatureData = null;
+      this.player.mountedSeatIndex = null;
       return;
     }
     const mount = this.getActiveMount();
@@ -14067,28 +15380,29 @@ export class GameEngine {
     const localRiderId = this.getLocalRiderId();
     const isBoat = mount.kind === CreatureKind.BOAT;
     const isBoatPassenger = isBoat && this.isLocalPlayerBoatPassenger(mount);
+    this.player.mountedSeatIndex = isBoatPassenger ? 1 : 0;
 
     const resolvedRiderId = isBoat
       ? isBoatPassenger
         ? mount.riderPlayerId || null
         : localRiderId
-      : mount.riderPlayerId === 'LOCAL'
+      : this.isIdMatchingLocalPlayer(mount.riderPlayerId)
       ? localRiderId
       : mount.riderPlayerId || localRiderId;
 
     const resolvedPassengerId = isBoat
       ? isBoatPassenger
         ? localRiderId
-        : mount.passengerPlayerId === 'LOCAL'
+        : this.isIdMatchingLocalPlayer(mount.passengerPlayerId)
         ? localRiderId
         : mount.passengerPlayerId || null
       : null;
 
     this.player.mountedCreatureData = {
       ...mount,
-      x: this.player.x,
-      y: this.player.y,
-      direction: this.player.direction,
+      x: isBoatPassenger ? mount.x : this.player.x,
+      y: isBoatPassenger ? mount.y : this.player.y,
+      direction: isBoatPassenger ? mount.direction : this.player.direction,
       ownerId: isBoat ? null : mount.ownerId || this.getLocalOwnerId(),
       ownerName: isBoat
         ? null
@@ -14107,6 +15421,7 @@ export class GameEngine {
   /**
    * Ensures that any remote player who is mounted has their mount entity present and synchronized
    * in `this.entities.creatures`, and accurately distinguishes Boat Seat 1 (Driver/Helm) vs Seat 2 (Passenger).
+   * Note: Passengers in Seat 2 (`mountedSeatIndex === 1`) are NEVER auto-promoted to Seat 1 when the Pilot leaves!
    */
   private reconcileRemotePlayerMounts(): void {
     for (const rp of this.multiplayer.remotePlayers.values()) {
@@ -14115,6 +15430,7 @@ export class GameEngine {
           (c) => c.id === rp.mountedEntityId
         );
         const rpClaimsPassenger =
+          rp.mountedSeatIndex === 1 ||
           rp.mountedCreatureData.passengerPlayerId === rp.peerId ||
           rp.mountedCreatureData.passengerPlayerId === rp.persistentPlayerId;
 
@@ -14125,8 +15441,8 @@ export class GameEngine {
             id: rp.mountedEntityId,
             x: rp.x,
             y: rp.y,
-            vx: rp.vx,
-            vy: rp.vy,
+            vx: rpClaimsPassenger ? 0 : rp.vx,
+            vy: rpClaimsPassenger ? 0 : rp.vy,
             direction: rp.direction,
             hp: Math.max(
               1,
@@ -14170,16 +15486,25 @@ export class GameEngine {
             const rpIsPassenger =
               rpClaimsPassenger ||
               mount.passengerPlayerId === rp.peerId ||
+              mount.passengerPlayerId === rp.persistentPlayerId ||
               (localIsDriver && mount.riderPlayerId !== rp.peerId);
 
             if (rpIsPassenger) {
+              rp.mountedSeatIndex = 1;
               mount.passengerPlayerId = rp.peerId;
+              if (mount.riderPlayerId === rp.peerId || mount.riderPlayerId === rp.persistentPlayerId) {
+                mount.riderPlayerId = null;
+              }
               if (localIsDriver) {
                 mount.riderPlayerId = this.getLocalRiderId();
               }
             } else {
-              // Remote player is in Seat 1 (Driver / Helm) -> controls Boat position & direction!
+              // Remote player is in Seat 1 (Pilot / Helm) -> controls Boat position & direction!
+              rp.mountedSeatIndex = 0;
               mount.riderPlayerId = rp.peerId;
+              if (mount.passengerPlayerId === rp.peerId || mount.passengerPlayerId === rp.persistentPlayerId) {
+                mount.passengerPlayerId = null;
+              }
               mount.x = rp.x;
               mount.y = rp.y;
               mount.vx = rp.vx;
@@ -14191,6 +15516,7 @@ export class GameEngine {
             continue;
           }
 
+          rp.mountedSeatIndex = 0;
           mount.x = rp.x;
           mount.y = rp.y;
           mount.vx = rp.vx;
@@ -14225,16 +15551,20 @@ export class GameEngine {
           }
         }
       } else {
+        rp.mountedSeatIndex = null;
         for (const cr of this.entities.creatures) {
-          if (cr.riderPlayerId === rp.peerId && rp.mountedEntityId !== cr.id) {
+          if (
+            (cr.riderPlayerId === rp.peerId ||
+              (rp.persistentPlayerId && cr.riderPlayerId === rp.persistentPlayerId)) &&
+            rp.mountedEntityId !== cr.id
+          ) {
             cr.riderPlayerId = null;
-            if (cr.kind === CreatureKind.BOAT && cr.passengerPlayerId) {
-              cr.riderPlayerId = cr.passengerPlayerId;
-              cr.passengerPlayerId = null;
-            }
+            cr.vx = 0;
+            cr.vy = 0;
           }
           if (
-            cr.passengerPlayerId === rp.peerId &&
+            (cr.passengerPlayerId === rp.peerId ||
+              (rp.persistentPlayerId && cr.passengerPlayerId === rp.persistentPlayerId)) &&
             rp.mountedEntityId !== cr.id
           ) {
             cr.passengerPlayerId = null;
@@ -14245,31 +15575,45 @@ export class GameEngine {
   }
 
   /**
-   * When a Guest leaves the game while mounted, their mount is part of their body
-   * and disappears from the world with them (and returns when they reconnect).
+   * When a Guest leaves the game while mounted, personal mounts (Horse/Camel) disappear with them,
+   * whereas Boats remain in the water and simply vacate their seat.
    */
   private handleRemotePeerLeft(peerId: string): void {
     if (!peerId) return;
-    let removedAny = false;
+    let changedAny = false;
     for (let i = this.entities.creatures.length - 1; i >= 0; i--) {
       const cr = this.entities.creatures[i];
+      if (cr.kind === CreatureKind.BOAT) {
+        if (cr.riderPlayerId === peerId) {
+          cr.riderPlayerId = null;
+          cr.vx = 0;
+          cr.vy = 0;
+          changedAny = true;
+        }
+        if (cr.passengerPlayerId === peerId) {
+          cr.passengerPlayerId = null;
+          changedAny = true;
+        }
+        continue;
+      }
       if (cr.riderPlayerId === peerId) {
         if (this.player.mountedEntityId === cr.id) {
           this.player.mountedEntityId = null;
           this.player.mountedCreatureData = null;
+          this.player.mountedSeatIndex = null;
           this.player.isGalloping = false;
         }
         this.entities.creatures.splice(i, 1);
-        removedAny = true;
+        changedAny = true;
         continue;
       }
       if (cr.passengerPlayerId === peerId) {
         cr.passengerPlayerId = null;
-        removedAny = true;
+        changedAny = true;
       }
     }
     if (
-      removedAny &&
+      changedAny &&
       this.multiplayer.isOnline &&
       this.multiplayer.role === 'HOST'
     ) {
@@ -14463,15 +15807,17 @@ export class GameEngine {
           (c) => c.id === event.creatureId
         );
         if (cr) {
-          if (cr.riderPlayerId === peerId) {
+          if (cr.riderPlayerId === peerId || cr.riderPlayerId === guestOwnerId) {
             cr.riderPlayerId = null;
-            // Promote 2nd-seat passenger to driver if Seat 1 vacated on a Boat!
-            if (cr.kind === CreatureKind.BOAT && cr.passengerPlayerId) {
-              cr.riderPlayerId = cr.passengerPlayerId;
-              cr.passengerPlayerId = null;
-            }
+            // Do NOT auto-promote Seat 2 passenger to Seat 1 pilot!
+            // To become the pilot, the passenger must exit and enter the boat again.
           }
-          if (cr.passengerPlayerId === peerId) cr.passengerPlayerId = null;
+          if (
+            cr.passengerPlayerId === peerId ||
+            cr.passengerPlayerId === guestOwnerId
+          ) {
+            cr.passengerPlayerId = null;
+          }
           if (!cr.riderPlayerId) {
             if (typeof event.x === 'number') cr.x = event.x;
             if (typeof event.y === 'number') cr.y = event.y;
@@ -14699,19 +16045,21 @@ export class GameEngine {
       if (this.player.mountedEntityId) {
         this.dismountCreature();
       }
-      // Check Boat 2-seat capacity: Seat 1 = riderPlayerId (Leme/Direção), Seat 2 = passengerPlayerId (Passageiro)
+      // Check Boat 2-seat capacity: Seat 1 = riderPlayerId (Pilot / Direção), Seat 2 = passengerPlayerId (Passageiro)
       const driverRemote = this.remotePlayersList.find(
         (rp) =>
           rp.mountedEntityId === cr.id &&
+          rp.mountedSeatIndex !== 1 &&
           (cr.riderPlayerId === rp.peerId ||
             cr.riderPlayerId === rp.persistentPlayerId ||
-            (!cr.riderPlayerId && cr.passengerPlayerId !== rp.peerId))
+            rp.mountedSeatIndex === 0)
       );
       const passengerRemote = this.remotePlayersList.find(
         (rp) =>
           rp.mountedEntityId === cr.id &&
           rp !== driverRemote &&
-          (cr.passengerPlayerId === rp.peerId ||
+          (rp.mountedSeatIndex === 1 ||
+            cr.passengerPlayerId === rp.peerId ||
             cr.passengerPlayerId === rp.persistentPlayerId)
       );
 
@@ -14725,9 +16073,12 @@ export class GameEngine {
         return false;
       }
 
+      // First player to board (when Seat 1 is free) gets Seat 1 (Pilot, seatIndex = 0).
+      // Second player (when Seat 1 is occupied) gets Seat 2 (Passenger, seatIndex = 1).
       const isPassenger = Boolean(driverRemote);
       if (!isPassenger) {
         cr.riderPlayerId = localRiderId;
+        this.player.mountedSeatIndex = 0;
         if (this.isIdMatchingLocalPlayer(cr.passengerPlayerId)) {
           cr.passengerPlayerId = null;
         }
@@ -14735,6 +16086,7 @@ export class GameEngine {
         // Board 2nd seat as passenger! (Displace pet if one was in 2nd seat)
         cr.passengerPetId = null;
         cr.passengerPlayerId = localRiderId;
+        this.player.mountedSeatIndex = 1;
       }
 
       // If the 2nd seat is free and the player has a tamed pet currently following ('follow') that belongs to them, seat it in Seat 2!
@@ -14782,10 +16134,10 @@ export class GameEngine {
       this.renderer.spawnRipple(cr.x, cr.y, '#38bdf8', 24, 0.4);
       this.addFloatingText(
         isPassenger
-          ? '⛵ Embarcou no 2º Assento (Passageiro)!'
+          ? '⛵ Embarcou no Assento 2 (Passageiro)!'
           : cr.passengerPetId
-          ? '⛵ Embarcou no Leme com seu Pet! (2/2 Assentos)'
-          : '⛵ Embarcou no Leme do Bote! (1º Assento · Direção)',
+          ? '⛵ Embarcou no Assento 1 (Piloto) com seu Pet!'
+          : '⛵ Embarcou no Assento 1 (Piloto · Direção)!',
         cr.x,
         cr.y - 20,
         '#38bdf8'
@@ -14842,6 +16194,7 @@ export class GameEngine {
       cr.passengerPlayerId = null;
       cr.passengerPetId = null;
       this.player.mountedEntityId = cr.id;
+      this.player.mountedSeatIndex = 0;
       this.player.isGalloping = false;
       this.player.x = cr.x;
       this.player.y = cr.y;
@@ -14883,9 +16236,9 @@ export class GameEngine {
 
   public dismountCreature(): void {
     const mount = this.getActiveMount();
-    const localRiderId = this.getLocalRiderId();
     this.player.mountedEntityId = null;
     this.player.mountedCreatureData = null;
+    this.player.mountedSeatIndex = null;
     this.player.isGalloping = false;
     if (!mount) {
       this.emitUiSnapshot();
@@ -14894,10 +16247,10 @@ export class GameEngine {
 
     if (this.isIdMatchingLocalPlayer(mount.riderPlayerId)) {
       mount.riderPlayerId = null;
-      if (mount.kind === CreatureKind.BOAT && mount.passengerPlayerId) {
-        mount.riderPlayerId = mount.passengerPlayerId;
-        mount.passengerPlayerId = null;
-      }
+      mount.vx = 0;
+      mount.vy = 0;
+      // Do NOT promote Seat 2 passenger to Seat 1 pilot!
+      // Passenger remains in Seat 2 until they exit and re-enter to take Seat 1.
     }
     if (this.isIdMatchingLocalPlayer(mount.passengerPlayerId)) {
       mount.passengerPlayerId = null;
@@ -15998,9 +17351,27 @@ export class GameEngine {
           this.metadata.dayCount = snapshot.metadata.dayCount;
         }
         if (snapshot.chunks) {
+          const now = Date.now();
           for (const [key, ch] of Object.entries(snapshot.chunks)) {
             if (ch) {
-              this.world.chunks[key] = this.world.hydrateChunk(ch);
+              const prevChunk = this.world.chunks[key];
+              const prevExplored = prevChunk?.explored;
+              const lastLocalEdit = this.lastLocalChunkEditAt.get(key) || 0;
+              // Do not overwrite a chunk that the local player just modified within the last 3 seconds
+              if (prevChunk && now - lastLocalEdit < 3000) {
+                continue;
+              }
+              const hydrated = this.world.hydrateChunk(ch);
+              // Preserve local player's Fog-of-War (`explored`) if they have already explored tiles in this chunk
+              if (
+                Array.isArray(prevExplored) &&
+                prevExplored.length === hydrated.explored.length
+              ) {
+                for (let i = 0; i < prevExplored.length; i++) {
+                  if (prevExplored[i]) hydrated.explored[i] = 1;
+                }
+              }
+              this.world.chunks[key] = hydrated;
             }
           }
         }
@@ -16021,9 +17392,25 @@ export class GameEngine {
       },
       onChunkSyncReceived: (chunkKey, chunkData) => {
         if (!chunkKey || !chunkData) return;
-        this.world.chunks[chunkKey] = this.world.hydrateChunk(chunkData);
+        const prevChunk = this.world.chunks[chunkKey];
+        const prevExplored = prevChunk?.explored;
+        const hydrated = this.world.hydrateChunk(chunkData);
+        // Never overwrite the local player's Fog-of-War exploration when receiving a remote chunk update!
+        if (
+          Array.isArray(prevExplored) &&
+          prevExplored.length === hydrated.explored.length
+        ) {
+          for (let i = 0; i < prevExplored.length; i++) {
+            if (prevExplored[i]) hydrated.explored[i] = 1;
+          }
+        }
+        this.world.chunks[chunkKey] = hydrated;
         if (!this.canEntityOccupy(this.player.x, this.player.y)) {
           this.pushPlayerOutOfHitbox(0.05, false);
+        }
+        // If Host receives a chunk update from a Guest (e.g. Chest storage edit), relay to other Guests
+        if (this.multiplayer.isOnline && this.multiplayer.role === 'HOST') {
+          this.multiplayer.sendChunkSync(chunkKey, hydrated);
         }
         this.emitUiSnapshot();
       },

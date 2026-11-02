@@ -57,8 +57,7 @@ export const PauseSettingsModal: React.FC<PauseSettingsModalProps> = ({
     setSaveFeedback('Arquivo .wildborn.json baixado com sucesso!');
   };
 
-  const handleSaveAndExit = async () => {
-    await engine.saveGame(false);
+  const handleSaveAndExit = () => {
     onExitToMenu();
   };
 

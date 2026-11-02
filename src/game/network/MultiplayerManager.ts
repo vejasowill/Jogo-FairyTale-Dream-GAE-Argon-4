@@ -242,6 +242,10 @@ export class MultiplayerManager {
       isMoving: player.isMoving,
       isSwimming: Boolean(player.isSwimming),
       mountedEntityId: player.mountedEntityId || null,
+      mountedSeatIndex:
+        typeof player.mountedSeatIndex === 'number'
+          ? player.mountedSeatIndex
+          : null,
       isGalloping: Boolean(player.isGalloping),
       mountedCreatureData: player.mountedCreatureData || null,
       swingTimer: player.swingTimer,
@@ -1799,19 +1803,9 @@ export class MultiplayerManager {
         }
         if (
           typeof msg.worldRevision === 'number' &&
-          msg.worldRevision > this.worldRevision &&
-          Date.now() - this.lastResyncRequestAt > 2500
+          msg.worldRevision > this.worldRevision
         ) {
-          this.lastResyncRequestAt = Date.now();
-          this.safeSendConn(
-            conn,
-            {
-              type: 'p2p_request_resync',
-              peerId: this.peerId,
-              worldRevision: this.worldRevision,
-            },
-            true
-          );
+          this.worldRevision = msg.worldRevision;
         }
         if (msg.type === 'p2p_ping') {
           this.safeSendConn(
@@ -2361,19 +2355,9 @@ export class MultiplayerManager {
             }
             if (
               typeof msg.worldRevision === 'number' &&
-              msg.worldRevision > manager.worldRevision &&
-              Date.now() - manager.lastResyncRequestAt > 2500
+              msg.worldRevision > manager.worldRevision
             ) {
-              manager.lastResyncRequestAt = Date.now();
-              manager.safeSendConn(
-                conn,
-                {
-                  type: 'p2p_request_resync',
-                  peerId: manager.peerId,
-                  worldRevision: manager.worldRevision,
-                },
-                true
-              );
+              manager.worldRevision = msg.worldRevision;
             }
             if (msg.type === 'p2p_ping') {
               manager.safeSendConn(
@@ -2517,12 +2501,13 @@ export class MultiplayerManager {
             void this.tryAttachWebSocket(1200);
           }
         } else if (this.role === 'GUEST') {
-          // Give the Host up to ~8 retries (~2.5 seconds) to re-host before closing or falling back to P2P
-          if (this.consecutiveHttpFailures >= 10 && errData?.roomClosed) {
+          if (errData?.roomClosed || this.consecutiveHttpFailures >= 10) {
+            this.intentionalClose = true;
+            this.isP2PReconnecting = false;
             this.handleServerMessage({
               type: 'room_closed',
               reason:
-                errData.error || 'O anfitrião encerrou a sessão online.',
+                errData?.error || 'O anfitrião saiu do mundo e encerrou a sessão.',
             });
           } else {
             this.syncStatus = 'RESYNCING';
@@ -2580,7 +2565,6 @@ export class MultiplayerManager {
           data.worldRevision > this.worldRevision
         ) {
           this.worldRevision = data.worldRevision;
-          this.pendingFullSnapshotRequest = true;
         }
 
         if (Array.isArray(data.creatures)) {
@@ -2706,8 +2690,84 @@ export class MultiplayerManager {
     }
   }
 
+  /**
+   * Pre-disconnects all connected Guests immediately when the Host exits the world,
+   * flushing `room_closed` across P2P WebRTC, WebSocket, and HTTP before tearing down sockets.
+   */
+  public async disconnectAndCloseRoom(): Promise<void> {
+    this.intentionalClose = true;
+    this.isP2PReconnecting = false;
+    const prevCode = this.inviteCode;
+    const prevPeerId = this.peerId;
+    const wasOnline = this.isOnline;
+    const wasHost = this.role === 'HOST';
+
+    this.stopHttpSyncLoop();
+    this.stopSyncWatchdogLoop();
+    this.outgoingHttpEvents = [];
+
+    if (wasOnline) {
+      if (wasHost && this.p2pGuestConnections.size > 0) {
+        this.broadcastToP2PGuests(
+          {
+            type: 'room_closed',
+            reason: 'O anfitrião saiu do mundo e encerrou a sessão.',
+          },
+          undefined,
+          true
+        );
+      } else if (this.role === 'GUEST' && this.p2pHostConn?.open) {
+        this.safeSendConn(
+          this.p2pHostConn,
+          {
+            type: 'leave_room',
+            peerId: this.peerId,
+          },
+          true
+        );
+      }
+
+      if (prevCode) {
+        this.sendRaw({ type: 'leave_room' });
+      }
+
+      const leavePromises: Promise<unknown>[] = [];
+      if (wasHost && this.p2pGuestConnections.size > 0) {
+        // Give WebRTC DataChannels a brief window to flush `room_closed` before closing peer connections
+        leavePromises.push(new Promise((r) => window.setTimeout(r, 120)));
+      }
+      if (this.transportMode !== 'P2P_WEBRTC' && prevCode) {
+        const baseUrl = MultiplayerManager.resolveHttpBaseUrl(
+          this.customServerUrl
+        );
+        const controller = new AbortController();
+        const tid = window.setTimeout(() => controller.abort(), 500);
+        leavePromises.push(
+          fetch(`${baseUrl}/api/mp/leave`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              inviteCode: prevCode,
+              peerId: prevPeerId,
+            }),
+            signal: controller.signal,
+          })
+            .catch(() => {})
+            .finally(() => window.clearTimeout(tid))
+        );
+      }
+
+      if (leavePromises.length > 0) {
+        await Promise.all(leavePromises);
+      }
+    }
+
+    this.disconnect(false);
+  }
+
   public disconnect(notifyServer = true): void {
     this.intentionalClose = true;
+    this.isP2PReconnecting = false;
     const prevCode = this.inviteCode;
     const prevPeerId = this.peerId;
     const wasOnline = this.isOnline;
@@ -3021,6 +3081,8 @@ export class MultiplayerManager {
       case 'room_closed': {
         const reason =
           msg.reason || 'O anfitrião fechou o mundo e a sessão terminou.';
+        this.intentionalClose = true;
+        this.isP2PReconnecting = false;
         this.disconnect(false);
         this.callbacks.onRoomClosedByHost?.(reason);
         break;
@@ -3063,6 +3125,10 @@ export class MultiplayerManager {
         st.mountedEntityId !== undefined
           ? st.mountedEntityId
           : existing.mountedEntityId;
+      existing.mountedSeatIndex =
+        st.mountedSeatIndex !== undefined
+          ? st.mountedSeatIndex
+          : existing.mountedSeatIndex ?? null;
       existing.isGalloping =
         st.isGalloping !== undefined
           ? Boolean(st.isGalloping)
@@ -3109,6 +3175,8 @@ export class MultiplayerManager {
         isSwimming: Boolean(st.isSwimming),
         isSleeping: Boolean(st.isSleeping),
         mountedEntityId: st.mountedEntityId ?? null,
+        mountedSeatIndex:
+          typeof st.mountedSeatIndex === 'number' ? st.mountedSeatIndex : null,
         isGalloping: Boolean(st.isGalloping),
         mountedCreatureData: st.mountedCreatureData ?? null,
         animFrame: 0,
@@ -3243,11 +3311,16 @@ export class MultiplayerManager {
   public sendChunkSync(chunkKey: string, chunkData: ChunkData): void {
     if (!this.isOnline) return;
     this.worldRevision += 1;
+    // Strip per-player local `explored` fog-of-war array so remote chunk syncs never overwrite another player's fog of war
+    const networkChunk: ChunkData = {
+      ...chunkData,
+      explored: [],
+    };
     this.queueOrSendEvent(
       {
         type: 'chunk_sync',
         chunkKey,
-        chunkData,
+        chunkData: networkChunk,
         worldRevision: this.worldRevision,
       },
       `chunk_${chunkKey}`

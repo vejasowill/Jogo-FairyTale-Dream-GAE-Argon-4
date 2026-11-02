@@ -64,12 +64,15 @@ export const MarketStallModal: React.FC<MarketStallModalProps> = ({
   const stallSlots = engine.ensureMarketStallInitialized(stall);
   const isPlayerOwner = stall.ownerType === 'PLAYER';
   const isVillagerOwner = stall.ownerType === 'VILLAGER';
+  const isVillagerOwnerAlive =
+    isVillagerOwner && engine.isVillagerStallOwnerAlive(stall);
+  const isUnowned = !isPlayerOwner && !isVillagerOwnerAlive;
   const isVillagerSleeping =
-    isVillagerOwner && engine.isVillagerStallOwnerSleeping(stall);
+    isVillagerOwnerAlive && engine.isVillagerStallOwnerSleeping(stall);
   const visibleStallSlots = isVillagerSleeping
     ? Array.from({ length: 8 }, () => null)
     : stallSlots;
-  const isOpen = isVillagerOwner
+  const isOpen = isVillagerOwnerAlive
     ? !isVillagerSleeping
     : stall.stallOpen !== false;
   const offer = stall.pendingCustomerOffer || null;
@@ -166,10 +169,16 @@ export const MarketStallModal: React.FC<MarketStallModalProps> = ({
                   className={`text-[9px] font-bold px-1.5 py-0.5 border ${
                     isPlayerOwner
                       ? 'bg-emerald-950/70 border-emerald-500/60 text-emerald-300'
-                      : 'bg-sky-950/70 border-sky-500/60 text-sky-300'
+                      : isUnowned
+                        ? 'bg-amber-950/70 border-amber-500/60 text-amber-300'
+                        : 'bg-sky-950/70 border-sky-500/60 text-sky-300'
                   }`}
                 >
-                  {isPlayerOwner ? 'Sua Tenda' : stall.ownerName || 'Aldeão'}
+                  {isPlayerOwner
+                    ? 'Dono: Você'
+                    : isUnowned
+                      ? 'Dono: Sem Dono'
+                      : `Dono: ${stall.ownerName || 'Aldeão'}`}
                 </span>
               </div>
               <div className="text-[10px] text-[#c4ab7d] flex items-center gap-2 font-mono-tabular">
@@ -207,6 +216,25 @@ export const MarketStallModal: React.FC<MarketStallModalProps> = ({
             </button>
           </div>
         </div>
+
+        {/* BANNER PARA TENDA SEM DONO */}
+        {isUnowned && (
+          <div className="px-3 py-2 bg-amber-950/50 border-b border-amber-500/60 flex items-center justify-between gap-2 shrink-0">
+            <div className="text-[11px] text-amber-100">
+              Esta tenda está <strong>Sem Dono</strong>. Defina que você é o dono para expor mercadorias ou delegar a um aldeão.
+            </div>
+            <button
+              type="button"
+              onClick={() => {
+                engine.setMarketStallOwner(stall.id, 'PLAYER');
+                setFeedback('Você assumiu a posse desta Tenda de Vendas!');
+              }}
+              className="min-h-[32px] px-3 medieval-btn-gold font-pixel text-[10px] font-bold shrink-0"
+            >
+              Tomar Posse da Tenda
+            </button>
+          </div>
+        )}
 
         {/* CAIXINHA DE MOEDAS DO JOGADOR (EXCLUSIVA PARA TENDAS DO JOGADOR) */}
         {isPlayerOwner && (
