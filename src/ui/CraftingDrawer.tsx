@@ -34,7 +34,11 @@ import {
   getItemBasePrice,
   ITEMS,
 } from '../game/core/ItemRegistry';
-import { CraftingRecipe, RECIPES } from '../game/core/RecipeRegistry';
+import {
+  CraftingRecipe,
+  isCommonWoodItem,
+  RECIPES,
+} from '../game/core/RecipeRegistry';
 import {
   ClothingColorId,
   EquipmentSlot,
@@ -1792,7 +1796,11 @@ export const CraftingDrawer: React.FC<CraftingDrawerProps> = ({
                             <>
                               <img
                                 src={spriteAtlas.getItemIconUrl(
-                                  activeCookingRecipe.ingredients[0]?.itemId ||
+                                  engine.getRecipeActiveIngredients(
+                                    activeCookingRecipe,
+                                    thermalState.cookingMaterialOptionId ||
+                                      undefined
+                                  )[0]?.itemId ||
                                     activeCookingRecipe.resultItemId
                                 )}
                                 alt={activeCookingOutDef.name}
@@ -2312,12 +2320,14 @@ export const CraftingDrawer: React.FC<CraftingDrawerProps> = ({
                     )}
                   </div>
 
-                  {/* Material Option Selector for Multi-Source Dye Recipes */}
+                  {/* Material Option Selector for Multi-Source Dye or Wood Recipes */}
                   {selectedRecipe.materialOptions &&
                     selectedRecipe.materialOptions.length > 1 && (
                       <div className="space-y-1.5 pt-1 border-t border-white/10">
                         <span className="text-[9px] font-pixel text-amber-300 block">
-                          ESCOLHA O MATERIAL PARA PRODUZIR O CORANTE:
+                          {resultItem.isDye
+                            ? 'ESCOLHA O MATERIAL PARA PRODUZIR O CORANTE:'
+                            : 'ESCOLHA QUAL MADEIRA USAR:'}
                         </span>
                         <div className="grid grid-cols-1 gap-1">
                           {selectedRecipe.materialOptions.map((opt) => {
@@ -2325,11 +2335,16 @@ export const CraftingDrawer: React.FC<CraftingDrawerProps> = ({
                               (selectedMaterialOptionId ||
                                 selectedRecipe.materialOptions![0].id) ===
                               opt.id;
-                            const firstIng = opt.ingredients[0];
-                            const have = firstIng
-                              ? engine.getIngredientAvailableCount(firstIng)
+                            const matIng =
+                              opt.ingredients.find((ing) =>
+                                opt.iconItemId
+                                  ? ing.itemId === opt.iconItemId
+                                  : isCommonWoodItem(ing.itemId)
+                              ) || opt.ingredients[0];
+                            const have = matIng
+                              ? engine.getIngredientAvailableCount(matIng)
                               : 0;
-                            const need = firstIng?.count || 1;
+                            const need = matIng?.count || 1;
                             const enough = have >= need;
                             return (
                               <button
@@ -2345,11 +2360,11 @@ export const CraftingDrawer: React.FC<CraftingDrawerProps> = ({
                                 }`}
                               >
                                 <div className="flex items-center gap-2 min-w-0">
-                                  {firstIng && (
+                                  {matIng && (
                                     <img
                                       src={spriteAtlas.getItemIconUrl(
-                                        firstIng.itemId,
-                                        firstIng.flowerColor
+                                        opt.iconItemId || matIng.itemId,
+                                        matIng.flowerColor
                                       )}
                                       alt={opt.label}
                                       className="w-5 h-5 pixelated shrink-0"
@@ -2385,7 +2400,10 @@ export const CraftingDrawer: React.FC<CraftingDrawerProps> = ({
                         const ingDef = ITEMS[ing.itemId];
                         const have = engine.getIngredientAvailableCount(ing);
                         const enough = have >= ing.count;
-                        const ingName = ing.flowerColor
+                        const isWoodChoice = isCommonWoodItem(ing.itemId);
+                        const ingName = isWoodChoice
+                          ? 'Madeira'
+                          : ing.flowerColor
                           ? `${ingDef?.name || ing.itemId} (${getFlowerColorLabel(
                               ing.flowerColor
                             )})`

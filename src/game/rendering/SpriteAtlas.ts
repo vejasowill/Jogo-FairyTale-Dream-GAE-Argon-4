@@ -736,11 +736,34 @@ class SpriteAtlasManager {
       },
     ];
 
+    const drawOrganicBlob = (
+      ctx: CanvasRenderingContext2D,
+      cx: number,
+      cy: number,
+      rx: number,
+      ry: number,
+      color: string
+    ) => {
+      ctx.fillStyle = color;
+      // Seamless wrapping across 32x32 tile edges so patches flow naturally between cells
+      for (let oy = -32; oy <= 32; oy += 32) {
+        for (let ox = -32; ox <= 32; ox += 32) {
+          const bx = cx + ox;
+          const by = cy + oy;
+          if (bx + rx < 0 || bx - rx > 32 || by + ry < 0 || by - ry > 32) {
+            continue;
+          }
+          ctx.fillRect(bx - rx + 1, by - ry, (rx - 1) * 2, ry * 2);
+          ctx.fillRect(bx - rx, by - ry + 1, rx * 2, (ry - 1) * 2);
+        }
+      }
+    };
+
     for (let z = 0; z < 3; z++) {
       for (let v = 0; v < 4; v++) {
         for (let f = 0; f < 4; f++) {
           // =================================================================
-          // 1. PLAINS MINIMALIST 32x32 TILE (Clean, soft, un-cluttered)
+          // 1. PLAINS ORGANIC 32x32 TILE (Soft, seamless, natural meadow)
           // =================================================================
           const pPal = plainsPalettes[z];
           const pCanvas = createPixelCanvas(32, 32);
@@ -748,35 +771,38 @@ class SpriteAtlasManager {
           pCtx.fillStyle = pPal.base;
           pCtx.fillRect(0, 0, 32, 32);
 
-          // Subtle soft tonal ground patches (keeps variability between v=0..3 without visual noise)
-          pCtx.fillStyle = pPal.soft;
-          const patchX1 = (v * 7 + z * 3) % 20 + 2;
-          const patchY1 = (v * 5 + z * 7) % 20 + 2;
-          pCtx.fillRect(patchX1, patchY1, 6, 3);
-          pCtx.fillRect(patchX1 + 1, patchY1 - 1, 4, 5);
+          // Seamless edge-wrapping organic ground patches so cell X -> cell Y flows organically
+          const patchX1 = (v * 9 + z * 5) % 32;
+          const patchY1 = (v * 7 + z * 11) % 32;
+          drawOrganicBlob(pCtx, patchX1, patchY1, 6, 4, pPal.soft);
 
-          const patchX2 = (patchX1 + 13) % 22 + 3;
-          const patchY2 = (patchY1 + 11) % 22 + 3;
-          pCtx.fillRect(patchX2, patchY2, 5, 2);
+          const patchX2 = (patchX1 + 17) % 32;
+          const patchY2 = (patchY1 + 15) % 32;
+          drawOrganicBlob(pCtx, patchX2, patchY2, 5, 3, pPal.soft);
 
-          // Minimalist 2-3 clean grass tuft accents per tile (varies by variant v)
-          const tuftCount = v === 0 ? 1 : v === 3 ? 3 : 2;
+          const patchX3 = (patchX1 + 9) % 32;
+          const patchY3 = (patchY1 + 23) % 32;
+          drawOrganicBlob(pCtx, patchX3, patchY3, 4, 3, pPal.accent);
+
+          // Natural grass tuft accents per tile (varies by variant v)
+          const tuftCount = v === 0 ? 2 : v === 3 ? 3 : 2;
           const sway = f === 1 ? 1 : 0;
           for (let i = 0; i < tuftCount; i++) {
             const gx = ((v * 9 + i * 13 + z * 5) % 24) + 4;
             const gy = ((v * 11 + i * 15 + z * 3) % 24) + 5;
             pCtx.fillStyle = pPal.accent;
-            pCtx.fillRect(gx, gy, 2, 2);
+            pCtx.fillRect(gx, gy, 3, 2);
+            pCtx.fillRect(gx + 1, gy - 1, 2, 1);
             if (i === 0) {
               pCtx.fillStyle = pPal.tip;
-              pCtx.fillRect(gx + sway, gy - 1, 1, 1);
+              pCtx.fillRect(gx + 1 + sway, gy - 1, 1, 1);
             }
           }
 
           this.tileSprites.set(`${BiomeType.PLAINS}_${z}_${v}_${f}`, pCanvas);
 
           // =================================================================
-          // 2. DESERT MINIMALIST 32x32 TILE (Clean wind-swept sand)
+          // 2. DESERT ORGANIC 32x32 TILE (Wind-swept dunes with seamless curves)
           // =================================================================
           const dPal = desertPalettes[z];
           const dCanvas = createPixelCanvas(32, 32);
@@ -784,7 +810,11 @@ class SpriteAtlasManager {
           dCtx.fillStyle = dPal.base;
           dCtx.fillRect(0, 0, 32, 32);
 
-          // Smooth, understated sand ripple curve (varies by variant v)
+          // Seamless organic sand swell patches
+          drawOrganicBlob(dCtx, patchX1, patchY1, 7, 3, dPal.soft);
+          drawOrganicBlob(dCtx, patchX2, patchY2, 5, 2, dPal.crest);
+
+          // Smooth sand ripple curve (varies by variant v)
           const rippleX = (v * 6 + z * 4) % 16 + 3;
           const rippleY = (v * 7 + z * 3) % 18 + 6;
           dCtx.fillStyle = dPal.soft;
@@ -796,13 +826,13 @@ class SpriteAtlasManager {
             const r2x = (rippleX + 11) % 18 + 4;
             const r2y = (rippleY + 11) % 20 + 5;
             dCtx.fillStyle = dPal.grain;
-            dCtx.fillRect(r2x, r2y, 2, 1);
+            dCtx.fillRect(r2x, r2y, 3, 1);
           }
 
           this.tileSprites.set(`${BiomeType.DESERT}_${z}_${v}_${f}`, dCanvas);
 
           // =================================================================
-          // 3. OCEAN MINIMALIST 32x32 TILE (Calm water swells)
+          // 3. OCEAN ORGANIC 32x32 TILE (Calm water swells)
           // =================================================================
           const oPal = oceanPalettes[z];
           const oCanvas = createPixelCanvas(32, 32);
@@ -813,6 +843,7 @@ class SpriteAtlasManager {
           const waveShift = f;
           const wx1 = (4 + waveShift + v * 6) % 20 + 2;
           const wy1 = 7 + (v % 2) * 5;
+          drawOrganicBlob(oCtx, (wx1 + 10) % 32, (wy1 + 8) % 32, 6, 3, oPal.soft);
           oCtx.fillStyle = oPal.soft;
           oCtx.fillRect(wx1, wy1 + 1, 8, 2);
           oCtx.fillStyle = oPal.swell;
@@ -831,7 +862,7 @@ class SpriteAtlasManager {
           this.tileSprites.set(`${BiomeType.OCEAN}_${z}_${v}_${f}`, oCanvas);
 
           // =================================================================
-          // 4. ISLAND MINIMALIST 32x32 TILE
+          // 4. ISLAND ORGANIC 32x32 TILE
           // =================================================================
           this.tileSprites.set(
             `${BiomeType.ISLAND}_${z}_${v}_${f}`,
@@ -839,7 +870,7 @@ class SpriteAtlasManager {
           );
 
           // =================================================================
-          // 5. FOREST (Floresta Comum) MINIMALIST 32x32 TILE (Mossy woodland floor)
+          // 5. FOREST (Floresta Comum) ORGANIC 32x32 TILE (Mossy woodland floor)
           // =================================================================
           const forestPalettes = [
             { base: '#3d7a37', soft: '#356d30', accent: '#2c5c27', leaf: '#7c5329' },
@@ -851,14 +882,14 @@ class SpriteAtlasManager {
           const fCtx = fCanvas.getContext('2d')!;
           fCtx.fillStyle = fPal.base;
           fCtx.fillRect(0, 0, 32, 32);
-          fCtx.fillStyle = fPal.soft;
-          fCtx.fillRect(patchX1, patchY1, 7, 3);
-          fCtx.fillRect(patchX2, patchY2, 5, 3);
+          drawOrganicBlob(fCtx, patchX1, patchY1, 6, 4, fPal.soft);
+          drawOrganicBlob(fCtx, patchX2, patchY2, 5, 3, fPal.soft);
+          drawOrganicBlob(fCtx, patchX3, patchY3, 4, 3, fPal.accent);
           for (let i = 0; i < 2; i++) {
             const lx = ((v * 9 + i * 13 + z * 5) % 24) + 4;
             const ly = ((v * 11 + i * 15 + z * 3) % 24) + 5;
             fCtx.fillStyle = i === 0 ? fPal.accent : fPal.leaf;
-            fCtx.fillRect(lx, ly, 2, 2);
+            fCtx.fillRect(lx, ly, 3, 2);
           }
           this.tileSprites.set(`${BiomeType.FOREST}_${z}_${v}_${f}`, fCanvas);
 
@@ -875,14 +906,14 @@ class SpriteAtlasManager {
           const tfCtx = tfCanvas.getContext('2d')!;
           tfCtx.fillStyle = tfPal.base;
           tfCtx.fillRect(0, 0, 32, 32);
-          tfCtx.fillStyle = tfPal.soft;
-          tfCtx.fillRect(patchX1, patchY1, 7, 4);
-          tfCtx.fillRect(patchX2, patchY2, 6, 3);
+          drawOrganicBlob(tfCtx, patchX1, patchY1, 6, 4, tfPal.soft);
+          drawOrganicBlob(tfCtx, patchX2, patchY2, 5, 3, tfPal.soft);
+          drawOrganicBlob(tfCtx, patchX3, patchY3, 4, 3, tfPal.accent);
           for (let i = 0; i < 2; i++) {
             const gx = ((v * 7 + i * 15 + z * 5) % 24) + 4;
             const gy = ((v * 13 + i * 11 + z * 3) % 24) + 5;
             tfCtx.fillStyle = i === 0 ? tfPal.accent : tfPal.humus;
-            tfCtx.fillRect(gx, gy, 2, 2);
+            tfCtx.fillRect(gx, gy, 3, 2);
           }
           this.tileSprites.set(
             `${BiomeType.TEMPERATE_FOREST}_${z}_${v}_${f}`,
@@ -902,9 +933,9 @@ class SpriteAtlasManager {
           const tgCtx = tgCanvas.getContext('2d')!;
           tgCtx.fillStyle = tgPal.base;
           tgCtx.fillRect(0, 0, 32, 32);
-          tgCtx.fillStyle = tgPal.soft;
-          tgCtx.fillRect(patchX1, patchY1, 6, 3);
-          tgCtx.fillRect(patchX2, patchY2, 6, 3);
+          drawOrganicBlob(tgCtx, patchX1, patchY1, 6, 4, tgPal.soft);
+          drawOrganicBlob(tgCtx, patchX2, patchY2, 5, 3, tgPal.soft);
+          drawOrganicBlob(tgCtx, patchX3, patchY3, 4, 3, tgPal.accent);
           for (let i = 0; i < 2; i++) {
             const nx = ((v * 11 + i * 13 + z * 7) % 24) + 4;
             const ny = ((v * 9 + i * 17 + z * 5) % 24) + 5;
@@ -928,7 +959,7 @@ class SpriteAtlasManager {
       this.itemCanvases.set(id, c);
     };
 
-    // Wood
+    // Wood (Madeira de Carvalho)
     registerItem(
       'wood',
       [
@@ -950,6 +981,54 @@ class SpriteAtlasManager {
         '................',
       ],
       { b: '#5c3a21', l: '#8b5a2b', d: '#d2a679' }
+    );
+
+    // Dark Oak Wood (Madeira de Carvalho Escuro)
+    registerItem(
+      'dark_oak_wood',
+      [
+        '................',
+        '..........bbbb..',
+        '........bbllbb..',
+        '.......bbllbb...',
+        '......bbllbb....',
+        '.....bbllbb.....',
+        '....bbllbb......',
+        '...bbllbb.......',
+        '..bbllbb........',
+        '.bbddbb.........',
+        '.bddbb..........',
+        '..bbb...........',
+        '................',
+        '................',
+        '................',
+        '................',
+      ],
+      { b: '#2b180c', l: '#4a2c16', d: '#8c6239' }
+    );
+
+    // Pine Wood (Madeira de Pinheiro)
+    registerItem(
+      'pine_wood',
+      [
+        '................',
+        '..........bbbb..',
+        '........bbllbb..',
+        '.......bbllbb...',
+        '......bbllbb....',
+        '.....bbllbb.....',
+        '....bbllbb......',
+        '...bbllbb.......',
+        '..bbllbb........',
+        '.bbddbb.........',
+        '.bddbb..........',
+        '..bbb...........',
+        '................',
+        '................',
+        '................',
+        '................',
+      ],
+      { b: '#4a2e1b', l: '#73482b', d: '#e6c896' }
     );
 
     // Hardwood

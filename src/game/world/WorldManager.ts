@@ -548,12 +548,92 @@ export class WorldManager {
   }
 
   /**
+   * Deterministic Cellular Organic Island Generator:
+   * - Evaluates a macro grid (`ISLAND_CELL_SIZE = 96` tiles per cell) inside deep ocean basins.
+   * - Each qualifying cell spawns at most ONE medium-to-large island (`radius = 15..26` tiles, i.e., `30..52` tiles across)
+   *   with a smooth, rounded organic circumference modulated by low-order polar harmonics.
+   * - Eliminates thin island slivers, fragmented archipelagos, and tiny 1–4 tile "pingados" in the sea.
+   */
+  private isOceanicIslandAtTile(
+    tx: number,
+    ty: number,
+    continentalElev: number,
+    oceanLevel: number
+  ): boolean {
+    // Keep a wide open ocean channel between the mainland coast and any oceanic island
+    if (continentalElev > oceanLevel - 0.024) {
+      return false;
+    }
+
+    const ISLAND_CELL_SIZE = 96;
+    const icx = Math.floor(tx / ISLAND_CELL_SIZE);
+    const icy = Math.floor(ty / ISLAND_CELL_SIZE);
+
+    // Only ~38% of ocean macro-cells contain an island so islands are well-spaced and never overcrowded
+    const cellRoll = hash2D(icx, icy, this.seed + 1901);
+    if (cellRoll >= 0.38) {
+      return false;
+    }
+
+    // Place the island center well inside the 96x96 cell (margin 30..66) so adjacent cells never merge into thin strips
+    const centerX =
+      icx * ISLAND_CELL_SIZE +
+      30 +
+      hash2D(icx, icy, this.seed + 1903) * (ISLAND_CELL_SIZE - 60);
+    const centerY =
+      icy * ISLAND_CELL_SIZE +
+      30 +
+      hash2D(icx, icy, this.seed + 1907) * (ISLAND_CELL_SIZE - 60);
+
+    // Medium-to-large base radius: 15 to 25 tiles (diameter 30 to 50 tiles)
+    const baseRadius = 15 + hash2D(icx, icy, this.seed + 1913) * 10;
+
+    const dx = tx - centerX;
+    const dy = ty - centerY;
+    // Fast bounding-box reject before hypot/atan2
+    if (Math.abs(dx) > baseRadius * 1.3 || Math.abs(dy) > baseRadius * 1.3) {
+      return false;
+    }
+
+    // Verify the island's center itself sits well inside the ocean basin
+    const centerWarpX =
+      (smoothNoise(centerX * 0.0065, centerY * 0.0065, this.seed + 101) - 0.5) *
+      18;
+    const centerWarpY =
+      (smoothNoise(centerX * 0.0065, centerY * 0.0065, this.seed + 202) - 0.5) *
+      18;
+    const centerElev = fbm(
+      (centerX + centerWarpX) * 0.0034,
+      (centerY + centerWarpY) * 0.0034,
+      this.seed,
+      2
+    );
+    if (centerElev > oceanLevel - 0.042) {
+      return false;
+    }
+
+    const dist = Math.hypot(dx, dy);
+    const theta = Math.atan2(dy, dx);
+    const phase1 = hash2D(icx, icy, this.seed + 1931) * Math.PI * 2;
+    const phase2 = hash2D(icx, icy, this.seed + 1949) * Math.PI * 2;
+
+    // Smooth, organic rounded contour (never thin, pinched, or jagged)
+    const organicFactor =
+      1 +
+      0.13 * Math.sin(2 * theta + phase1) +
+      0.08 * Math.cos(3 * theta + phase2);
+    const effectiveRadius = baseRadius * organicFactor;
+
+    return dist <= effectiveRadius;
+  }
+
+  /**
    * Evaluates raw hydrological features at `(tx, ty)`:
    * - Predominant dry land continent (`~84%+` of the world)
-   * - Immense Oceans very far apart (`continentalElev < 0.312` at low frequency `0.0038`)
-   * - Oceanic Islands inside the oceans (`islandNoise > 0.605`)
+   * - Immense Oceans very far apart (`continentalElev < 0.312` at low frequency `0.0034`)
+   * - Medium-to-large rounded Oceanic Islands inside the oceans (`isOceanicIslandAtTile`)
    * - Rare meandering Rivers that flow downhill and empty directly into the Ocean (`waterKind === 'river'`)
-   * - Localized inland Lakes & Desert Oases (`waterKind === 'lake'`)
+   * - Cohesive rounded inland Lakes (`waterKind === 'lake'`) without 1-tile speckles
    */
   private getRawWaterAtTile(
     tx: number,
@@ -567,50 +647,49 @@ export class WorldManager {
   } {
     const distFromOrigin = Math.hypot(tx, ty);
 
-    // Organic domain warping for natural coastlines, bays, and peninsulas
+    // Smooth low-frequency domain warping for sweeping, organic coastlines and biome contours
     const warpX =
-      (smoothNoise(tx * 0.018, ty * 0.018, this.seed + 101) - 0.5) * 24;
+      (smoothNoise(tx * 0.0065, ty * 0.0065, this.seed + 101) - 0.5) * 18;
     const warpY =
-      (smoothNoise(tx * 0.018, ty * 0.018, this.seed + 202) - 0.5) * 24;
+      (smoothNoise(tx * 0.0065, ty * 0.0065, this.seed + 202) - 0.5) * 18;
     const wx = tx + warpX;
     const wy = ty + warpY;
 
-    // Low-frequency continental elevation so dry land is predominant and oceans are immense and very far apart
-    let continentalElev = fbm(wx * 0.0038, wy * 0.0038, this.seed, 4);
-    if (distFromOrigin < 36) {
-      const boost = Math.max(0, (36 - distFromOrigin) / 36) * 0.25;
+    // Smooth 2-octave continental elevation so dry land is predominant and coastlines have zero tiny fragments
+    let continentalElev = fbm(wx * 0.0034, wy * 0.0034, this.seed, 2);
+    if (distFromOrigin < 38) {
+      const boost = Math.max(0, (38 - distFromOrigin) / 38) * 0.25;
       continentalElev += boost;
     }
 
-    const climate = fbm(
-      wx * 0.016 + 150,
-      wy * 0.016 - 120,
-      this.seed + 777,
-      3
+    // Ultra-smooth macro climate continuum (wavelength ~280 tiles) for large, progressive biomes
+    const c1 = smoothNoise(
+      wx * 0.0032 + 150,
+      wy * 0.0032 - 120,
+      this.seed + 777
     );
+    const c2 = smoothNoise(
+      wx * 0.0064 - 80,
+      wy * 0.0064 + 90,
+      this.seed + 1777
+    );
+    const climate = c1 * 0.82 + c2 * 0.18;
+
     const riverMeander =
-      fbm(wx * 0.0078 + 310, wy * 0.0078 - 240, this.seed + 4409, 3) - 0.48;
+      fbm(wx * 0.0068 + 310, wy * 0.0068 - 240, this.seed + 4409, 2) - 0.48;
 
     const OCEAN_LEVEL = 0.312;
 
-    // 1. Immense Ocean Basins & Oceanic Islands
+    // 1. Immense Ocean Basins & Medium/Large Organic Oceanic Islands
     if (continentalElev < OCEAN_LEVEL) {
-      if (continentalElev < OCEAN_LEVEL - 0.016 && continentalElev > 0.12) {
-        const islandNoise = fbm(
-          tx * 0.025 + warpX * 0.25,
-          ty * 0.025 + warpY * 0.25,
-          this.seed + 1901,
-          3
-        );
-        if (islandNoise > 0.605) {
-          return {
-            waterKind: 'none',
-            isIslandLand: true,
-            continentalElev,
-            riverMeander,
-            climate,
-          };
-        }
+      if (this.isOceanicIslandAtTile(tx, ty, continentalElev, OCEAN_LEVEL)) {
+        return {
+          waterKind: 'none',
+          isIslandLand: true,
+          continentalElev,
+          riverMeander,
+          climate,
+        };
       }
       return {
         waterKind: 'ocean',
@@ -622,7 +701,7 @@ export class WorldManager {
     }
 
     // Guarantee starter heartland around (0, 0) is open dry land
-    if (distFromOrigin < 16) {
+    if (distFromOrigin < 18) {
       return {
         waterKind: 'none',
         isIslandLand: false,
@@ -645,7 +724,7 @@ export class WorldManager {
         (continentalElev - OCEAN_LEVEL) /
         Math.max(0.01, maxRiverElev - OCEAN_LEVEL);
       // Widens at the estuary mouth where it meets the ocean, tapers at inland headwaters
-      const halfWidth = 0.0145 * (1 - 0.52 * riverProgress);
+      const halfWidth = 0.0155 * (1 - 0.48 * riverProgress);
       if (Math.abs(riverMeander) < halfWidth) {
         return {
           waterKind: 'river',
@@ -657,37 +736,21 @@ export class WorldManager {
       }
     }
 
-    // 3. Localized Inland Lakes & Desert Oases (keeping dry land strongly predominant)
-    if (climate < 0.275) {
-      const oasisPotential = smoothNoise(
-        tx * 0.065,
-        ty * 0.065,
-        this.seed + 3307
-      );
-      if (
-        distFromOrigin > 20 &&
-        continentalElev > 0.37 &&
-        oasisPotential > 0.875
-      ) {
-        return {
-          waterKind: 'lake',
-          isIslandLand: false,
-          continentalElev,
-          riverMeander,
-          climate,
-        };
-      }
-    } else {
-      const lakeNoise = smoothNoise(tx * 0.052, ty * 0.052, this.seed + 2801);
-      if (distFromOrigin > 20 && continentalElev > 0.38 && lakeNoise > 0.858) {
-        return {
-          waterKind: 'lake',
-          isIslandLand: false,
-          continentalElev,
-          riverMeander,
-          climate,
-        };
-      }
+    // 3. Cohesive, rounded Inland Lakes (low frequency 0.015 so lakes are medium/large and never 1-tile speckles)
+    const lakeNoise = smoothNoise(wx * 0.015, wy * 0.015, this.seed + 2801);
+    if (
+      distFromOrigin > 26 &&
+      continentalElev > 0.385 &&
+      climate >= 0.32 &&
+      lakeNoise > 0.875
+    ) {
+      return {
+        waterKind: 'lake',
+        isIslandLand: false,
+        continentalElev,
+        riverMeander,
+        climate,
+      };
     }
 
     return {
@@ -700,8 +763,7 @@ export class WorldManager {
   }
 
   /**
-   * Checks whether a dry-land tile `(tx, ty)` is surrounded by water in all 8 directions
-   * (either an oceanic island or an inland/coastal island surrounded by rivers, lakes, or sea).
+   * Checks whether a dry-land tile `(tx, ty)` belongs to an oceanic island.
    */
   private isLandSurroundedByWater(
     tx: number,
@@ -716,47 +778,7 @@ export class WorldManager {
   ): boolean {
     const baseRaw = raw ?? this.getRawWaterAtTile(tx, ty);
     if (baseRaw.waterKind !== 'none') return false;
-    if (baseRaw.isIslandLand) return true;
-
-    const OCEAN_LEVEL = 0.312;
-    // Fast early-out for deep continental interior far from oceans and river channels
-    if (
-      baseRaw.continentalElev >= OCEAN_LEVEL + 0.075 &&
-      Math.abs(baseRaw.riverMeander) > 0.045
-    ) {
-      return false;
-    }
-
-    const dirs: [number, number][] = [
-      [1, 0],
-      [-1, 0],
-      [0, 1],
-      [0, -1],
-      [1, 1],
-      [-1, 1],
-      [1, -1],
-      [-1, -1],
-    ];
-    const maxIslandRadius = 12;
-
-    for (let d = 0; d < dirs.length; d++) {
-      const [dx, dy] = dirs[d];
-      let foundWaterInDir = false;
-      for (let step = 1; step <= maxIslandRadius; step++) {
-        if (
-          this.getRawWaterAtTile(tx + dx * step, ty + dy * step).waterKind !==
-          'none'
-        ) {
-          foundWaterInDir = true;
-          break;
-        }
-      }
-      if (!foundWaterInDir) {
-        return false;
-      }
-    }
-
-    return true;
+    return baseRaw.isIslandLand;
   }
 
   /**
@@ -783,11 +805,11 @@ export class WorldManager {
       };
     }
 
-    const isIsland = this.isLandSurroundedByWater(tx, ty, raw);
-
+    const isIsland = raw.isIslandLand;
     const OCEAN_LEVEL = 0.312;
+
     // Fast O(1) early-out for inland continent tiles far from any ocean
-    if (!isIsland && raw.continentalElev >= OCEAN_LEVEL + 0.056) {
+    if (!isIsland && raw.continentalElev >= OCEAN_LEVEL + 0.048) {
       return {
         waterKind: 'none',
         isOceanBeach: false,
@@ -798,13 +820,8 @@ export class WorldManager {
       };
     }
 
-    // Wide sandy beach belt along the ocean coast (4 to 6 tiles wide)
-    const beachNoise =
-      smoothNoise(tx * 0.08, ty * 0.08, this.seed + 601) * 0.011;
-    if (
-      !isIsland &&
-      raw.continentalElev < OCEAN_LEVEL + 0.025 + beachNoise
-    ) {
+    // Smooth coastal beach belt along the ocean coast
+    if (!isIsland && raw.continentalElev < OCEAN_LEVEL + 0.022) {
       return {
         waterKind: 'none',
         isOceanBeach: true,
@@ -815,7 +832,7 @@ export class WorldManager {
       };
     }
 
-    // Check up to 4 tiles around (tx, ty) so every ocean coast & island shore has a wide sandy beach
+    // Check up to 3 tiles around (tx, ty) for island shores and ocean beaches
     const beachProbeOffsets: [number, number][] = [
       [1, 0],
       [-1, 0],
@@ -833,18 +850,6 @@ export class WorldManager {
       [-3, 0],
       [0, 3],
       [0, -3],
-      [3, 2],
-      [-3, 2],
-      [3, -2],
-      [-3, -2],
-      [4, 0],
-      [-4, 0],
-      [0, 4],
-      [0, -4],
-      [3, 3],
-      [-3, 3],
-      [3, -3],
-      [-3, -3],
     ];
 
     for (let i = 0; i < beachProbeOffsets.length; i++) {
@@ -920,71 +925,160 @@ export class WorldManager {
     return BiomeType.PLAINS;
   }
 
-  private computeBiomeAtTileV2(tx: number, ty: number): BiomeType {
+  /**
+   * Evaluates the raw terrestrial/aquatic macro biome using ultra-low-frequency
+   * domain-warped climate and woodland fields (`0.0032`–`0.0035`, wavelength ~280 tiles).
+   * Terrestrial biomes are arranged along a progressive continuum:
+   *   DESERT <-> PLAINS <-> FOREST <-> TEMPERATE_FOREST <-> TAIGA_FOREST
+   * so biomes always form large, organic regions and transition progressively without small pockets.
+   */
+  private computeRawBiomeAtTileV2(tx: number, ty: number): {
+    biome: BiomeType;
+    nearThreshold: boolean;
+  } {
+    const raw = this.getRawWaterAtTile(tx, ty);
+    if (raw.waterKind !== 'none') {
+      return { biome: BiomeType.OCEAN, nearThreshold: false };
+    }
+
+    if (raw.isIslandLand) {
+      return { biome: BiomeType.ISLAND, nearThreshold: false };
+    }
+
     const distFromOrigin = Math.hypot(tx, ty);
-    if (distFromOrigin < 14) {
-      return BiomeType.PLAINS;
+    // Smooth starter heartland fade so (0, 0) is always a generous Plains region without hard circle cuts
+    const originPlainsBias =
+      distFromOrigin < 26 ? Math.max(0, (26 - distFromOrigin) / 26) : 0;
+
+    const climate = raw.climate * (1 - originPlainsBias) + 0.44 * originPlainsBias;
+
+    // 1. DESERT: Rarest biome, occupying large arid macro-basins (climate < 0.258)
+    //    Always surrounded by a wide PLAINS buffer (0.258 <= climate < 0.36) for progressive transition.
+    const DESERT_THRESHOLD = 0.258;
+    if (climate < DESERT_THRESHOLD) {
+      return {
+        biome: BiomeType.DESERT,
+        nearThreshold: DESERT_THRESHOLD - climate < 0.018,
+      };
     }
 
-    const hydro = this.getHydrologyAtTile(tx, ty);
-    if (hydro.waterKind !== 'none') {
-      return BiomeType.OCEAN;
-    }
+    // 2. FOREST MASSIFS: Rare, large, organic forest regions (Floresta Comum, Temperada, Taiga)
+    const warpX =
+      (smoothNoise(tx * 0.0045, ty * 0.0045, this.seed + 301) - 0.5) * 32;
+    const warpY =
+      (smoothNoise(tx * 0.0045, ty * 0.0045, this.seed + 401) - 0.5) * 32;
+    const mx = tx + warpX;
+    const my = ty + warpY;
 
-    // Todo e qualquer solo que seja rodeado por água é definido como bioma ILHA (BiomeType.ISLAND)
-    if (hydro.isIslandLand) {
-      return BiomeType.ISLAND;
-    }
+    const f1 = smoothNoise(
+      mx * 0.0034 - 220,
+      my * 0.0034 + 190,
+      this.seed + 6211
+    );
+    const f2 = smoothNoise(
+      mx * 0.0068 + 110,
+      my * 0.0068 - 140,
+      this.seed + 7211
+    );
+    const forestMacro = (f1 * 0.84 + f2 * 0.16) * (1 - originPlainsBias * 0.85);
 
-    // Ocean borders on mainland are wide sandy beaches
-    if (hydro.isOceanBeach) {
-      return BiomeType.DESERT;
-    }
-
-    // Deserto é o bioma mais raro do mundo (clima extremamente árido < 0.275)
-    if (hydro.climate < 0.275) {
-      const oasisPotential = smoothNoise(
-        tx * 0.065,
-        ty * 0.065,
-        this.seed + 3307
+    const FOREST_THRESHOLD = 0.605;
+    if (climate >= 0.35 && forestMacro > FOREST_THRESHOLD) {
+      const nearForestEdge = forestMacro - FOREST_THRESHOLD < 0.02;
+      // Inside a large forest massif, transition progressively by macro latitude/climate
+      const t1 = smoothNoise(
+        mx * 0.0028 + 340,
+        my * 0.0028 - 280,
+        this.seed + 8191
       );
-      if (
-        distFromOrigin > 20 &&
-        hydro.continentalElev > 0.37 &&
-        oasisPotential > 0.835
-      ) {
-        return BiomeType.PLAINS;
-      }
-      return BiomeType.DESERT;
-    }
-
-    // Florestas são raras (Floresta Comum, Floresta Temperada, Floresta de Taiga)
-    if (distFromOrigin >= 15 && hydro.climate >= 0.34) {
-      const forestMacro = fbm(
-        tx * 0.014 - 220,
-        ty * 0.014 + 190,
-        this.seed + 6211,
-        3
+      const t2 = smoothNoise(
+        mx * 0.0056 - 190,
+        my * 0.0056 + 210,
+        this.seed + 9191
       );
-      if (forestMacro > 0.625) {
-        const forestTypeNoise = fbm(
-          tx * 0.009 + 340,
-          ty * 0.009 - 280,
-          this.seed + 8191,
-          3
-        );
-        if (forestTypeNoise < 0.37) {
-          return BiomeType.TAIGA_FOREST;
+      const forestTypeAxis = t1 * 0.85 + t2 * 0.15;
+
+      // Progressive ordering: FOREST (< 0.39) <-> TEMPERATE_FOREST (0.39..0.63) <-> TAIGA_FOREST (>= 0.63)
+      if (forestTypeAxis < 0.39) {
+        return {
+          biome: BiomeType.FOREST,
+          nearThreshold: nearForestEdge || 0.39 - forestTypeAxis < 0.02,
+        };
+      }
+      if (forestTypeAxis < 0.63) {
+        return {
+          biome: BiomeType.TEMPERATE_FOREST,
+          nearThreshold:
+            nearForestEdge ||
+            forestTypeAxis - 0.39 < 0.02 ||
+            0.63 - forestTypeAxis < 0.02,
+        };
+      }
+      return {
+        biome: BiomeType.TAIGA_FOREST,
+        nearThreshold: nearForestEdge || forestTypeAxis - 0.63 < 0.02,
+      };
+    }
+
+    // 3. PLAINS: Most common default biome of the world
+    const nearAnyBorder =
+      climate - DESERT_THRESHOLD < 0.018 ||
+      (climate >= 0.33 && FOREST_THRESHOLD - forestMacro < 0.02);
+    return { biome: BiomeType.PLAINS, nearThreshold: nearAnyBorder };
+  }
+
+  private computeBiomeAtTileV2(tx: number, ty: number): BiomeType {
+    const center = this.computeRawBiomeAtTileV2(tx, ty);
+    if (
+      !center.nearThreshold ||
+      center.biome === BiomeType.OCEAN ||
+      center.biome === BiomeType.ISLAND
+    ) {
+      return center.biome;
+    }
+
+    // Radius-5 morphological majority filter near biome boundaries:
+    // Guarantees that any tiny cap/tip of a noise contour (< 12 tiles wide) is smoothly absorbed
+    // into the surrounding biome so "pingados" (small isolated biome pieces) can never form.
+    const probeOffsets: [number, number][] = [
+      [5, 0],
+      [-5, 0],
+      [0, 5],
+      [0, -5],
+      [4, 4],
+      [-4, 4],
+      [4, -4],
+      [-4, -4],
+    ];
+
+    let sameCount = 0;
+    let bestAltBiome = BiomeType.PLAINS;
+    let bestAltCount = 0;
+    const counts: Partial<Record<BiomeType, number>> = {};
+
+    for (let i = 0; i < probeOffsets.length; i++) {
+      const [dx, dy] = probeOffsets[i];
+      const nb = this.computeRawBiomeAtTileV2(tx + dx, ty + dy).biome;
+      if (nb === BiomeType.OCEAN || nb === BiomeType.ISLAND) {
+        continue;
+      }
+      if (nb === center.biome) {
+        sameCount++;
+      } else {
+        const c = (counts[nb] || 0) + 1;
+        counts[nb] = c;
+        if (c > bestAltCount) {
+          bestAltCount = c;
+          bestAltBiome = nb;
         }
-        if (forestTypeNoise < 0.63) {
-          return BiomeType.FOREST;
-        }
-        return BiomeType.TEMPERATE_FOREST;
       }
     }
 
-    // Planície é o bioma mais comum e padrão do mundo
-    return BiomeType.PLAINS;
+    if (sameCount < 3 && bestAltCount > sameCount) {
+      return bestAltBiome;
+    }
+
+    return center.biome;
   }
 
   /**
@@ -997,7 +1091,11 @@ export class WorldManager {
     biome?: BiomeType
   ): EcologicalZone {
     const hydro = this.getHydrologyAtTile(tx, ty);
-    const b = biome ?? (hydro.waterKind !== 'none' ? BiomeType.OCEAN : this.computeBiomeAtTile(tx, ty));
+    const b =
+      biome ??
+      (hydro.waterKind !== 'none'
+        ? BiomeType.OCEAN
+        : this.computeBiomeAtTile(tx, ty));
     const distFromOrigin = Math.hypot(tx, ty);
 
     if (b === BiomeType.OCEAN) {
@@ -1026,8 +1124,11 @@ export class WorldManager {
       return EcologicalZone.MEADOW_CLEARING;
     }
 
-    // Wide sandy Ocean Beach (both mainland and oceanic islands) -> Costa de Coqueiros
-    if (hydro.isOceanBeach) {
+    // Wide sandy Ocean Beach on Islands and Desert coasts -> Costa de Coqueiros
+    if (
+      hydro.isOceanBeach &&
+      (b === BiomeType.ISLAND || b === BiomeType.DESERT)
+    ) {
       return EcologicalZone.COASTAL_TROPICS;
     }
 
@@ -1036,9 +1137,10 @@ export class WorldManager {
     const e = this.computeBiomeAtTile(tx + 1, ty);
     const w = this.computeBiomeAtTile(tx - 1, ty);
 
-    const vegNoise = fbm(tx * 0.055 + 40, ty * 0.055 + 40, this.seed + 511, 3);
-    const rockNoise = fbm(tx * 0.065 - 80, ty * 0.065 + 90, this.seed + 883, 3);
-    const sacredNoise = smoothNoise(tx * 0.038, ty * 0.038, this.seed + 1409);
+    // Smooth low-frequency sub-biome fields (wavelength ~60 tiles) so sub-zones never form tiny speckles
+    const vegNoise = smoothNoise(tx * 0.018 + 40, ty * 0.018 + 40, this.seed + 511);
+    const rockNoise = smoothNoise(tx * 0.016 - 80, ty * 0.016 + 90, this.seed + 883);
+    const sacredNoise = smoothNoise(tx * 0.015, ty * 0.015, this.seed + 1409);
 
     const nearWater =
       n === BiomeType.OCEAN ||
@@ -1058,21 +1160,18 @@ export class WorldManager {
       if (b === BiomeType.ISLAND && nearWater) {
         return EcologicalZone.COASTAL_TROPICS;
       }
-      if (nearWater && hydro.climate < 0.46) {
-        return EcologicalZone.DESERT_OASIS;
-      }
 
-      if (rockNoise > 0.64) {
+      if (rockNoise > 0.72) {
         return EcologicalZone.ROCKY_HIGHLANDS;
       }
 
-      if (vegNoise < 0.37) {
+      if (vegNoise < 0.42) {
         return EcologicalZone.MEADOW_CLEARING;
       }
-      if (vegNoise < 0.58) {
+      if (vegNoise < 0.64) {
         return EcologicalZone.OVERGROWN_SHRUBLAND;
       }
-      if (distFromOrigin > 32 && sacredNoise > 0.7) {
+      if (distFromOrigin > 32 && sacredNoise > 0.74) {
         return EcologicalZone.ANCIENT_GROVE;
       }
       return EcologicalZone.DENSE_WOODLAND;
@@ -1082,23 +1181,12 @@ export class WorldManager {
     if (nearWater) {
       return EcologicalZone.DESERT_OASIS;
     }
-    if (
-      n === BiomeType.PLAINS ||
-      s === BiomeType.PLAINS ||
-      e === BiomeType.PLAINS ||
-      w === BiomeType.PLAINS
-    ) {
-      const oasisCheck = smoothNoise(tx * 0.065, ty * 0.065, this.seed + 3307);
-      if (oasisCheck > 0.76) {
-        return EcologicalZone.DESERT_OASIS;
-      }
-    }
 
-    if (rockNoise > 0.61 && distFromOrigin > 15) {
+    if (rockNoise > 0.68 && distFromOrigin > 15) {
       return EcologicalZone.CRYSTAL_BADLANDS;
     }
 
-    if (vegNoise < 0.45) {
+    if (vegNoise < 0.48) {
       return EcologicalZone.OPEN_SAND_DUNES;
     }
 
@@ -1185,101 +1273,86 @@ export class WorldManager {
     }
 
     const zone = this.getEcologicalZoneAtTile(tx, ty);
-    if (true) {
-      if (biome === BiomeType.ISLAND) {
-        if (
-          n === BiomeType.OCEAN ||
-          s === BiomeType.OCEAN ||
-          e === BiomeType.OCEAN ||
-          w === BiomeType.OCEAN ||
-          zone === EcologicalZone.COASTAL_TROPICS
-        ) {
-          return 1; // Golden Tropical Island Shore
-        }
-        if (zone === EcologicalZone.ROCKY_HIGHLANDS) {
-          return 2; // Island Rocky Highland
-        }
-        return 0; // Lush Tropical Island Interior
-      }
-
+    if (biome === BiomeType.ISLAND) {
       if (
-        biome === BiomeType.FOREST ||
-        biome === BiomeType.TEMPERATE_FOREST ||
-        biome === BiomeType.TAIGA_FOREST
+        n === BiomeType.OCEAN ||
+        s === BiomeType.OCEAN ||
+        e === BiomeType.OCEAN ||
+        w === BiomeType.OCEAN ||
+        zone === EcologicalZone.COASTAL_TROPICS
       ) {
-        const borderDiff =
-          n !== biome || s !== biome || e !== biome || w !== biome;
-        if (borderDiff) {
-          return 2; // Forest edge transition tone
-        }
-        const canopyMicro = smoothNoise(tx * 0.14, ty * 0.14, this.seed + 709);
-        return canopyMicro > 0.5 ? 0 : 1;
+        return 1; // Golden Tropical Island Shore
       }
-
-      if (biome === BiomeType.PLAINS) {
-        if (
-          n === BiomeType.DESERT ||
-          s === BiomeType.DESERT ||
-          e === BiomeType.DESERT ||
-          w === BiomeType.DESERT ||
-          zone === EcologicalZone.ROCKY_HIGHLANDS
-        ) {
-          return 2; // Frontier Steppe / Highlands tone
-        }
-        if (
-          zone === EcologicalZone.DENSE_WOODLAND ||
-          zone === EcologicalZone.ANCIENT_GROVE ||
-          zone === EcologicalZone.OVERGROWN_SHRUBLAND
-        ) {
-          return 0; // Deep Lush Clover / Forest tone
-        }
-        return 1; // Sunlit Meadow Clearing tone
+      if (zone === EcologicalZone.ROCKY_HIGHLANDS) {
+        return 2; // Island Rocky Highland
       }
-
-      // DESERT / BEACH (v2)
-      if (zone === EcologicalZone.COASTAL_TROPICS) {
-        return 1; // Bright Golden Beach Sand on all ocean beaches
-      }
-      if (
-        n === BiomeType.PLAINS ||
-        s === BiomeType.PLAINS ||
-        e === BiomeType.PLAINS ||
-        w === BiomeType.PLAINS ||
-        zone === EcologicalZone.DESERT_OASIS ||
-        zone === EcologicalZone.CACTUS_SCRUBLAND
-      ) {
-        return 0; // Savannah Scrub / Oasis border
-      }
-      if (zone === EcologicalZone.CRYSTAL_BADLANDS) {
-        return 2; // Red-Gold Sandstone Basin
-      }
-      return 1; // Sculpted Golden Sand Dunes
+      return 0; // Lush Tropical Island Interior
     }
 
-    // Legacy v1 sub-zone calculation
+    if (
+      biome === BiomeType.FOREST ||
+      biome === BiomeType.TEMPERATE_FOREST ||
+      biome === BiomeType.TAIGA_FOREST
+    ) {
+      const borderDiff =
+        n !== biome || s !== biome || e !== biome || w !== biome;
+      if (borderDiff) {
+        return 2; // Forest edge transition tone
+      }
+      const canopyMacro = smoothNoise(tx * 0.022, ty * 0.022, this.seed + 709);
+      return canopyMacro > 0.5 ? 0 : 1;
+    }
+
     if (biome === BiomeType.PLAINS) {
       if (
         n === BiomeType.DESERT ||
         s === BiomeType.DESERT ||
         e === BiomeType.DESERT ||
-        w === BiomeType.DESERT
+        w === BiomeType.DESERT ||
+        zone === EcologicalZone.ROCKY_HIGHLANDS
       ) {
-        return 2;
+        return 2; // Frontier Steppe / Highlands tone
       }
-      const micro = smoothNoise(tx * 0.14, ty * 0.14, this.seed + 503);
-      return micro > 0.52 ? 0 : 1;
+      if (
+        n === BiomeType.FOREST ||
+        s === BiomeType.FOREST ||
+        e === BiomeType.FOREST ||
+        w === BiomeType.FOREST ||
+        n === BiomeType.TEMPERATE_FOREST ||
+        s === BiomeType.TEMPERATE_FOREST ||
+        e === BiomeType.TEMPERATE_FOREST ||
+        w === BiomeType.TEMPERATE_FOREST ||
+        n === BiomeType.TAIGA_FOREST ||
+        s === BiomeType.TAIGA_FOREST ||
+        e === BiomeType.TAIGA_FOREST ||
+        w === BiomeType.TAIGA_FOREST ||
+        zone === EcologicalZone.DENSE_WOODLAND ||
+        zone === EcologicalZone.ANCIENT_GROVE ||
+        zone === EcologicalZone.OVERGROWN_SHRUBLAND
+      ) {
+        return 0; // Deep Lush Clover / Forest border tone
+      }
+      return 1; // Sunlit Meadow Clearing tone
     }
 
+    // DESERT / BEACH (v2)
+    if (zone === EcologicalZone.COASTAL_TROPICS) {
+      return 1; // Bright Golden Beach Sand on all ocean beaches
+    }
     if (
       n === BiomeType.PLAINS ||
       s === BiomeType.PLAINS ||
       e === BiomeType.PLAINS ||
-      w === BiomeType.PLAINS
+      w === BiomeType.PLAINS ||
+      zone === EcologicalZone.DESERT_OASIS ||
+      zone === EcologicalZone.CACTUS_SCRUBLAND
     ) {
-      return 0;
+      return 0; // Savannah Scrub / Oasis border
     }
-    const duneNoise = smoothNoise(tx * 0.12, ty * 0.12, this.seed + 809);
-    return duneNoise > 0.56 ? 2 : 1;
+    if (zone === EcologicalZone.CRYSTAL_BADLANDS) {
+      return 2; // Red-Gold Sandstone Basin
+    }
+    return 1; // Sculpted Golden Sand Dunes
   }
 
   // =========================================================================

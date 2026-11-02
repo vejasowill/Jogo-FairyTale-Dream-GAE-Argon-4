@@ -326,6 +326,7 @@ export interface PlacedStructure {
   fuelBurnRemaining?: number; // Seconds of active fire remaining from current fuel unit
   fuelBurnMax?: number; // Total burn seconds of the currently burning fuel unit
   cookingRecipeId?: string | null;
+  cookingMaterialOptionId?: string | null;
   cookingInputCount?: number; // Number of recipe batches queued in the input slot
   cookingProgress?: number; // Elapsed preparation seconds for current batch
   cookingDuration?: number; // Required preparation seconds per batch
@@ -845,8 +846,8 @@ export interface OnlineActivationStep {
 }
 
 // REGRA PERMANENTE: A cada nova atualização do jogo, incremente a versão para o número seguinte da beta (ex: 0.4.4-beta -> 0.4.5-beta).
-export const GAME_VERSION = '0.6.6-beta';
-export const CURRENT_WORLD_GEN_VERSION = 3;
+export const GAME_VERSION = '0.6.7-beta';
+export const CURRENT_WORLD_GEN_VERSION = 4;
 
 export interface OnlineSessionInfo {
   isOnline: boolean;

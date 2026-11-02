@@ -4241,7 +4241,9 @@ export class GameEngine {
       // =====================================================================
       else {
         const isPeacefulAnimal =
-          cr.kind === CreatureKind.SHEEP || cr.kind === CreatureKind.HORSE;
+          cr.kind === CreatureKind.SHEEP ||
+          cr.kind === CreatureKind.HORSE ||
+          cr.kind === CreatureKind.COW;
         let handledFleeFromAttacker = false;
 
         if (
@@ -4254,10 +4256,26 @@ export class GameEngine {
           let attackerActive = false;
 
           if (cr.fleeTargetId === 'PLAYER') {
+            let bestPlayerDist = Infinity;
+            const refX = cr.fleeFromX ?? cr.x;
+            const refY = cr.fleeFromY ?? cr.y;
             if (this.player.hp > 0) {
               attackerX = this.player.x;
               attackerY = this.player.y;
+              bestPlayerDist = Math.hypot(this.player.x - refX, this.player.y - refY);
               attackerActive = true;
+            }
+            for (let pi = 0; pi < this.remotePlayersList.length; pi++) {
+              const rp = this.remotePlayersList[pi];
+              if (rp.hp > 0) {
+                const d = Math.hypot(rp.x - refX, rp.y - refY);
+                if (d < bestPlayerDist) {
+                  bestPlayerDist = d;
+                  attackerX = rp.x;
+                  attackerY = rp.y;
+                  attackerActive = true;
+                }
+              }
             }
           } else if (cr.fleeTargetId) {
             const attCr = this.entities.creatures.find(
@@ -5578,9 +5596,12 @@ export class GameEngine {
   }
 
   private updateWanderAi(cr: CreatureEntity, dt: number): void {
-    // 1. Wild Sheep smartly flee away from nearby hostile Monsters using obstacle-aware Context Steering
+    // 1. Wild Sheep & Cows smartly flee away from nearby hostile Monsters using obstacle-aware Context Steering
     //    (They avoid water unless cornered against the shoreline with no dry escape route)
-    if (!cr.tamed && cr.kind === CreatureKind.SHEEP) {
+    if (
+      !cr.tamed &&
+      (cr.kind === CreatureKind.SHEEP || cr.kind === CreatureKind.COW)
+    ) {
       let threatX = 0;
       let threatY = 0;
       let threatCount = 0;
@@ -13579,7 +13600,12 @@ export class GameEngine {
         activeStation === PlaceableType.FURNACE) &&
       (recipe.craftTimeSec || 0) > 0
     ) {
-      return this.queueThermalStationRecipe(activeStation, recipeId, times);
+      return this.queueThermalStationRecipe(
+        activeStation,
+        recipeId,
+        times,
+        materialOptionId
+      );
     }
 
     const maxPossible = this.getMaxCraftableCount(recipe, materialOptionId);
@@ -13623,6 +13649,8 @@ export class GameEngine {
     if (st.fuelBurnRemaining === undefined) st.fuelBurnRemaining = 0;
     if (st.fuelBurnMax === undefined) st.fuelBurnMax = 12;
     if (st.cookingRecipeId === undefined) st.cookingRecipeId = null;
+    if (st.cookingMaterialOptionId === undefined)
+      st.cookingMaterialOptionId = null;
     if (st.cookingInputCount === undefined) st.cookingInputCount = 0;
     if (st.cookingProgress === undefined) st.cookingProgress = 0;
     if (st.cookingDuration === undefined) st.cookingDuration = 6;
@@ -13768,12 +13796,13 @@ export class GameEngine {
   public queueThermalStationRecipe(
     stationType: PlaceableType.CAMPFIRE | PlaceableType.FURNACE,
     recipeId: string,
-    batches = 1
+    batches = 1,
+    materialOptionId?: string
   ): boolean {
     const recipe = RECIPES.find((r) => r.id === recipeId);
     if (!recipe || recipe.requiredStation !== stationType) return false;
 
-    const maxPossible = this.getMaxCraftableCount(recipe);
+    const maxPossible = this.getMaxCraftableCount(recipe, materialOptionId);
     const toQueue = Math.min(batches, maxPossible);
     if (toQueue <= 0) return false;
 
@@ -13788,20 +13817,28 @@ export class GameEngine {
       this.collectThermalStationOutput(stationType);
     }
 
-    // If a different recipe was previously queued in the input slot, refund its remaining batches first
+    // If a different recipe or material option was previously queued in the input slot, refund its remaining batches first
     if (
       st.cookingRecipeId &&
-      st.cookingRecipeId !== recipe.id &&
+      (st.cookingRecipeId !== recipe.id ||
+        (materialOptionId &&
+          st.cookingMaterialOptionId &&
+          st.cookingMaterialOptionId !== materialOptionId)) &&
       (st.cookingInputCount || 0) > 0
     ) {
       this.cancelThermalStationQueue(stationType);
     }
 
-    for (const ing of recipe.ingredients) {
-      this.removeItemFromInventory(ing.itemId, ing.count * toQueue);
+    const activeIngredients = this.getRecipeActiveIngredients(
+      recipe,
+      materialOptionId
+    );
+    for (const ing of activeIngredients) {
+      this.removeIngredientFromInventory(ing, toQueue);
     }
 
     st.cookingRecipeId = recipe.id;
+    st.cookingMaterialOptionId = materialOptionId || null;
     st.cookingInputCount = (st.cookingInputCount || 0) + toQueue;
     st.cookingDuration = Math.max(1, recipe.craftTimeSec || 6);
     if ((st.cookingInputCount || 0) === toQueue) {
@@ -13854,12 +13891,18 @@ export class GameEngine {
 
     const recipe = RECIPES.find((r) => r.id === st.cookingRecipeId);
     const batches = st.cookingInputCount;
+    const savedMatOptId = st.cookingMaterialOptionId || undefined;
     st.cookingRecipeId = null;
+    st.cookingMaterialOptionId = null;
     st.cookingInputCount = 0;
     st.cookingProgress = 0;
 
     if (recipe) {
-      for (const ing of recipe.ingredients) {
+      const activeIngredients = this.getRecipeActiveIngredients(
+        recipe,
+        savedMatOptId
+      );
+      for (const ing of activeIngredients) {
         const refundCount = ing.count * batches;
         if (!this.addItemToInventory(ing.itemId, refundCount)) {
           this.spawnDrop(ing.itemId, refundCount, this.player.x, this.player.y);
@@ -13954,7 +13997,11 @@ export class GameEngine {
     if (st.cookingRecipeId && (st.cookingInputCount || 0) > 0) {
       const recipe = RECIPES.find((r) => r.id === st.cookingRecipeId);
       if (recipe) {
-        for (const ing of recipe.ingredients) {
+        const activeIngredients = this.getRecipeActiveIngredients(
+          recipe,
+          st.cookingMaterialOptionId || undefined
+        );
+        for (const ing of activeIngredients) {
           emitOrGive(ing.itemId, ing.count * st.cookingInputCount!);
         }
       }
@@ -13963,6 +14010,7 @@ export class GameEngine {
         st.weavingDyeItemId = null;
       }
       st.cookingRecipeId = null;
+      st.cookingMaterialOptionId = null;
       st.cookingInputCount = 0;
       st.cookingProgress = 0;
     }

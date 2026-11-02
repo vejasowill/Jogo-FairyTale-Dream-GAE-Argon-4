@@ -49,11 +49,33 @@ export const ITEMS: Record<string, ItemDefinition> = {
   // === BASIC RESOURCES ===
   wood: {
     id: 'wood',
-    name: 'Madeira Rústica',
+    name: 'Madeira de Carvalho',
     description:
-      'Tronco básico cortado de carvalhos e palmeiras. Base estrutural para ferramentas, estações, pontes, armadilhas e combustível de fundição.',
+      'Tronco de carvalho cortado de Árvores de Carvalho e palmeiras. Base estrutural para ferramentas, estações, pontes, armadilhas e combustível de fundição.',
     purposeSummary:
       'Cria Bancada, Fogueira, Tochas, Ferramentas Iniciais, Pontes Costeiras, Muros, Pisos, Armadilhas de Espinhos e funde Minério de Ferro.',
+    category: ItemCategory.RESOURCE,
+    rarity: RarityTier.BASIC,
+    maxStack: 99,
+  },
+  dark_oak_wood: {
+    id: 'dark_oak_wood',
+    name: 'Madeira de Carvalho Escuro',
+    description:
+      'Toras densas e escuras extraídas de Carvalhos Escuros na Floresta Temperada. Pode ser escolhida como madeira em qualquer receita ou usada como combustível.',
+    purposeSummary:
+      'Substitui qualquer madeira nas receitas de criação e serve como combustível.',
+    category: ItemCategory.RESOURCE,
+    rarity: RarityTier.BASIC,
+    maxStack: 99,
+  },
+  pine_wood: {
+    id: 'pine_wood',
+    name: 'Madeira de Pinheiro',
+    description:
+      'Toras resinosas e aromáticas cortadas de Pinheiros na Floresta de Taiga. Pode ser escolhida como madeira em qualquer receita ou usada como combustível.',
+    purposeSummary:
+      'Substitui qualquer madeira nas receitas de criação e serve como combustível.',
     category: ItemCategory.RESOURCE,
     rarity: RarityTier.BASIC,
     maxStack: 99,
@@ -3128,7 +3150,7 @@ export interface NatureNodeBlueprint {
 export const NATURE_BLUEPRINTS: Record<NatureNodeType, NatureNodeBlueprint> = {
   [NatureNodeType.OAK_TREE]: {
     type: NatureNodeType.OAK_TREE,
-    name: 'Carvalho da Planície',
+    name: 'Árvore de Carvalho',
     rarity: RarityTier.BASIC,
     maxHp: 70,
     materialKind: 'SOFT_WOOD',
@@ -3370,7 +3392,7 @@ export const NATURE_BLUEPRINTS: Record<NatureNodeType, NatureNodeBlueprint> = {
   },
   [NatureNodeType.TEMPERATE_TREE]: {
     type: NatureNodeType.TEMPERATE_TREE,
-    name: 'Árvore de Floresta Temperada',
+    name: 'Carvalho Escuro',
     rarity: RarityTier.BASIC,
     maxHp: 95,
     materialKind: 'SOFT_WOOD',
@@ -3380,14 +3402,14 @@ export const NATURE_BLUEPRINTS: Record<NatureNodeType, NatureNodeBlueprint> = {
     hasHitbox: true,
     hitboxRadius: 8,
     drops: [
-      { itemId: 'wood', min: 4, max: 6, chance: 1.0 },
+      { itemId: 'dark_oak_wood', min: 4, max: 6, chance: 1.0 },
       { itemId: 'hardwood', min: 1, max: 2, chance: 0.35 },
       { itemId: 'oak_sapling', min: 1, max: 2, chance: 0.85 },
     ],
   },
   [NatureNodeType.PINE_TREE]: {
     type: NatureNodeType.PINE_TREE,
-    name: 'Pinheiro de Taiga',
+    name: 'Pinheiro',
     rarity: RarityTier.BASIC,
     maxHp: 80,
     materialKind: 'SOFT_WOOD',
@@ -3397,7 +3419,7 @@ export const NATURE_BLUEPRINTS: Record<NatureNodeType, NatureNodeBlueprint> = {
     hasHitbox: true,
     hitboxRadius: 7,
     drops: [
-      { itemId: 'wood', min: 3, max: 5, chance: 1.0 },
+      { itemId: 'pine_wood', min: 3, max: 5, chance: 1.0 },
       { itemId: 'oak_sapling', min: 1, max: 2, chance: 0.85 },
     ],
   },
@@ -3412,6 +3434,8 @@ export const NATURE_BLUEPRINTS: Record<NatureNodeType, NatureNodeBlueprint> = {
 export const ITEM_BASE_PRICES: Record<string, number> = {
   // === TIER 1: RECURSOS BÁSICOS ABUNDANTES (PONTO DE PARTIDA) ===
   wood: 1,
+  dark_oak_wood: 1,
+  pine_wood: 1,
   fiber: 1,
   berry: 1,
   gold_coin: 1,
@@ -3720,7 +3744,7 @@ export function evaluateStallPriceDeal(
 
 export const MATERIAL_LABELS: Record<MaterialKind, string> = {
   FIBER_FOLIAGE: 'Fibra & Folhagem',
-  SOFT_WOOD: 'Madeira Rústica',
+  SOFT_WOOD: 'Madeira de Carvalho / Pinheiro',
   ROUGH_STONE: 'Rocha & Alvenaria Básica',
   HARDWOOD: 'Madeira Nobre Ancestral',
   IRON_MINERAL: 'Minério de Ferro & Cristal Solar',
@@ -4480,7 +4504,21 @@ export const FUEL_ITEMS: Record<string, FuelDefinition> = {
   },
   wood: {
     itemId: 'wood',
-    name: 'Madeira Rústica',
+    name: 'Madeira de Carvalho',
+    burnTimeSec: 12,
+    efficiencyLabel: 'Lenha Básica (12s)',
+    smeltCapacityHint: '1.5x preparos por tora',
+  },
+  dark_oak_wood: {
+    itemId: 'dark_oak_wood',
+    name: 'Madeira de Carvalho Escuro',
+    burnTimeSec: 12,
+    efficiencyLabel: 'Lenha Básica (12s)',
+    smeltCapacityHint: '1.5x preparos por tora',
+  },
+  pine_wood: {
+    itemId: 'pine_wood',
+    name: 'Madeira de Pinheiro',
     burnTimeSec: 12,
     efficiencyLabel: 'Lenha Básica (12s)',
     smeltCapacityHint: '1.5x preparos por tora',
@@ -4501,7 +4539,14 @@ export const FUEL_ITEMS: Record<string, FuelDefinition> = {
   },
 };
 
-export const FUEL_ITEM_ORDER: string[] = ['charcoal', 'hardwood', 'wood', 'fiber'];
+export const FUEL_ITEM_ORDER: string[] = [
+  'charcoal',
+  'hardwood',
+  'wood',
+  'dark_oak_wood',
+  'pine_wood',
+  'fiber',
+];
 
 export function isFuelItem(itemId: string): boolean {
   return Boolean(FUEL_ITEMS[itemId]);

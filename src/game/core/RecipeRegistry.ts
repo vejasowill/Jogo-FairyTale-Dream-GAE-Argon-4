@@ -9,6 +9,7 @@ export interface RecipeIngredient {
 export interface RecipeMaterialOption {
   id: string;
   label: string;
+  iconItemId?: string;
   ingredients: RecipeIngredient[];
 }
 
@@ -1620,3 +1621,52 @@ export const RECIPES: CraftingRecipe[] = [
     ],
   },
 ];
+
+export const WOOD_ITEM_IDS = ['wood', 'dark_oak_wood', 'pine_wood'] as const;
+
+export function isCommonWoodItem(itemId: string): boolean {
+  return (
+    itemId === 'wood' ||
+    itemId === 'dark_oak_wood' ||
+    itemId === 'pine_wood'
+  );
+}
+
+// Em todas as receitas que precisam de madeira ('wood'), permite ao jogador escolher qual madeira usar:
+// Madeira de Carvalho, Madeira de Carvalho Escuro ou Madeira de Pinheiro.
+for (const recipe of RECIPES) {
+  if (
+    !recipe.materialOptions &&
+    recipe.ingredients.some((ing) => ing.itemId === 'wood')
+  ) {
+    recipe.materialOptions = [
+      {
+        id: 'wood_oak',
+        label: 'Madeira de Carvalho',
+        iconItemId: 'wood',
+        ingredients: recipe.ingredients.map((ing) =>
+          ing.itemId === 'wood' ? { ...ing, itemId: 'wood' } : { ...ing }
+        ),
+      },
+      {
+        id: 'wood_dark_oak',
+        label: 'Madeira de Carvalho Escuro',
+        iconItemId: 'dark_oak_wood',
+        ingredients: recipe.ingredients.map((ing) =>
+          ing.itemId === 'wood'
+            ? { ...ing, itemId: 'dark_oak_wood' }
+            : { ...ing }
+        ),
+      },
+      {
+        id: 'wood_pine',
+        label: 'Madeira de Pinheiro',
+        iconItemId: 'pine_wood',
+        ingredients: recipe.ingredients.map((ing) =>
+          ing.itemId === 'wood' ? { ...ing, itemId: 'pine_wood' } : { ...ing }
+        ),
+      },
+    ];
+  }
+}
+

@@ -1408,8 +1408,180 @@ export class GameRenderer {
   }
 
   /**
-   * Seamless Auto-Tiling for Coastlines (Ocean <-> Land) & Ecotones (Plains <-> Desert).
-   * Eliminates hard square tile seams and creates animated pixel shorelines & dithered grass/sand edges.
+   * Returns the representative ground color and soft transition color for a tile `(tx, ty)`
+   * so neighboring cells can blend organically across both biome borders and sub-zone shifts.
+   */
+  private getTileOrganicBlendColors(
+    world: WorldManager,
+    tx: number,
+    ty: number,
+    biome: BiomeType,
+    subZone?: number
+  ): { solid: string; mid: string; soft: string } {
+    const z = subZone !== undefined ? subZone : world.getTileSubZone(tx, ty, biome);
+    if (biome === BiomeType.DESERT || (biome === BiomeType.ISLAND && z === 1)) {
+      if (z === 0) {
+        return {
+          solid: '#cfa95e',
+          mid: 'rgba(207, 169, 94, 0.72)',
+          soft: 'rgba(207, 169, 94, 0.35)',
+        };
+      }
+      if (z === 2) {
+        return {
+          solid: '#d4a459',
+          mid: 'rgba(212, 164, 89, 0.72)',
+          soft: 'rgba(212, 164, 89, 0.35)',
+        };
+      }
+      return {
+        solid: '#dfc072',
+        mid: 'rgba(223, 192, 114, 0.72)',
+        soft: 'rgba(223, 192, 114, 0.35)',
+      };
+    }
+    if (biome === BiomeType.TEMPERATE_FOREST) {
+      return {
+        solid: '#275332',
+        mid: 'rgba(39, 83, 50, 0.72)',
+        soft: 'rgba(39, 83, 50, 0.36)',
+      };
+    }
+    if (biome === BiomeType.TAIGA_FOREST) {
+      return {
+        solid: '#2d574c',
+        mid: 'rgba(45, 87, 76, 0.72)',
+        soft: 'rgba(45, 87, 76, 0.36)',
+      };
+    }
+    if (biome === BiomeType.FOREST) {
+      return {
+        solid: '#3d7a37',
+        mid: 'rgba(61, 122, 55, 0.72)',
+        soft: 'rgba(61, 122, 55, 0.36)',
+      };
+    }
+    // PLAINS / ISLAND interior
+    if (z === 0) {
+      return {
+        solid: '#34783d',
+        mid: 'rgba(52, 120, 61, 0.68)',
+        soft: 'rgba(52, 120, 61, 0.32)',
+      };
+    }
+    if (z === 2) {
+      return {
+        solid: '#618a39',
+        mid: 'rgba(97, 138, 57, 0.68)',
+        soft: 'rgba(97, 138, 57, 0.32)',
+      };
+    }
+    return {
+      solid: '#41853c',
+      mid: 'rgba(65, 133, 60, 0.68)',
+      soft: 'rgba(65, 133, 60, 0.32)',
+    };
+  }
+
+  /**
+   * Draws an organic, scalloped, multi-layered transition along one edge of a 32x32 tile
+   * so cell X and cell Y blend with natural curved tufts/lobes rather than a hard straight line.
+   */
+  private drawOrganicEdgeLobes(
+    ctx: CanvasRenderingContext2D,
+    wx: number,
+    wy: number,
+    tx: number,
+    ty: number,
+    side: 'N' | 'S' | 'W' | 'E',
+    colors: { solid: string; mid: string; soft: string },
+    depthScale = 1.0
+  ): void {
+    const phase = (tx * 7 + ty * 13) & 7;
+    // 8 segments of 4px along the 32px edge with deterministic organic wave depth
+    for (let s = 0; s < 8; s++) {
+      const wave =
+        Math.sin((s + phase) * 1.15) * 0.5 +
+        Math.cos((s * 2 - phase) * 0.9) * 0.5;
+      const dSolid = Math.max(1, Math.round((2.6 + wave * 1.6) * depthScale));
+      const dMid = Math.max(2, Math.round((5.2 + wave * 2.4) * depthScale));
+      const dSoft = Math.max(4, Math.round((8.4 + wave * 3.0) * depthScale));
+      const offset = s * 4;
+
+      if (side === 'N') {
+        ctx.fillStyle = colors.soft;
+        ctx.fillRect(wx + offset, wy, 4, dSoft);
+        ctx.fillStyle = colors.mid;
+        ctx.fillRect(wx + offset, wy, 4, dMid);
+        ctx.fillStyle = colors.solid;
+        ctx.fillRect(wx + offset, wy, 4, dSolid);
+      } else if (side === 'S') {
+        ctx.fillStyle = colors.soft;
+        ctx.fillRect(wx + offset, wy + TILE_SIZE - dSoft, 4, dSoft);
+        ctx.fillStyle = colors.mid;
+        ctx.fillRect(wx + offset, wy + TILE_SIZE - dMid, 4, dMid);
+        ctx.fillStyle = colors.solid;
+        ctx.fillRect(wx + offset, wy + TILE_SIZE - dSolid, 4, dSolid);
+      } else if (side === 'W') {
+        ctx.fillStyle = colors.soft;
+        ctx.fillRect(wx, wy + offset, dSoft, 4);
+        ctx.fillStyle = colors.mid;
+        ctx.fillRect(wx, wy + offset, dMid, 4);
+        ctx.fillStyle = colors.solid;
+        ctx.fillRect(wx, wy + offset, dSolid, 4);
+      } else {
+        ctx.fillStyle = colors.soft;
+        ctx.fillRect(wx + TILE_SIZE - dSoft, wy + offset, dSoft, 4);
+        ctx.fillStyle = colors.mid;
+        ctx.fillRect(wx + TILE_SIZE - dMid, wy + offset, dMid, 4);
+        ctx.fillStyle = colors.solid;
+        ctx.fillRect(wx + TILE_SIZE - dSolid, wy + offset, dSolid, 4);
+      }
+    }
+  }
+
+  /**
+   * Draws a rounded organic corner patch when two adjacent edges or a diagonal neighbor differ,
+   * eliminating 90-degree blocky tile corners.
+   */
+  private drawOrganicCornerPatch(
+    ctx: CanvasRenderingContext2D,
+    wx: number,
+    wy: number,
+    corner: 'NW' | 'NE' | 'SW' | 'SE',
+    colors: { solid: string; mid: string; soft: string },
+    size = 8
+  ): void {
+    const sSoft = size;
+    const sMid = Math.max(3, Math.round(size * 0.65));
+    const sSolid = Math.max(2, Math.round(size * 0.38));
+
+    const drawStepCorner = (cSize: number, color: string) => {
+      ctx.fillStyle = color;
+      const half = Math.max(1, Math.floor(cSize * 0.6));
+      if (corner === 'NW') {
+        ctx.fillRect(wx, wy, cSize, half);
+        ctx.fillRect(wx, wy, half, cSize);
+      } else if (corner === 'NE') {
+        ctx.fillRect(wx + TILE_SIZE - cSize, wy, cSize, half);
+        ctx.fillRect(wx + TILE_SIZE - half, wy, half, cSize);
+      } else if (corner === 'SW') {
+        ctx.fillRect(wx, wy + TILE_SIZE - half, cSize, half);
+        ctx.fillRect(wx, wy + TILE_SIZE - cSize, half, cSize);
+      } else {
+        ctx.fillRect(wx + TILE_SIZE - cSize, wy + TILE_SIZE - half, cSize, half);
+        ctx.fillRect(wx + TILE_SIZE - half, wy + TILE_SIZE - cSize, half, cSize);
+      }
+    };
+
+    drawStepCorner(sSoft, colors.soft);
+    drawStepCorner(sMid, colors.mid);
+    drawStepCorner(sSolid, colors.solid);
+  }
+
+  /**
+   * Seamless Organic Auto-Tiling for Coastlines (Ocean <-> Land) & Terrestrial Ecotones.
+   * Eliminates hard square tile seams and creates curved, organic transitions between cells.
    */
   private drawSeamlessBiomeBorders(
     ctx: CanvasRenderingContext2D,
@@ -1427,7 +1599,7 @@ export class GameRenderer {
     const w = world.getTileBiomeFast(tx - 1, ty);
 
     // =========================================================================
-    // A. OCEAN COASTLINE AUTO-TILING (Submerged Sand Shelf, Cliff Lip & Animated Seafoam)
+    // A. OCEAN COASTLINE AUTO-TILING (Organic Curved Sand Shelf, Lip & Seafoam)
     // =========================================================================
     if (biome === BiomeType.OCEAN) {
       const nLand = n !== BiomeType.OCEAN;
@@ -1435,73 +1607,103 @@ export class GameRenderer {
       const eLand = e !== BiomeType.OCEAN;
       const wLand = w !== BiomeType.OCEAN;
 
-      if (!nLand && !sLand && !eLand && !wLand) {
-        // Check outer diagonal corners for rounded island tips
-        const nwLand = world.getTileBiomeFast(tx - 1, ty - 1) !== BiomeType.OCEAN;
-        const neLand = world.getTileBiomeFast(tx + 1, ty - 1) !== BiomeType.OCEAN;
-        const swLand = world.getTileBiomeFast(tx - 1, ty + 1) !== BiomeType.OCEAN;
-        const seLand = world.getTileBiomeFast(tx + 1, ty + 1) !== BiomeType.OCEAN;
+      const nw = world.getTileBiomeFast(tx - 1, ty - 1);
+      const ne = world.getTileBiomeFast(tx + 1, ty - 1);
+      const sw = world.getTileBiomeFast(tx - 1, ty + 1);
+      const se = world.getTileBiomeFast(tx + 1, ty + 1);
+      const nwLand = nw !== BiomeType.OCEAN;
+      const neLand = ne !== BiomeType.OCEAN;
+      const swLand = sw !== BiomeType.OCEAN;
+      const seLand = se !== BiomeType.OCEAN;
 
-        ctx.fillStyle = '#bae6fd';
-        if (nwLand) ctx.fillRect(wx, wy, 6, 6);
-        if (neLand) ctx.fillRect(wx + TILE_SIZE - 6, wy, 6, 6);
-        if (swLand) ctx.fillRect(wx, wy + TILE_SIZE - 6, 6, 6);
-        if (seLand) ctx.fillRect(wx + TILE_SIZE - 6, wy + TILE_SIZE - 6, 6, 6);
-      } else {
+      const shelfColors = {
+        solid: '#d6b065',
+        mid: 'rgba(217, 169, 92, 0.58)',
+        soft: 'rgba(217, 169, 92, 0.28)',
+      };
+
+      if (nLand || sLand || eLand || wLand) {
         const waveOffset = Math.round(
           Math.sin(globalTime * 3.2 + tx * 0.8 + ty * 0.6) * 2
         );
         const foamDist = 5 + waveOffset;
 
-        // 1. Submerged warm sandbank shelf along land edges
-        ctx.fillStyle = 'rgba(217, 169, 92, 0.42)';
-        if (nLand) ctx.fillRect(wx, wy, TILE_SIZE, 8);
-        if (sLand) ctx.fillRect(wx, wy + TILE_SIZE - 8, TILE_SIZE, 8);
-        if (wLand) ctx.fillRect(wx, wy, 8, TILE_SIZE);
-        if (eLand) ctx.fillRect(wx + TILE_SIZE - 8, wy, 8, TILE_SIZE);
-
-        // 2. Earthen / Sandy Shoreline Lip at immediate tile boundary
+        // 1. Organic scalloped submerged sandbank & shoreline lip along land edges
         if (nLand) {
-          ctx.fillStyle = n === BiomeType.PLAINS ? '#4d6b2a' : '#b88c3e';
-          ctx.fillRect(wx, wy, TILE_SIZE, 3);
-          ctx.fillStyle = '#d6b065';
-          ctx.fillRect(wx, wy + 3, TILE_SIZE, 2);
+          this.drawOrganicEdgeLobes(ctx, wx, wy, tx, ty, 'N', shelfColors, 1.15);
+          const lipColors = this.getTileOrganicBlendColors(world, tx, ty - 1, n);
+          this.drawOrganicEdgeLobes(ctx, wx, wy, tx, ty, 'N', lipColors, 0.55);
         }
         if (sLand) {
-          ctx.fillStyle = s === BiomeType.PLAINS ? '#4d6b2a' : '#b88c3e';
-          ctx.fillRect(wx, wy + TILE_SIZE - 3, TILE_SIZE, 3);
+          this.drawOrganicEdgeLobes(ctx, wx, wy, tx, ty, 'S', shelfColors, 1.15);
+          const lipColors = this.getTileOrganicBlendColors(world, tx, ty + 1, s);
+          this.drawOrganicEdgeLobes(ctx, wx, wy, tx, ty, 'S', lipColors, 0.55);
         }
         if (wLand) {
-          ctx.fillStyle = w === BiomeType.PLAINS ? '#4d6b2a' : '#b88c3e';
-          ctx.fillRect(wx, wy, 3, TILE_SIZE);
+          this.drawOrganicEdgeLobes(ctx, wx, wy, tx, ty, 'W', shelfColors, 1.15);
+          const lipColors = this.getTileOrganicBlendColors(world, tx - 1, ty, w);
+          this.drawOrganicEdgeLobes(ctx, wx, wy, tx, ty, 'W', lipColors, 0.55);
         }
         if (eLand) {
-          ctx.fillStyle = e === BiomeType.PLAINS ? '#4d6b2a' : '#b88c3e';
-          ctx.fillRect(wx + TILE_SIZE - 3, wy, 3, TILE_SIZE);
+          this.drawOrganicEdgeLobes(ctx, wx, wy, tx, ty, 'E', shelfColors, 1.15);
+          const lipColors = this.getTileOrganicBlendColors(world, tx + 1, ty, e);
+          this.drawOrganicEdgeLobes(ctx, wx, wy, tx, ty, 'E', lipColors, 0.55);
         }
 
-        // 3. Animated White-Turquoise Seafoam Wave Line
+        // Round inner coves where two land edges meet
+        if (nLand && wLand) {
+          this.drawOrganicCornerPatch(ctx, wx, wy, 'NW', shelfColors, 13);
+        }
+        if (nLand && eLand) {
+          this.drawOrganicCornerPatch(ctx, wx, wy, 'NE', shelfColors, 13);
+        }
+        if (sLand && wLand) {
+          this.drawOrganicCornerPatch(ctx, wx, wy, 'SW', shelfColors, 13);
+        }
+        if (sLand && eLand) {
+          this.drawOrganicCornerPatch(ctx, wx, wy, 'SE', shelfColors, 13);
+        }
+
+        // 2. Animated White-Turquoise Seafoam Wave Line following the organic contour
         ctx.fillStyle = '#e0f2fe';
         if (nLand) {
           for (let px = 2; px < TILE_SIZE - 2; px += 6) {
-            ctx.fillRect(wx + px, wy + foamDist, 4, 2);
+            const curve = Math.round(Math.sin((px + tx * 5) * 0.35) * 1.5);
+            ctx.fillRect(wx + px, wy + foamDist + curve, 4, 2);
           }
         }
         if (sLand) {
           for (let px = 2; px < TILE_SIZE - 2; px += 6) {
-            ctx.fillRect(wx + px, wy + TILE_SIZE - foamDist - 2, 4, 2);
+            const curve = Math.round(Math.sin((px + tx * 5) * 0.35) * 1.5);
+            ctx.fillRect(wx + px, wy + TILE_SIZE - foamDist - 2 - curve, 4, 2);
           }
         }
         if (wLand) {
           for (let py = 2; py < TILE_SIZE - 2; py += 6) {
-            ctx.fillRect(wx + foamDist, wy + py, 2, 4);
+            const curve = Math.round(Math.cos((py + ty * 5) * 0.35) * 1.5);
+            ctx.fillRect(wx + foamDist + curve, wy + py, 2, 4);
           }
         }
         if (eLand) {
           for (let py = 2; py < TILE_SIZE - 2; py += 6) {
-            ctx.fillRect(wx + TILE_SIZE - foamDist - 2, wy + py, 2, 4);
+            const curve = Math.round(Math.cos((py + ty * 5) * 0.35) * 1.5);
+            ctx.fillRect(wx + TILE_SIZE - foamDist - 2 - curve, wy + py, 2, 4);
           }
         }
+      }
+
+      // Check outer diagonal corners for rounded island/peninsula tips
+      if (!nLand && !wLand && nwLand) {
+        this.drawOrganicCornerPatch(ctx, wx, wy, 'NW', shelfColors, 9);
+      }
+      if (!nLand && !eLand && neLand) {
+        this.drawOrganicCornerPatch(ctx, wx, wy, 'NE', shelfColors, 9);
+      }
+      if (!sLand && !wLand && swLand) {
+        this.drawOrganicCornerPatch(ctx, wx, wy, 'SW', shelfColors, 9);
+      }
+      if (!sLand && !eLand && seLand) {
+        this.drawOrganicCornerPatch(ctx, wx, wy, 'SE', shelfColors, 9);
       }
     }
 
@@ -1564,90 +1766,133 @@ export class GameRenderer {
     }
 
     // =========================================================================
-    // B. PLAINS / ISLAND <-> DESERT / SHORE ECOTONE AUTO-TILING (Smooth Anti-Serrilhado Blending)
+    // B. TERRESTRIAL CELL-TO-CELL ORGANIC BLENDING (Biomes & Sub-Zones)
     // =========================================================================
-    if (
-      biome === BiomeType.DESERT ||
-      (biome === BiomeType.ISLAND &&
-        world.getTileSubZone(tx, ty, BiomeType.ISLAND) === 1)
-    ) {
-      const isGreenNeighbor = (nx: number, ny: number, nb: BiomeType) =>
-        nb === BiomeType.PLAINS ||
-        nb === BiomeType.FOREST ||
-        nb === BiomeType.TEMPERATE_FOREST ||
-        nb === BiomeType.TAIGA_FOREST ||
-        (nb === BiomeType.ISLAND &&
-          world.getTileSubZone(nx, ny, BiomeType.ISLAND) !== 1);
-      const nPlains = isGreenNeighbor(tx, ty - 1, n);
-      const sPlains = isGreenNeighbor(tx, ty + 1, s);
-      const wPlains = isGreenNeighbor(tx - 1, ty, w);
-      const ePlains = isGreenNeighbor(tx + 1, ty, e);
+    const mySub = world.getTileSubZone(tx, ty, biome);
 
-      if (nPlains || sPlains || wPlains || ePlains) {
-        // Smooth, non-serrated progressive ecotone border strips (no sawtooth teeth)
-        if (nPlains) {
-          ctx.fillStyle = '#598033';
-          ctx.fillRect(wx, wy, TILE_SIZE, 2);
-          ctx.fillStyle = 'rgba(97, 138, 57, 0.55)';
-          ctx.fillRect(wx, wy + 2, TILE_SIZE, 2);
-        }
-        if (sPlains) {
-          ctx.fillStyle = '#598033';
-          ctx.fillRect(wx, wy + TILE_SIZE - 2, TILE_SIZE, 2);
-          ctx.fillStyle = 'rgba(97, 138, 57, 0.55)';
-          ctx.fillRect(wx, wy + TILE_SIZE - 4, TILE_SIZE, 2);
-        }
-        if (wPlains) {
-          ctx.fillStyle = '#598033';
-          ctx.fillRect(wx, wy, 2, TILE_SIZE);
-          ctx.fillStyle = 'rgba(97, 138, 57, 0.55)';
-          ctx.fillRect(wx + 2, wy, 2, TILE_SIZE);
-        }
-        if (ePlains) {
-          ctx.fillStyle = '#598033';
-          ctx.fillRect(wx + TILE_SIZE - 2, wy, 2, TILE_SIZE);
-          ctx.fillStyle = 'rgba(97, 138, 57, 0.55)';
-          ctx.fillRect(wx + TILE_SIZE - 4, wy, 2, TILE_SIZE);
-        }
+    // Priority order so lush vegetation/forests/grass naturally overlap onto drier/flatter ground
+    const getVisualBlendRank = (b: BiomeType, sub: number): number => {
+      if (b === BiomeType.OCEAN) return 0;
+      if (b === BiomeType.DESERT || (b === BiomeType.ISLAND && sub === 1)) {
+        return 10 + sub;
       }
-    } else if (biome === BiomeType.PLAINS || biome === BiomeType.ISLAND) {
-      // Smooth sub-zone transitions inside Plains/Island and at Forest borders
-      const mySub = world.getTileSubZone(tx, ty, biome);
-      if (mySub === 1 && n === biome && world.getTileSubZone(tx, ty - 1, biome) === 0) {
-        ctx.fillStyle = 'rgba(52, 120, 61, 0.45)';
-        ctx.fillRect(wx, wy, TILE_SIZE, 3);
+      if (b === BiomeType.PLAINS || b === BiomeType.ISLAND) {
+        return 20 + (2 - sub);
       }
-      if (mySub === 1 && s === biome && world.getTileSubZone(tx, ty + 1, biome) === 0) {
-        ctx.fillStyle = 'rgba(52, 120, 61, 0.45)';
-        ctx.fillRect(wx, wy + TILE_SIZE - 3, TILE_SIZE, 3);
+      if (b === BiomeType.FOREST) return 30 + (2 - sub);
+      if (b === BiomeType.TEMPERATE_FOREST) return 40 + (2 - sub);
+      if (b === BiomeType.TAIGA_FOREST) return 50 + (2 - sub);
+      return 20;
+    };
+
+    const myRank = getVisualBlendRank(biome, mySub);
+
+    const checkNeighborBlend = (
+      nx: number,
+      ny: number,
+      nb: BiomeType
+    ): { solid: string; mid: string; soft: string; isBiomeChange: boolean } | null => {
+      if (nb === BiomeType.OCEAN) return null;
+      const nSub = world.getTileSubZone(nx, ny, nb);
+      if (nb === biome && nSub === mySub) return null;
+      const nRank = getVisualBlendRank(nb, nSub);
+      if (nRank <= myRank) return null;
+      const cols = this.getTileOrganicBlendColors(world, nx, ny, nb, nSub);
+      return { ...cols, isBiomeChange: nb !== biome };
+    };
+
+    const nBlend = checkNeighborBlend(tx, ty - 1, n);
+    const sBlend = checkNeighborBlend(tx, ty + 1, s);
+    const wBlend = checkNeighborBlend(tx - 1, ty, w);
+    const eBlend = checkNeighborBlend(tx + 1, ty, e);
+
+    if (nBlend) {
+      this.drawOrganicEdgeLobes(
+        ctx,
+        wx,
+        wy,
+        tx,
+        ty,
+        'N',
+        nBlend,
+        nBlend.isBiomeChange ? 1.05 : 0.72
+      );
+    }
+    if (sBlend) {
+      this.drawOrganicEdgeLobes(
+        ctx,
+        wx,
+        wy,
+        tx,
+        ty,
+        'S',
+        sBlend,
+        sBlend.isBiomeChange ? 1.05 : 0.72
+      );
+    }
+    if (wBlend) {
+      this.drawOrganicEdgeLobes(
+        ctx,
+        wx,
+        wy,
+        tx,
+        ty,
+        'W',
+        wBlend,
+        wBlend.isBiomeChange ? 1.05 : 0.72
+      );
+    }
+    if (eBlend) {
+      this.drawOrganicEdgeLobes(
+        ctx,
+        wx,
+        wy,
+        tx,
+        ty,
+        'E',
+        eBlend,
+        eBlend.isBiomeChange ? 1.05 : 0.72
+      );
+    }
+
+    // Inner & outer diagonal corner rounding so biome and sub-zone transitions curve organically
+    if (nBlend && wBlend) {
+      this.drawOrganicCornerPatch(ctx, wx, wy, 'NW', nBlend, 11);
+    } else if (!nBlend && !wBlend) {
+      const nw = world.getTileBiomeFast(tx - 1, ty - 1);
+      const nwBlend = checkNeighborBlend(tx - 1, ty - 1, nw);
+      if (nwBlend) {
+        this.drawOrganicCornerPatch(ctx, wx, wy, 'NW', nwBlend, 7);
       }
-      if (mySub === 1 && w === biome && world.getTileSubZone(tx - 1, ty, biome) === 0) {
-        ctx.fillStyle = 'rgba(52, 120, 61, 0.45)';
-        ctx.fillRect(wx, wy, 3, TILE_SIZE);
+    }
+
+    if (nBlend && eBlend) {
+      this.drawOrganicCornerPatch(ctx, wx, wy, 'NE', nBlend, 11);
+    } else if (!nBlend && !eBlend) {
+      const ne = world.getTileBiomeFast(tx + 1, ty - 1);
+      const neBlend = checkNeighborBlend(tx + 1, ty - 1, ne);
+      if (neBlend) {
+        this.drawOrganicCornerPatch(ctx, wx, wy, 'NE', neBlend, 7);
       }
-      if (mySub === 1 && e === biome && world.getTileSubZone(tx + 1, ty, biome) === 0) {
-        ctx.fillStyle = 'rgba(52, 120, 61, 0.45)';
-        ctx.fillRect(wx + TILE_SIZE - 3, wy, 3, TILE_SIZE);
+    }
+
+    if (sBlend && wBlend) {
+      this.drawOrganicCornerPatch(ctx, wx, wy, 'SW', sBlend, 11);
+    } else if (!sBlend && !wBlend) {
+      const sw = world.getTileBiomeFast(tx - 1, ty + 1);
+      const swBlend = checkNeighborBlend(tx - 1, ty + 1, sw);
+      if (swBlend) {
+        this.drawOrganicCornerPatch(ctx, wx, wy, 'SW', swBlend, 7);
       }
-      const isForestNeighbor = (nb: BiomeType) =>
-        nb === BiomeType.FOREST ||
-        nb === BiomeType.TEMPERATE_FOREST ||
-        nb === BiomeType.TAIGA_FOREST;
-      if (isForestNeighbor(n)) {
-        ctx.fillStyle = 'rgba(42, 92, 48, 0.42)';
-        ctx.fillRect(wx, wy, TILE_SIZE, 3);
-      }
-      if (isForestNeighbor(s)) {
-        ctx.fillStyle = 'rgba(42, 92, 48, 0.42)';
-        ctx.fillRect(wx, wy + TILE_SIZE - 3, TILE_SIZE, 3);
-      }
-      if (isForestNeighbor(w)) {
-        ctx.fillStyle = 'rgba(42, 92, 48, 0.42)';
-        ctx.fillRect(wx, wy, 3, TILE_SIZE);
-      }
-      if (isForestNeighbor(e)) {
-        ctx.fillStyle = 'rgba(42, 92, 48, 0.42)';
-        ctx.fillRect(wx + TILE_SIZE - 3, wy, 3, TILE_SIZE);
+    }
+
+    if (sBlend && eBlend) {
+      this.drawOrganicCornerPatch(ctx, wx, wy, 'SE', sBlend, 11);
+    } else if (!sBlend && !eBlend) {
+      const se = world.getTileBiomeFast(tx + 1, ty + 1);
+      const seBlend = checkNeighborBlend(tx + 1, ty + 1, se);
+      if (seBlend) {
+        this.drawOrganicCornerPatch(ctx, wx, wy, 'SE', seBlend, 7);
       }
     }
   }
