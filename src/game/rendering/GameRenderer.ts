@@ -1198,11 +1198,9 @@ export class GameRenderer {
           world.getGroundStructureAtTile(targetTileX, targetTileY);
         if (aimedSt && aimedSt.hp < aimedSt.maxHp) {
           breakRatio = aimedSt.hp / aimedSt.maxHp;
-          breakBarColor =
-            aimedSt.type === PlaceableType.OAK_SAPLING ||
-            aimedSt.type === PlaceableType.PALM_SAPLING
-              ? '#4ade80'
-              : '#38bdf8';
+          breakBarColor = WorldManager.isSaplingStructure(aimedSt.type)
+            ? '#4ade80'
+            : '#38bdf8';
         }
       }
 
@@ -3079,18 +3077,55 @@ export class GameRenderer {
     );
     const stage = st.growthStage || 0;
     const isPalm = st.type === PlaceableType.PALM_SAPLING;
+    const isDarkOak = st.type === PlaceableType.DARK_OAK_SAPLING;
+    const isPine = st.type === PlaceableType.PINE_SAPLING;
 
     if (stage === 0) {
       // === ESTÁGIO 1: MUDA (Brote pequeno recém-plantado) ===
       ctx.fillStyle = 'rgba(0, 0, 0, 0.22)';
       ctx.fillRect(cx - 6, baseY - 1, 12, 3);
       // Montinho de terra fofa / semente de coco na base
-      ctx.fillStyle = isPalm ? '#78350f' : '#5c3a1e';
+      ctx.fillStyle = isPalm
+        ? '#78350f'
+        : isDarkOak
+        ? '#3b1d0a'
+        : isPine
+        ? '#431407'
+        : '#5c3a1e';
       ctx.fillRect(cx - 5, baseY - 3, 10, 3);
-      ctx.fillStyle = isPalm ? '#92400e' : '#78350f';
+      ctx.fillStyle = isPalm
+        ? '#92400e'
+        : isDarkOak
+        ? '#4a2c16'
+        : isPine
+        ? '#5c3a21'
+        : '#78350f';
       ctx.fillRect(cx - 3, baseY - 4, 6, 2);
 
-      if (!isPalm) {
+      if (isDarkOak) {
+        // Muda de Carvalho Escuro (caule escuro encorpado e copa densa verde-floresta profundo)
+        ctx.fillStyle = '#2b170b';
+        ctx.fillRect(cx - 2, baseY - 11, 4, 8);
+        ctx.fillStyle = '#022c22';
+        ctx.fillRect(cx - 7 + sway, baseY - 19, 14, 9);
+        ctx.fillStyle = '#065f46';
+        ctx.fillRect(cx - 6 + sway, baseY - 18, 12, 7);
+        ctx.fillStyle = '#10b981';
+        ctx.fillRect(cx - 4 + sway, baseY - 17, 7, 3);
+      } else if (isPine) {
+        // Muda de Pinheiro (caule avermelhado boreal e agulhas cônicas em camadas)
+        ctx.fillStyle = '#5c3a21';
+        ctx.fillRect(cx - 1, baseY - 10, 2, 7);
+        ctx.fillStyle = '#042f2e';
+        ctx.fillRect(cx - 6 + sway, baseY - 13, 12, 4);
+        ctx.fillRect(cx - 4 + sway, baseY - 17, 8, 5);
+        ctx.fillRect(cx - 2 + sway, baseY - 20, 4, 4);
+        ctx.fillStyle = '#0d9488';
+        ctx.fillRect(cx - 5 + sway, baseY - 12, 10, 2);
+        ctx.fillRect(cx - 3 + sway, baseY - 16, 6, 3);
+        ctx.fillStyle = '#2dd4bf';
+        ctx.fillRect(cx - 1 + sway, baseY - 19, 2, 2);
+      } else if (!isPalm) {
         // Muda de Carvalho (pequeno caule e 3 folhinhas tenras)
         ctx.fillStyle = '#78350f';
         ctx.fillRect(cx - 1, baseY - 11, 2, 8);
@@ -3117,7 +3152,54 @@ export class GameRenderer {
       ctx.fillStyle = 'rgba(0, 0, 0, 0.28)';
       ctx.fillRect(cx - 10, baseY - 2, 20, 4);
 
-      if (!isPalm) {
+      if (isDarkOak) {
+        // Carvalho Escuro Jovem (tronco robusto chocolate-escuro e copa densa verde-esmeralda profundo)
+        ctx.fillStyle = '#140904';
+        ctx.fillRect(cx - 4, baseY - 20, 8, 19);
+        ctx.fillStyle = '#3b1d0a';
+        ctx.fillRect(cx - 3, baseY - 19, 6, 17);
+        ctx.fillStyle = '#5c3a21';
+        ctx.fillRect(cx - 1, baseY - 18, 2, 15);
+
+        ctx.fillStyle = '#022c22';
+        ctx.fillRect(cx - 13 + sway, baseY - 34, 26, 17);
+        ctx.fillRect(cx - 10 + sway, baseY - 39, 20, 7);
+        ctx.fillStyle = '#064e3b';
+        ctx.fillRect(cx - 12 + sway, baseY - 33, 24, 14);
+        ctx.fillRect(cx - 9 + sway, baseY - 38, 18, 6);
+        ctx.fillStyle = '#047857';
+        ctx.fillRect(cx - 10 + sway, baseY - 32, 20, 10);
+        ctx.fillStyle = '#10b981';
+        ctx.fillRect(cx - 7 + sway, baseY - 36, 12, 5);
+      } else if (isPine) {
+        // Pinheiro Jovem (tronco boreal avermelhado e 3 camadas cônicas de agulhas de taiga)
+        ctx.fillStyle = '#270e04';
+        ctx.fillRect(cx - 3, baseY - 18, 6, 17);
+        ctx.fillStyle = '#5c3a21';
+        ctx.fillRect(cx - 2, baseY - 17, 4, 15);
+        ctx.fillStyle = '#7c4d2b';
+        ctx.fillRect(cx - 1, baseY - 16, 2, 13);
+
+        // Camada inferior, média e topo cônico
+        ctx.fillStyle = '#042f2e';
+        ctx.fillRect(cx - 12 + sway, baseY - 24, 24, 9);
+        ctx.fillRect(cx - 9 + sway, baseY - 32, 18, 9);
+        ctx.fillRect(cx - 6 + sway, baseY - 39, 12, 8);
+        ctx.fillRect(cx - 3 + sway, baseY - 43, 6, 5);
+
+        ctx.fillStyle = '#115e59';
+        ctx.fillRect(cx - 11 + sway, baseY - 23, 22, 6);
+        ctx.fillRect(cx - 8 + sway, baseY - 31, 16, 6);
+        ctx.fillRect(cx - 5 + sway, baseY - 38, 10, 6);
+
+        ctx.fillStyle = '#0d9488';
+        ctx.fillRect(cx - 9 + sway, baseY - 23, 18, 3);
+        ctx.fillRect(cx - 6 + sway, baseY - 31, 12, 3);
+        ctx.fillRect(cx - 4 + sway, baseY - 38, 8, 3);
+
+        ctx.fillStyle = '#2dd4bf';
+        ctx.fillRect(cx - 2 + sway, baseY - 42, 4, 3);
+      } else if (!isPalm) {
         // Árvore Pequena de Carvalho (tronco jovem com galhos e copa frondosa compacta)
         ctx.fillStyle = '#2a1205';
         ctx.fillRect(cx - 3, baseY - 18, 6, 17);
@@ -3260,10 +3342,7 @@ export class GameRenderer {
     // Special 3-stage rendering for Tree Saplings:
     // Stage 0 = Muda (Sprout), Stage 1 = Árvore Pequena / Palmeira Pequena (Young Tree)
     // (Stage 2 transforms into an adult NatureNode in WorldManager)
-    if (
-      st.type === PlaceableType.OAK_SAPLING ||
-      st.type === PlaceableType.PALM_SAPLING
-    ) {
+    if (WorldManager.isSaplingStructure(st.type)) {
       ctx.save();
       if (st.hitFlashTimer > 0) {
         ctx.filter = 'brightness(1.7)';
@@ -3980,9 +4059,11 @@ export class GameRenderer {
     const hasS = (mask & 4) !== 0;
     const hasW = (mask & 8) !== 0;
 
-    // 1. AUTO-ALIGNING DOORS & GATES (WOOD_DOOR, IRON_GATE — Elevated 40px tall architectural portals)
+    // 1. AUTO-ALIGNING DOORS & GATES (WOOD_DOOR, DARK_OAK_DOOR, PINE_DOOR, IRON_GATE — Elevated 40px tall architectural portals)
     if (
       st.type === PlaceableType.WOOD_DOOR ||
+      st.type === PlaceableType.DARK_OAK_DOOR ||
+      st.type === PlaceableType.PINE_DOOR ||
       st.type === PlaceableType.IRON_GATE
     ) {
       const orient = world.getDoorOrientationAt(
@@ -3992,15 +4073,47 @@ export class GameRenderer {
         st.orientation
       );
       const isIron = st.type === PlaceableType.IRON_GATE;
+      const isDarkOakDoor = st.type === PlaceableType.DARK_OAK_DOOR;
+      const isPineDoor = st.type === PlaceableType.PINE_DOOR;
       const isOpen = Boolean(st.isOpen);
 
-      const postColor = isIron ? '#334155' : '#4a250d';
-      const postTop = isIron ? '#94a3b8' : '#8c5327';
-      const leafColor = isIron ? '#475569' : '#78350f';
-      const leafHi = isIron ? '#cbd5e1' : '#b45309';
+      const postColor = isIron
+        ? '#334155'
+        : isDarkOakDoor
+        ? '#1c0d06'
+        : isPineDoor
+        ? '#5c3a21'
+        : '#4a250d';
+      const postTop = isIron
+        ? '#94a3b8'
+        : isDarkOakDoor
+        ? '#5c3a21'
+        : isPineDoor
+        ? '#d6b07a'
+        : '#8c5327';
+      const leafColor = isIron
+        ? '#475569'
+        : isDarkOakDoor
+        ? '#2b170b'
+        : isPineDoor
+        ? '#b88c56'
+        : '#78350f';
+      const leafHi = isIron
+        ? '#cbd5e1'
+        : isDarkOakDoor
+        ? '#4a2c16'
+        : isPineDoor
+        ? '#e2be8a'
+        : '#b45309';
 
       // Threshold floor plate
-      ctx.fillStyle = isIron ? 'rgba(30, 41, 59, 0.55)' : 'rgba(67, 35, 13, 0.55)';
+      ctx.fillStyle = isIron
+        ? 'rgba(30, 41, 59, 0.55)'
+        : isDarkOakDoor
+        ? 'rgba(28, 13, 6, 0.65)'
+        : isPineDoor
+        ? 'rgba(92, 58, 33, 0.55)'
+        : 'rgba(67, 35, 13, 0.55)';
       if (orient === 'horizontal') {
         ctx.fillRect(wx, wy + 14, TILE_SIZE, 10);
       } else {
@@ -4034,7 +4147,49 @@ export class GameRenderer {
               ctx.fillStyle = '#facc15';
               ctx.fillRect(bx, wy - 11, 2, 2);
             }
+          } else if (isDarkOakDoor) {
+            // Porta de Carvalho Escuro: Painéis verticais entalhados e ferragens de bronze antigo
+            ctx.fillStyle = leafColor;
+            ctx.fillRect(wx + 6, wy - 9, TILE_SIZE - 12, 35);
+            // Recessed twin vertical dark oak panels
+            ctx.fillStyle = '#140904';
+            ctx.fillRect(wx + 8, wy - 6, 7, 28);
+            ctx.fillRect(wx + 17, wy - 6, 7, 28);
+            ctx.fillStyle = leafHi;
+            ctx.fillRect(wx + 9, wy - 5, 5, 11);
+            ctx.fillRect(wx + 18, wy - 5, 5, 11);
+            ctx.fillRect(wx + 9, wy + 9, 5, 12);
+            ctx.fillRect(wx + 18, wy + 9, 5, 12);
+            // Antique bronze trim & ring knocker handle
+            ctx.fillStyle = '#b45309';
+            ctx.fillRect(wx + 6, wy - 8, TILE_SIZE - 12, 2);
+            ctx.fillRect(wx + 6, wy + 22, TILE_SIZE - 12, 2);
+            ctx.fillStyle = '#fbbf24';
+            ctx.fillRect(wx + 19, wy + 6, 4, 4);
+            ctx.fillStyle = '#2b170b';
+            ctx.fillRect(wx + 20, wy + 7, 2, 2);
+          } else if (isPineDoor) {
+            // Porta de Pinheiro: Tábuas claras de abeto nórdico com trava diagonal em Z e trinco de cobre
+            ctx.fillStyle = leafColor;
+            ctx.fillRect(wx + 6, wy - 9, TILE_SIZE - 12, 35);
+            ctx.fillStyle = leafHi;
+            ctx.fillRect(wx + 7, wy - 8, 5, 33);
+            ctx.fillRect(wx + 13, wy - 8, 5, 33);
+            ctx.fillRect(wx + 19, wy - 8, 5, 33);
+            // Dark spruce Z-brace crossbars & diagonal
+            ctx.fillStyle = '#5c3a21';
+            ctx.fillRect(wx + 6, wy - 5, TILE_SIZE - 12, 3);
+            ctx.fillRect(wx + 6, wy + 18, TILE_SIZE - 12, 3);
+            for (let s = 0; s < 7; s++) {
+              ctx.fillRect(wx + 8 + s * 2, wy + 15 - s * 3, 3, 3);
+            }
+            // Copper latch handle
+            ctx.fillStyle = '#ea580c';
+            ctx.fillRect(wx + 19, wy + 7, 4, 3);
+            ctx.fillStyle = '#fdba74';
+            ctx.fillRect(wx + 20, wy + 7, 2, 1);
           } else {
+            // Porta de Carvalho: Tábuas douradas de carvalho com cintas de ferro forjado e maçaneta dourada
             ctx.fillStyle = leafColor;
             ctx.fillRect(wx + 6, wy - 9, TILE_SIZE - 12, 35);
             ctx.fillStyle = leafHi;
@@ -4072,7 +4227,7 @@ export class GameRenderer {
           ctx.fillRect(vx + 1, wy - 4, vw - 2, TILE_SIZE - 2);
           ctx.fillStyle = leafHi;
           ctx.fillRect(vx + 2, wy - 4, 2, TILE_SIZE - 2);
-          ctx.fillStyle = '#facc15';
+          ctx.fillStyle = isPineDoor ? '#ea580c' : isDarkOakDoor ? '#fbbf24' : '#facc15';
           ctx.fillRect(vx + 3, wy + 10, 2, 4);
         } else {
           // Swung open to the East
@@ -4132,19 +4287,59 @@ export class GameRenderer {
       return;
     }
 
-    // 3. 16-STATE ARCHITECTURAL WALLS & WINDOWS (WOOD_WALL, STONE_WALL, BRICK_WALL, WOOD_WINDOW, STONE_WINDOW)
+    // 3. 16-STATE ARCHITECTURAL WALLS & WINDOWS (Oak, Dark Oak, Pine, Stone, Brick)
     const isStone =
       st.type === PlaceableType.STONE_WALL ||
       st.type === PlaceableType.STONE_WINDOW;
     const isBrick = st.type === PlaceableType.BRICK_WALL;
+    const isDarkOak =
+      st.type === PlaceableType.DARK_OAK_WALL ||
+      st.type === PlaceableType.DARK_OAK_WINDOW;
+    const isPine =
+      st.type === PlaceableType.PINE_WALL ||
+      st.type === PlaceableType.PINE_WINDOW;
     const isWindow =
       st.type === PlaceableType.WOOD_WINDOW ||
+      st.type === PlaceableType.DARK_OAK_WINDOW ||
+      st.type === PlaceableType.PINE_WINDOW ||
       st.type === PlaceableType.STONE_WINDOW;
 
-    const topCap = isBrick ? '#d97706' : isStone ? '#cbd5e1' : '#c28442';
-    const topInner = isBrick ? '#b45309' : isStone ? '#94a3b8' : '#9a602d';
-    const faceMain = isBrick ? '#9a3412' : isStone ? '#475569' : '#653716';
-    const faceDark = isBrick ? '#451a03' : isStone ? '#1e293b' : '#3d1f0a';
+    const topCap = isBrick
+      ? '#d97706'
+      : isStone
+      ? '#cbd5e1'
+      : isDarkOak
+      ? '#6b4226'
+      : isPine
+      ? '#e2be8a'
+      : '#c28442';
+    const topInner = isBrick
+      ? '#b45309'
+      : isStone
+      ? '#94a3b8'
+      : isDarkOak
+      ? '#4a2c16'
+      : isPine
+      ? '#c49a62'
+      : '#9a602d';
+    const faceMain = isBrick
+      ? '#9a3412'
+      : isStone
+      ? '#475569'
+      : isDarkOak
+      ? '#2b170b'
+      : isPine
+      ? '#8c6239'
+      : '#653716';
+    const faceDark = isBrick
+      ? '#451a03'
+      : isStone
+      ? '#1e293b'
+      : isDarkOak
+      ? '#140904'
+      : isPine
+      ? '#4a2e16'
+      : '#3d1f0a';
 
     // Check if this wall is viewed purely from the side (vertical North-South alignment)
     const isSideProfile = world.isWallOrDoorSideProfileAt(st.tileX, st.tileY, st);
@@ -4186,7 +4381,7 @@ export class GameRenderer {
       ctx.fillRect(vx + 2, topY + 1, 2, totalH - 9);
 
       // Masonry / timber joint lines along the side-viewed top cap
-      ctx.fillStyle = faceDark;
+      ctx.fillStyle = isDarkOak ? '#b45309' : faceDark;
       for (let jy = topY + 8; jy < botY - 8; jy += 8) {
         ctx.fillRect(vx + 1, jy, vw - 2, 1);
       }
@@ -4194,7 +4389,7 @@ export class GameRenderer {
       if (isWindow) {
         ctx.restore();
         // Side-viewed window frame (solid) + glass slit with 33% transparency (alpha 0.67)
-        ctx.fillStyle = '#0f172a';
+        ctx.fillStyle = isDarkOak ? '#b45309' : isPine ? '#5c3a21' : '#0f172a';
         ctx.fillRect(vx + 1, wy - 2, vw - 2, 1);
         ctx.fillRect(vx + 1, wy + 13, vw - 2, 1);
         ctx.fillRect(vx + 1, wy - 1, 1, 14);
@@ -4318,7 +4513,47 @@ export class GameRenderer {
       ctx.fillStyle = '#94a3b8';
       ctx.fillRect(texLeft + 1, wy - 1, Math.max(2, midW - 2), 2);
       ctx.fillRect(texLeft + 2, wy + 9, Math.max(2, texW - 4), 2);
+    } else if (isDarkOak) {
+      // Parede de Carvalho Escuro: Painéis verticais entalhados em madeira chocolate-expresso com frisos de bronze
+      for (let px = texLeft + 1; px < texRight - 3; px += 7) {
+        const pw = Math.min(5, texRight - px - 1);
+        if (pw <= 1) continue;
+        ctx.fillStyle = '#3d2312';
+        ctx.fillRect(px, wy - 1, pw, 22);
+        ctx.fillStyle = '#5c3a21';
+        ctx.fillRect(px + 1, wy, Math.max(1, pw - 2), 19);
+      }
+      // Warm antique bronze horizontal trim bands & studs
+      ctx.fillStyle = '#92400e';
+      ctx.fillRect(spanX, wy - 3, spanW, 2);
+      ctx.fillRect(spanX, wy + 22, spanW, 2);
+      ctx.fillStyle = '#f59e0b';
+      for (let sx = spanX + 3; sx < spanRight - 2; sx += 7) {
+        ctx.fillRect(sx, wy - 3, 2, 1);
+        ctx.fillRect(sx, wy + 22, 2, 1);
+      }
+    } else if (isPine) {
+      // Parede de Pinheiro: Toras horizontais arredondadas de abeto claro com encaixes rústicos de cabana nas pontas
+      const logRows = [wy - 3, wy + 4, wy + 11, wy + 18];
+      for (const ly of logRows) {
+        ctx.fillStyle = '#b88c56';
+        ctx.fillRect(texLeft, ly, texW, 6);
+        ctx.fillStyle = '#e2be8a';
+        ctx.fillRect(texLeft, ly, texW, 2);
+        ctx.fillStyle = '#f3d9a4';
+        ctx.fillRect(texLeft + 1, ly, Math.max(2, texW - 2), 1);
+        // Dark spruce bark seam between logs
+        ctx.fillStyle = '#5c3a21';
+        ctx.fillRect(texLeft, ly + 5, texW, 1);
+        // Notched log-cabin corner joints on exposed or connected ends
+        ctx.fillStyle = '#6b4226';
+        ctx.fillRect(texLeft, ly + 1, 3, 4);
+        if (texW > 7) {
+          ctx.fillRect(texRight - 3, ly + 1, 3, 4);
+        }
+      }
     } else {
+      // Parede de Carvalho: Tábuas horizontais douradas com cintas de ferro forjado
       ctx.fillStyle = '#7c471e';
       ctx.fillRect(texLeft, wy - 2, texW, 6);
       ctx.fillRect(texLeft, wy + 7, texW, 6);
@@ -4334,27 +4569,50 @@ export class GameRenderer {
       ctx.fillRect(spanX, wy + 21, spanW, 2);
     }
 
-    // Window Glass (33% transparency) & Solid Mullion Frame if WOOD_WINDOW or STONE_WINDOW
+    // Window Glass (33% transparency) & Solid Mullion Frame if Window Wall
     if (isWindow) {
       ctx.restore();
+      const frameColor = isDarkOak
+        ? '#b45309'
+        : isPine
+        ? '#5c3a21'
+        : '#1e293b';
       // Solid outer frame border around glass opening
-      ctx.fillStyle = '#1e293b';
+      ctx.fillStyle = frameColor;
       ctx.fillRect(winLeft, wy - 1, winW, 2);
       ctx.fillRect(winLeft, wy + 16, winW, 2);
       ctx.fillRect(winLeft, wy + 1, 2, 15);
       ctx.fillRect(winLeft + winW - 2, wy + 1, 2, 15);
+      // Pine Alpine side shutters
+      if (isPine && winLeft >= spanX + 3 && winRight <= spanRight - 3) {
+        ctx.fillStyle = '#5c3a21';
+        ctx.fillRect(winLeft - 3, wy, 3, 16);
+        ctx.fillRect(winRight, wy, 3, 16);
+        ctx.fillStyle = '#8c6239';
+        ctx.fillRect(winLeft - 2, wy + 2, 1, 12);
+        ctx.fillRect(winRight + 1, wy + 2, 1, 12);
+      }
       // Window glass pane with 33% transparency (alpha = 0.67)
       ctx.save();
       ctx.globalAlpha = 0.67;
-      ctx.fillStyle = '#38bdf8';
+      ctx.fillStyle = isDarkOak ? '#0284c7' : '#38bdf8';
       ctx.fillRect(glassX, glassY, glassW, glassH);
       ctx.fillStyle = '#bae6fd';
       ctx.fillRect(winLeft + 3, wy + 2, 2, 7);
       ctx.restore();
       // Solid mullion cross-bar & sill
-      ctx.fillStyle = '#1e293b';
+      ctx.fillStyle = frameColor;
       ctx.fillRect(winLeft + 1, wy + 8, Math.max(2, winW - 2), 2);
-      ctx.fillStyle = topCap;
+      if (isDarkOak || isPine) {
+        // Vertical center mullion for 4-pane manor/cabin window
+        ctx.fillRect(
+          winLeft + Math.floor(winW / 2) - 1,
+          wy + 1,
+          2,
+          15
+        );
+      }
+      ctx.fillStyle = isDarkOak ? '#f59e0b' : topCap;
       ctx.fillRect(winLeft - 1, wy + 17, winW + 2, 3);
     }
 

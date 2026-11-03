@@ -434,7 +434,9 @@ export default function App() {
     return () => {
       window.clearTimeout(readyTimer);
       window.removeEventListener('resize', resizeCanvas);
-      void engine.saveGame(true);
+      if (!engine.multiplayer.isConnectionUnstable()) {
+        void engine.saveGame(true);
+      }
       engine.destroy();
       engineRef.current = null;
     };
@@ -498,10 +500,8 @@ export default function App() {
       subtitle: isHostOnline
         ? 'Desconectando jogadores convidados e salvando o mundo...'
         : 'Preservando inventário, construções e montaria integrada ao personagem...',
-      stepLabel: isHostOnline
-        ? 'Notificando e desconectando convidados da sessão...'
-        : 'Gravando dados locais e encerrando sessão...',
-      progress: 45,
+      stepLabel: 'Gravando dados do mundo com segurança...',
+      progress: 50,
     });
 
     try {
@@ -509,19 +509,25 @@ export default function App() {
         engineRef.current.closeChest(activeChestId);
       }
       if (engineRef.current) {
-        if (engineRef.current.multiplayer.isOnline) {
-          await engineRef.current.multiplayer.disconnectAndCloseRoom();
-        }
+        // Save FIRST before disconnecting so Guest / Host roles and online states are intact!
+        await engineRef.current.saveGame(false);
         setTransitionState((prev) =>
           prev
             ? {
                 ...prev,
-                stepLabel: 'Gravando dados do mundo com segurança...',
-                progress: 80,
+                stepLabel: isHostOnline
+                  ? 'Notificando e desconectando convidados da sessão...'
+                  : 'Encerrando conexão da sessão...',
+                progress: 85,
               }
             : null
         );
-        await engineRef.current.saveGame(false);
+        if (engineRef.current.multiplayer.isOnline) {
+          await Promise.race([
+            engineRef.current.multiplayer.disconnectAndCloseRoom(),
+            new Promise((r) => window.setTimeout(r, 650)),
+          ]);
+        }
       }
     } catch {
       // ignore
@@ -532,6 +538,51 @@ export default function App() {
         ? {
             ...prev,
             stepLabel: 'Salvamento concluído!',
+            progress: 100,
+          }
+        : null
+    );
+
+    window.setTimeout(() => {
+      setStationContext(null);
+      setActiveChestId(null);
+      setActiveStallId(null);
+      setActiveWorldSave(null);
+      setSnapshot(null);
+      setTransitionState(null);
+    }, 280);
+  };
+
+  const handleRevertToLastAutoSaveAndExit = async () => {
+    if (transitionState?.active) return;
+    setActiveModal('NONE');
+    setIsEditingHud(false);
+    setIsMountSaddlebagOpen(false);
+    setTransitionState({
+      active: true,
+      title: 'RESTAURANDO ÚLTIMO SAVE AUTOMÁTICO',
+      subtitle:
+        'Encerrando sessão com falha de conexão e restaurando o estado do último salvamento automático...',
+      stepLabel: 'Restaurando snapshot do último save automático...',
+      progress: 65,
+    });
+
+    try {
+      if (engineRef.current) {
+        await engineRef.current.revertToLastAutoSaveAndPrepareExit();
+        if (engineRef.current.multiplayer.isOnline) {
+          engineRef.current.multiplayer.disconnect(false);
+        }
+      }
+    } catch {
+      // ignore
+    }
+
+    setTransitionState((prev) =>
+      prev
+        ? {
+            ...prev,
+            stepLabel: 'Retornando ao menu principal...',
             progress: 100,
           }
         : null
@@ -1493,6 +1544,109 @@ export default function App() {
               </div>
             </div>
           )}
+
+          {/* Connection Instability / Reconnecting Overlay (Pauses Game & Shows Time Since Last Auto-Save) */}
+          {snapshot?.onlineSession?.connectionUnstable &&
+            !transitionState?.active &&
+            engineRef.current &&
+            (() => {
+              const now = Date.now();
+              const elapsedSec = Math.max(
+                0,
+                Math.floor((now - (snapshot.lastAutoSaveAt || now)) / 1000)
+              );
+              const mins = Math.floor(elapsedSec / 60);
+              const secs = elapsedSec % 60;
+              const elapsedLabel =
+                mins > 0
+                  ? `há ${mins} min e ${secs}s`
+                  : `há ${secs} segundo${secs === 1 ? '' : 's'}`;
+              const unstableSec = snapshot.onlineSession.connectionUnstableSince
+                ? Math.max(
+                    1,
+                    Math.floor(
+                      (now - snapshot.onlineSession.connectionUnstableSince) /
+                        1000
+                    )
+                  )
+                : 1;
+
+              return (
+                <div className="fixed inset-0 z-[90] bg-black/88 backdrop-blur-sm flex items-center justify-center p-4 select-none">
+                  <div className="w-full max-w-md medieval-panel p-5 sm:p-6 text-center space-y-4 border-2 border-amber-500/80 shadow-[0_0_40px_rgba(0,0,0,0.95)]">
+                    <div className="w-14 h-14 mx-auto mc-slot-active flex items-center justify-center">
+                      <div className="w-7 h-7 border-3 border-amber-400 border-t-transparent rounded-full animate-spin" />
+                    </div>
+
+                    <div className="space-y-1.5">
+                      <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded bg-amber-950/90 border border-amber-500/60 text-[10px] font-pixel font-bold text-amber-300 uppercase tracking-wider">
+                        <span>⚠️ JOGO PAUSADO · INSTABILIDADE DE CONEXÃO</span>
+                      </div>
+                      <h2 className="font-pixel text-sm sm:text-base font-bold text-amber-400 tracking-wide pt-1">
+                        TENTANDO RECONECTAR À SESSÃO...
+                      </h2>
+                      <p className="text-xs text-[#e5d5b5] leading-relaxed">
+                        {snapshot.onlineSession.connectionUnstableReason ||
+                          'Foi detectada uma inconsistência ou falha de qualidade na sua conexão de internet. O jogo foi pausado automaticamente para proteger seu progresso.'}
+                      </p>
+                    </div>
+
+                    <div className="medieval-inset p-3 space-y-1.5 text-left border border-[#5c3c24]">
+                      <div className="flex items-center justify-between text-xs">
+                        <span className="text-[#c4ab7d]">
+                          Último save automático:
+                        </span>
+                        <span className="font-mono-tabular font-bold text-emerald-400">
+                          {elapsedLabel}
+                        </span>
+                      </div>
+                      <div className="flex items-center justify-between text-[11px]">
+                        <span className="text-[#c4ab7d]">
+                          Tempo sem resposta estável:
+                        </span>
+                        <span className="font-mono-tabular font-bold text-amber-300">
+                          {unstableSec}s
+                        </span>
+                      </div>
+                      {snapshot.onlineSession.reconnectAttempts &&
+                        snapshot.onlineSession.reconnectAttempts > 0 && (
+                          <div className="flex items-center justify-between text-[11px]">
+                            <span className="text-[#c4ab7d]">
+                              Tentativas de reconexão:
+                            </span>
+                            <span className="font-mono-tabular font-bold text-sky-300">
+                              #{snapshot.onlineSession.reconnectAttempts}
+                            </span>
+                          </div>
+                        )}
+                    </div>
+
+                    <div className="space-y-2.5 pt-1">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          engineRef.current?.multiplayer.retryReconnectNow();
+                        }}
+                        className="w-full min-h-[42px] medieval-btn-gold font-pixel text-xs font-bold tracking-wider"
+                      >
+                        🔄 TENTAR RECONECTAR AGORA
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          void handleRevertToLastAutoSaveAndExit();
+                        }}
+                        className="w-full min-h-[44px] medieval-btn-crimson px-3 py-2 font-pixel text-[11px] font-bold leading-snug"
+                      >
+                        SAIR E PERDER PROGRESSO DESDE O ÚLTIMO SAVE AUTOMÁTICO (
+                        {elapsedLabel.toUpperCase()})
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              );
+            })()}
         </div>
       )}
 

@@ -298,32 +298,39 @@ export function migrateSaveData(rawSave: WorldSaveData): WorldSaveData {
   // Reconstruct & freeze explored chunk terrain arrays, prune untouched unexplored chunks so new updates generate them fresh,
   // and ensure all placed/generated Chests have a 24-slot storageSlots array.
   if (migrated.chunks && typeof migrated.chunks === 'object') {
-    const hydrationMgr = new WorldManager(
-      migrated.metadata?.seed || 123456,
-      undefined,
-      originalWorldGenVersion
-    );
-    const preservedChunks: Record<string, ChunkData> = {};
-
-    for (const [key, chunk] of Object.entries(migrated.chunks)) {
+    for (const chunk of Object.values(migrated.chunks)) {
       if (!chunk) continue;
-      if (!WorldManager.isChunkExploredOrModified(chunk)) {
-        // Untouched unexplored chunk: do not lock it, so future exploration generates it with CURRENT_WORLD_GEN_VERSION
-        continue;
-      }
-
       if (typeof chunk.genVersion !== 'number') {
         chunk.genVersion = originalWorldGenVersion;
       }
       if (!chunk.generatedGameVersion) {
         chunk.generatedGameVersion = originalGameVersion;
       }
-      chunk.preserved = true;
+    }
 
-      hydrationMgr.hydrateChunk(chunk);
+    const hydrationMgr = new WorldManager(
+      migrated.metadata?.seed || 123456,
+      migrated.chunks,
+      originalWorldGenVersion
+    );
+    const preservedChunks: Record<string, ChunkData> = {};
+
+    for (const [key, chunk] of Object.entries(hydrationMgr.chunks)) {
+      if (!chunk) continue;
+      chunk.preserved = true;
 
       if (Array.isArray(chunk.structures)) {
         for (const st of chunk.structures) {
+          if (
+            (st.type as string) === 'TREE_SAPLING' ||
+            (st.type as string) === 'SAPLING' ||
+            st.itemId === 'tree_sapling' ||
+            st.itemId === 'generic_sapling' ||
+            st.itemId === 'sapling'
+          ) {
+            st.type = PlaceableType.OAK_SAPLING;
+            st.itemId = 'oak_sapling';
+          }
           if (st.type === PlaceableType.CHEST) {
             if (
               !Array.isArray(st.storageSlots) ||
@@ -355,8 +362,32 @@ export function migrateSaveData(rawSave: WorldSaveData): WorldSaveData {
               }
               st.storageSlots = slots;
             }
+            if (Array.isArray(st.storageSlots)) {
+              for (const s of st.storageSlots) {
+                if (
+                  s &&
+                  (s.itemId === 'tree_sapling' ||
+                    s.itemId === 'generic_sapling' ||
+                    s.itemId === 'sapling')
+                ) {
+                  s.itemId = 'oak_sapling';
+                }
+              }
+            }
             if (!st.customName && st.landmarkName) {
               st.customName = st.landmarkName;
+            }
+          }
+          if (Array.isArray(st.stallSlots)) {
+            for (const s of st.stallSlots) {
+              if (
+                s &&
+                (s.itemId === 'tree_sapling' ||
+                  s.itemId === 'generic_sapling' ||
+                  s.itemId === 'sapling')
+              ) {
+                s.itemId = 'oak_sapling';
+              }
             }
           }
         }
@@ -366,6 +397,50 @@ export function migrateSaveData(rawSave: WorldSaveData): WorldSaveData {
     }
 
     migrated.chunks = preservedChunks;
+  }
+
+  // Migrate any legacy generic sapling item IDs in inventories, mounts, death bags, or dropped items to oak_sapling (Muda de Carvalho)
+  const migrateLegacyItemId = (id: string): string =>
+    id === 'tree_sapling' || id === 'generic_sapling' || id === 'sapling'
+      ? 'oak_sapling'
+      : id;
+
+  if (Array.isArray(migrated.player?.inventory)) {
+    for (const s of migrated.player.inventory) {
+      if (s && s.itemId) s.itemId = migrateLegacyItemId(s.itemId);
+    }
+  }
+  if (migrated.guestPlayers && typeof migrated.guestPlayers === 'object') {
+    for (const gp of Object.values(migrated.guestPlayers)) {
+      if (gp && Array.isArray(gp.inventory)) {
+        for (const s of gp.inventory) {
+          if (s && s.itemId) s.itemId = migrateLegacyItemId(s.itemId);
+        }
+      }
+    }
+  }
+  if (Array.isArray(migrated.creatures)) {
+    for (const cr of migrated.creatures) {
+      if (cr && Array.isArray(cr.mountInventory)) {
+        for (const s of cr.mountInventory) {
+          if (s && s.itemId) s.itemId = migrateLegacyItemId(s.itemId);
+        }
+      }
+    }
+  }
+  if (Array.isArray(migrated.droppedItems)) {
+    for (const d of migrated.droppedItems) {
+      if (d && d.itemId) d.itemId = migrateLegacyItemId(d.itemId);
+    }
+  }
+  if (Array.isArray(migrated.deathBags)) {
+    for (const db of migrated.deathBags) {
+      if (db && Array.isArray(db.items)) {
+        for (const s of db.items) {
+          if (s && s.itemId) s.itemId = migrateLegacyItemId(s.itemId);
+        }
+      }
+    }
   }
 
   return migrated;
@@ -588,6 +663,14 @@ export class SaveManager {
       undefined,
       CURRENT_WORLD_GEN_VERSION
     );
+
+    // Find a valid, collision-free natural dry-land spawn point without molding a circular Plains clearing
+    const initialSpawn = worldMgr.findInitialPlayerSpawnPoint();
+    player.x = initialSpawn.x;
+    player.y = initialSpawn.y;
+    player.respawnX = initialSpawn.x;
+    player.respawnY = initialSpawn.y;
+
     worldMgr.revealAround(player.x, player.y, 11);
 
     const metadata: WorldMetadata = {
@@ -619,8 +702,8 @@ export class SaveManager {
         {
           id: 'wp_origin',
           label: 'Acampamento Inicial',
-          tileX: 0,
-          tileY: 0,
+          tileX: initialSpawn.tileX,
+          tileY: initialSpawn.tileY,
           color: '#f59e0b',
         },
       ],
@@ -634,14 +717,16 @@ export class SaveManager {
   /**
    * Produces a compact copy of `WorldSaveData` for `localStorage` persistence without mutating
    * the live in-memory world state:
-   * - Preserves exact chunk terrain via ultra-compact 256-char strings (`compactTiles`, `compactZones`, `compactVariants`)
-   *   and `genVersion` / `generatedGameVersion` / `preserved = true` so explored chunks are NEVER altered by future world updates.
-   * - Skips untouched, unexplored chunks so newly explored areas always generate with the latest world generation version.
+   * - Preserves 100% of all explored chunks (both natural terrain and structures) via ultra-compact
+   *   strings (`compactTiles`, `compactZones`, `compactVariants`, `compactExplored`) and `genVersion` / `preserved = true`
+   *   so previously explored natural areas are NEVER lost or altered by future world updates.
+   * - Skips only untouched, completely unexplored chunks so newly explored areas generate with the latest world generation version.
    * - Strips static blueprint properties from `NatureNode` entries.
    */
   private static compactSaveDataForStorage(
     saveData: WorldSaveData,
-    strictPrune = false
+    strictNodePrune = false,
+    maxFullNodeRadius = 18
   ): WorldSaveData {
     const compactChunks: Record<string, ChunkData> = {};
     const playerChunkX = Math.floor((saveData.player?.x || 0) / (32 * 16));
@@ -650,8 +735,14 @@ export class SaveManager {
     if (saveData.chunks && typeof saveData.chunks === 'object') {
       for (const [key, chunk] of Object.entries(saveData.chunks)) {
         if (!chunk) continue;
-        const hasExplored =
+        const hasExploredArray =
           Array.isArray(chunk.explored) && chunk.explored.some((v) => v > 0);
+        const hasCompactExplored =
+          typeof chunk.compactExplored === 'string' &&
+          chunk.compactExplored.length > 0 &&
+          !/^0+$/.test(chunk.compactExplored);
+        const hasExplored = hasExploredArray || hasCompactExplored;
+
         const hasPlayerOrCustomStruct =
           Array.isArray(chunk.structures) &&
           chunk.structures.some(
@@ -659,40 +750,64 @@ export class SaveManager {
               s.ownerType === 'PLAYER' ||
               Boolean(s.cropType) ||
               s.type === PlaceableType.TILLED_SOIL ||
+              s.type === PlaceableType.CHEST ||
               (Array.isArray(s.storageSlots) && s.storageSlots.some(Boolean)) ||
-              (Array.isArray(s.stallSlots) && s.stallSlots.some(Boolean))
+              (Array.isArray(s.stallSlots) && s.stallSlots.some(Boolean)) ||
+              (typeof s.storageRevision === 'number' && s.storageRevision > 0)
           );
 
         if (!hasExplored && !hasPlayerOrCustomStruct) {
           continue;
         }
 
-        if (strictPrune && !hasPlayerOrCustomStruct) {
-          const dist = Math.hypot(
-            chunk.cx - playerChunkX,
-            chunk.cy - playerChunkY
-          );
-          if (dist > 8 && (!chunk.structures || chunk.structures.length === 0)) {
-            continue;
-          }
-        }
-
         const allExplored =
-          hasExplored &&
-          chunk.explored.length === 256 &&
-          chunk.explored.every((v) => v > 0);
+          (hasExploredArray &&
+             ((chunk.explored.length === 1 && chunk.explored[0] > 0) ||
+              (chunk.explored.length === 256 &&
+                chunk.explored.every((v) => v > 0)))) ||
+          chunk.compactExplored === 'F'.repeat(64);
+
+        const compactExplored = allExplored
+          ? undefined
+          : hasExploredArray
+          ? WorldManager.encodeCompactExplored(chunk.explored)
+          : chunk.compactExplored;
+
+        const dist = Math.hypot(
+          chunk.cx - playerChunkX,
+          chunk.cy - playerChunkY
+        );
+        const skipUndamagedCommonNodes =
+          strictNodePrune &&
+          dist > maxFullNodeRadius &&
+          !hasPlayerOrCustomStruct;
 
         const compactNodes = Array.isArray(chunk.nodes)
-          ? chunk.nodes.map(
-              (n) =>
-                ({
-                  id: n.id,
-                  type: n.type,
-                  tileX: n.tileX,
-                  tileY: n.tileY,
-                  hp: n.hp,
-                }) as NatureNode
-            )
+          ? chunk.nodes
+              .filter(
+                (n) =>
+                  !skipUndamagedCommonNodes ||
+                  (typeof n.hp === 'number' &&
+                    typeof n.maxHp === 'number' &&
+                    n.hp < n.maxHp)
+              )
+              .map(
+                (n) =>
+                  ({
+                    type: n.type,
+                    tileX: n.tileX,
+                    tileY: n.tileY,
+                    ...(typeof n.hp === 'number' &&
+                    typeof n.maxHp === 'number' &&
+                    n.hp < n.maxHp
+                      ? { hp: n.hp }
+                      : {}),
+                    ...(typeof n.variant === 'number'
+                      ? { variant: n.variant }
+                      : {}),
+                    ...(n.flowerColor ? { flowerColor: n.flowerColor } : {}),
+                  }) as NatureNode
+              )
           : [];
 
         const compactTiles =
@@ -714,6 +829,7 @@ export class SaveManager {
           ...(chunk.landmarkName ? { landmarkName: chunk.landmarkName } : {}),
           ...(chunk.villageId ? { villageId: chunk.villageId } : {}),
           ...(chunk.mobsPopulated ? { mobsPopulated: true } : {}),
+          ...(chunk.islandMobsPopulated ? { islandMobsPopulated: true } : {}),
           genVersion:
             typeof chunk.genVersion === 'number'
               ? chunk.genVersion
@@ -728,9 +844,10 @@ export class SaveManager {
           ...(compactTiles ? { compactTiles } : {}),
           ...(compactZones ? { compactZones } : {}),
           ...(compactVariants ? { compactVariants } : {}),
+          ...(compactExplored ? { compactExplored } : {}),
           tiles: [] as unknown as BiomeType[],
           tileVariants: [],
-          explored: allExplored ? [1] : hasExplored ? chunk.explored : [],
+          explored: allExplored ? [1] : [],
           nodes: compactNodes,
           structures: chunk.structures || [],
         };
@@ -745,7 +862,7 @@ export class SaveManager {
 
   /**
    * Frees up `localStorage` space by removing legacy `*_bak` keys and compacting any older
-   * uncompacted world saves already stored in the browser.
+   * uncompacted world saves already stored in the browser without deleting explored chunks.
    */
   private static reclaimLocalStorageSpace(excludeWorldId?: string): void {
     try {
@@ -775,7 +892,7 @@ export class SaveManager {
           if (!raw || raw.length < 120000) continue; // Already compact
           const env = JSON.parse(raw) as SaveEnvelope;
           if (env && env.data && env.data.chunks) {
-            const compacted = this.compactSaveDataForStorage(env.data, true);
+            const compacted = this.compactSaveDataForStorage(env.data, false);
             const serialized = JSON.stringify(compacted);
             const newEnv: SaveEnvelope = {
               checksum: computeChecksum(serialized),
@@ -794,12 +911,18 @@ export class SaveManager {
   }
 
   public static saveWorldLocal(saveData: WorldSaveData): boolean {
+    const primaryKey = `${WORLD_PREFIX}${saveData.metadata.id}`;
+    const backupKey = `${WORLD_PREFIX}${saveData.metadata.id}_bak`;
+    let previousPrimaryRaw: string | null = null;
+    try {
+      previousPrimaryRaw = localStorage.getItem(primaryKey);
+    } catch {
+      previousPrimaryRaw = null;
+    }
+
     try {
       saveData.version = CURRENT_SAVE_VERSION;
       saveData.metadata.updatedAt = Date.now();
-
-      const primaryKey = `${WORLD_PREFIX}${saveData.metadata.id}`;
-      const backupKey = `${WORLD_PREFIX}${saveData.metadata.id}_bak`;
 
       // Remove legacy duplicate _bak entry to avoid doubling localStorage usage
       try {
@@ -821,20 +944,38 @@ export class SaveManager {
       try {
         localStorage.setItem(primaryKey, envelopeStr);
       } catch {
-        // Reclaim space by removing any _bak keys and compacting other stored worlds, then retry
+        // CRITICAL: Browsers check (existingPrimaryKeySize + newEnvelopeStrSize <= 5MB) when overwriting!
+        // Remove primaryKey temporarily in-memory so the old save doesn't occupy half the 5MB quota during the write!
+        try {
+          localStorage.removeItem(primaryKey);
+        } catch {
+          // ignore
+        }
         this.reclaimLocalStorageSpace(saveData.metadata.id);
         try {
           localStorage.setItem(primaryKey, envelopeStr);
         } catch {
-          // Final fallback with strict pruning of distant unmodified chunks
-          const strictCompact = this.compactSaveDataForStorage(saveData, true);
-          const strictSer = JSON.stringify(strictCompact);
-          const strictEnv: SaveEnvelope = {
-            checksum: computeChecksum(strictSer),
-            savedAt: Date.now(),
-            data: strictCompact,
-          };
-          localStorage.setItem(primaryKey, JSON.stringify(strictEnv));
+          // Fallback 1: Keep 100% of explored chunks & terrain, compact distant undamaged nodes (> 18 chunks away)
+          try {
+            const strictCompact = this.compactSaveDataForStorage(saveData, true, 18);
+            const strictSer = JSON.stringify(strictCompact);
+            const strictEnv: SaveEnvelope = {
+              checksum: computeChecksum(strictSer),
+              savedAt: Date.now(),
+              data: strictCompact,
+            };
+            localStorage.setItem(primaryKey, JSON.stringify(strictEnv));
+          } catch {
+            // Fallback 2: Keep 100% of explored chunks & terrain, compact distant undamaged nodes (> 8 chunks away)
+            const ultraCompact = this.compactSaveDataForStorage(saveData, true, 8);
+            const ultraSer = JSON.stringify(ultraCompact);
+            const ultraEnv: SaveEnvelope = {
+              checksum: computeChecksum(ultraSer),
+              savedAt: Date.now(),
+              data: ultraCompact,
+            };
+            localStorage.setItem(primaryKey, JSON.stringify(ultraEnv));
+          }
         }
       }
 
@@ -843,6 +984,14 @@ export class SaveManager {
       this.saveWorldIndex(list);
       return true;
     } catch (e) {
+      // Restore previous save if all writes failed so existing progress is never lost
+      if (previousPrimaryRaw && !localStorage.getItem(primaryKey)) {
+        try {
+          localStorage.setItem(primaryKey, previousPrimaryRaw);
+        } catch {
+          // ignore
+        }
+      }
       console.warn('Local storage quota reached; world remains active in memory:', e);
       return false;
     }
@@ -919,18 +1068,23 @@ export class SaveManager {
     }
     const base = cfg.customServerUrl.trim().replace(/\/$/, '');
     const url = `${base}/api/worlds`;
+    const controller = new AbortController();
+    const timeoutId = window.setTimeout(() => controller.abort(), 2500);
     try {
       const checksum = computeChecksum(JSON.stringify(saveData));
       const res = await fetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ world: saveData, checksum }),
+        signal: controller.signal,
       });
+      window.clearTimeout(timeoutId);
       if (!res.ok) {
         return { ok: false, message: `Erro HTTP ${res.status}` };
       }
       return { ok: true, message: 'Salvo no servidor com sucesso.' };
     } catch {
+      window.clearTimeout(timeoutId);
       return { ok: false, message: 'Servidor offline (salvo localmente com segurança).' };
     }
   }

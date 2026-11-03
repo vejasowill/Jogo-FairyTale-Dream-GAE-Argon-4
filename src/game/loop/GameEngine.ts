@@ -24,6 +24,7 @@ import { soundManager } from '../core/SoundManager';
 import {
   BiomeType,
   CHEST_STORAGE_SIZE,
+  ChunkData,
   ClothingColorId,
   CreatureEntity,
   CreatureKind,
@@ -96,6 +97,7 @@ export interface HudSnapshot {
   canPause: boolean;
   isGameOver: boolean;
   lastSaveStatus: string;
+  lastAutoSaveAt: number;
   buildDemolishMode: boolean;
   buildOrientation: 'auto' | 'horizontal' | 'vertical';
   showHitboxPreview: boolean;
@@ -126,6 +128,11 @@ export class GameEngine {
   private isMuffledOverlayOpen = false;
   public isGameOver = false;
   public lastSaveStatus = 'Salvo';
+  public lastAutoSaveAt = Date.now();
+  public readonly isGuestWorldSession: boolean;
+  private lastAutoSaveWorldSnapshot: WorldSaveData | null = null;
+  private lastAutoSavePlayerSnapshot: PlayerState | null = null;
+  private guestPlayers: Record<string, PlayerState> = {};
   public buildDemolishMode = false;
   public buildOrientation: 'auto' | 'horizontal' | 'vertical' = 'auto';
   public showHitboxPreview = false;
@@ -155,11 +162,28 @@ export class GameEngine {
   // Multiplayer anti-duplication state locks
   private claimedDropIds = new Set<string>();
   private pendingDropClaimTimers = new Map<string, number>();
+  private localDropCreatedAt = new Map<string, number>();
+  private lastLocalChestEditAt = new Map<string, number>();
   private claimedDeathBagIds = new Set<string>();
   private pendingDeathBagClaims = new Set<string>();
   private claimedWorldActionKeys = new Map<string, number>();
   private pendingContainerWithdraws = new Set<string>();
   private stallCustomerSpawnTimer = 3.5;
+  private boundHandlePageUnload = () => {
+    if (!this.multiplayer.isConnectionUnstable() && !this.isGameOver) {
+      void this.saveGame(true);
+    }
+  };
+  private boundHandleVisibilityChange = () => {
+    if (
+      typeof document !== 'undefined' &&
+      document.visibilityState === 'hidden' &&
+      !this.multiplayer.isConnectionUnstable() &&
+      !this.isGameOver
+    ) {
+      void this.saveGame(true);
+    }
+  };
   public static readonly WELL_VILLAGE_RADIUS = 380;
   private buildingOwnerCache = new Map<
     string,
@@ -200,9 +224,14 @@ export class GameEngine {
   ) {
     const saveData = migrateSaveData(rawSaveData);
     this.metadata = { ...saveData.metadata };
+    this.guestPlayers = saveData.guestPlayers
+      ? JSON.parse(JSON.stringify(saveData.guestPlayers))
+      : {};
     const isGuestSession = Boolean(
       existingMultiplayer && existingMultiplayer.role === 'GUEST'
     );
+    this.isGuestWorldSession = isGuestSession;
+    const localPersistentUid = getOrCreatePersistentPlayerUid();
 
     if (isGuestSession) {
       let guestPlayer: PlayerState | null = null;
@@ -213,19 +242,30 @@ export class GameEngine {
         );
         if (savedGuestRaw) {
           guestPlayer = JSON.parse(savedGuestRaw);
-          if (
-            guestPlayer &&
-            typeof guestPlayer.x === 'number' &&
-            Number.isFinite(guestPlayer.x) &&
-            typeof guestPlayer.y === 'number' &&
-            Number.isFinite(guestPlayer.y)
-          ) {
-            hasSavedPosition = true;
-          }
         }
       } catch {
         guestPlayer = null;
       }
+
+      const hostSavedGuest = this.guestPlayers[localPersistentUid];
+      if (
+        hostSavedGuest &&
+        (!guestPlayer ||
+          (hostSavedGuest.savedAt || 0) > (guestPlayer.savedAt || 0))
+      ) {
+        guestPlayer = JSON.parse(JSON.stringify(hostSavedGuest));
+      }
+
+      if (
+        guestPlayer &&
+        typeof guestPlayer.x === 'number' &&
+        Number.isFinite(guestPlayer.x) &&
+        typeof guestPlayer.y === 'number' &&
+        Number.isFinite(guestPlayer.y)
+      ) {
+        hasSavedPosition = true;
+      }
+
       if (!guestPlayer) {
         guestPlayer = createInitialPlayerState();
         guestPlayer.appearance.shirtColor = '#059669';
@@ -240,7 +280,7 @@ export class GameEngine {
     }
 
     if (!this.player.persistentPlayerId) {
-      this.player.persistentPlayerId = getOrCreatePersistentPlayerUid();
+      this.player.persistentPlayerId = localPersistentUid;
     }
 
     // Universal Account Appearance: always link player's appearance to the account appearance
@@ -348,6 +388,12 @@ export class GameEngine {
         this.player.y
       );
     }
+
+    this.lastAutoSaveAt = Date.now();
+    this.lastAutoSavePlayerSnapshot = JSON.parse(JSON.stringify(this.player));
+    if (!isGuestSession) {
+      this.lastAutoSaveWorldSnapshot = this.buildSaveData();
+    }
   }
 
   // 1. INITIALIZE
@@ -356,6 +402,16 @@ export class GameEngine {
     this.input.attach();
     this.lastTimestamp = performance.now();
 
+    if (typeof window !== 'undefined') {
+      window.addEventListener('beforeunload', this.boundHandlePageUnload);
+    }
+    if (typeof document !== 'undefined') {
+      document.addEventListener(
+        'visibilitychange',
+        this.boundHandleVisibilityChange
+      );
+    }
+
     if (this.multiplayer.role !== 'GUEST' && !this.multiplayer.isOnline) {
       this.openOnlineInviteSession();
     } else if (this.multiplayer.role === 'GUEST') {
@@ -363,6 +419,7 @@ export class GameEngine {
         this.multiplayer.remotePlayers.values()
       );
       this.multiplayer.sendPlayerState(this.player);
+      this.multiplayer.sendGuestProfileSave(this.player);
     }
 
     this.emitUiSnapshot();
@@ -370,6 +427,15 @@ export class GameEngine {
   }
 
   public destroy(): void {
+    if (typeof window !== 'undefined') {
+      window.removeEventListener('beforeunload', this.boundHandlePageUnload);
+    }
+    if (typeof document !== 'undefined') {
+      document.removeEventListener(
+        'visibilitychange',
+        this.boundHandleVisibilityChange
+      );
+    }
     if (this.rafId !== null) {
       cancelAnimationFrame(this.rafId);
       this.rafId = null;
@@ -428,8 +494,9 @@ export class GameEngine {
   }
 
   public syncPauseState(): void {
+    const isConnUnstable = this.multiplayer.isConnectionUnstable();
     const canPauseNow = !this.hasConnectedNetworkPlayers();
-    const shouldPause = this.uiPauseRequested && canPauseNow;
+    const shouldPause = isConnUnstable || (this.uiPauseRequested && canPauseNow);
     if (this.isPaused !== shouldPause) {
       this.isPaused = shouldPause;
       this.lastTimestamp = performance.now();
@@ -441,9 +508,14 @@ export class GameEngine {
         this.input.actionHeld = false;
         this.input.actionPressed = false;
       }
-      soundManager.setMusicPaused(this.isPauseMenuOpen || this.isGameOver);
+      soundManager.setMusicPaused(
+        this.isPauseMenuOpen || this.isGameOver || isConnUnstable
+      );
       soundManager.setMusicMuffled(
-        this.isMuffledOverlayOpen && !this.isPauseMenuOpen && !this.isGameOver
+        this.isMuffledOverlayOpen &&
+          !this.isPauseMenuOpen &&
+          !this.isGameOver &&
+          !isConnUnstable
       );
       this.emitUiSnapshot();
     }
@@ -455,35 +527,56 @@ export class GameEngine {
     const dt = Math.min(0.1, Math.max(0.001, rawDt));
 
     this.syncPauseState();
-    soundManager.setMusicPaused(this.isPauseMenuOpen || this.isGameOver);
+    const isConnUnstable = this.multiplayer.isConnectionUnstable();
+    soundManager.setMusicPaused(
+      this.isPauseMenuOpen || this.isGameOver || isConnUnstable
+    );
     soundManager.setMusicMuffled(
-      this.isMuffledOverlayOpen && !this.isPauseMenuOpen && !this.isGameOver
+      this.isMuffledOverlayOpen &&
+        !this.isPauseMenuOpen &&
+        !this.isGameOver &&
+        !isConnUnstable
     );
 
     if (!this.isPaused && !this.isGameOver) {
       this.update(dt);
     } else if (this.isPaused && !this.isGameOver) {
-      // Keep Campfire & Furnace thermal stations smelting/cooking AND Market Stall NPC visitors shopping in real time while the player watches the station/stall HUD!
-      this.globalTime += dt;
-      soundManager.setListenerPosition(this.player.x, this.player.y);
-      if (this.campfireRestCooldown > 0) {
-        this.campfireRestCooldown = Math.max(0, this.campfireRestCooldown - dt);
-      }
-      this.updateThermalStations(dt);
-      this.updatePausedMarketStallVisitors(dt);
-      for (let i = this.floatingTexts.length - 1; i >= 0; i--) {
-        this.floatingTexts[i].timer -= dt;
-        if (this.floatingTexts[i].timer <= 0) {
-          this.floatingTexts.splice(i, 1);
+      if (!isConnUnstable) {
+        // Keep Campfire & Furnace thermal stations smelting/cooking AND Market Stall NPC visitors shopping in real time while the player watches the station/stall HUD!
+        this.globalTime += dt;
+        soundManager.setListenerPosition(this.player.x, this.player.y);
+        if (this.campfireRestCooldown > 0) {
+          this.campfireRestCooldown = Math.max(
+            0,
+            this.campfireRestCooldown - dt
+          );
+        }
+        this.updateThermalStations(dt);
+        this.updatePausedMarketStallVisitors(dt);
+        for (let i = this.floatingTexts.length - 1; i >= 0; i--) {
+          this.floatingTexts[i].timer -= dt;
+          if (this.floatingTexts[i].timer <= 0) {
+            this.floatingTexts.splice(i, 1);
+          }
+        }
+        // Keep periodic auto-save running even while paused in Chest / Inventory / Crafting UI
+        this.autoSaveTimer += dt;
+        const intervalSec = Math.max(
+          10,
+          Math.min(20, this.settings.autoSaveIntervalSec || 15)
+        );
+        if (this.autoSaveTimer >= intervalSec) {
+          this.autoSaveTimer = 0;
+          void this.saveGame(true);
+        }
+        if (this.multiplayer.isOnline) {
+          this.updateMultiplayerSync(dt);
         }
       }
       this.uiUpdateTimer += dt;
-      if (this.uiUpdateTimer >= 0.12) {
+      if (this.uiUpdateTimer >= 0.15) {
         this.uiUpdateTimer = 0;
         this.emitUiSnapshot();
-      }
-      if (this.multiplayer.isOnline) {
-        this.updateMultiplayerSync(dt);
       }
     }
     this.render();
@@ -595,11 +688,17 @@ export class GameEngine {
       this.performUseOrPlaceHeldItemAction();
     }
 
-    // Auto-save timer
-    this.autoSaveTimer += dt;
-    if (this.autoSaveTimer >= Math.max(10, this.settings.autoSaveIntervalSec)) {
-      this.autoSaveTimer = 0;
-      this.saveGame(true);
+    // Periodic Auto-Save (every 10-20s when connection is healthy)
+    if (!this.multiplayer.isConnectionUnstable()) {
+      this.autoSaveTimer += dt;
+      const intervalSec = Math.max(
+        10,
+        Math.min(20, this.settings.autoSaveIntervalSec || 15)
+      );
+      if (this.autoSaveTimer >= intervalSec) {
+        this.autoSaveTimer = 0;
+        void this.saveGame(true);
+      }
     }
 
     // Periodic UI HUD sync
@@ -1366,10 +1465,7 @@ export class GameEngine {
     if (this.isRestPointStructure(st)) {
       return true;
     }
-    if (
-      st.type === PlaceableType.WOOD_DOOR ||
-      st.type === PlaceableType.IRON_GATE
-    ) {
+    if (WorldManager.isDoorOrGateStructure(st.type)) {
       const mask = this.world.getStructureConnectionMask(
         st.tileX,
         st.tileY,
@@ -1586,13 +1682,8 @@ export class GameEngine {
               st.ownerName = undefined;
             }
           } else if (
-            st.type === PlaceableType.WOOD_WALL ||
-            st.type === PlaceableType.STONE_WALL ||
-            st.type === PlaceableType.BRICK_WALL ||
-            st.type === PlaceableType.WOOD_WINDOW ||
-            st.type === PlaceableType.STONE_WINDOW ||
-            st.type === PlaceableType.WOOD_DOOR ||
-            st.type === PlaceableType.IRON_GATE
+            WorldManager.isWallMountableStructure(st.type) ||
+            WorldManager.isDoorOrGateStructure(st.type)
           ) {
             st.ownerType = undefined;
             st.ownerId = undefined;
@@ -1674,13 +1765,8 @@ export class GameEngine {
             st.isPrimaryStructureOwner = st.id === restPointSt.id;
             st.structureOwnerClearedAfterLoss = false;
           } else if (
-            st.type === PlaceableType.WOOD_WALL ||
-            st.type === PlaceableType.STONE_WALL ||
-            st.type === PlaceableType.BRICK_WALL ||
-            st.type === PlaceableType.WOOD_WINDOW ||
-            st.type === PlaceableType.STONE_WINDOW ||
-            st.type === PlaceableType.WOOD_DOOR ||
-            st.type === PlaceableType.IRON_GATE
+            WorldManager.isWallMountableStructure(st.type) ||
+            WorldManager.isDoorOrGateStructure(st.type)
           ) {
             st.ownerType = restPointSt.ownerType;
             st.ownerId = restPointSt.ownerId;
@@ -1752,10 +1838,7 @@ export class GameEngine {
   ): boolean {
     // Player cannot claim ownership of a house through its door;
     // ownership is only claimed by defining/claiming a rest point inside the structure.
-    if (
-      st.type === PlaceableType.WOOD_DOOR ||
-      st.type === PlaceableType.IRON_GATE
-    ) {
+    if (WorldManager.isDoorOrGateStructure(st.type)) {
       return false;
     }
 
@@ -7071,10 +7154,7 @@ export class GameEngine {
 
     // 1. Interacting with a Placed Crafting Station or Interactive Door/Gate
     if (target.kind === 'station' && target.stationType) {
-      if (
-        target.stationType === PlaceableType.WOOD_DOOR ||
-        target.stationType === PlaceableType.IRON_GATE
-      ) {
+      if (WorldManager.isDoorOrGateStructure(target.stationType)) {
         const { tx, ty } = this.world.worldToTile(target.worldX, target.worldY);
         const { cx, cy } = this.world.tileToChunk(tx, ty);
         const chunk = this.world.chunks[WorldManager.chunkKey(cx, cy)];
@@ -7082,8 +7162,7 @@ export class GameEngine {
           (s) =>
             s.tileX === tx &&
             s.tileY === ty &&
-            (s.type === PlaceableType.WOOD_DOOR ||
-              s.type === PlaceableType.IRON_GATE)
+            WorldManager.isDoorOrGateStructure(s.type)
         );
         if (doorSt) {
           // If this door belongs to a house with villagers currently sleeping/sheltered inside, knock on the door to call them out!
@@ -7377,7 +7456,10 @@ export class GameEngine {
             }
           }
 
-          if (chestStruct.lootItems && chestStruct.lootItems.length > 0) {
+          const hadLootItems = Boolean(
+            chestStruct.lootItems && chestStruct.lootItems.length > 0
+          );
+          if (hadLootItems) {
             chestStruct.lootItems = [];
             soundManager.playLevelUp();
             this.gainXp(40);
@@ -7396,7 +7478,20 @@ export class GameEngine {
           }
 
           chestStruct.isOpen = true;
-          this.syncChunkAtTile(tx, ty);
+          if (hadLootItems) {
+            this.commitChestStorageMutation(chestStruct);
+          } else if (
+            this.multiplayer.isOnline &&
+            this.multiplayer.role === 'GUEST'
+          ) {
+            // Request latest authoritative chest storage from Host upon opening without overwriting Host chunk
+            this.multiplayer.sendWorldInteractRequest({
+              action: 'request_chest_storage',
+              chestId: chestStruct.id,
+              tileX: tx,
+              tileY: ty,
+            });
+          }
           if (this.onChestInteract) {
             this.onChestInteract(chestStruct);
           }
@@ -8588,20 +8683,32 @@ export class GameEngine {
             continue;
           }
 
-          // 1B. Tree Saplings (OAK_SAPLING / PALM_SAPLING) within reach
+          // 1B. Tree Saplings (OAK_SAPLING / DARK_OAK_SAPLING / PINE_SAPLING / PALM_SAPLING) within reach
           if (WorldManager.isSaplingStructure(st.type)) {
             if (distPlayer <= TILE_SIZE * 2.2) {
-              const isPalm = st.type === PlaceableType.PALM_SAPLING;
               const stageIdx = st.growthStage || 0;
               const pct = Math.round((st.growthProgress || 0) * 100);
-              const stageLabel =
-                stageIdx === 0
-                  ? isPalm
-                    ? 'Muda de Palmeira'
-                    : 'Muda de Árvore'
-                  : isPalm
-                  ? 'Palmeira Pequena'
-                  : 'Árvore Pequena';
+              let stageLabel = 'Muda de Carvalho';
+              let saplingIconId = 'oak_sapling';
+              if (st.type === PlaceableType.PALM_SAPLING) {
+                stageLabel =
+                  stageIdx === 0 ? 'Muda de Palmeira' : 'Palmeira Pequena';
+                saplingIconId = 'palm_sapling';
+              } else if (st.type === PlaceableType.DARK_OAK_SAPLING) {
+                stageLabel =
+                  stageIdx === 0
+                    ? 'Muda de Carvalho Escuro'
+                    : 'Carvalho Escuro Jovem';
+                saplingIconId = 'dark_oak_sapling';
+              } else if (st.type === PlaceableType.PINE_SAPLING) {
+                stageLabel =
+                  stageIdx === 0 ? 'Muda de Pinheiro' : 'Pinheiro Jovem';
+                saplingIconId = 'pine_sapling';
+              } else {
+                stageLabel =
+                  stageIdx === 0 ? 'Muda de Carvalho' : 'Carvalho Pequeno';
+                saplingIconId = 'oak_sapling';
+              }
               const hint = st.fertilized
                 ? `Adubada ✦ (${pct}%)`
                 : `Crescendo (${pct}%) · Aceita Adubo 🌱`;
@@ -8613,7 +8720,7 @@ export class GameEngine {
                   actionHint: hint,
                   worldX: sx,
                   worldY: sy,
-                  iconItemId: isPalm ? 'palm_sapling' : 'oak_sapling',
+                  iconItemId: saplingIconId,
                   structureId: st.id,
                   cropStage: stageIdx,
                 },
@@ -8662,8 +8769,7 @@ export class GameEngine {
             st.type !== PlaceableType.CHEST &&
             st.type !== PlaceableType.VILLAGE_WELL &&
             st.type !== PlaceableType.MARKET_STALL &&
-            st.type !== PlaceableType.WOOD_DOOR &&
-            st.type !== PlaceableType.IRON_GATE
+            !WorldManager.isDoorOrGateStructure(st.type)
           ) {
             continue;
           }
@@ -8748,10 +8854,7 @@ export class GameEngine {
               } else {
                 resolvedOwnerText = 'Sem Dono';
               }
-            } else if (
-              st.type === PlaceableType.WOOD_DOOR ||
-              st.type === PlaceableType.IRON_GATE
-            ) {
+            } else if (WorldManager.isDoorOrGateStructure(st.type)) {
               if (effectiveOwnerType === 'PLAYER') {
                 resolvedOwnerText = effectiveOwnerName || 'Você';
               } else if (effectiveOwnerType === 'VILLAGER') {
@@ -8776,11 +8879,9 @@ export class GameEngine {
                 : insideResidents.length > 0 &&
                   (st.type === PlaceableType.BED ||
                     st.type === PlaceableType.EXPLORER_TENT ||
-                    st.type === PlaceableType.WOOD_DOOR ||
-                    st.type === PlaceableType.IRON_GATE)
+                    WorldManager.isDoorOrGateStructure(st.type))
                 ? `🚪 Bater na Porta (${insideNames}) 🏠`
-                : st.type === PlaceableType.WOOD_DOOR ||
-                  st.type === PlaceableType.IRON_GATE
+                : WorldManager.isDoorOrGateStructure(st.type)
                 ? `${st.isOpen ? 'Fechar Passagem 🔒' : 'Abrir Passagem 🔓'}`
                 : st.type === PlaceableType.CHEST
                 ? st.villageId
@@ -11418,19 +11519,55 @@ export class GameEngine {
     for (let i = 0; i < slots.length; i++) {
       const sl = slots[i];
       if (!sl || sl.count <= 0) continue;
-      if (tryAddToPlayerFirst && this.addItemToInventory(sl.itemId, sl.count)) {
+      const def = ITEMS[sl.itemId];
+      if (def?.isFlower && sl.colorCounts) {
+        for (const [colorKey, colorAmt] of Object.entries(sl.colorCounts)) {
+          if (!colorAmt || colorAmt <= 0) continue;
+          if (tryAddToPlayerFirst) {
+            this.addItemOrDropOnGround(
+              sl.itemId,
+              colorAmt,
+              wx + (Math.random() - 0.5) * 20,
+              wy + (Math.random() - 0.5) * 20,
+              colorKey as ClothingColorId
+            );
+          } else {
+            this.spawnDrop(
+              sl.itemId,
+              colorAmt,
+              wx + (Math.random() - 0.5) * 20,
+              wy + (Math.random() - 0.5) * 20,
+              0.25,
+              colorKey as ClothingColorId
+            );
+          }
+        }
         slots[i] = null;
         continue;
       }
-      this.spawnDrop(
-        sl.itemId,
-        sl.count,
-        wx + (Math.random() - 0.5) * 20,
-        wy + (Math.random() - 0.5) * 20
-      );
+      if (tryAddToPlayerFirst) {
+        this.addItemOrDropOnGround(
+          sl.itemId,
+          sl.count,
+          wx + (Math.random() - 0.5) * 20,
+          wy + (Math.random() - 0.5) * 20,
+          sl.selectedColor
+        );
+      } else {
+        this.spawnDrop(
+          sl.itemId,
+          sl.count,
+          wx + (Math.random() - 0.5) * 20,
+          wy + (Math.random() - 0.5) * 20,
+          0.25,
+          sl.selectedColor
+        );
+      }
       slots[i] = null;
     }
     chest.lootItems = [];
+    chest.storageRevision = (chest.storageRevision || 0) + 1;
+    chest.storageUpdatedAt = Date.now();
   }
 
   public getChestById(chestId: string): PlacedStructure | null {
@@ -11486,8 +11623,92 @@ export class GameEngine {
     const chest = this.getChestById(chestId);
     if (chest) {
       chest.isOpen = false;
-      this.syncChunkAtTile(chest.tileX, chest.tileY);
+      // Do NOT broadcast full chunk on merely closing the chest modal
       this.emitUiSnapshot();
+    }
+  }
+
+  /**
+   * Atomically stamps revision on a chest after a local storage change, broadcasts a dedicated
+   * `chest_storage_sync` packet to Host/Guests so rapid clicks never suffer self-echo races,
+   * syncs the chunk, and triggers a background save.
+   */
+  private commitChestStorageMutation(chest: PlacedStructure): void {
+    const now = Date.now();
+    chest.storageRevision = (chest.storageRevision || 0) + 1;
+    chest.storageUpdatedAt = now;
+    this.lastLocalChestEditAt.set(chest.id, now);
+    this.markLocalChunkModified(chest.tileX, chest.tileY);
+
+    if (this.multiplayer.isOnline && !this.isApplyingNetworkEvent) {
+      const clonedSlots = JSON.parse(
+        JSON.stringify(this.ensureChestStorageInitialized(chest))
+      );
+      const syncPayload = {
+        action: 'chest_storage_sync',
+        chestId: chest.id,
+        tileX: chest.tileX,
+        tileY: chest.tileY,
+        storageRevision: chest.storageRevision,
+        storageUpdatedAt: chest.storageUpdatedAt,
+        customName: chest.customName,
+        storageSlots: clonedSlots,
+      };
+      if (this.multiplayer.role === 'GUEST') {
+        this.multiplayer.sendWorldInteractRequest(syncPayload);
+      } else if (this.multiplayer.role === 'HOST') {
+        this.multiplayer.sendWorldInteractResolved(syncPayload);
+      }
+      this.syncChunkAtTile(chest.tileX, chest.tileY);
+    }
+
+    void this.saveGame(true);
+  }
+
+  /**
+   * Protects local chest storage from being overwritten by an older or self-echoed chunk packet.
+   */
+  private preserveNewerChestStorageInChunk(
+    prevChunk: ChunkData | undefined,
+    incomingChunk: ChunkData
+  ): void {
+    if (
+      !prevChunk ||
+      !Array.isArray(prevChunk.structures) ||
+      !Array.isArray(incomingChunk.structures)
+    ) {
+      return;
+    }
+    const now = Date.now();
+    for (const incSt of incomingChunk.structures) {
+      if (!incSt || incSt.type !== PlaceableType.CHEST) continue;
+      const prevSt = prevChunk.structures.find(
+        (s) =>
+          s.type === PlaceableType.CHEST &&
+          (s.id === incSt.id ||
+            (s.tileX === incSt.tileX && s.tileY === incSt.tileY))
+      );
+      if (!prevSt) continue;
+
+      const prevRev = prevSt.storageRevision || 0;
+      const incRev = incSt.storageRevision || 0;
+      const lastLocalEdit = this.lastLocalChestEditAt.get(prevSt.id) || 0;
+      const editedRecently = now - lastLocalEdit < 5000;
+
+      if (
+        prevRev > incRev ||
+        (editedRecently && incRev <= prevRev) ||
+        (prevRev === incRev &&
+          (prevSt.storageUpdatedAt || 0) > (incSt.storageUpdatedAt || 0))
+      ) {
+        incSt.storageSlots = prevSt.storageSlots
+          ? JSON.parse(JSON.stringify(prevSt.storageSlots))
+          : prevSt.storageSlots;
+        incSt.storageRevision = prevSt.storageRevision;
+        incSt.storageUpdatedAt = prevSt.storageUpdatedAt;
+        incSt.customName = prevSt.customName;
+        incSt.lootItems = prevSt.lootItems;
+      }
     }
   }
 
@@ -11497,7 +11718,7 @@ export class GameEngine {
     const clean = newName.trim().slice(0, 28);
     chest.customName = clean || undefined;
     soundManager.playPickup();
-    this.syncChunkAtTile(chest.tileX, chest.tileY);
+    this.commitChestStorageMutation(chest);
     this.emitUiSnapshot();
   }
 
@@ -11607,7 +11828,10 @@ export class GameEngine {
           slots[slotIdx] = merged.updatedTarget;
           if (merged.updatedSource) workingSource = merged.updatedSource;
         } else {
-          slots[slotIdx] = { itemId, count: take };
+          slots[slotIdx] = {
+            itemId,
+            count: take,
+          };
         }
       } else if (def.isFlower) {
         const merged = this.mergeFlowerColorCountsIntoSlot(
@@ -11696,10 +11920,8 @@ export class GameEngine {
     }
 
     this.consumeInventoryAt(playerSlotIdx, moved);
-    this.markLocalChunkModified(chest.tileX, chest.tileY);
     soundManager.playPickup();
-    this.syncChunkAtTile(chest.tileX, chest.tileY);
-    void this.saveGame(true);
+    this.commitChestStorageMutation(chest);
     this.emitUiSnapshot();
     return true;
   }
@@ -11708,7 +11930,8 @@ export class GameEngine {
     chestId: string,
     chestSlotIdx: number,
     count?: number,
-    targetPlayerSlotIdx?: number
+    targetPlayerSlotIdx?: number,
+    skipCommit = false
   ): boolean {
     const chest = this.getChestById(chestId);
     if (!chest) return false;
@@ -11730,11 +11953,11 @@ export class GameEngine {
       if (cSlot.count <= 0) {
         slots[chestSlotIdx] = null;
       }
-      this.markLocalChunkModified(chest.tileX, chest.tileY);
-      soundManager.playPickup();
-      this.syncChunkAtTile(chest.tileX, chest.tileY);
-      void this.saveGame(true);
-      this.emitUiSnapshot();
+      if (!skipCommit) {
+        soundManager.playPickup();
+        this.commitChestStorageMutation(chest);
+        this.emitUiSnapshot();
+      }
       return true;
     }
 
@@ -11825,34 +12048,38 @@ export class GameEngine {
       }
     }
 
-    // Se o inventário estiver cheio ao colocar para coletar, o restante cai no chão
-    if (remaining > 0) {
-      this.spawnDrop(
-        cSlot.itemId,
-        remaining,
-        this.player.x,
-        this.player.y + 12
-      );
+    const actualMoved = amountToMove - remaining;
+    if (actualMoved <= 0) {
+      if (!skipCommit) {
+        this.addFloatingText(
+          'Mochila cheia!',
+          this.player.x,
+          this.player.y - 20,
+          '#f43f5e'
+        );
+      }
+      return false;
     }
 
+    // Deduct ONLY what actually fit in the player's inventory; keep any remainder safely inside the chest!
+    const leftInChest = cSlot.count - actualMoved;
     if (def.isFlower) {
-      const leftInChest = cSlot.count - amountToMove;
       slots[chestSlotIdx] =
         leftInChest > 0 && workingChestSource
           ? { ...workingChestSource, count: leftInChest }
           : null;
     } else {
-      cSlot.count -= amountToMove;
+      cSlot.count = leftInChest;
       if (cSlot.count <= 0) {
         slots[chestSlotIdx] = null;
       }
     }
 
-    this.markLocalChunkModified(chest.tileX, chest.tileY);
-    soundManager.playPickup();
-    this.syncChunkAtTile(chest.tileX, chest.tileY);
-    void this.saveGame(true);
-    this.emitUiSnapshot();
+    if (!skipCommit) {
+      soundManager.playPickup();
+      this.commitChestStorageMutation(chest);
+      this.emitUiSnapshot();
+    }
     return true;
   }
 
@@ -11894,10 +12121,8 @@ export class GameEngine {
           slots[indexA] =
             newSrcCount > 0 ? { ...slotA, count: newSrcCount } : null;
         }
-        this.markLocalChunkModified(chest.tileX, chest.tileY);
         soundManager.playPickup();
-        this.syncChunkAtTile(chest.tileX, chest.tileY);
-        void this.saveGame(true);
+        this.commitChestStorageMutation(chest);
         this.emitUiSnapshot();
         return;
       }
@@ -11905,10 +12130,8 @@ export class GameEngine {
 
     slots[indexA] = slotB ? { ...slotB } : null;
     slots[indexB] = slotA ? { ...slotA } : null;
-    this.markLocalChunkModified(chest.tileX, chest.tileY);
     soundManager.playPickup();
-    this.syncChunkAtTile(chest.tileX, chest.tileY);
-    void this.saveGame(true);
+    this.commitChestStorageMutation(chest);
     this.emitUiSnapshot();
   }
 
@@ -11986,10 +12209,8 @@ export class GameEngine {
     ) {
       this.addItemToInventory('gold_coin', srcSlot.count);
       setSlot(source, null);
-      this.markLocalChunkModified(chest.tileX, chest.tileY);
       soundManager.playPickup();
-      this.syncChunkAtTile(chest.tileX, chest.tileY);
-      void this.saveGame(true);
+      this.commitChestStorageMutation(chest);
       this.emitUiSnapshot();
       return true;
     }
@@ -12018,12 +12239,12 @@ export class GameEngine {
             newSrcCount > 0 ? { ...srcSlot, count: newSrcCount } : null
           );
         }
-        this.markLocalChunkModified(chest.tileX, chest.tileY);
         soundManager.playPickup();
         if (source.container === 'chest' || dest.container === 'chest') {
-          this.syncChunkAtTile(chest.tileX, chest.tileY);
+          this.commitChestStorageMutation(chest);
+        } else {
+          void this.saveGame(true);
         }
-        void this.saveGame(true);
         this.emitUiSnapshot();
         return true;
       }
@@ -12032,12 +12253,12 @@ export class GameEngine {
     setSlot(source, dstSlot);
     setSlot(dest, srcSlot);
 
-    this.markLocalChunkModified(chest.tileX, chest.tileY);
     soundManager.playPickup();
     if (source.container === 'chest' || dest.container === 'chest') {
-      this.syncChunkAtTile(chest.tileX, chest.tileY);
+      this.commitChestStorageMutation(chest);
+    } else {
+      void this.saveGame(true);
     }
-    void this.saveGame(true);
     this.emitUiSnapshot();
     return true;
   }
@@ -12080,7 +12301,6 @@ export class GameEngine {
     }
 
     if (totalMoved > 0) {
-      this.markLocalChunkModified(chest.tileX, chest.tileY);
       soundManager.playCraft();
       this.addFloatingText(
         `Empilhado no Baú (${totalMoved} itens)`,
@@ -12088,8 +12308,7 @@ export class GameEngine {
         this.player.y - 22,
         '#4ade80'
       );
-      this.syncChunkAtTile(chest.tileX, chest.tileY);
-      void this.saveGame(true);
+      this.commitChestStorageMutation(chest);
       this.emitUiSnapshot();
     }
     return totalMoved;
@@ -12147,7 +12366,6 @@ export class GameEngine {
     }
 
     if (totalMoved > 0) {
-      this.markLocalChunkModified(chest.tileX, chest.tileY);
       soundManager.playCraft();
       this.addFloatingText(
         `Guardado no Baú (${totalMoved} itens)`,
@@ -12155,8 +12373,7 @@ export class GameEngine {
         this.player.y - 22,
         '#38bdf8'
       );
-      this.syncChunkAtTile(chest.tileX, chest.tileY);
-      void this.saveGame(true);
+      this.commitChestStorageMutation(chest);
       this.emitUiSnapshot();
     }
     return totalMoved;
@@ -12175,13 +12392,12 @@ export class GameEngine {
       const cSlot = slots[i];
       if (!cSlot || cSlot.count <= 0) continue;
       const before = cSlot.count;
-      this.transferChestToPlayer(chestId, i, before);
+      this.transferChestToPlayer(chestId, i, before, undefined, true);
       const after = slots[i]?.count ?? 0;
       totalTaken += before - after;
     }
 
     if (totalTaken > 0) {
-      this.markLocalChunkModified(chest.tileX, chest.tileY);
       soundManager.playCraft();
       this.addFloatingText(
         `Retirado do Baú (${totalTaken} itens)`,
@@ -12189,27 +12405,26 @@ export class GameEngine {
         this.player.y - 22,
         '#fde047'
       );
-      this.syncChunkAtTile(chest.tileX, chest.tileY);
-      void this.saveGame(true);
+      this.commitChestStorageMutation(chest);
       this.emitUiSnapshot();
+    } else {
+      this.addFloatingText(
+        'Mochila cheia!',
+        this.player.x,
+        this.player.y - 20,
+        '#f43f5e'
+      );
     }
     return totalTaken;
   }
 
   /**
-   * "Organizar Baú": Merges partial stacks and sorts items by Category, Tier, and Name.
+   * "Organizar Baú": Merges partial stacks (preserving flower colors and tool charges) and sorts items by Category and Name.
    */
   public sortChestStorage(chestId: string): void {
     const chest = this.getChestById(chestId);
     if (!chest) return;
     const slots = this.ensureChestStorageInitialized(chest);
-
-    const totals = new Map<string, number>();
-    for (const sl of slots) {
-      if (sl && sl.count > 0) {
-        totals.set(sl.itemId, (totals.get(sl.itemId) || 0) + sl.count);
-      }
-    }
 
     const catOrder: Record<ItemCategory, number> = {
       [ItemCategory.WEAPON]: 1,
@@ -12220,32 +12435,35 @@ export class GameEngine {
       [ItemCategory.RESOURCE]: 6,
     };
 
-    const sortedIds = Array.from(totals.keys()).sort((a, b) => {
-      const da = ITEMS[a];
-      const db = ITEMS[b];
-      if (!da || !db) return a.localeCompare(b);
+    const nonEmpty = slots.filter(
+      (sl): sl is InventorySlot => sl !== null && sl.count > 0
+    );
+    nonEmpty.sort((a, b) => {
+      const da = ITEMS[a.itemId];
+      const db = ITEMS[b.itemId];
+      if (!da || !db) return a.itemId.localeCompare(b.itemId);
       const ca = catOrder[da.category] ?? 99;
       const cb = catOrder[db.category] ?? 99;
       if (ca !== cb) return ca - cb;
       return da.name.localeCompare(db.name, 'pt-BR');
     });
 
-    const newSlots: (InventorySlot | null)[] = new Array(CHEST_STORAGE_SIZE).fill(null);
-    let writeIdx = 0;
-    for (const itemId of sortedIds) {
-      const def = ITEMS[itemId];
-      const maxStack = def?.maxStack || 99;
-      let rem = totals.get(itemId) || 0;
-      while (rem > 0 && writeIdx < CHEST_STORAGE_SIZE) {
-        const take = Math.min(maxStack, rem);
-        newSlots[writeIdx++] = { itemId, count: take };
-        rem -= take;
-      }
+    const newSlots: (InventorySlot | null)[] = new Array(
+      CHEST_STORAGE_SIZE
+    ).fill(null);
+    for (const sl of nonEmpty) {
+      this.addItemToChestStorage(
+        newSlots,
+        sl.itemId,
+        sl.count,
+        undefined,
+        sl
+      );
     }
 
     chest.storageSlots = newSlots;
     soundManager.playPickup();
-    this.syncChunkAtTile(chest.tileX, chest.tileY);
+    this.commitChestStorageMutation(chest);
     this.emitUiSnapshot();
   }
 
@@ -14795,6 +15013,7 @@ export class GameEngine {
       expiresTimer: 120,
     };
     this.droppedItems.push(drop);
+    this.localDropCreatedAt.set(drop.id, Date.now());
     if (!this.isApplyingNetworkEvent) {
       this.multiplayer.sendSpawnDrop(drop);
     }
@@ -17172,6 +17391,75 @@ export class GameEngine {
         }
         break;
       }
+
+      case 'request_chest_storage': {
+        const chestId = String(request.chestId || '');
+        const chest = this.getChestById(chestId);
+        if (chest) {
+          const slots = this.ensureChestStorageInitialized(chest);
+          this.multiplayer.sendWorldInteractResolved({
+            action: 'chest_storage_sync',
+            chestId: chest.id,
+            tileX: chest.tileX,
+            tileY: chest.tileY,
+            storageRevision: chest.storageRevision || 0,
+            storageUpdatedAt: chest.storageUpdatedAt || 0,
+            customName: chest.customName,
+            storageSlots: JSON.parse(JSON.stringify(slots)),
+            targetPeerId: peerId,
+          });
+        }
+        break;
+      }
+
+      case 'chest_storage_sync': {
+        const chestId = String(request.chestId || '');
+        let chest = this.getChestById(chestId);
+        if (
+          !chest &&
+          typeof request.tileX === 'number' &&
+          typeof request.tileY === 'number'
+        ) {
+          const { cx, cy } = this.world.tileToChunk(
+            request.tileX,
+            request.tileY
+          );
+          const ch = this.world.chunks[WorldManager.chunkKey(cx, cy)];
+          chest =
+            ch?.structures.find(
+              (s) =>
+                s.type === PlaceableType.CHEST &&
+                s.tileX === request.tileX &&
+                s.tileY === request.tileY
+            ) || null;
+        }
+        if (chest && Array.isArray(request.storageSlots)) {
+          const nextRev = Math.max(
+            (chest.storageRevision || 0) + 1,
+            Number(request.storageRevision || 0)
+          );
+          chest.storageSlots = JSON.parse(JSON.stringify(request.storageSlots));
+          chest.storageRevision = nextRev;
+          chest.storageUpdatedAt = Date.now();
+          if (request.customName !== undefined) {
+            chest.customName = request.customName;
+          }
+          this.markLocalChunkModified(chest.tileX, chest.tileY);
+          this.multiplayer.sendWorldInteractResolved({
+            action: 'chest_storage_sync',
+            chestId: chest.id,
+            tileX: chest.tileX,
+            tileY: chest.tileY,
+            storageRevision: chest.storageRevision,
+            storageUpdatedAt: chest.storageUpdatedAt,
+            customName: chest.customName,
+            storageSlots: chest.storageSlots,
+          });
+          void this.saveGame(true);
+          this.emitUiSnapshot();
+        }
+        break;
+      }
     }
   }
 
@@ -17311,27 +17599,67 @@ export class GameEngine {
           if (Array.isArray(result.items)) {
             for (const entry of result.items) {
               if (!entry || !entry.itemId || entry.count <= 0) continue;
-              if (!this.addItemToInventory(entry.itemId, entry.count)) {
-                this.spawnDrop(
-                  entry.itemId,
-                  entry.count,
-                  this.player.x,
-                  this.player.y
-                );
-              }
-            }
-            soundManager.playPickup();
-            this.emitUiSnapshot();
-          } else if (result.itemId && result.count > 0) {
-            if (!this.addItemToInventory(result.itemId, result.count)) {
-              this.spawnDrop(
-                result.itemId,
-                result.count,
+              this.addItemOrDropOnGround(
+                entry.itemId,
+                entry.count,
                 this.player.x,
                 this.player.y
               );
             }
             soundManager.playPickup();
+            this.emitUiSnapshot();
+          } else if (result.itemId && result.count > 0) {
+            this.addItemOrDropOnGround(
+              result.itemId,
+              result.count,
+              this.player.x,
+              this.player.y
+            );
+            soundManager.playPickup();
+            this.emitUiSnapshot();
+          }
+        }
+        break;
+      }
+
+      case 'chest_storage_sync': {
+        if (result.targetPeerId && result.targetPeerId !== myPeerId) {
+          break;
+        }
+        const chestId = String(result.chestId || '');
+        let chest = this.getChestById(chestId);
+        if (
+          !chest &&
+          typeof result.tileX === 'number' &&
+          typeof result.tileY === 'number'
+        ) {
+          const { cx, cy } = this.world.tileToChunk(result.tileX, result.tileY);
+          const ch = this.world.chunks[WorldManager.chunkKey(cx, cy)];
+          chest =
+            ch?.structures.find(
+              (s) =>
+                s.type === PlaceableType.CHEST &&
+                s.tileX === result.tileX &&
+                s.tileY === result.tileY
+            ) || null;
+        }
+        if (chest && Array.isArray(result.storageSlots)) {
+          const incomingRev = Number(result.storageRevision || 0);
+          const currentRev = chest.storageRevision || 0;
+          const lastLocalEdit = this.lastLocalChestEditAt.get(chest.id) || 0;
+          if (
+            incomingRev >= currentRev ||
+            Date.now() - lastLocalEdit > 2500
+          ) {
+            chest.storageSlots = JSON.parse(
+              JSON.stringify(result.storageSlots)
+            );
+            chest.storageRevision = Math.max(currentRev, incomingRev);
+            chest.storageUpdatedAt =
+              Number(result.storageUpdatedAt) || Date.now();
+            if (result.customName !== undefined) {
+              chest.customName = result.customName;
+            }
             this.emitUiSnapshot();
           }
         }
@@ -17389,6 +17717,16 @@ export class GameEngine {
           this.emitUiSnapshot();
         }
       },
+      onGuestProfileSyncReceived: (_peerId, persistentPlayerId, playerState) => {
+        if (persistentPlayerId && playerState) {
+          this.guestPlayers[persistentPlayerId] = JSON.parse(
+            JSON.stringify({
+              ...playerState,
+              savedAt: Date.now(),
+            })
+          );
+        }
+      },
       onRequestHostSnapshot: () => {
         return this.buildSaveData();
       },
@@ -17405,11 +17743,12 @@ export class GameEngine {
               const prevChunk = this.world.chunks[key];
               const prevExplored = prevChunk?.explored;
               const lastLocalEdit = this.lastLocalChunkEditAt.get(key) || 0;
-              // Do not overwrite a chunk that the local player just modified within the last 3 seconds
-              if (prevChunk && now - lastLocalEdit < 3000) {
+              // Do not overwrite a chunk that the local player just modified within the last 3.5 seconds
+              if (prevChunk && now - lastLocalEdit < 3500) {
                 continue;
               }
               const hydrated = this.world.hydrateChunk(ch);
+              this.preserveNewerChestStorageInChunk(prevChunk, hydrated);
               // Preserve local player's Fog-of-War (`explored`) if they have already explored tiles in this chunk
               if (
                 Array.isArray(prevExplored) &&
@@ -17427,7 +17766,20 @@ export class GameEngine {
           this.entities.creatures = snapshot.creatures;
         }
         if (Array.isArray(snapshot.droppedItems)) {
-          this.droppedItems = snapshot.droppedItems;
+          const now = Date.now();
+          const recentLocalDrops = this.droppedItems.filter((d) => {
+            const createdAt = this.localDropCreatedAt.get(d.id) || 0;
+            return now - createdAt < 4500 && !this.claimedDropIds.has(d.id);
+          });
+          const mergedDrops = snapshot.droppedItems.filter(
+            (d) => !this.claimedDropIds.has(d.id)
+          );
+          for (const ld of recentLocalDrops) {
+            if (!mergedDrops.some((d) => d.id === ld.id)) {
+              mergedDrops.push(ld);
+            }
+          }
+          this.droppedItems = mergedDrops;
         }
         if (Array.isArray(snapshot.deathBags)) {
           this.deathBags = snapshot.deathBags;
@@ -17443,6 +17795,8 @@ export class GameEngine {
         const prevChunk = this.world.chunks[chunkKey];
         const prevExplored = prevChunk?.explored;
         const hydrated = this.world.hydrateChunk(chunkData);
+        // Protect chests from stale/out-of-order chunk packets
+        this.preserveNewerChestStorageInChunk(prevChunk, hydrated);
         // Never overwrite the local player's Fog-of-War exploration when receiving a remote chunk update!
         if (
           Array.isArray(prevExplored) &&
@@ -17456,9 +17810,10 @@ export class GameEngine {
         if (!this.canEntityOccupy(this.player.x, this.player.y)) {
           this.pushPlayerOutOfHitbox(0.05, false);
         }
-        // If Host receives a chunk update from a Guest (e.g. Chest storage edit), relay to other Guests
+        // Note: MultiplayerManager already relays Guest `chunk_sync` to other Guests with `excludePeerId`.
+        // Do NOT call `this.multiplayer.sendChunkSync` here on Host, as that would echo stale State 1 back to the Guest!
         if (this.multiplayer.isOnline && this.multiplayer.role === 'HOST') {
-          this.multiplayer.sendChunkSync(chunkKey, hydrated);
+          void this.saveGame(true);
         }
         this.emitUiSnapshot();
       },
@@ -17471,6 +17826,7 @@ export class GameEngine {
       onPickupDropReceived: (dropId) => {
         this.claimedDropIds.add(dropId);
         this.pendingDropClaimTimers.delete(dropId);
+        this.localDropCreatedAt.delete(dropId);
         const idx = this.droppedItems.findIndex((d) => d.id === dropId);
         if (idx !== -1) {
           const drop = this.droppedItems[idx];
@@ -17479,7 +17835,18 @@ export class GameEngine {
         }
       },
       onDropsSyncReceived: (drops) => {
-        this.droppedItems = drops.filter((d) => !this.claimedDropIds.has(d.id));
+        const now = Date.now();
+        const recentLocalDrops = this.droppedItems.filter((d) => {
+          const createdAt = this.localDropCreatedAt.get(d.id) || 0;
+          return now - createdAt < 4500 && !this.claimedDropIds.has(d.id);
+        });
+        const nextDrops = drops.filter((d) => !this.claimedDropIds.has(d.id));
+        for (const ld of recentLocalDrops) {
+          if (!nextDrops.some((d) => d.id === ld.id)) {
+            nextDrops.push(ld);
+          }
+        }
+        this.droppedItems = nextDrops;
       },
       onCreaturesSyncReceived: (incomingCreatures) => {
         if (!Array.isArray(incomingCreatures)) return;
@@ -17875,6 +18242,7 @@ export class GameEngine {
 
   public buildSaveData(): WorldSaveData {
     this.syncPlayerMountedCreatureData();
+    this.player.savedAt = Date.now();
     this.metadata.updatedAt = Date.now();
     this.metadata.playerLevel = this.player.level;
     this.metadata.exploredChunksCount = this.world.getExploredChunksCount();
@@ -17883,6 +18251,10 @@ export class GameEngine {
       version: CURRENT_SAVE_VERSION,
       metadata: { ...this.metadata },
       player: JSON.parse(JSON.stringify(this.player)),
+      guestPlayers:
+        Object.keys(this.guestPlayers).length > 0
+          ? JSON.parse(JSON.stringify(this.guestPlayers))
+          : undefined,
       chunks: this.world.chunks,
       creatures: this.entities.creatures,
       droppedItems: this.droppedItems,
@@ -17893,13 +18265,26 @@ export class GameEngine {
 
   public async saveGame(isAuto = false): Promise<void> {
     this.syncPlayerMountedCreatureData();
-    if (this.multiplayer.role === 'GUEST') {
+    const now = Date.now();
+    this.player.savedAt = now;
+    const isConnHealthy = !this.multiplayer.isConnectionUnstable();
+
+    if (this.isGuestWorldSession || this.multiplayer.role === 'GUEST') {
       try {
         localStorage.setItem(
           `wildborn_guest_player_${this.metadata.id}`,
           JSON.stringify(this.player)
         );
-        this.lastSaveStatus = 'Herói Salvo (Convidado)';
+        if (isConnHealthy && this.multiplayer.isOnline) {
+          this.multiplayer.sendGuestProfileSave(this.player);
+          this.lastAutoSaveAt = now;
+          this.lastAutoSavePlayerSnapshot = JSON.parse(
+            JSON.stringify(this.player)
+          );
+        }
+        this.lastSaveStatus = isAuto
+          ? 'Auto-salvo (Convidado)'
+          : 'Herói Salvo (Convidado)';
       } catch {
         this.lastSaveStatus = 'Online (Convidado)';
       }
@@ -17909,19 +18294,61 @@ export class GameEngine {
 
     const data = this.buildSaveData();
     const okLocal = SaveManager.saveWorldLocal(data);
-    if (this.settings.serverSyncEnabled) {
+    if (okLocal && isConnHealthy) {
+      this.lastAutoSaveAt = now;
+      this.lastAutoSavePlayerSnapshot = JSON.parse(JSON.stringify(this.player));
+      this.lastAutoSaveWorldSnapshot = data;
+    }
+
+    if (this.settings.serverSyncEnabled && isConnHealthy) {
       const serverRes = await SaveManager.syncWorldToServer(data, this.settings);
       this.lastSaveStatus = serverRes.ok
         ? isAuto
           ? 'Auto-salvo (v2)'
           : 'Salvo no Servidor'
         : okLocal
-        ? 'Salvo Localmente'
+        ? isAuto
+          ? 'Auto-salvo Localmente'
+          : 'Salvo Localmente'
         : 'Erro ao salvar';
     } else {
-      this.lastSaveStatus = okLocal ? 'Salvo Localmente' : 'Erro ao salvar';
+      this.lastSaveStatus = okLocal
+        ? isAuto
+          ? 'Auto-salvo Localmente'
+          : 'Salvo Localmente'
+        : 'Erro ao salvar';
     }
     this.emitUiSnapshot();
+  }
+
+  /**
+   * Used when the player chooses to exit during a prolonged internet connection failure:
+   * restores the last periodic auto-save snapshot so any unconfirmed actions since the connection
+   * dropped are cleanly discarded and the last confirmed auto-save is preserved on disk.
+   */
+  public async revertToLastAutoSaveAndPrepareExit(): Promise<void> {
+    if (this.isGuestWorldSession || this.multiplayer.role === 'GUEST') {
+      if (this.lastAutoSavePlayerSnapshot) {
+        this.player = JSON.parse(
+          JSON.stringify(this.lastAutoSavePlayerSnapshot)
+        );
+        try {
+          localStorage.setItem(
+            `wildborn_guest_player_${this.metadata.id}`,
+            JSON.stringify(this.player)
+          );
+        } catch {
+          // ignore
+        }
+      }
+      return;
+    }
+
+    if (this.lastAutoSaveWorldSnapshot) {
+      SaveManager.saveWorldLocal(this.lastAutoSaveWorldSnapshot);
+    } else {
+      await this.saveGame(false);
+    }
   }
 
   public updateSettings(newSettings: GameSettings): void {
@@ -17987,6 +18414,7 @@ export class GameEngine {
       canPause: !this.hasConnectedNetworkPlayers(),
       isGameOver: this.isGameOver,
       lastSaveStatus: this.lastSaveStatus,
+      lastAutoSaveAt: this.lastAutoSaveAt,
       buildDemolishMode: this.buildDemolishMode,
       buildOrientation: this.buildOrientation,
       showHitboxPreview: this.showHitboxPreview,

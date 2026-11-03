@@ -39,6 +39,11 @@ export interface MultiplayerCallbacks {
   onGuestMountEventReceived?: (peerId: string, event: any) => void;
   onWorldInteractRequestReceived?: (peerId: string, request: any) => void;
   onWorldInteractResolvedReceived?: (result: any) => void;
+  onGuestProfileSyncReceived?: (
+    peerId: string,
+    persistentPlayerId: string,
+    playerState: PlayerState
+  ) => void;
 }
 
 const INVITE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
@@ -71,6 +76,9 @@ export class MultiplayerManager {
   public worldRevision = 1;
   public connectedPeers: OnlinePeerSummary[] = [];
   public remotePlayers = new Map<string, RemotePlayerState>();
+  public connectionUnstable = false;
+  public connectionUnstableReason: string | null = null;
+  public connectionUnstableSince: number | null = null;
 
   private ws: WebSocket | null = null;
   private callbacks: MultiplayerCallbacks = {};
@@ -82,6 +90,19 @@ export class MultiplayerManager {
   private outgoingHttpEvents: any[] = [];
   private pendingFullSnapshotRequest = false;
   private consecutiveHttpFailures = 0;
+  private boundOnlineHandler: (() => void) | null = null;
+  private boundOfflineHandler: (() => void) | null = null;
+  private boundHandleOffline = () => {
+    if (!this.isOnline || this.intentionalClose) return;
+    this.setConnectionUnstable(
+      true,
+      'Sem conexão com a internet detectada no navegador. Tentando reconectar...'
+    );
+  };
+  private boundHandleOnline = () => {
+    if (!this.isOnline || this.intentionalClose) return;
+    this.retryReconnectNow();
+  };
 
   // Event deduplication & revision tracking
   private processedEventIds = new Set<string>();
@@ -142,6 +163,80 @@ export class MultiplayerManager {
     this.customServerUrl = url;
   }
 
+  public isConnectionUnstable(): boolean {
+    return Boolean(this.isOnline && this.connectionUnstable);
+  }
+
+  private setConnectionUnstable(unstable: boolean, reason?: string): void {
+    if (unstable) {
+      const wasUnstable = this.connectionUnstable;
+      this.connectionUnstable = true;
+      if (!this.connectionUnstableSince) {
+        this.connectionUnstableSince = Date.now();
+      }
+      if (reason) {
+        this.connectionUnstableReason = reason;
+      }
+      this.syncStatus = 'RESYNCING';
+      if (!wasUnstable || reason) {
+        this.emitSessionChange();
+      }
+    } else if (this.connectionUnstable) {
+      this.connectionUnstable = false;
+      this.connectionUnstableReason = null;
+      this.connectionUnstableSince = null;
+      this.p2pReconnectFailures = 0;
+      this.consecutiveHttpFailures = 0;
+      this.syncStatus = 'SYNCED';
+      this.emitSessionChange();
+    }
+  }
+
+  public retryReconnectNow(): void {
+    if (!this.isOnline || this.intentionalClose) return;
+    if (typeof navigator !== 'undefined' && navigator.onLine === false) {
+      this.setConnectionUnstable(
+        true,
+        'Dispositivo ainda sem sinal de internet. Verifique sua rede e tente novamente.'
+      );
+      return;
+    }
+    if (this.role === 'GUEST') {
+      if (this.transportMode === 'P2P_WEBRTC') {
+        this.isP2PReconnecting = false;
+        void this.attemptP2PGuestAutoReconnect();
+      } else {
+        this.pendingFullSnapshotRequest = true;
+        void this.performHttpSyncTick();
+        void this.tryAttachWebSocket(1500);
+      }
+    } else if (this.role === 'HOST') {
+      if (this.transportMode === 'P2P_WEBRTC' && this.inviteCode) {
+        if (!this.p2pPeer || this.p2pPeer.destroyed) {
+          void this.openP2PHostRoom(
+            this.inviteCode,
+            this.latestLocalPlayerState?.level || 1,
+            performance.now(),
+            true
+          );
+        } else if (this.p2pPeer.disconnected) {
+          try {
+            this.p2pPeer.reconnect();
+          } catch {
+            // ignore
+          }
+        }
+      } else {
+        void this.performHttpSyncTick();
+        void this.tryAttachWebSocket(1500);
+      }
+      this.forceResyncNow();
+      if (typeof navigator === 'undefined' || navigator.onLine !== false) {
+        this.setConnectionUnstable(false);
+      }
+    }
+  }
+
   public getSessionInfo(): OnlineSessionInfo {
     return {
       isOnline: this.isOnline,
@@ -159,6 +254,17 @@ export class MultiplayerManager {
       syncStatus: this.syncStatus,
       worldRevision: this.worldRevision,
       lastError: this.lastError,
+      connectionUnstable: this.connectionUnstable,
+      connectionUnstableReason: this.connectionUnstableReason,
+      connectionUnstableSince: this.connectionUnstableSince,
+      reconnectAttempts: Math.max(
+        this.p2pReconnectFailures,
+        this.consecutiveHttpFailures
+      ),
+      isReconnecting:
+        this.isP2PReconnecting ||
+        this.syncStatus === 'RESYNCING' ||
+        this.connectionUnstable,
     };
   }
 
@@ -1268,6 +1374,14 @@ export class MultiplayerManager {
         break;
       }
 
+      case 'guest_profile_save': {
+        this.handleServerMessage({
+          ...msg,
+          peerId: guestPeerId,
+        });
+        break;
+      }
+
       case 'death_bags_sync': {
         this.worldRevision += 1;
         const bagsPayload = {
@@ -1410,12 +1524,23 @@ export class MultiplayerManager {
   private startSyncWatchdogLoop(): void {
     this.stopSyncWatchdogLoop();
     this.lastPacketReceivedAt = Date.now();
+    this.connectionUnstable = false;
+    this.connectionUnstableReason = null;
+    this.connectionUnstableSince = null;
+    if (typeof window !== 'undefined') {
+      window.addEventListener('offline', this.boundHandleOffline);
+      window.addEventListener('online', this.boundHandleOnline);
+    }
     this.p2pKeepAliveInterval = window.setInterval(() => {
       this.runSyncWatchdogTick();
     }, 1000);
   }
 
   private stopSyncWatchdogLoop(): void {
+    if (typeof window !== 'undefined') {
+      window.removeEventListener('offline', this.boundHandleOffline);
+      window.removeEventListener('online', this.boundHandleOnline);
+    }
     if (this.p2pKeepAliveInterval !== null) {
       window.clearInterval(this.p2pKeepAliveInterval);
       this.p2pKeepAliveInterval = null;
@@ -1431,6 +1556,18 @@ export class MultiplayerManager {
       if (now - entry.createdAt > 20000) {
         this.incomingFramedPayloads.delete(fid);
       }
+    }
+
+    // Immediate browser offline detection
+    if (typeof navigator !== 'undefined' && navigator.onLine === false) {
+      this.setConnectionUnstable(
+        true,
+        'Sem conexão com a internet detectada no navegador. Tentando reconectar...'
+      );
+      if (this.role === 'GUEST' && !this.isP2PReconnecting) {
+        void this.attemptP2PGuestAutoReconnect();
+      }
+      return;
     }
 
     // 1. WebSocket heartbeat & auto-reattachment if on Dedicated Server
@@ -1489,13 +1626,18 @@ export class MultiplayerManager {
           true
         );
 
+        let anyGuestHealthy = false;
         // Check for zombie guest DataChannels that haven't responded in > 18s
         for (const [guestId, conn] of Array.from(
           this.p2pGuestConnections.entries()
         )) {
           const lastSeen = this.peerLastPacketAt.get(guestId) || now;
+          const silence = now - lastSeen;
+          if (silence <= 4200 && this.isConnOpenAndHealthy(conn, true)) {
+            anyGuestHealthy = true;
+          }
           if (
-            now - lastSeen > 18000 ||
+            silence > 18000 ||
             !this.isConnOpenAndHealthy(conn, true)
           ) {
             try {
@@ -1505,6 +1647,25 @@ export class MultiplayerManager {
             }
           }
         }
+
+        if (!anyGuestHealthy && this.p2pGuestConnections.size > 0) {
+          this.setConnectionUnstable(
+            true,
+            'Inconsistência na conexão com os jogadores conectados. Aguardando estabilização...'
+          );
+        } else if (this.connectionUnstable) {
+          this.setConnectionUnstable(false);
+        }
+      } else if (
+        this.transportMode !== 'P2P_WEBRTC' &&
+        this.consecutiveHttpFailures >= 3
+      ) {
+        this.setConnectionUnstable(
+          true,
+          'Falha de comunicação com o servidor da sessão online. Tentando reconectar...'
+        );
+      } else if (this.connectionUnstable) {
+        this.setConnectionUnstable(false);
       }
       return;
     }
@@ -1528,18 +1689,26 @@ export class MultiplayerManager {
 
       const silenceMs = now - this.lastPacketReceivedAt;
 
-      // If P2P Guest hasn't received any packet for > 3.5s or DataChannel closed, trigger automatic P2P reconnection & resync!
+      // If P2P Guest hasn't received any packet for > 3.5s or DataChannel closed, pause game & trigger automatic P2P reconnection & resync!
       if (
         this.transportMode === 'P2P_WEBRTC' &&
         (silenceMs > 3500 || !this.isConnOpenAndHealthy(this.p2pHostConn, true))
       ) {
+        this.setConnectionUnstable(
+          true,
+          'Oscilação ou queda de conexão com o anfitrião. Tentando reconectar...'
+        );
         if (!this.isP2PReconnecting) {
           void this.attemptP2PGuestAutoReconnect();
         }
       } else if (
         this.transportMode !== 'P2P_WEBRTC' &&
-        silenceMs > 4000
+        (silenceMs > 4000 || this.consecutiveHttpFailures >= 3)
       ) {
+        this.setConnectionUnstable(
+          true,
+          'Conexão instável com o servidor da sala. Tentando ressincronizar...'
+        );
         // On HTTP/WS server mode, request a full world snapshot on the next HTTP sync tick
         this.pendingFullSnapshotRequest = true;
         if (this.syncStatus !== 'RESYNCING') {
@@ -1547,10 +1716,15 @@ export class MultiplayerManager {
           this.statusMessage = 'Ressincronizando estado do mundo...';
           this.emitSessionChange();
         }
-      } else if (silenceMs <= 2500 && this.syncStatus !== 'SYNCED') {
-        this.syncStatus = 'SYNCED';
-        this.statusMessage = `Conectado e sincronizado com ${this.hostName}!`;
-        this.emitSessionChange();
+      } else if (silenceMs <= 2500) {
+        if (this.connectionUnstable) {
+          this.setConnectionUnstable(false);
+        }
+        if (this.syncStatus !== 'SYNCED') {
+          this.syncStatus = 'SYNCED';
+          this.statusMessage = `Conectado e sincronizado com ${this.hostName}!`;
+          this.emitSessionChange();
+        }
       }
     }
   }
@@ -1658,6 +1832,7 @@ export class MultiplayerManager {
       if (reconnected) {
         this.p2pReconnectFailures = 0;
         this.lastPacketReceivedAt = Date.now();
+        this.setConnectionUnstable(false);
         this.syncStatus = 'SYNCED';
         this.statusMessage = `Conectado e sincronizado com ${this.hostName}!`;
         this.callbacks.onPlayerEventNotification?.(
@@ -1665,16 +1840,12 @@ export class MultiplayerManager {
           '#4ade80'
         );
         this.emitSessionChange();
-      } else if (this.p2pReconnectFailures >= 10) {
-        // After ~10 consecutive failed reconnection attempts (~45+ seconds), the host truly closed the world
-        this.handleServerMessage({
-          type: 'room_closed',
-          reason:
-            'O anfitrião fechou o mundo ou ficou sem conexão por muito tempo.',
-        });
+      } else {
+        this.emitSessionChange();
       }
     } finally {
       this.isP2PReconnecting = false;
+      this.emitSessionChange();
     }
   }
 
@@ -1741,6 +1912,9 @@ export class MultiplayerManager {
       if (!msg || typeof msg.type !== 'string') return;
 
       this.lastPacketReceivedAt = Date.now();
+      if (this.connectionUnstable) {
+        this.setConnectionUnstable(false);
+      }
       if (this.syncStatus !== 'SYNCED') {
         this.syncStatus = 'SYNCED';
         this.emitSessionChange();
@@ -2527,6 +2701,9 @@ export class MultiplayerManager {
 
       this.consecutiveHttpFailures = 0;
       this.lastPacketReceivedAt = Date.now();
+      if (this.connectionUnstable) {
+        this.setConnectionUnstable(false);
+      }
       if (this.syncStatus !== 'SYNCED') {
         this.syncStatus = 'SYNCED';
         this.statusMessage =
@@ -2590,6 +2767,9 @@ export class MultiplayerManager {
             e.type === 'chunk_sync' ||
             e.type === 'spawn_drop' ||
             e.type === 'pickup_drop' ||
+            e.type === 'world_interact_request' ||
+            e.type === 'world_interact_resolved' ||
+            e.type === 'guest_profile_save' ||
             e.type === 'host_snapshot'
         );
         this.outgoingHttpEvents.unshift(...criticalEvents);
@@ -2820,6 +3000,9 @@ export class MultiplayerManager {
     this.inviteCode = null;
     this.transportMode = 'NONE';
     this.syncStatus = 'SYNCED';
+    this.connectionUnstable = false;
+    this.connectionUnstableReason = null;
+    this.connectionUnstableSince = null;
     this.activationState = 'IDLE';
     this.activationSteps = [];
     this.lastError = null;
@@ -3040,6 +3223,21 @@ export class MultiplayerManager {
       case 'world_interact_resolved': {
         if (msg.result) {
           this.callbacks.onWorldInteractResolvedReceived?.(msg.result);
+        }
+        break;
+      }
+
+      case 'guest_profile_save': {
+        if (
+          this.role === 'HOST' &&
+          msg.persistentPlayerId &&
+          msg.playerState
+        ) {
+          this.callbacks.onGuestProfileSyncReceived?.(
+            msg.peerId || '',
+            String(msg.persistentPlayerId),
+            msg.playerState as PlayerState
+          );
         }
         break;
       }
@@ -3434,6 +3632,26 @@ export class MultiplayerManager {
       result,
       worldRevision: this.worldRevision,
     });
+  }
+
+  public sendGuestProfileSave(player: PlayerState): void {
+    if (!this.isOnline || this.role !== 'GUEST') return;
+    const persistentPlayerId = player.persistentPlayerId || this.peerId;
+    const stateClone: PlayerState = JSON.parse(
+      JSON.stringify({
+        ...player,
+        savedAt: Date.now(),
+      })
+    );
+    this.queueOrSendEvent(
+      {
+        type: 'guest_profile_save',
+        peerId: this.peerId,
+        persistentPlayerId,
+        playerState: stateClone,
+      },
+      `guest_profile_${persistentPlayerId}`
+    );
   }
 
   public sendTimeSync(timeOfDay: number, dayCount: number): void {

@@ -87,11 +87,17 @@ const ROOF_PALETTES: Record<RoofMaterialStyle, RoofPalette> = {
 export function isRoofEnclosureStructure(type: PlaceableType): boolean {
   return (
     type === PlaceableType.WOOD_WALL ||
+    type === PlaceableType.DARK_OAK_WALL ||
+    type === PlaceableType.PINE_WALL ||
     type === PlaceableType.STONE_WALL ||
     type === PlaceableType.BRICK_WALL ||
     type === PlaceableType.WOOD_WINDOW ||
+    type === PlaceableType.DARK_OAK_WINDOW ||
+    type === PlaceableType.PINE_WINDOW ||
     type === PlaceableType.STONE_WINDOW ||
     type === PlaceableType.WOOD_DOOR ||
+    type === PlaceableType.DARK_OAK_DOOR ||
+    type === PlaceableType.PINE_DOOR ||
     type === PlaceableType.IRON_GATE
   );
 }
@@ -99,9 +105,13 @@ export function isRoofEnclosureStructure(type: PlaceableType): boolean {
 function isPrimaryRoofWall(type: PlaceableType): boolean {
   return (
     type === PlaceableType.WOOD_WALL ||
+    type === PlaceableType.DARK_OAK_WALL ||
+    type === PlaceableType.PINE_WALL ||
     type === PlaceableType.STONE_WALL ||
     type === PlaceableType.BRICK_WALL ||
     type === PlaceableType.WOOD_WINDOW ||
+    type === PlaceableType.DARK_OAK_WINDOW ||
+    type === PlaceableType.PINE_WINDOW ||
     type === PlaceableType.STONE_WINDOW
   );
 }

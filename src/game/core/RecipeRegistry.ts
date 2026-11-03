@@ -539,6 +539,24 @@ export const RECIPES: CraftingRecipe[] = [
     ingredients: [{ itemId: 'wood', count: 4 }],
   },
   {
+    id: 'craft_dark_oak_wall',
+    resultItemId: 'dark_oak_wall',
+    resultCount: 2,
+    requiredStation: PlaceableType.WORKBENCH,
+    craftTimeSec: 0,
+    rarity: RarityTier.BASIC,
+    ingredients: [{ itemId: 'dark_oak_wood', count: 4 }],
+  },
+  {
+    id: 'craft_pine_wall',
+    resultItemId: 'pine_wall',
+    resultCount: 2,
+    requiredStation: PlaceableType.WORKBENCH,
+    craftTimeSec: 0,
+    rarity: RarityTier.BASIC,
+    ingredients: [{ itemId: 'pine_wood', count: 4 }],
+  },
+  {
     id: 'craft_wood_window',
     resultItemId: 'wood_window',
     resultCount: 2,
@@ -551,6 +569,30 @@ export const RECIPES: CraftingRecipe[] = [
     ],
   },
   {
+    id: 'craft_dark_oak_window',
+    resultItemId: 'dark_oak_window',
+    resultCount: 2,
+    requiredStation: PlaceableType.WORKBENCH,
+    craftTimeSec: 0,
+    rarity: RarityTier.BASIC,
+    ingredients: [
+      { itemId: 'dark_oak_wood', count: 4 },
+      { itemId: 'glass', count: 1 },
+    ],
+  },
+  {
+    id: 'craft_pine_window',
+    resultItemId: 'pine_window',
+    resultCount: 2,
+    requiredStation: PlaceableType.WORKBENCH,
+    craftTimeSec: 0,
+    rarity: RarityTier.BASIC,
+    ingredients: [
+      { itemId: 'pine_wood', count: 4 },
+      { itemId: 'glass', count: 1 },
+    ],
+  },
+  {
     id: 'craft_wood_door',
     resultItemId: 'wood_door',
     resultCount: 1,
@@ -559,6 +601,30 @@ export const RECIPES: CraftingRecipe[] = [
     rarity: RarityTier.BASIC,
     ingredients: [
       { itemId: 'wood', count: 5 },
+      { itemId: 'fiber', count: 2 },
+    ],
+  },
+  {
+    id: 'craft_dark_oak_door',
+    resultItemId: 'dark_oak_door',
+    resultCount: 1,
+    requiredStation: PlaceableType.WORKBENCH,
+    craftTimeSec: 0,
+    rarity: RarityTier.BASIC,
+    ingredients: [
+      { itemId: 'dark_oak_wood', count: 5 },
+      { itemId: 'fiber', count: 2 },
+    ],
+  },
+  {
+    id: 'craft_pine_door',
+    resultItemId: 'pine_door',
+    resultCount: 1,
+    requiredStation: PlaceableType.WORKBENCH,
+    craftTimeSec: 0,
+    rarity: RarityTier.BASIC,
+    ingredients: [
+      { itemId: 'pine_wood', count: 5 },
       { itemId: 'fiber', count: 2 },
     ],
   },
@@ -1632,11 +1698,19 @@ export function isCommonWoodItem(itemId: string): boolean {
   );
 }
 
-// Em todas as receitas que precisam de madeira ('wood'), permite ao jogador escolher qual madeira usar:
+// Em todas as receitas que precisam de madeira genérica ('wood'), permite ao jogador escolher qual madeira usar:
 // Madeira de Carvalho, Madeira de Carvalho Escuro ou Madeira de Pinheiro.
+// (Exceto paredes, janelas e portas de madeira, que possuem variantes próprias para cada tipo de madeira).
+const WOOD_VARIANT_SPECIFIC_RECIPES = new Set([
+  'craft_wood_wall',
+  'craft_wood_window',
+  'craft_wood_door',
+]);
+
 for (const recipe of RECIPES) {
   if (
     !recipe.materialOptions &&
+    !WOOD_VARIANT_SPECIFIC_RECIPES.has(recipe.id) &&
     recipe.ingredients.some((ing) => ing.itemId === 'wood')
   ) {
     recipe.materialOptions = [

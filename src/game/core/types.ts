@@ -224,11 +224,17 @@ export enum PlaceableType {
   FURNACE = 'FURNACE',
   SOLAR_ALTAR = 'SOLAR_ALTAR',
   WOOD_WALL = 'WOOD_WALL',
+  DARK_OAK_WALL = 'DARK_OAK_WALL',
+  PINE_WALL = 'PINE_WALL',
   STONE_WALL = 'STONE_WALL',
   BRICK_WALL = 'BRICK_WALL',
   WOOD_WINDOW = 'WOOD_WINDOW',
+  DARK_OAK_WINDOW = 'DARK_OAK_WINDOW',
+  PINE_WINDOW = 'PINE_WINDOW',
   STONE_WINDOW = 'STONE_WINDOW',
   WOOD_DOOR = 'WOOD_DOOR',
+  DARK_OAK_DOOR = 'DARK_OAK_DOOR',
+  PINE_DOOR = 'PINE_DOOR',
   IRON_GATE = 'IRON_GATE',
   WOOD_FENCE = 'WOOD_FENCE',
   WOOD_FLOOR = 'WOOD_FLOOR',
@@ -250,6 +256,8 @@ export enum PlaceableType {
   TILLED_SOIL = 'TILLED_SOIL',
   DIRT_PATH = 'DIRT_PATH',
   OAK_SAPLING = 'OAK_SAPLING',
+  DARK_OAK_SAPLING = 'DARK_OAK_SAPLING',
+  PINE_SAPLING = 'PINE_SAPLING',
   PALM_SAPLING = 'PALM_SAPLING',
   BED = 'BED',
   WEAVING_TABLE = 'WEAVING_TABLE',
@@ -293,6 +301,8 @@ export interface PlacedStructure {
   breakIdleTimer?: number;
   lootItems?: { itemId: string; count: number }[];
   storageSlots?: (InventorySlot | null)[]; // 24-slot persistent interactive storage for CHEST
+  storageRevision?: number; // Monotonic revision counter for atomic chest storage synchronization
+  storageUpdatedAt?: number; // Timestamp of last storage modification
   customName?: string;
   landmarkName?: string;
   villageId?: string;
@@ -360,9 +370,10 @@ export interface ChunkData {
   genVersion?: number; // World generator version used when this chunk was originally generated
   generatedGameVersion?: string; // Beta version string (e.g., '0.4.3-beta', '0.4.4-beta') when this chunk was generated
   preserved?: boolean; // True once explored or modified by the player — prevents future updates from altering this chunk
-  compactTiles?: string; // 256-char compact encoding of tiles ('O' | 'P' | 'D' | 'I') so exact terrain is preserved in localStorage
+  compactTiles?: string; // 256-char compact encoding of tiles ('O' | 'P' | 'D' | 'I' | 'F' | 'T' | 'G') so exact terrain is preserved in localStorage
   compactZones?: string; // 256-char compact encoding of ecologicalZones ('0'..'B')
   compactVariants?: string; // 256-char compact encoding of tileVariants ('0'..'3')
+  compactExplored?: string; // 64-char hex bitmask encoding of the 256 explored flags (0/1)
 }
 
 export enum CreatureKind {
@@ -741,6 +752,7 @@ export interface PlayerStatusEffect {
 
 export interface PlayerState {
   persistentPlayerId?: string;
+  savedAt?: number;
   x: number;
   y: number;
   vx: number;
@@ -846,8 +858,8 @@ export interface OnlineActivationStep {
 }
 
 // REGRA PERMANENTE: A cada nova atualização do jogo, incremente a versão para o número seguinte da beta (ex: 0.4.4-beta -> 0.4.5-beta).
-export const GAME_VERSION = '0.6.7-beta';
-export const CURRENT_WORLD_GEN_VERSION = 4;
+export const GAME_VERSION = '0.7.0-beta';
+export const CURRENT_WORLD_GEN_VERSION = 5;
 
 export interface OnlineSessionInfo {
   isOnline: boolean;
@@ -865,6 +877,11 @@ export interface OnlineSessionInfo {
   syncStatus?: 'SYNCED' | 'RESYNCING' | 'DEGRADED';
   worldRevision?: number;
   lastError?: string | null;
+  connectionUnstable?: boolean;
+  connectionUnstableReason?: string | null;
+  connectionUnstableSince?: number | null;
+  reconnectAttempts?: number;
+  isReconnecting?: boolean;
 }
 
 export interface WorldMetadata {
@@ -894,6 +911,7 @@ export interface WorldSaveData {
   droppedItems: DroppedItem[];
   waypoints?: MapWaypoint[];
   deathBags?: DeathBag[];
+  guestPlayers?: Record<string, PlayerState>;
 }
 
 export interface HudElementPlacement {

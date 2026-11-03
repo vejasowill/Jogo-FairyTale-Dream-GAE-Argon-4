@@ -2150,19 +2150,20 @@ class SpriteAtlasManager {
       { y: '#f59e0b', w: '#fef08a', g: '#d97706', c: '#0284c7' }
     );
 
+    // Parede de Carvalho (Warm golden oak planks with iron straps)
     registerItem(
       'wood_wall',
       [
-        '.bbbbbbbbbbbbbb.',
-        '.bllbbllbbllbbl.',
-        '.bllbbllbbllbbl.',
-        '.bbbbbbbbbbbbbb.',
-        '.bllbbllbbllbbl.',
-        '.bllbbllbbllbbl.',
-        '.bbbbbbbbbbbbbb.',
-        '................',
-        '................',
-        '................',
+        '.dddddddddddddd.',
+        '.dttttttttttttd.',
+        '.dddddddddddddd.',
+        '.dbllbbllbbllbd.',
+        '.dssddddddddssd.',
+        '.dbllbbllbbllbd.',
+        '.dbllbbllbbllbd.',
+        '.dssddddddddssd.',
+        '.dbllbbllbbllbd.',
+        '.dddddddddddddd.',
         '................',
         '................',
         '................',
@@ -2170,7 +2171,55 @@ class SpriteAtlasManager {
         '................',
         '................',
       ],
-      { b: '#451a03', l: '#92400e' }
+      { d: '#2a1205', t: '#d97706', b: '#78350f', l: '#b45309', s: '#475569' }
+    );
+
+    // Parede de Carvalho Escuro (Deep chocolate vertical panels with bronze trim)
+    registerItem(
+      'dark_oak_wall',
+      [
+        '.dddddddddddddd.',
+        '.dggggggggggggd.',
+        '.dddddddddddddd.',
+        '.dbmmdbmmdbmmd..',
+        '.dbppdbppdbppd..',
+        '.dbppdbppdbppd..',
+        '.dbmmdbmmdbmmd..',
+        '.dggggggggggggd.',
+        '.dbmmdbmmdbmmd..',
+        '.dddddddddddddd.',
+        '................',
+        '................',
+        '................',
+        '................',
+        '................',
+        '................',
+      ],
+      { d: '#140904', g: '#b45309', b: '#2b170b', m: '#3d2312', p: '#5c3a21' }
+    );
+
+    // Parede de Pinheiro (Pale Nordic spruce horizontal logs with notched cabin corners)
+    registerItem(
+      'pine_wall',
+      [
+        '.dddddddddddddd.',
+        '.deeeeeeeeeeeed.',
+        '.dddddddddddddd.',
+        '.dcllllllllllcd.',
+        '.dcmmmmmmmmmmcd.',
+        '.dddddddddddddd.',
+        '.dcllllllllllcd.',
+        '.dcmmmmmmmmmmcd.',
+        '.dddddddddddddd.',
+        '.dcllllllllllcd.',
+        '.dddddddddddddd.',
+        '................',
+        '................',
+        '................',
+        '................',
+        '................',
+      ],
+      { d: '#3d2410', e: '#f3d9a4', l: '#e2be8a', m: '#b88c56', c: '#6b4226' }
     );
 
     registerItem(
@@ -2890,7 +2939,7 @@ class SpriteAtlasManager {
     );
 
     // === NEW ARCHITECTURAL & BUILDING SYSTEM ITEM ICONS ===
-    // Wood Door Icon
+    // Porta de Carvalho Icon (Warm golden oak door with iron hinges)
     registerItem(
       'wood_door',
       [
@@ -2912,6 +2961,54 @@ class SpriteAtlasManager {
         '................',
       ],
       { d: '#1f1209', b: '#78350f', l: '#b45309', g: '#fde047' }
+    );
+
+    // Porta de Carvalho Escuro Icon (Deep chocolate manor door with recessed panels & bronze ring)
+    registerItem(
+      'dark_oak_door',
+      [
+        '....dddddddd....',
+        '...dbbbbbbbbd...',
+        '..dbmddddddmbd..',
+        '..dbmdppppdmbd..',
+        '..dbmdppppdmbd..',
+        '..dbbbbbbbbbbd..',
+        '..dbmddddddmbd..',
+        '..dbmdppggdmbd..',
+        '..dbmdppppdmbd..',
+        '..dbmddddddmbd..',
+        '..dbbbbbbbbbbd..',
+        '..dddddddddddd..',
+        '................',
+        '................',
+        '................',
+        '................',
+      ],
+      { d: '#120804', b: '#2b170b', m: '#4a2c16', p: '#6b4226', g: '#f59e0b' }
+    );
+
+    // Porta de Pinheiro Icon (Pale amber spruce cabin door with diagonal Z-brace)
+    registerItem(
+      'pine_door',
+      [
+        '....dddddddd....',
+        '...dmmmmmmmmd...',
+        '..dmzzzzzzzzmd..',
+        '..dmzllllzllmd..',
+        '..dmzllzllllmd..',
+        '..dmzzllllllmd..',
+        '..dmzzzzzzzzmd..',
+        '..dmllllllccmd..',
+        '..dmllllllllmd..',
+        '..dmzzzzzzzzmd..',
+        '..dmmmmmmmmd....',
+        '..dddddddddddd..',
+        '................',
+        '................',
+        '................',
+        '................',
+      ],
+      { d: '#3d2410', m: '#8c6239', l: '#e2be8a', z: '#5c3a21', c: '#ea580c' }
     );
 
     // Iron Gate Icon
@@ -2962,7 +3059,7 @@ class SpriteAtlasManager {
       { d: '#2a1205', b: '#78350f', l: '#d97706' }
     );
 
-    // Wood Window Icon
+    // Parede de Carvalho com Janela Icon
     registerItem(
       'wood_window',
       [
@@ -2984,6 +3081,54 @@ class SpriteAtlasManager {
         '................',
       ],
       { d: '#1f1209', b: '#78350f', l: '#b45309', c: '#38bdf8', w: '#fef08a' }
+    );
+
+    // Parede de Carvalho Escuro com Janela Icon (Dark espresso timber & diamond/cross bronze mullion)
+    registerItem(
+      'dark_oak_window',
+      [
+        '.dddddddddddddd.',
+        '.dggggggggggggd.',
+        '.dbmddddddddmbd.',
+        '.dbmdccggccdmbd.',
+        '.dbmdcgwwgcdmbd.',
+        '.dbmdggggggdmbd.',
+        '.dbmdcgwwgcdmbd.',
+        '.dbmdccggccdmbd.',
+        '.dbmddddddddmbd.',
+        '.dbbbbbbbbbbbbd.',
+        '.dddddddddddddd.',
+        '................',
+        '................',
+        '................',
+        '................',
+        '................',
+      ],
+      { d: '#140904', b: '#2b170b', m: '#4a2c16', g: '#d97706', c: '#0284c7', w: '#fef08a' }
+    );
+
+    // Parede de Pinheiro com Janela Icon (Pale Nordic spruce log wall with alpine shutters)
+    registerItem(
+      'pine_window',
+      [
+        '.dddddddddddddd.',
+        '.dlllllllllllld.',
+        '.dmmsddddddsmmd.',
+        '.dmmscceeccsmmd.',
+        '.dmmscceeccsmmd.',
+        '.dmmsddddddsmmd.',
+        '.dmmscceeccsmmd.',
+        '.dmmsddddddsmmd.',
+        '.dlllllllllllld.',
+        '.dmmmmmmmmmmmmd.',
+        '.dddddddddddddd.',
+        '................',
+        '................',
+        '................',
+        '................',
+        '................',
+      ],
+      { d: '#3d2410', l: '#e2be8a', m: '#b88c56', s: '#5c3a21', c: '#38bdf8', e: '#e0f2fe' }
     );
 
     // Stone Window Icon
@@ -3947,7 +4092,7 @@ class SpriteAtlasManager {
       { d: '#1c0a04', b: '#5c2d16', m: '#9a3412', s: '#e2e8f0' }
     );
 
-    // Muda de Árvore (oak_sapling) — Young oak sprout with bright green leaves & root ball
+    // Muda de Carvalho (oak_sapling) — Young oak sprout with bright green leaves & root ball
     registerItem(
       'oak_sapling',
       [
@@ -3969,6 +4114,54 @@ class SpriteAtlasManager {
         '................',
       ],
       { d: '#052e16', g: '#16a34a', l: '#4ade80', b: '#78350f', s: '#5c3a1e' }
+    );
+
+    // Muda de Carvalho Escuro (dark_oak_sapling) — Deep emerald temperate sprout with thick dark stem
+    registerItem(
+      'dark_oak_sapling',
+      [
+        '.....dddddd.....',
+        '...ddggggggdd...',
+        '..dggllllllggd..',
+        '..dggggggggggd..',
+        '...ddggggggdd...',
+        '.....ddbbdd.....',
+        '.....ddbbdd.....',
+        '....ddbbbbdd....',
+        '....dssssssd....',
+        '.....dddddd.....',
+        '................',
+        '................',
+        '................',
+        '................',
+        '................',
+        '................',
+      ],
+      { d: '#022c22', g: '#065f46', l: '#10b981', b: '#3b1d0a', s: '#4a2c16' }
+    );
+
+    // Muda de Pinheiro (pine_sapling) — Conical boreal spruce sprout with tiered teal-green needles
+    registerItem(
+      'pine_sapling',
+      [
+        '.......dd.......',
+        '......dggd......',
+        '.....dgllgd.....',
+        '....ddggggdd....',
+        '....dgllllgd....',
+        '...ddggggggdd...',
+        '......dbbd......',
+        '......dbbd......',
+        '....ddssssdd....',
+        '.....dddddd.....',
+        '................',
+        '................',
+        '................',
+        '................',
+        '................',
+        '................',
+      ],
+      { d: '#042f2e', g: '#0f766e', l: '#2dd4bf', b: '#5c3a21', s: '#431407' }
     );
 
     // Muda de Palmeira (palm_sapling) — Tropical palm sprout with arching fronds & coconut seed base
@@ -5183,21 +5376,18 @@ class SpriteAtlasManager {
       })
     );
 
-    // WOOD WALL — Architectural timber wall with bevelled coping cap, vertical oak beams & forged iron straps
+    // WOOD WALL (Parede de Carvalho — Warm golden oak beams & forged iron straps)
     this.structureSprites.set(
       PlaceableType.WOOD_WALL,
       createFrames(24, 24, (ctx) => {
-        // Outer dark silhouette
         ctx.fillStyle = '#1f1209';
         ctx.fillRect(0, 1, 24, 22);
-        // Top bevelled coping cap
         ctx.fillStyle = '#d97706';
         ctx.fillRect(1, 2, 22, 4);
         ctx.fillStyle = '#fde68a';
         ctx.fillRect(2, 2, 20, 1);
         ctx.fillStyle = '#92400e';
         ctx.fillRect(2, 4, 20, 2);
-        // Vertical tongue-and-groove timber planks
         const logX = [1, 6, 11, 16, 20];
         for (let i = 0; i < logX.length; i++) {
           const lx = logX[i];
@@ -5207,7 +5397,6 @@ class SpriteAtlasManager {
           ctx.fillStyle = '#b45309';
           ctx.fillRect(lx + 1, 7, Math.max(1, lw - 2), 14);
         }
-        // Forged iron reinforcement straps & rivets
         ctx.fillStyle = '#334155';
         ctx.fillRect(0, 9, 24, 2);
         ctx.fillRect(0, 17, 24, 2);
@@ -5215,6 +5404,56 @@ class SpriteAtlasManager {
         for (const rx of [3, 9, 15, 20]) {
           ctx.fillRect(rx, 9, 1, 1);
           ctx.fillRect(rx, 17, 1, 1);
+        }
+      })
+    );
+
+    // DARK OAK WALL (Parede de Carvalho Escuro — Deep espresso vertical paneling with antique bronze molding)
+    this.structureSprites.set(
+      PlaceableType.DARK_OAK_WALL,
+      createFrames(24, 24, (ctx) => {
+        ctx.fillStyle = '#120804';
+        ctx.fillRect(0, 1, 24, 22);
+        ctx.fillStyle = '#6b4226';
+        ctx.fillRect(1, 2, 22, 4);
+        ctx.fillStyle = '#b45309';
+        ctx.fillRect(2, 2, 20, 1);
+        ctx.fillStyle = '#3d2312';
+        ctx.fillRect(2, 4, 20, 2);
+        ctx.fillStyle = '#2b170b';
+        ctx.fillRect(1, 7, 22, 15);
+        for (const px of [2, 9, 16]) {
+          ctx.fillStyle = '#3d2312';
+          ctx.fillRect(px, 8, 5, 13);
+          ctx.fillStyle = '#5c3a21';
+          ctx.fillRect(px + 1, 9, 3, 11);
+        }
+        ctx.fillStyle = '#b45309';
+        ctx.fillRect(0, 7, 24, 1);
+        ctx.fillRect(0, 20, 24, 1);
+      })
+    );
+
+    // PINE WALL (Parede de Pinheiro — Pale Nordic spruce horizontal rounded logs with notched cabin corners)
+    this.structureSprites.set(
+      PlaceableType.PINE_WALL,
+      createFrames(24, 24, (ctx) => {
+        ctx.fillStyle = '#2e1a0b';
+        ctx.fillRect(0, 1, 24, 22);
+        ctx.fillStyle = '#e2be8a';
+        ctx.fillRect(1, 2, 22, 4);
+        ctx.fillStyle = '#f8e7c9';
+        ctx.fillRect(2, 2, 20, 1);
+        ctx.fillStyle = '#c49a62';
+        ctx.fillRect(2, 4, 20, 2);
+        for (const ly of [7, 12, 17]) {
+          ctx.fillStyle = '#b88c56';
+          ctx.fillRect(1, ly, 22, 4);
+          ctx.fillStyle = '#e2be8a';
+          ctx.fillRect(1, ly, 22, 2);
+          ctx.fillStyle = '#6b4226';
+          ctx.fillRect(1, ly, 3, 4);
+          ctx.fillRect(20, ly, 3, 4);
         }
       })
     );
@@ -5722,7 +5961,7 @@ class SpriteAtlasManager {
     );
 
     // === NEW ARCHITECTURAL & BUILDING SYSTEM STRUCTURE SPRITES ===
-    // WOOD DOOR (Default closed preview sprite)
+    // WOOD DOOR (Porta de Carvalho)
     this.structureSprites.set(
       PlaceableType.WOOD_DOOR,
       createFrames(24, 24, (ctx) => {
@@ -5739,6 +5978,50 @@ class SpriteAtlasManager {
         ctx.fillRect(4, 7, 16, 2);
         ctx.fillRect(4, 15, 16, 2);
         ctx.fillStyle = '#fde047';
+        ctx.fillRect(15, 11, 3, 3);
+      })
+    );
+
+    // DARK OAK DOOR (Porta de Carvalho Escuro)
+    this.structureSprites.set(
+      PlaceableType.DARK_OAK_DOOR,
+      createFrames(24, 24, (ctx) => {
+        ctx.fillStyle = '#120804';
+        ctx.fillRect(0, 3, 24, 18);
+        ctx.fillStyle = '#2b170b';
+        ctx.fillRect(0, 4, 4, 16);
+        ctx.fillRect(20, 4, 4, 16);
+        ctx.fillStyle = '#3d2312';
+        ctx.fillRect(4, 5, 16, 14);
+        ctx.fillStyle = '#5c3a21';
+        ctx.fillRect(6, 6, 5, 12);
+        ctx.fillRect(13, 6, 5, 12);
+        ctx.fillStyle = '#b45309';
+        ctx.fillRect(4, 5, 16, 2);
+        ctx.fillRect(4, 17, 16, 2);
+        ctx.fillStyle = '#fbbf24';
+        ctx.fillRect(15, 11, 3, 3);
+      })
+    );
+
+    // PINE DOOR (Porta de Pinheiro)
+    this.structureSprites.set(
+      PlaceableType.PINE_DOOR,
+      createFrames(24, 24, (ctx) => {
+        ctx.fillStyle = '#2e1a0b';
+        ctx.fillRect(0, 3, 24, 18);
+        ctx.fillStyle = '#6b4226';
+        ctx.fillRect(0, 4, 4, 16);
+        ctx.fillRect(20, 4, 4, 16);
+        ctx.fillStyle = '#b88c56';
+        ctx.fillRect(4, 5, 16, 14);
+        ctx.fillStyle = '#e2be8a';
+        ctx.fillRect(5, 6, 14, 12);
+        ctx.fillStyle = '#6b4226';
+        ctx.fillRect(5, 6, 14, 2);
+        ctx.fillRect(5, 16, 14, 2);
+        ctx.fillRect(9, 8, 6, 8);
+        ctx.fillStyle = '#ea580c';
         ctx.fillRect(15, 11, 3, 3);
       })
     );
@@ -5782,7 +6065,7 @@ class SpriteAtlasManager {
       })
     );
 
-    // WOOD WINDOW
+    // WOOD WINDOW (Parede de Carvalho com Janela)
     this.structureSprites.set(
       PlaceableType.WOOD_WINDOW,
       createFrames(24, 24, (ctx, f) => {
@@ -5799,6 +6082,48 @@ class SpriteAtlasManager {
         ctx.fillStyle = '#fef08a';
         ctx.fillRect(8, 8, 8, 5);
         ctx.fillStyle = '#451a03';
+        ctx.fillRect(11, 7, 2, 9);
+        ctx.fillRect(6, 11, 12, 2);
+      })
+    );
+
+    // DARK OAK WINDOW (Parede de Carvalho Escuro com Janela)
+    this.structureSprites.set(
+      PlaceableType.DARK_OAK_WINDOW,
+      createFrames(24, 24, (ctx, f) => {
+        ctx.fillStyle = '#120804';
+        ctx.fillRect(0, 1, 24, 22);
+        ctx.fillStyle = '#2b170b';
+        ctx.fillRect(1, 2, 22, 20);
+        ctx.fillStyle = '#6b4226';
+        ctx.fillRect(1, 2, 22, 4);
+        ctx.fillStyle = '#140904';
+        ctx.fillRect(5, 6, 14, 11);
+        ctx.fillStyle = f % 2 === 0 ? '#0284c7' : '#38bdf8';
+        ctx.fillRect(6, 7, 12, 9);
+        ctx.fillStyle = '#fde047';
+        ctx.fillRect(8, 8, 8, 5);
+        ctx.fillStyle = '#b45309';
+        ctx.fillRect(11, 7, 2, 9);
+        ctx.fillRect(6, 11, 12, 2);
+      })
+    );
+
+    // PINE WINDOW (Parede de Pinheiro com Janela)
+    this.structureSprites.set(
+      PlaceableType.PINE_WINDOW,
+      createFrames(24, 24, (ctx, f) => {
+        ctx.fillStyle = '#2e1a0b';
+        ctx.fillRect(0, 1, 24, 22);
+        ctx.fillStyle = '#b88c56';
+        ctx.fillRect(1, 2, 22, 20);
+        ctx.fillStyle = '#e2be8a';
+        ctx.fillRect(1, 2, 22, 4);
+        ctx.fillStyle = '#5c3a21';
+        ctx.fillRect(3, 6, 18, 11);
+        ctx.fillStyle = f % 2 === 0 ? '#38bdf8' : '#bae6fd';
+        ctx.fillRect(6, 7, 12, 9);
+        ctx.fillStyle = '#6b4226';
         ctx.fillRect(11, 7, 2, 9);
         ctx.fillRect(6, 11, 12, 2);
       })
@@ -5991,6 +6316,49 @@ class SpriteAtlasManager {
         ctx.fillRect(8 + sway, 5, 8, 6);
         ctx.fillStyle = '#84cc16';
         ctx.fillRect(5 + sway, 8, 14, 2);
+      })
+    );
+
+    // DARK_OAK_SAPLING default preview sprite
+    this.structureSprites.set(
+      PlaceableType.DARK_OAK_SAPLING,
+      createFrames(24, 28, (ctx, f) => {
+        const sway = f % 2 === 0 ? 0 : 1;
+        ctx.fillStyle = 'rgba(0,0,0,0.25)';
+        ctx.fillRect(6, 23, 12, 3);
+        ctx.fillStyle = '#4a2c16';
+        ctx.fillRect(8, 21, 8, 3);
+        ctx.fillStyle = '#3b1d0a';
+        ctx.fillRect(10, 13, 4, 9);
+        ctx.fillStyle = '#022c22';
+        ctx.fillRect(5 + sway, 5, 14, 11);
+        ctx.fillStyle = '#065f46';
+        ctx.fillRect(6 + sway, 6, 12, 9);
+        ctx.fillStyle = '#10b981';
+        ctx.fillRect(7 + sway, 7, 7, 4);
+      })
+    );
+
+    // PINE_SAPLING default preview sprite
+    this.structureSprites.set(
+      PlaceableType.PINE_SAPLING,
+      createFrames(24, 28, (ctx, f) => {
+        const sway = f % 2 === 0 ? 0 : 1;
+        ctx.fillStyle = 'rgba(0,0,0,0.25)';
+        ctx.fillRect(6, 23, 12, 3);
+        ctx.fillStyle = '#431407';
+        ctx.fillRect(8, 21, 8, 3);
+        ctx.fillStyle = '#5c3a21';
+        ctx.fillRect(11, 15, 2, 7);
+        ctx.fillStyle = '#042f2e';
+        ctx.fillRect(5 + sway, 12, 14, 5);
+        ctx.fillRect(7 + sway, 8, 10, 5);
+        ctx.fillRect(9 + sway, 4, 6, 5);
+        ctx.fillStyle = '#0d9488';
+        ctx.fillRect(6 + sway, 12, 12, 3);
+        ctx.fillRect(8 + sway, 8, 8, 3);
+        ctx.fillStyle = '#2dd4bf';
+        ctx.fillRect(10 + sway, 5, 4, 3);
       })
     );
 

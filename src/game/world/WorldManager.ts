@@ -180,6 +180,9 @@ export class WorldManager {
     this.worldGenVersion = CURRENT_WORLD_GEN_VERSION;
 
     if (existingChunks) {
+      // Pass 1: Decode compact terrain & explored snapshots and register all preserved chunks in this.chunks
+      // so neighbor lookups during Pass 2 hydration see all preserved chunks immediately.
+      const keysToHydrate: string[] = [];
       for (const [key, chunk] of Object.entries(existingChunks)) {
         if (!chunk) continue;
         // Only preserve chunks that have been explored or modified by the player!
@@ -192,7 +195,29 @@ export class WorldManager {
         if (typeof chunk.genVersion !== 'number') {
           chunk.genVersion = this.legacyChunkGenVersion;
         }
-        this.chunks[key] = this.hydrateChunk(chunk);
+        const totalTiles = CHUNK_SIZE * CHUNK_SIZE;
+        if (!Array.isArray(chunk.tiles) || chunk.tiles.length !== totalTiles) {
+          const decodedTiles = WorldManager.decodeCompactTiles(chunk.compactTiles);
+          if (decodedTiles) {
+            chunk.tiles = decodedTiles;
+          }
+        }
+        if (
+          !Array.isArray(chunk.ecologicalZones) ||
+          chunk.ecologicalZones.length !== totalTiles
+        ) {
+          const decodedZones = WorldManager.decodeCompactZones(chunk.compactZones);
+          if (decodedZones) {
+            chunk.ecologicalZones = decodedZones;
+          }
+        }
+        this.chunks[key] = chunk;
+        keysToHydrate.push(key);
+      }
+
+      // Pass 2: Full hydration of each preserved chunk
+      for (const key of keysToHydrate) {
+        this.chunks[key] = this.hydrateChunk(this.chunks[key]);
       }
     }
   }
@@ -203,10 +228,21 @@ export class WorldManager {
    */
   public static isChunkExploredOrModified(chunk: ChunkData): boolean {
     if (!chunk) return false;
-    if (chunk.preserved) return true;
-    const hasExplored =
+    const hasExploredArray =
       Array.isArray(chunk.explored) && chunk.explored.some((v) => v > 0);
-    if (hasExplored) return true;
+    if (hasExploredArray) return true;
+    const hasCompactExplored =
+      typeof chunk.compactExplored === 'string' &&
+      chunk.compactExplored.length > 0 &&
+      !/^0+$/.test(chunk.compactExplored);
+    if (hasCompactExplored) return true;
+    if (
+      chunk.preserved &&
+      typeof chunk.compactTiles === 'string' &&
+      chunk.compactTiles.length === CHUNK_SIZE * CHUNK_SIZE
+    ) {
+      return true;
+    }
     const hasPlayerOrCustomStruct =
       Array.isArray(chunk.structures) &&
       chunk.structures.some(
@@ -218,6 +254,44 @@ export class WorldManager {
           (Array.isArray(s.stallSlots) && s.stallSlots.some(Boolean))
       );
     return hasPlayerOrCustomStruct;
+  }
+
+  public static encodeCompactExplored(explored?: number[]): string | undefined {
+    const total = CHUNK_SIZE * CHUNK_SIZE;
+    if (!Array.isArray(explored) || explored.length === 0) return undefined;
+    if (explored.length === 1) {
+      return explored[0] ? 'F'.repeat(total / 4) : undefined;
+    }
+    if (explored.length !== total) return undefined;
+    let hasAny = false;
+    let out = '';
+    for (let i = 0; i < total; i += 4) {
+      const b0 = explored[i] ? 1 : 0;
+      const b1 = explored[i + 1] ? 2 : 0;
+      const b2 = explored[i + 2] ? 4 : 0;
+      const b3 = explored[i + 3] ? 8 : 0;
+      const nibble = b0 | b1 | b2 | b3;
+      if (nibble !== 0) hasAny = true;
+      out += nibble.toString(16).toUpperCase();
+    }
+    return hasAny ? out : undefined;
+  }
+
+  public static decodeCompactExplored(compact?: string): number[] | null {
+    const total = CHUNK_SIZE * CHUNK_SIZE;
+    const hexLen = total / 4; // 64 hex chars for 256 tiles
+    if (typeof compact !== 'string' || compact.length !== hexLen) return null;
+    const out = new Array<number>(total);
+    for (let i = 0; i < hexLen; i++) {
+      const nibble = parseInt(compact[i], 16);
+      const val = Number.isNaN(nibble) ? 0 : nibble;
+      const base = i * 4;
+      out[base] = val & 1 ? 1 : 0;
+      out[base + 1] = val & 2 ? 1 : 0;
+      out[base + 2] = val & 4 ? 1 : 0;
+      out[base + 3] = val & 8 ? 1 : 0;
+    }
+    return out;
   }
 
   public static encodeCompactTiles(tiles: BiomeType[]): string {
@@ -355,6 +429,10 @@ export class WorldManager {
         chunk.tileVariants
       );
     }
+    const encodedExplored = WorldManager.encodeCompactExplored(chunk.explored);
+    if (encodedExplored) {
+      chunk.compactExplored = encodedExplored;
+    }
   }
 
   /**
@@ -431,10 +509,24 @@ export class WorldManager {
             chunk.ecologicalZones[idx] = this.computeEcologicalZoneAtTile(
               tx,
               ty,
-              biome
+              biome,
+              chunkGenVer
             );
           }
         }
+      }
+    }
+
+    // Restore 256-tile explored array from compactExplored or legacy explored array
+    if (
+      (!Array.isArray(chunk.explored) || chunk.explored.length === 0) &&
+      chunk.compactExplored
+    ) {
+      const decodedExplored = WorldManager.decodeCompactExplored(
+        chunk.compactExplored
+      );
+      if (decodedExplored) {
+        chunk.explored = decodedExplored;
       }
     }
 
@@ -456,6 +548,9 @@ export class WorldManager {
     if (Array.isArray(chunk.nodes)) {
       for (let i = 0; i < chunk.nodes.length; i++) {
         const n = chunk.nodes[i];
+        if (!n.id) {
+          n.id = `node_${n.tileX}_${n.tileY}`;
+        }
         const bp = NATURE_BLUEPRINTS[n.type];
         if (bp) {
           if (typeof n.maxHp !== 'number') n.maxHp = bp.maxHp;
@@ -637,7 +732,8 @@ export class WorldManager {
    */
   private getRawWaterAtTile(
     tx: number,
-    ty: number
+    ty: number,
+    version = this.worldGenVersion
   ): {
     waterKind: 'none' | 'ocean' | 'river' | 'lake';
     isIslandLand: boolean;
@@ -646,6 +742,7 @@ export class WorldManager {
     climate: number;
   } {
     const distFromOrigin = Math.hypot(tx, ty);
+    const useLegacyOriginCircle = version <= 4;
 
     // Smooth low-frequency domain warping for sweeping, organic coastlines and biome contours
     const warpX =
@@ -657,7 +754,7 @@ export class WorldManager {
 
     // Smooth 2-octave continental elevation so dry land is predominant and coastlines have zero tiny fragments
     let continentalElev = fbm(wx * 0.0034, wy * 0.0034, this.seed, 2);
-    if (distFromOrigin < 38) {
+    if (useLegacyOriginCircle && distFromOrigin < 38) {
       const boost = Math.max(0, (38 - distFromOrigin) / 38) * 0.25;
       continentalElev += boost;
     }
@@ -700,8 +797,8 @@ export class WorldManager {
       };
     }
 
-    // Guarantee starter heartland around (0, 0) is open dry land
-    if (distFromOrigin < 18) {
+    // Legacy v2-v4 only: starter heartland around (0, 0) forced dry
+    if (useLegacyOriginCircle && distFromOrigin < 18) {
       return {
         waterKind: 'none',
         isIslandLand: false,
@@ -739,7 +836,7 @@ export class WorldManager {
     // 3. Cohesive, rounded Inland Lakes (low frequency 0.015 so lakes are medium/large and never 1-tile speckles)
     const lakeNoise = smoothNoise(wx * 0.015, wy * 0.015, this.seed + 2801);
     if (
-      distFromOrigin > 26 &&
+      (!useLegacyOriginCircle || distFromOrigin > 26) &&
       continentalElev > 0.385 &&
       climate >= 0.32 &&
       lakeNoise > 0.875
@@ -784,8 +881,13 @@ export class WorldManager {
   /**
    * Returns complete hydrological & coastal beach classification at `(tx, ty)`.
    * Every Ocean border (both mainland and oceanic islands) has a wide sandy beach (`isOceanBeach = true`).
+   * Respects preserved chunks in `this.chunks` first so updates never contradict explored terrain.
    */
-  public getHydrologyAtTile(tx: number, ty: number): {
+  public getHydrologyAtTile(
+    tx: number,
+    ty: number,
+    version = this.worldGenVersion
+  ): {
     waterKind: 'none' | 'ocean' | 'river' | 'lake';
     isOceanBeach: boolean;
     isIslandLand: boolean;
@@ -793,7 +895,53 @@ export class WorldManager {
     riverMeander: number;
     climate: number;
   } {
-    const raw = this.getRawWaterAtTile(tx, ty);
+    const cx = Math.floor(tx / CHUNK_SIZE);
+    const cy = Math.floor(ty / CHUNK_SIZE);
+    const existingChunk = this.chunks[`${cx},${cy}`];
+    const effectiveVer = existingChunk?.genVersion ?? version;
+    const raw = this.getRawWaterAtTile(tx, ty, effectiveVer);
+
+    if (
+      existingChunk &&
+      Array.isArray(existingChunk.tiles) &&
+      existingChunk.tiles.length === CHUNK_SIZE * CHUNK_SIZE
+    ) {
+      const lx = ((tx % CHUNK_SIZE) + CHUNK_SIZE) % CHUNK_SIZE;
+      const ly = ((ty % CHUNK_SIZE) + CHUNK_SIZE) % CHUNK_SIZE;
+      const idx = ly * CHUNK_SIZE + lx;
+      const preservedBiome = existingChunk.tiles[idx];
+      const preservedZone = existingChunk.ecologicalZones?.[idx];
+
+      if (preservedBiome === BiomeType.OCEAN) {
+        return {
+          waterKind: raw.waterKind !== 'none' ? raw.waterKind : 'ocean',
+          isOceanBeach: false,
+          isIslandLand: false,
+          continentalElev: raw.continentalElev,
+          riverMeander: raw.riverMeander,
+          climate: raw.climate,
+        };
+      }
+
+      if (preservedBiome) {
+        const isIsland = preservedBiome === BiomeType.ISLAND;
+        const isOceanBeach =
+          preservedZone === EcologicalZone.COASTAL_TROPICS ||
+          this.getTileBiomeFast(tx + 1, ty) === BiomeType.OCEAN ||
+          this.getTileBiomeFast(tx - 1, ty) === BiomeType.OCEAN ||
+          this.getTileBiomeFast(tx, ty + 1) === BiomeType.OCEAN ||
+          this.getTileBiomeFast(tx, ty - 1) === BiomeType.OCEAN;
+        return {
+          waterKind: 'none',
+          isOceanBeach,
+          isIslandLand: isIsland,
+          continentalElev: raw.continentalElev,
+          riverMeander: raw.riverMeander,
+          climate: raw.climate,
+        };
+      }
+    }
+
     if (raw.waterKind !== 'none') {
       return {
         waterKind: raw.waterKind,
@@ -854,7 +1002,7 @@ export class WorldManager {
 
     for (let i = 0; i < beachProbeOffsets.length; i++) {
       const [dx, dy] = beachProbeOffsets[i];
-      if (this.getRawWaterAtTile(tx + dx, ty + dy).waterKind === 'ocean') {
+      if (this.getRawWaterAtTile(tx + dx, ty + dy, effectiveVer).waterKind === 'ocean') {
         return {
           waterKind: 'none',
           isOceanBeach: true,
@@ -906,7 +1054,7 @@ export class WorldManager {
     if (version <= 1) {
       return this.computeBiomeAtTileV1(tx, ty);
     }
-    return this.computeBiomeAtTileV2(tx, ty);
+    return this.computeBiomeAtTileV2(tx, ty, version);
   }
 
   private computeBiomeAtTileV1(tx: number, ty: number): BiomeType {
@@ -931,12 +1079,17 @@ export class WorldManager {
    * Terrestrial biomes are arranged along a progressive continuum:
    *   DESERT <-> PLAINS <-> FOREST <-> TEMPERATE_FOREST <-> TAIGA_FOREST
    * so biomes always form large, organic regions and transition progressively without small pockets.
+   * Note: In v5+, the world NEVER molds a circular Plains clearing around (0,0); (0,0) uses 100% natural seed noise.
    */
-  private computeRawBiomeAtTileV2(tx: number, ty: number): {
+  private computeRawBiomeAtTileV2(
+    tx: number,
+    ty: number,
+    version = this.worldGenVersion
+  ): {
     biome: BiomeType;
     nearThreshold: boolean;
   } {
-    const raw = this.getRawWaterAtTile(tx, ty);
+    const raw = this.getRawWaterAtTile(tx, ty, version);
     if (raw.waterKind !== 'none') {
       return { biome: BiomeType.OCEAN, nearThreshold: false };
     }
@@ -945,12 +1098,15 @@ export class WorldManager {
       return { biome: BiomeType.ISLAND, nearThreshold: false };
     }
 
+    const useLegacyOriginCircle = version <= 4;
     const distFromOrigin = Math.hypot(tx, ty);
-    // Smooth starter heartland fade so (0, 0) is always a generous Plains region without hard circle cuts
     const originPlainsBias =
-      distFromOrigin < 26 ? Math.max(0, (26 - distFromOrigin) / 26) : 0;
+      useLegacyOriginCircle && distFromOrigin < 26
+        ? Math.max(0, (26 - distFromOrigin) / 26)
+        : 0;
 
-    const climate = raw.climate * (1 - originPlainsBias) + 0.44 * originPlainsBias;
+    const climate =
+      raw.climate * (1 - originPlainsBias) + 0.44 * originPlainsBias;
 
     // 1. DESERT: Rarest biome, occupying large arid macro-basins (climate < 0.258)
     //    Always surrounded by a wide PLAINS buffer (0.258 <= climate < 0.36) for progressive transition.
@@ -1027,8 +1183,12 @@ export class WorldManager {
     return { biome: BiomeType.PLAINS, nearThreshold: nearAnyBorder };
   }
 
-  private computeBiomeAtTileV2(tx: number, ty: number): BiomeType {
-    const center = this.computeRawBiomeAtTileV2(tx, ty);
+  private computeBiomeAtTileV2(
+    tx: number,
+    ty: number,
+    version = this.worldGenVersion
+  ): BiomeType {
+    const center = this.computeRawBiomeAtTileV2(tx, ty, version);
     if (
       !center.nearThreshold ||
       center.biome === BiomeType.OCEAN ||
@@ -1058,7 +1218,7 @@ export class WorldManager {
 
     for (let i = 0; i < probeOffsets.length; i++) {
       const [dx, dy] = probeOffsets[i];
-      const nb = this.computeRawBiomeAtTileV2(tx + dx, ty + dy).biome;
+      const nb = this.computeRawBiomeAtTileV2(tx + dx, ty + dy, version).biome;
       if (nb === BiomeType.OCEAN || nb === BiomeType.ISLAND) {
         continue;
       }
@@ -1088,39 +1248,58 @@ export class WorldManager {
   public computeEcologicalZoneAtTile(
     tx: number,
     ty: number,
-    biome?: BiomeType
+    biome?: BiomeType,
+    version = this.worldGenVersion,
+    localChunkTiles?: BiomeType[],
+    localChunkCx?: number,
+    localChunkCy?: number
   ): EcologicalZone {
-    const hydro = this.getHydrologyAtTile(tx, ty);
+    const getNeighborBiome = (ntx: number, nty: number): BiomeType => {
+      if (
+        localChunkTiles &&
+        localChunkCx !== undefined &&
+        localChunkCy !== undefined &&
+        Math.floor(ntx / CHUNK_SIZE) === localChunkCx &&
+        Math.floor(nty / CHUNK_SIZE) === localChunkCy
+      ) {
+        const nlx = ((ntx % CHUNK_SIZE) + CHUNK_SIZE) % CHUNK_SIZE;
+        const nly = ((nty % CHUNK_SIZE) + CHUNK_SIZE) % CHUNK_SIZE;
+        return localChunkTiles[nly * CHUNK_SIZE + nlx];
+      }
+      return this.computeBiomeAtTile(ntx, nty);
+    };
+
+    const hydro = this.getHydrologyAtTile(tx, ty, version);
     const b =
       biome ??
       (hydro.waterKind !== 'none'
         ? BiomeType.OCEAN
-        : this.computeBiomeAtTile(tx, ty));
+        : getNeighborBiome(tx, ty));
     const distFromOrigin = Math.hypot(tx, ty);
 
     if (b === BiomeType.OCEAN) {
       if (hydro.waterKind === 'river' || hydro.waterKind === 'lake') {
         return EcologicalZone.SHALLOW_REEF;
       }
-      const n = this.computeBiomeAtTile(tx, ty - 1);
-      const s = this.computeBiomeAtTile(tx, ty + 1);
-      const e = this.computeBiomeAtTile(tx + 1, ty);
-      const w = this.computeBiomeAtTile(tx - 1, ty);
+      const n = getNeighborBiome(tx, ty - 1);
+      const s = getNeighborBiome(tx, ty + 1);
+      const e = getNeighborBiome(tx + 1, ty);
+      const w = getNeighborBiome(tx - 1, ty);
       if (
         n !== BiomeType.OCEAN ||
         s !== BiomeType.OCEAN ||
         e !== BiomeType.OCEAN ||
         w !== BiomeType.OCEAN ||
-        this.computeBiomeAtTile(tx + 2, ty) !== BiomeType.OCEAN ||
-        this.computeBiomeAtTile(tx - 2, ty) !== BiomeType.OCEAN
+        getNeighborBiome(tx + 2, ty) !== BiomeType.OCEAN ||
+        getNeighborBiome(tx - 2, ty) !== BiomeType.OCEAN
       ) {
         return EcologicalZone.SHALLOW_REEF;
       }
       return EcologicalZone.DEEP_OCEAN;
     }
 
-    // Immediate starter clearing so the player begins in a clean, open meadow
-    if (distFromOrigin < 7.5) {
+    // Legacy v2-v4 only: immediate starter clearing
+    if (version <= 4 && distFromOrigin < 7.5) {
       return EcologicalZone.MEADOW_CLEARING;
     }
 
@@ -1132,10 +1311,10 @@ export class WorldManager {
       return EcologicalZone.COASTAL_TROPICS;
     }
 
-    const n = this.computeBiomeAtTile(tx, ty - 1);
-    const s = this.computeBiomeAtTile(tx, ty + 1);
-    const e = this.computeBiomeAtTile(tx + 1, ty);
-    const w = this.computeBiomeAtTile(tx - 1, ty);
+    const n = getNeighborBiome(tx, ty - 1);
+    const s = getNeighborBiome(tx, ty + 1);
+    const e = getNeighborBiome(tx + 1, ty);
+    const w = getNeighborBiome(tx - 1, ty);
 
     // Smooth low-frequency sub-biome fields (wavelength ~60 tiles) so sub-zones never form tiny speckles
     const vegNoise = smoothNoise(tx * 0.018 + 40, ty * 0.018 + 40, this.seed + 511);
@@ -1355,6 +1534,214 @@ export class WorldManager {
     return 1; // Sculpted Golden Sand Dunes
   }
 
+  /**
+   * Resolves a progressive intermediate biome along a seam between an older preserved chunk's
+   * edge biome (`anchorBiome`) and a newly generated chunk's raw biome (`targetBiome`).
+   * Guarantees smooth, natural ecotone progressions instead of abrupt jumps.
+   */
+  private resolveProgressiveSeamBiome(
+    anchorBiome: BiomeType,
+    targetBiome: BiomeType,
+    normalizedProgress: number
+  ): BiomeType {
+    if (anchorBiome === targetBiome) return anchorBiome;
+    // Inner band closest to the preserved chunk border adopts the preserved chunk's biome
+    if (normalizedProgress < 0.56) {
+      return anchorBiome;
+    }
+
+    // Outer band (0.56..1.0): insert natural intermediate biome when transitioning between non-adjacent biomes
+    const isForest = (b: BiomeType) =>
+      b === BiomeType.FOREST ||
+      b === BiomeType.TEMPERATE_FOREST ||
+      b === BiomeType.TAIGA_FOREST;
+
+    // Desert <-> Any Forest transitions progressively through Plains
+    if (
+      (anchorBiome === BiomeType.DESERT && isForest(targetBiome)) ||
+      (isForest(anchorBiome) && targetBiome === BiomeType.DESERT)
+    ) {
+      return BiomeType.PLAINS;
+    }
+
+    // Common Forest <-> Taiga Forest transitions progressively through Temperate Forest
+    if (
+      (anchorBiome === BiomeType.FOREST &&
+        targetBiome === BiomeType.TAIGA_FOREST) ||
+      (anchorBiome === BiomeType.TAIGA_FOREST &&
+        targetBiome === BiomeType.FOREST)
+    ) {
+      return BiomeType.TEMPERATE_FOREST;
+    }
+
+    // Ocean <-> Dense Forests transitions through a natural Plains coastal margin
+    if (
+      (anchorBiome === BiomeType.OCEAN && isForest(targetBiome)) ||
+      (isForest(anchorBiome) && targetBiome === BiomeType.OCEAN)
+    ) {
+      return BiomeType.PLAINS;
+    }
+
+    return anchorBiome;
+  }
+
+  /**
+   * Organically blends the terrain tiles of a newly generated chunk `(cx, cy)` with any
+   * already-explored / preserved neighboring chunks in `this.chunks`.
+   * Prevents straight, rectilinear, quadratic, or unnatural chunk-border seams when the world
+   * generator is updated across game versions.
+   */
+  private blendChunkTilesWithPreservedNeighbors(
+    cx: number,
+    cy: number,
+    tiles: BiomeType[]
+  ): void {
+    const neighborOffsets: Array<[number, number]> = [
+      [-1, 0],
+      [1, 0],
+      [0, -1],
+      [0, 1],
+      [-1, -1],
+      [1, -1],
+      [-1, 1],
+      [1, 1],
+    ];
+
+    const preservedNeighbors: Array<{
+      dx: number;
+      dy: number;
+      chunk: ChunkData;
+    }> = [];
+
+    for (const [dx, dy] of neighborOffsets) {
+      const nb = this.chunks[WorldManager.chunkKey(cx + dx, cy + dy)];
+      if (
+        nb &&
+        (nb.preserved || WorldManager.isChunkExploredOrModified(nb)) &&
+        Array.isArray(nb.tiles) &&
+        nb.tiles.length === CHUNK_SIZE * CHUNK_SIZE
+      ) {
+        preservedNeighbors.push({ dx, dy, chunk: nb });
+      }
+    }
+
+    if (preservedNeighbors.length === 0) return;
+
+    const blended = tiles.slice();
+    const wasBlended = new Uint8Array(CHUNK_SIZE * CHUNK_SIZE);
+
+    for (let ly = 0; ly < CHUNK_SIZE; ly++) {
+      for (let lx = 0; lx < CHUNK_SIZE; lx++) {
+        const tx = cx * CHUNK_SIZE + lx;
+        const ty = cy * CHUNK_SIZE + ly;
+        const idx = ly * CHUNK_SIZE + lx;
+        const rawBiome = tiles[idx];
+
+        // Multi-frequency domain-warped organic wave so the blend contour curves naturally
+        const w1 =
+          (perlin2D(tx * 0.13, ty * 0.13, this.seed + 15131) + 1) * 0.5;
+        const w2 = smoothNoise(tx * 0.065, ty * 0.065, this.seed + 15733);
+        const w3 = perlin2D(tx * 0.27, ty * 0.27, this.seed + 16007) * 0.7;
+        const waveFactor = 0.36 + 0.64 * (w1 * 0.62 + w2 * 0.38);
+        const wobble = Math.round(
+          perlin2D(tx * 0.19, ty * 0.19, this.seed + 16301) * 1.5
+        );
+
+        let bestT = 1.0;
+        let bestAnchorBiome: BiomeType = rawBiome;
+
+        for (let i = 0; i < preservedNeighbors.length; i++) {
+          const { dx, dy, chunk: nb } = preservedNeighbors[i];
+          const distX = dx < 0 ? lx : dx > 0 ? CHUNK_SIZE - 1 - lx : 0;
+          const distY = dy < 0 ? ly : dy > 0 ? CHUNK_SIZE - 1 - ly : 0;
+          const isCorner = dx !== 0 && dy !== 0;
+          const d = isCorner ? Math.hypot(distX, distY) : distX + distY;
+
+          const maxReach = isCorner ? 5.6 : 7.2;
+          const organicReach = Math.max(
+            1.6,
+            maxReach * waveFactor + w3
+          );
+
+          if (d < organicReach) {
+            const t = d / organicReach;
+            if (t < bestT) {
+              const nbLx =
+                dx < 0
+                  ? CHUNK_SIZE - 1
+                  : dx > 0
+                  ? 0
+                  : Math.max(0, Math.min(CHUNK_SIZE - 1, lx + wobble));
+              const nbLy =
+                dy < 0
+                  ? CHUNK_SIZE - 1
+                  : dy > 0
+                  ? 0
+                  : Math.max(0, Math.min(CHUNK_SIZE - 1, ly + wobble));
+              const edgeBiome = nb.tiles[nbLy * CHUNK_SIZE + nbLx];
+              if (edgeBiome) {
+                bestT = t;
+                bestAnchorBiome = edgeBiome;
+              }
+            }
+          }
+        }
+
+        if (bestT < 1.0 && bestAnchorBiome !== rawBiome) {
+          blended[idx] = this.resolveProgressiveSeamBiome(
+            bestAnchorBiome,
+            rawBiome,
+            bestT
+          );
+          wasBlended[idx] = 1;
+        }
+      }
+    }
+
+    // Cellular smoothing pass on the blended seam zone so contours are 100% rounded and organic
+    const getEffectiveTile = (lx: number, ly: number): BiomeType => {
+      if (lx >= 0 && lx < CHUNK_SIZE && ly >= 0 && ly < CHUNK_SIZE) {
+        return blended[ly * CHUNK_SIZE + lx];
+      }
+      return this.getTileBiomeFast(cx * CHUNK_SIZE + lx, cy * CHUNK_SIZE + ly);
+    };
+
+    for (let ly = 0; ly < CHUNK_SIZE; ly++) {
+      for (let lx = 0; lx < CHUNK_SIZE; lx++) {
+        const idx = ly * CHUNK_SIZE + lx;
+        if (!wasBlended[idx]) {
+          tiles[idx] = blended[idx];
+          continue;
+        }
+        const current = blended[idx];
+        const n = getEffectiveTile(lx, ly - 1);
+        const s = getEffectiveTile(lx, ly + 1);
+        const e = getEffectiveTile(lx + 1, ly);
+        const w = getEffectiveTile(lx - 1, ly);
+
+        let sameCardinals = 0;
+        if (n === current) sameCardinals++;
+        if (s === current) sameCardinals++;
+        if (e === current) sameCardinals++;
+        if (w === current) sameCardinals++;
+
+        if (sameCardinals <= 1) {
+          if (n === s || n === e || n === w) {
+            tiles[idx] = n;
+          } else if (s === e || s === w) {
+            tiles[idx] = s;
+          } else if (e === w) {
+            tiles[idx] = e;
+          } else {
+            tiles[idx] = current;
+          }
+        } else {
+          tiles[idx] = current;
+        }
+      }
+    }
+  }
+
   // =========================================================================
   // LEGACY V1 CHUNK GENERATOR (100% preserved for existing saved games)
   // =========================================================================
@@ -1459,7 +1846,7 @@ export class WorldManager {
   }
 
   // =========================================================================
-  // V2 REALISTIC BIOME, ECOLOGICAL ZONE, TRUE RARITY & STRUCTURE GENERATOR
+  // V2+ REALISTIC BIOME, ECOLOGICAL ZONE, TRUE RARITY & STRUCTURE GENERATOR
   // =========================================================================
   private generateChunkV2(cx: number, cy: number): ChunkData {
     const tiles: BiomeType[] = new Array(CHUNK_SIZE * CHUNK_SIZE);
@@ -1479,23 +1866,44 @@ export class WorldManager {
     let relicSpawnedInChunk = false;
     let rareCountInChunk = 0;
 
+    // Pass 1: Compute raw natural biome and visual variant for each tile in the chunk
+    for (let ly = 0; ly < CHUNK_SIZE; ly++) {
+      for (let lx = 0; lx < CHUNK_SIZE; lx++) {
+        const tx = cx * CHUNK_SIZE + lx;
+        const ty = cy * CHUNK_SIZE + ly;
+        const idx = ly * CHUNK_SIZE + lx;
+        tiles[idx] = this.computeBiomeAtTileV2(tx, ty, this.worldGenVersion);
+        const r = hash2D(tx, ty, this.seed + 31);
+        tileVariants[idx] = Math.floor(r * 4);
+      }
+    }
+
+    // Pass 2: Organically blend chunk edges with any adjacent already-explored/preserved chunks
+    // so updates to world generation never produce straight, quadratic, or rectilinear seams!
+    this.blendChunkTilesWithPreservedNeighbors(cx, cy, tiles);
+
+    // Pass 3: Compute ecological zones and populate natural flora/minerals matching the blended terrain
     for (let ly = 0; ly < CHUNK_SIZE; ly++) {
       for (let lx = 0; lx < CHUNK_SIZE; lx++) {
         const tx = cx * CHUNK_SIZE + lx;
         const ty = cy * CHUNK_SIZE + ly;
         const idx = ly * CHUNK_SIZE + lx;
 
-        const biome = this.computeBiomeAtTileV2(tx, ty);
-        const zone = this.computeEcologicalZoneAtTile(tx, ty, biome);
-        tiles[idx] = biome;
+        const biome = tiles[idx];
+        const zone = this.computeEcologicalZoneAtTile(
+          tx,
+          ty,
+          biome,
+          this.worldGenVersion,
+          tiles,
+          cx,
+          cy
+        );
         ecologicalZones[idx] = zone;
 
         const r = hash2D(tx, ty, this.seed + 31);
-        tileVariants[idx] = Math.floor(r * 4);
-
         const distFromSpawn = Math.hypot(tx, ty);
-        // Keep immediate starter clearing around (0,0) open and welcoming
-        if (distFromSpawn < 4.5) continue;
+        if (this.worldGenVersion <= 4 && distFromSpawn < 4.5) continue;
 
         // Winding natural animal/explorer trails stay clear even inside dense woods
         const trailVal = Math.abs(
@@ -3141,19 +3549,22 @@ export class WorldManager {
           const chunk = this.getOrCreateChunk(cx, cy);
           const tileIdx = ly * CHUNK_SIZE + lx;
           const wasExplored = chunk.explored[tileIdx] === 1;
-          chunk.explored[tileIdx] = 1;
-          touchedChunks.add(chunk);
-          if (
-            !wasExplored &&
-            !chunk.islandMobsPopulated &&
-            chunk.tiles[tileIdx] === BiomeType.ISLAND
-          ) {
-            newlyDiscoveredIslandChunks.add(chunk);
+          if (!wasExplored) {
+            chunk.explored[tileIdx] = 1;
+            touchedChunks.add(chunk);
+            if (
+              !chunk.islandMobsPopulated &&
+              chunk.tiles[tileIdx] === BiomeType.ISLAND
+            ) {
+              newlyDiscoveredIslandChunks.add(chunk);
+            }
+          } else if (!chunk.preserved) {
+            touchedChunks.add(chunk);
           }
         }
       }
     }
-    // Once a chunk has explored tiles, mark it preserved and lock its terrain snapshot!
+    // Lock terrain snapshot and update compactExplored bitmask on all newly revealed chunks
     for (const chunk of touchedChunks) {
       if (!chunk.preserved) {
         WorldManager.lockChunkTerrainSnapshot(
@@ -3161,9 +3572,126 @@ export class WorldManager {
           chunk.genVersion ?? this.worldGenVersion,
           chunk.generatedGameVersion ?? GAME_VERSION
         );
+      } else {
+        const encodedExplored = WorldManager.encodeCompactExplored(
+          chunk.explored
+        );
+        if (encodedExplored) {
+          chunk.compactExplored = encodedExplored;
+        }
       }
     }
     return Array.from(newlyDiscoveredIslandChunks);
+  }
+
+  /**
+   * Finds a natural, valid initial spawn point for the player on a new world without molding
+   * or altering the surrounding biome (no forced circular Plains clearing).
+   * Guarantees the player spawns on solid dry land with a walkable neighborhood and zero
+   * collision overlap with physical world elements (trees, rocks, cacti, structures, or water).
+   */
+  public findInitialPlayerSpawnPoint(): {
+    x: number;
+    y: number;
+    tileX: number;
+    tileY: number;
+  } {
+    const isSolidLandmassAnchor = (
+      tx: number,
+      ty: number,
+      allowIsland: boolean
+    ): boolean => {
+      const centerBiome = this.computeBiomeAtTile(tx, ty);
+      if (centerBiome === BiomeType.OCEAN) return false;
+      if (!allowIsland && centerBiome === BiomeType.ISLAND) return false;
+
+      let dryNeighbors = 0;
+      for (let dy = -2; dy <= 2; dy++) {
+        for (let dx = -2; dx <= 2; dx++) {
+          const b = this.computeBiomeAtTile(tx + dx, ty + dy);
+          if (b !== BiomeType.OCEAN && (allowIsland || b !== BiomeType.ISLAND)) {
+            dryNeighbors++;
+          }
+        }
+      }
+      return dryNeighbors >= 18;
+    };
+
+    const tryFindWalkableTileNearAnchor = (
+      anchorTx: number,
+      anchorTy: number
+    ): { x: number; y: number; tileX: number; tileY: number } | null => {
+      for (let r = 0; r <= 3; r++) {
+        for (let dy = -r; dy <= r; dy++) {
+          for (let dx = -r; dx <= r; dx++) {
+            if (r > 0 && Math.abs(dx) !== r && Math.abs(dy) !== r) continue;
+            const tx = anchorTx + dx;
+            const ty = anchorTy + dy;
+            if (!this.isTileWalkable(tx, ty, false)) continue;
+
+            // Ensure at least 2 cardinal neighbor tiles are also walkable dry land so the player isn't boxed in
+            let freeCardinals = 0;
+            if (this.isTileWalkable(tx + 1, ty, false)) freeCardinals++;
+            if (this.isTileWalkable(tx - 1, ty, false)) freeCardinals++;
+            if (this.isTileWalkable(tx, ty + 1, false)) freeCardinals++;
+            if (this.isTileWalkable(tx, ty - 1, false)) freeCardinals++;
+            if (freeCardinals < 2) continue;
+
+            const wx = tx * TILE_SIZE + TILE_SIZE / 2;
+            const wy = ty * TILE_SIZE + TILE_SIZE / 2;
+            if (this.canEntityOccupyWorldCircle(wx, wy, 7.2, false)) {
+              return { x: wx, y: wy, tileX: tx, tileY: ty };
+            }
+          }
+        }
+      }
+      return null;
+    };
+
+    const cleanupUnexploredProbedChunks = () => {
+      for (const [k, c] of Object.entries(this.chunks)) {
+        if (!WorldManager.isChunkExploredOrModified(c)) {
+          delete this.chunks[k];
+        }
+      }
+    };
+
+    // Pass 1: Search outward from (0, 0) for a natural mainland dry-land position
+    // Pass 2: Fallback allowing large islands if the origin region is an ocean archipelago
+    for (const allowIsland of [false, true]) {
+      if (isSolidLandmassAnchor(0, 0, allowIsland)) {
+        const hit = tryFindWalkableTileNearAnchor(0, 0);
+        if (hit) {
+          cleanupUnexploredProbedChunks();
+          return hit;
+        }
+      }
+
+      for (let rad = 2; rad <= 320; rad += 3) {
+        const steps = Math.max(8, Math.min(48, Math.floor(rad * 1.5)));
+        for (let i = 0; i < steps; i++) {
+          const angle = (i / steps) * Math.PI * 2;
+          const tx = Math.round(Math.cos(angle) * rad);
+          const ty = Math.round(Math.sin(angle) * rad);
+          if (!isSolidLandmassAnchor(tx, ty, allowIsland)) continue;
+
+          const hit = tryFindWalkableTileNearAnchor(tx, ty);
+          if (hit) {
+            cleanupUnexploredProbedChunks();
+            return hit;
+          }
+        }
+      }
+    }
+
+    cleanupUnexploredProbedChunks();
+    const fallbackSafe = this.findNearestSafePosition(16, 16, 7.2);
+    return {
+      x: fallbackSafe.x,
+      y: fallbackSafe.y,
+      tileX: Math.floor(fallbackSafe.x / TILE_SIZE),
+      tileY: Math.floor(fallbackSafe.y / TILE_SIZE),
+    };
   }
 
   /**
@@ -3741,13 +4269,11 @@ export class WorldManager {
           !alreadyHasTorch
         );
       }
-      // Allow SPIKE_TRAP and Doors/Gates (WOOD_DOOR, IRON_GATE) to coexist on the same tile
-      const isDoorType = (t: PlaceableType) =>
-        t === PlaceableType.WOOD_DOOR || t === PlaceableType.IRON_GATE;
+      // Allow SPIKE_TRAP and Doors/Gates (WOOD_DOOR, DARK_OAK_DOOR, PINE_DOOR, IRON_GATE) to coexist on the same tile
       if (
         placeableType === PlaceableType.SPIKE_TRAP &&
         existingUppers.length === 1 &&
-        isDoorType(wallOnTile.type)
+        WorldManager.isDoorOrGateStructure(wallOnTile.type)
       ) {
         return true;
       }
@@ -3760,10 +4286,8 @@ export class WorldManager {
     }
 
     // Allow Doors/Gates to be placed on a tile that currently only has a SPIKE_TRAP
-    const isDoorType = (t: PlaceableType) =>
-      t === PlaceableType.WOOD_DOOR || t === PlaceableType.IRON_GATE;
     if (
-      isDoorType(placeableType) &&
+      WorldManager.isDoorOrGateStructure(placeableType) &&
       existingUppers.length === 1 &&
       existingUppers[0].type === PlaceableType.SPIKE_TRAP
     ) {
@@ -3822,11 +4346,13 @@ export class WorldManager {
   }
 
   /**
-   * Returns true if `type` is a tree sapling structure (OAK_SAPLING or PALM_SAPLING).
+   * Returns true if `type` is a tree sapling structure (OAK_SAPLING, DARK_OAK_SAPLING, PINE_SAPLING, or PALM_SAPLING).
    */
   public static isSaplingStructure(type: PlaceableType): boolean {
     return (
       type === PlaceableType.OAK_SAPLING ||
+      type === PlaceableType.DARK_OAK_SAPLING ||
+      type === PlaceableType.PINE_SAPLING ||
       type === PlaceableType.PALM_SAPLING
     );
   }
@@ -3837,10 +4363,26 @@ export class WorldManager {
   public static isWallMountableStructure(type: PlaceableType): boolean {
     return (
       type === PlaceableType.WOOD_WALL ||
+      type === PlaceableType.DARK_OAK_WALL ||
+      type === PlaceableType.PINE_WALL ||
       type === PlaceableType.STONE_WALL ||
       type === PlaceableType.BRICK_WALL ||
       type === PlaceableType.WOOD_WINDOW ||
+      type === PlaceableType.DARK_OAK_WINDOW ||
+      type === PlaceableType.PINE_WINDOW ||
       type === PlaceableType.STONE_WINDOW
+    );
+  }
+
+  /**
+   * Returns true if `type` is a door or gate structure.
+   */
+  public static isDoorOrGateStructure(type: PlaceableType): boolean {
+    return (
+      type === PlaceableType.WOOD_DOOR ||
+      type === PlaceableType.DARK_OAK_DOOR ||
+      type === PlaceableType.PINE_DOOR ||
+      type === PlaceableType.IRON_GATE
     );
   }
 
@@ -3871,10 +4413,7 @@ export class WorldManager {
     ty: number,
     st: PlacedStructure
   ): boolean {
-    if (
-      st.type === PlaceableType.WOOD_DOOR ||
-      st.type === PlaceableType.IRON_GATE
-    ) {
+    if (WorldManager.isDoorOrGateStructure(st.type)) {
       return (
         this.getDoorOrientationAt(tx, ty, st.type, st.orientation) ===
         'vertical'
@@ -4049,16 +4588,14 @@ export class WorldManager {
         placeableType === PlaceableType.MARKET_STALL ||
         placeableType === PlaceableType.EXPLORER_TENT ||
         placeableType === PlaceableType.VILLAGE_HOUSE ||
-        placeableType === PlaceableType.WOOD_DOOR ||
-        placeableType === PlaceableType.IRON_GATE
+        WorldManager.isDoorOrGateStructure(placeableType)
           ? 'PLAYER'
           : undefined,
       ownerId:
         placeableType === PlaceableType.MARKET_STALL ||
         placeableType === PlaceableType.EXPLORER_TENT ||
         placeableType === PlaceableType.VILLAGE_HOUSE ||
-        placeableType === PlaceableType.WOOD_DOOR ||
-        placeableType === PlaceableType.IRON_GATE
+        WorldManager.isDoorOrGateStructure(placeableType)
           ? 'player'
           : undefined,
       ownerName:
@@ -4066,8 +4603,7 @@ export class WorldManager {
           ? 'Você (Mercador)'
           : placeableType === PlaceableType.EXPLORER_TENT ||
             placeableType === PlaceableType.VILLAGE_HOUSE ||
-            placeableType === PlaceableType.WOOD_DOOR ||
-            placeableType === PlaceableType.IRON_GATE
+            WorldManager.isDoorOrGateStructure(placeableType)
           ? 'Você'
           : undefined,
       stallOpen:
@@ -4337,10 +4873,14 @@ export class WorldManager {
       (n) => n.tileX === sapling.tileX && n.tileY === sapling.tileY
     );
     if (!alreadyHasNode) {
-      const targetNodeType =
-        sapling.type === PlaceableType.PALM_SAPLING
-          ? NatureNodeType.PALM_TREE
-          : NatureNodeType.OAK_TREE;
+      let targetNodeType = NatureNodeType.OAK_TREE;
+      if (sapling.type === PlaceableType.PALM_SAPLING) {
+        targetNodeType = NatureNodeType.PALM_TREE;
+      } else if (sapling.type === PlaceableType.DARK_OAK_SAPLING) {
+        targetNodeType = NatureNodeType.TEMPERATE_TREE;
+      } else if (sapling.type === PlaceableType.PINE_SAPLING) {
+        targetNodeType = NatureNodeType.PINE_TREE;
+      }
       const r = hash2D(sapling.tileX, sapling.tileY, this.seed + 31);
       chunk.nodes.push(
         this.createNatureNode(targetNodeType, sapling.tileX, sapling.tileY, r)
