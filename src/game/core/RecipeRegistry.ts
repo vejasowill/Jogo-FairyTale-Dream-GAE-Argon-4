@@ -521,6 +521,24 @@ export const RECIPES: CraftingRecipe[] = [
     ingredients: [{ itemId: 'wood', count: 3 }],
   },
   {
+    id: 'craft_dark_oak_floor',
+    resultItemId: 'dark_oak_floor',
+    resultCount: 4,
+    requiredStation: PlaceableType.WORKBENCH,
+    craftTimeSec: 0,
+    rarity: RarityTier.BASIC,
+    ingredients: [{ itemId: 'dark_oak_wood', count: 3 }],
+  },
+  {
+    id: 'craft_pine_floor',
+    resultItemId: 'pine_floor',
+    resultCount: 4,
+    requiredStation: PlaceableType.WORKBENCH,
+    craftTimeSec: 0,
+    rarity: RarityTier.BASIC,
+    ingredients: [{ itemId: 'pine_wood', count: 3 }],
+  },
+  {
     id: 'craft_stone_floor',
     resultItemId: 'stone_floor',
     resultCount: 4,
@@ -1702,6 +1720,7 @@ export function isCommonWoodItem(itemId: string): boolean {
 // Madeira de Carvalho, Madeira de Carvalho Escuro ou Madeira de Pinheiro.
 // (Exceto paredes, janelas e portas de madeira, que possuem variantes próprias para cada tipo de madeira).
 const WOOD_VARIANT_SPECIFIC_RECIPES = new Set([
+  'craft_wood_floor',
   'craft_wood_wall',
   'craft_wood_window',
   'craft_wood_door',

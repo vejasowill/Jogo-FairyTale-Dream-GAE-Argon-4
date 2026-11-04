@@ -10,6 +10,7 @@ import {
   getFuelBurnTimeSec,
   getItemBasePrice,
   getNatureBreakRequirement,
+  getPlaceableRotationMode,
   getStructureBreakRequirement,
   isFuelItem,
   ITEMS,
@@ -100,6 +101,7 @@ export interface HudSnapshot {
   lastAutoSaveAt: number;
   buildDemolishMode: boolean;
   buildOrientation: 'auto' | 'horizontal' | 'vertical';
+  buildRotation: 0 | 1 | 2 | 3;
   showHitboxPreview: boolean;
   innocentFireEnabled: boolean;
   onlineSession: OnlineSessionInfo;
@@ -135,6 +137,7 @@ export class GameEngine {
   private guestPlayers: Record<string, PlayerState> = {};
   public buildDemolishMode = false;
   public buildOrientation: 'auto' | 'horizontal' | 'vertical' = 'auto';
+  public buildRotation: 0 | 1 | 2 | 3 = 0;
   public showHitboxPreview = false;
   public innocentFireEnabled = false;
   public hudAttackButtonHeld = false;
@@ -732,6 +735,7 @@ export class GameEngine {
       {
         demolishMode: this.buildDemolishMode,
         orientation: this.buildOrientation,
+        rotation: this.buildRotation,
         showHitboxPreview: this.showHitboxPreview,
       },
       this.remotePlayersList,
@@ -5138,12 +5142,19 @@ export class GameEngine {
         (s) =>
           s.tileX === doorTile.tx &&
           s.tileY === doorTile.ty &&
-          (s.type === PlaceableType.WOOD_DOOR ||
-            s.type === PlaceableType.IRON_GATE) &&
+          WorldManager.isDoorOrGateStructure(s.type) &&
           !s.isOpen
       );
       if (doorSt) {
         doorSt.isOpen = true;
+        const partnerInfo = this.world.getPartnerDoubleDoor(
+          doorTile.tx,
+          doorTile.ty,
+          doorSt
+        );
+        if (partnerInfo) {
+          partnerInfo.partner.isOpen = true;
+        }
       }
     }
 
@@ -5418,11 +5429,18 @@ export class GameEngine {
         if (
           st.tileX === tx &&
           st.tileY === ty &&
-          (st.type === PlaceableType.WOOD_DOOR ||
-            st.type === PlaceableType.IRON_GATE) &&
+          WorldManager.isDoorOrGateStructure(st.type) &&
           st.isOpen
         ) {
           st.isOpen = false;
+          const partnerInfo = this.world.getPartnerDoubleDoor(tx, ty, st);
+          if (partnerInfo && partnerInfo.partner.isOpen) {
+            partnerInfo.partner.isOpen = false;
+            this.syncChunkAtTile(
+              partnerInfo.partner.tileX,
+              partnerInfo.partner.tileY
+            );
+          }
           this.renderer.spawnBurst(
             tx * TILE_SIZE + 16,
             ty * TILE_SIZE + 16,
@@ -7175,6 +7193,24 @@ export class GameEngine {
           }
 
           doorSt.isOpen = !doorSt.isOpen;
+          const partnerInfo = this.world.getPartnerDoubleDoor(tx, ty, doorSt);
+          if (partnerInfo) {
+            partnerInfo.partner.isOpen = doorSt.isOpen;
+            const pwx = partnerInfo.partner.tileX * TILE_SIZE + 16;
+            const pwy = partnerInfo.partner.tileY * TILE_SIZE + 16;
+            this.renderer.spawnRipple(
+              pwx,
+              pwy,
+              doorSt.isOpen ? '#4ade80' : '#fde047',
+              20,
+              0.35
+            );
+            this.renderer.spawnBurst(pwx, pwy, 'WOOD', 5);
+            this.syncChunkAtTile(
+              partnerInfo.partner.tileX,
+              partnerInfo.partner.tileY
+            );
+          }
           soundManager.playHitWood();
           this.renderer.spawnRipple(
             target.worldX,
@@ -7185,7 +7221,13 @@ export class GameEngine {
           );
           this.renderer.spawnBurst(target.worldX, target.worldY, 'WOOD', 5);
           this.addFloatingText(
-            doorSt.isOpen ? '🔓 Aberto (Passagem Livre)' : '🔒 Fechado (Hitbox Sólida)',
+            partnerInfo
+              ? doorSt.isOpen
+                ? '🔓 Portas Duplas Abertas'
+                : '🔒 Portas Duplas Fechadas'
+              : doorSt.isOpen
+              ? '🔓 Aberto (Passagem Livre)'
+              : '🔒 Fechado (Hitbox Sólida)',
             target.worldX,
             target.worldY - 20,
             doorSt.isOpen ? '#4ade80' : '#fde047'
@@ -7974,7 +8016,8 @@ export class GameEngine {
         heldItem.placeableType,
         heldItem.id,
         this.buildOrientation,
-        placedFlowerColor
+        placedFlowerColor,
+        this.buildRotation
       );
       if (result.placed) {
         const placedSt = this.world.getStructureAtTile(target.tx, target.ty);
@@ -11267,13 +11310,40 @@ export class GameEngine {
   }
 
   public cycleBuildOrientation(): void {
-    const order: Array<'auto' | 'horizontal' | 'vertical'> = [
-      'auto',
-      'horizontal',
-      'vertical',
-    ];
-    const idx = order.indexOf(this.buildOrientation);
-    this.buildOrientation = order[(idx + 1) % order.length];
+    const heldSlot = this.player.inventory[this.player.selectedHotbarIndex];
+    const heldItem = heldSlot ? ITEMS[heldSlot.itemId] : null;
+    const rotMode = getPlaceableRotationMode(heldItem?.placeableType);
+
+    if (rotMode === 'dir4') {
+      this.buildRotation = ((this.buildRotation + 1) % 4) as 0 | 1 | 2 | 3;
+      this.buildOrientation =
+        this.buildRotation % 2 === 1 ? 'vertical' : 'horizontal';
+      const labels: Record<0 | 1 | 2 | 3, string> = {
+        0: '🔄 Vista: Sul (Frente)',
+        1: '🔄 Vista: Leste (Direita)',
+        2: '🔄 Vista: Norte (Costas)',
+        3: '🔄 Vista: Oeste (Esquerda)',
+      };
+      this.addFloatingText(
+        labels[this.buildRotation],
+        this.player.x,
+        this.player.y - 26,
+        '#fde047'
+      );
+    } else {
+      this.buildRotation = this.buildRotation % 2 === 0 ? 1 : 0;
+      this.buildOrientation =
+        this.buildRotation === 1 ? 'vertical' : 'horizontal';
+      this.addFloatingText(
+        this.buildRotation === 1
+          ? '🔄 Eixo: Vertical'
+          : '🔄 Eixo: Horizontal',
+        this.player.x,
+        this.player.y - 26,
+        '#fde047'
+      );
+    }
+
     soundManager.playPickup();
     this.emitUiSnapshot();
   }
@@ -18417,6 +18487,7 @@ export class GameEngine {
       lastAutoSaveAt: this.lastAutoSaveAt,
       buildDemolishMode: this.buildDemolishMode,
       buildOrientation: this.buildOrientation,
+      buildRotation: this.buildRotation,
       showHitboxPreview: this.showHitboxPreview,
       innocentFireEnabled: this.innocentFireEnabled,
       onlineSession: this.multiplayer.getSessionInfo(),

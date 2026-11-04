@@ -473,6 +473,19 @@ export const WorldMapModal: React.FC<WorldMapModalProps> = ({
     pointerDownY: 0,
   });
 
+  const activePointersRef = useRef<Map<number, { x: number; y: number }>>(
+    new Map()
+  );
+  const pinchStateRef = useRef<{
+    active: boolean;
+    initialDist: number;
+    initialZoom: number;
+  }>({
+    active: false,
+    initialDist: 0,
+    initialZoom: 4,
+  });
+
   const playerTx = Math.floor(player.x / TILE_SIZE);
   const playerTy = Math.floor(player.y / TILE_SIZE);
   const remotePlayersList = Array.from(engine.multiplayer.remotePlayers.values());
@@ -713,6 +726,20 @@ export const WorldMapModal: React.FC<WorldMapModalProps> = ({
             ctx.fillRect(sx, sy, cellSize, cellSize);
             if (cellSize >= 4) {
               ctx.fillStyle = '#b45309';
+              ctx.fillRect(sx + 1, sy + 1, cellSize - 2, Math.max(1, Math.floor(cellSize * 0.4)));
+            }
+          } else if (gst.type === PlaceableType.DARK_OAK_FLOOR) {
+            ctx.fillStyle = '#2b170b';
+            ctx.fillRect(sx, sy, cellSize, cellSize);
+            if (cellSize >= 4) {
+              ctx.fillStyle = '#4a2c16';
+              ctx.fillRect(sx + 1, sy + 1, cellSize - 2, Math.max(1, Math.floor(cellSize * 0.4)));
+            }
+          } else if (gst.type === PlaceableType.PINE_FLOOR) {
+            ctx.fillStyle = '#b88c56';
+            ctx.fillRect(sx, sy, cellSize, cellSize);
+            if (cellSize >= 4) {
+              ctx.fillStyle = '#e2be8a';
               ctx.fillRect(sx + 1, sy + 1, cellSize - 2, Math.max(1, Math.floor(cellSize * 0.4)));
             }
           } else if (gst.type === PlaceableType.STONE_FLOOR) {
@@ -1508,18 +1535,61 @@ export const WorldMapModal: React.FC<WorldMapModalProps> = ({
     };
   };
 
-  const handlePointerDown = (e: React.PointerEvent) => {
-    dragRef.current = {
-      active: true,
-      moved: false,
-      startX: e.clientX - pan.x,
-      startY: e.clientY - pan.y,
-      pointerDownX: e.clientX,
-      pointerDownY: e.clientY,
-    };
+  const handlePointerDown = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    e.currentTarget.setPointerCapture?.(e.pointerId);
+    activePointersRef.current.set(e.pointerId, {
+      x: e.clientX,
+      y: e.clientY,
+    });
+
+    if (activePointersRef.current.size === 2) {
+      const pts = Array.from(activePointersRef.current.values());
+      const dist = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y);
+      pinchStateRef.current = {
+        active: true,
+        initialDist: Math.max(10, dist),
+        initialZoom: zoom,
+      };
+      dragRef.current.active = false;
+      dragRef.current.moved = true;
+      return;
+    }
+
+    if (activePointersRef.current.size === 1) {
+      pinchStateRef.current.active = false;
+      dragRef.current = {
+        active: true,
+        moved: false,
+        startX: e.clientX - pan.x,
+        startY: e.clientY - pan.y,
+        pointerDownX: e.clientX,
+        pointerDownY: e.clientY,
+      };
+    }
   };
 
-  const handlePointerMove = (e: React.PointerEvent) => {
+  const handlePointerMove = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    if (activePointersRef.current.has(e.pointerId)) {
+      activePointersRef.current.set(e.pointerId, {
+        x: e.clientX,
+        y: e.clientY,
+      });
+    }
+
+    if (
+      pinchStateRef.current.active &&
+      activePointersRef.current.size >= 2
+    ) {
+      const pts = Array.from(activePointersRef.current.values());
+      const dist = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y);
+      const scale = dist / Math.max(10, pinchStateRef.current.initialDist);
+      const nextZoom = Math.round(
+        Math.max(2, Math.min(12, pinchStateRef.current.initialZoom * scale))
+      );
+      setZoom(nextZoom);
+      return;
+    }
+
     const info = computeMapPointDetails(e.clientX, e.clientY);
     if (info) setHoveredInfo(info);
 
@@ -1537,7 +1607,28 @@ export const WorldMapModal: React.FC<WorldMapModalProps> = ({
     });
   };
 
-  const handlePointerUp = (e: React.PointerEvent) => {
+  const handlePointerUp = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    e.currentTarget.releasePointerCapture?.(e.pointerId);
+    activePointersRef.current.delete(e.pointerId);
+
+    if (pinchStateRef.current.active) {
+      if (activePointersRef.current.size < 2) {
+        pinchStateRef.current.active = false;
+        if (activePointersRef.current.size === 1) {
+          const remaining = Array.from(activePointersRef.current.values())[0];
+          dragRef.current = {
+            active: true,
+            moved: true,
+            startX: remaining.x - pan.x,
+            startY: remaining.y - pan.y,
+            pointerDownX: remaining.x,
+            pointerDownY: remaining.y,
+          };
+        }
+      }
+      return;
+    }
+
     const wasClick = dragRef.current.active && !dragRef.current.moved;
     dragRef.current.active = false;
     if (wasClick) {

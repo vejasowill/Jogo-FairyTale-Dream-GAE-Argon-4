@@ -4151,23 +4151,164 @@ export class WorldManager {
   /**
    * Determines whether a Door or Gate at (tx, ty) should align horizontally (East-West wall)
    * or vertically (North-South wall).
+   * Connected wall/door neighbors take priority over manual standalone rotation.
    */
   public getDoorOrientationAt(
     tx: number,
     ty: number,
     placeableType: PlaceableType,
-    preferred?: 'auto' | 'horizontal' | 'vertical'
+    preferred?: 'auto' | 'horizontal' | 'vertical',
+    rotation?: 0 | 1 | 2 | 3
   ): 'horizontal' | 'vertical' {
-    if (preferred === 'horizontal' || preferred === 'vertical') {
-      return preferred;
-    }
     const mask = this.getStructureConnectionMask(tx, ty, placeableType);
     const hasNS = (mask & 5) !== 0; // North (1) or South (4)
     const hasEW = (mask & 10) !== 0; // East (2) or West (8)
     if (hasNS && !hasEW) {
       return 'vertical';
     }
+    if (hasEW && !hasNS) {
+      return 'horizontal';
+    }
+    if (rotation !== undefined) {
+      return rotation % 2 === 1 ? 'vertical' : 'horizontal';
+    }
+    if (preferred === 'horizontal' || preferred === 'vertical') {
+      return preferred;
+    }
     return 'horizontal';
+  }
+
+  /**
+   * Returns the door or gate structure at (tx, ty), if any.
+   */
+  public getDoorStructureAtTile(
+    tx: number,
+    ty: number
+  ): PlacedStructure | undefined {
+    const { cx, cy } = this.tileToChunk(tx, ty);
+    const chunk = this.chunks[WorldManager.chunkKey(cx, cy)];
+    if (!chunk) return undefined;
+    return chunk.structures.find(
+      (s) =>
+        s.tileX === tx &&
+        s.tileY === ty &&
+        WorldManager.isDoorOrGateStructure(s.type)
+    );
+  }
+
+  /**
+   * Detects if a door/gate at (tx, ty) is connected to an adjacent door/gate along its axis
+   * to form a Double Door (Porta Dupla).
+   * Returns the partner door structure, whether `(tx, ty)` is the second leaf (Right leaf for horizontal, Bottom leaf for vertical),
+   * and the shared orientation.
+   */
+  public getPartnerDoubleDoor(
+    tx: number,
+    ty: number,
+    door?: PlacedStructure
+  ): {
+    partner: PlacedStructure;
+    isSecondLeaf: boolean;
+    orient: 'horizontal' | 'vertical';
+  } | null {
+    const st = door || this.getDoorStructureAtTile(tx, ty);
+    if (!st || !WorldManager.isDoorOrGateStructure(st.type)) return null;
+
+    const orient = this.getDoorOrientationAt(
+      tx,
+      ty,
+      st.type,
+      st.orientation,
+      st.rotation
+    );
+
+    if (orient === 'horizontal') {
+      // Count consecutive horizontal doors to the West to pair deterministically in 2-door units
+      let westRun = 0;
+      let checkX = tx - 1;
+      while (westRun < 8) {
+        const wDoor = this.getDoorStructureAtTile(checkX, ty);
+        if (
+          !wDoor ||
+          this.getDoorOrientationAt(
+            checkX,
+            ty,
+            wDoor.type,
+            wDoor.orientation,
+            wDoor.rotation
+          ) !== 'horizontal'
+        ) {
+          break;
+        }
+        westRun++;
+        checkX--;
+      }
+
+      if (westRun % 2 === 1) {
+        const partner = this.getDoorStructureAtTile(tx - 1, ty);
+        if (partner) {
+          return { partner, isSecondLeaf: true, orient: 'horizontal' };
+        }
+      } else {
+        const eDoor = this.getDoorStructureAtTile(tx + 1, ty);
+        if (
+          eDoor &&
+          this.getDoorOrientationAt(
+            tx + 1,
+            ty,
+            eDoor.type,
+            eDoor.orientation,
+            eDoor.rotation
+          ) === 'horizontal'
+        ) {
+          return { partner: eDoor, isSecondLeaf: false, orient: 'horizontal' };
+        }
+      }
+    } else {
+      // Vertical orientation: pair North-South doors in 2-door units
+      let northRun = 0;
+      let checkY = ty - 1;
+      while (northRun < 8) {
+        const nDoor = this.getDoorStructureAtTile(tx, checkY);
+        if (
+          !nDoor ||
+          this.getDoorOrientationAt(
+            tx,
+            checkY,
+            nDoor.type,
+            nDoor.orientation,
+            nDoor.rotation
+          ) !== 'vertical'
+        ) {
+          break;
+        }
+        northRun++;
+        checkY--;
+      }
+
+      if (northRun % 2 === 1) {
+        const partner = this.getDoorStructureAtTile(tx, ty - 1);
+        if (partner) {
+          return { partner, isSecondLeaf: true, orient: 'vertical' };
+        }
+      } else {
+        const sDoor = this.getDoorStructureAtTile(tx, ty + 1);
+        if (
+          sDoor &&
+          this.getDoorOrientationAt(
+            tx,
+            ty + 1,
+            sDoor.type,
+            sDoor.orientation,
+            sDoor.rotation
+          ) === 'vertical'
+        ) {
+          return { partner: sDoor, isSecondLeaf: false, orient: 'vertical' };
+        }
+      }
+    }
+
+    return null;
   }
 
   /**
@@ -4407,6 +4548,7 @@ export class WorldManager {
   /**
    * Returns true when a wall, window, or door at `(tx, ty)` is oriented vertically (North-South side profile)
    * rather than horizontally (East-West front elevation).
+   * When connected to neighbors (mask !== 0), the connection design takes priority over manual rotation.
    */
   public isWallOrDoorSideProfileAt(
     tx: number,
@@ -4415,19 +4557,29 @@ export class WorldManager {
   ): boolean {
     if (WorldManager.isDoorOrGateStructure(st.type)) {
       return (
-        this.getDoorOrientationAt(tx, ty, st.type, st.orientation) ===
-        'vertical'
+        this.getDoorOrientationAt(
+          tx,
+          ty,
+          st.type,
+          st.orientation,
+          st.rotation
+        ) === 'vertical'
       );
     }
     if (!WorldManager.isWallMountableStructure(st.type)) {
       return false;
     }
-    if (st.orientation === 'vertical') return true;
-    if (st.orientation === 'horizontal') return false;
     const mask = this.getStructureConnectionMask(tx, ty, st.type);
     const hasNS = (mask & 5) !== 0; // North (1) or South (4)
     const hasEW = (mask & 10) !== 0; // East (2) or West (8)
-    return hasNS && !hasEW;
+    if (mask !== 0) {
+      return hasNS && !hasEW;
+    }
+    if (st.rotation !== undefined) {
+      return st.rotation % 2 === 1;
+    }
+    if (st.orientation === 'vertical') return true;
+    return false;
   }
 
   /**
@@ -4485,7 +4637,8 @@ export class WorldManager {
     placeableType: PlaceableType,
     itemId: string,
     orientation: 'auto' | 'horizontal' | 'vertical' = 'auto',
-    flowerColor?: ClothingColorId
+    flowerColor?: ClothingColorId,
+    rotation?: 0 | 1 | 2 | 3
   ): { placed: boolean; replacedItemId?: string; attachedToWall?: boolean } {
     if (!this.canPlaceStructureAt(tx, ty, placeableType)) {
       return { placed: false };
@@ -4555,7 +4708,14 @@ export class WorldManager {
       }
     }
 
-    chunk.structures.push({
+    const resolvedOrientation: 'auto' | 'horizontal' | 'vertical' =
+      rotation !== undefined
+        ? rotation % 2 === 1
+          ? 'vertical'
+          : 'horizontal'
+        : orientation;
+
+    const newStruct: PlacedStructure = {
       id: `struct_${tx}_${ty}_${Date.now()}_${Math.floor(Math.random() * 999)}`,
       type: placeableType,
       itemId,
@@ -4566,7 +4726,8 @@ export class WorldManager {
       solid: bp.hasHitbox,
       isBridge: placeableType === PlaceableType.WOOD_BRIDGE,
       isOpen: false,
-      orientation,
+      orientation: resolvedOrientation,
+      rotation,
       lightRadius: bp.lightRadius,
       hitFlashTimer: 0,
       attachedToWall: isMountingTorchOnWall ? true : undefined,
@@ -4616,7 +4777,17 @@ export class WorldManager {
         placeableType === PlaceableType.MARKET_STALL ? 0 : undefined,
       stallTotalGoldEarned:
         placeableType === PlaceableType.MARKET_STALL ? 0 : undefined,
-    });
+    };
+
+    chunk.structures.push(newStruct);
+
+    // If this is a Door/Gate that connects into a Double Door, synchronize its open state with its partner
+    if (WorldManager.isDoorOrGateStructure(placeableType)) {
+      const dbl = this.getPartnerDoubleDoor(tx, ty, newStruct);
+      if (dbl) {
+        newStruct.isOpen = Boolean(dbl.partner.isOpen);
+      }
+    }
 
     if (!chunk.preserved) {
       WorldManager.lockChunkTerrainSnapshot(

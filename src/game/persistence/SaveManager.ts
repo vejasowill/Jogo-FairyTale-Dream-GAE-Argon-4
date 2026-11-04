@@ -454,6 +454,7 @@ export class SaveManager {
       interactBtn: { offsetX: 0, offsetY: 0, scale: 1.0 },
       placeBtn: { offsetX: 0, offsetY: 0, scale: 1.0 },
       mountBtn: { offsetX: 0, offsetY: 0, scale: 1.0 },
+      rotateBtn: { offsetX: 0, offsetY: 0, scale: 1.0 },
       hotbar: { offsetX: 0, offsetY: 0, scale: 1.0 },
       statusPlaque: { offsetX: 0, offsetY: 0, scale: 1.0 },
       topMenu: { offsetX: 0, offsetY: 0, scale: 1.0 },

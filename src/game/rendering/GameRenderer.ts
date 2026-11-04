@@ -61,6 +61,7 @@ export interface AimedTargetInfo {
 export interface BuildRenderOptions {
   demolishMode?: boolean;
   orientation?: 'auto' | 'horizontal' | 'vertical';
+  rotation?: 0 | 1 | 2 | 3;
   showHitboxPreview?: boolean;
 }
 
@@ -2416,21 +2417,52 @@ export class GameRenderer {
     }
 
     const sprite = spriteAtlas.getStructureSprite(st.type, tileAnimFrame);
-    ctx.drawImage(sprite, sx, sy, TILE_SIZE, TILE_SIZE);
+    const isRotatedFloor =
+      (st.type === PlaceableType.WOOD_FLOOR ||
+        st.type === PlaceableType.DARK_OAK_FLOOR ||
+        st.type === PlaceableType.PINE_FLOOR ||
+        st.type === PlaceableType.BRICK_FLOOR) &&
+      (st.orientation === 'vertical' || (st.rotation ?? 0) % 2 === 1);
+
+    if (isRotatedFloor) {
+      ctx.save();
+      ctx.translate(sx + TILE_SIZE / 2, sy + TILE_SIZE / 2);
+      ctx.rotate(Math.PI / 2);
+      ctx.drawImage(
+        sprite,
+        -TILE_SIZE / 2,
+        -TILE_SIZE / 2,
+        TILE_SIZE,
+        TILE_SIZE
+      );
+      ctx.restore();
+    } else {
+      ctx.drawImage(sprite, sx, sy, TILE_SIZE, TILE_SIZE);
+    }
 
     if (
       st.type === PlaceableType.WOOD_FLOOR ||
+      st.type === PlaceableType.DARK_OAK_FLOOR ||
+      st.type === PlaceableType.PINE_FLOOR ||
       st.type === PlaceableType.STONE_FLOOR ||
       st.type === PlaceableType.BRICK_FLOOR
     ) {
       const trimDark =
-        st.type === PlaceableType.WOOD_FLOOR
+        st.type === PlaceableType.DARK_OAK_FLOOR
+          ? '#140904'
+          : st.type === PlaceableType.PINE_FLOOR
+          ? '#4a2e16'
+          : st.type === PlaceableType.WOOD_FLOOR
           ? '#43230d'
           : st.type === PlaceableType.BRICK_FLOOR
           ? '#451a03'
           : '#1e293b';
       const trimLight =
-        st.type === PlaceableType.WOOD_FLOOR
+        st.type === PlaceableType.DARK_OAK_FLOOR
+          ? '#6b4226'
+          : st.type === PlaceableType.PINE_FLOOR
+          ? '#e2be8a'
+          : st.type === PlaceableType.WOOD_FLOOR
           ? '#b87a3d'
           : st.type === PlaceableType.BRICK_FLOOR
           ? '#d97706'
@@ -2476,6 +2508,8 @@ export class GameRenderer {
       return (
         g.type === PlaceableType.DIRT_PATH ||
         g.type === PlaceableType.WOOD_FLOOR ||
+        g.type === PlaceableType.DARK_OAK_FLOOR ||
+        g.type === PlaceableType.PINE_FLOOR ||
         g.type === PlaceableType.STONE_FLOOR ||
         g.type === PlaceableType.BRICK_FLOOR ||
         g.type === PlaceableType.WOOD_BRIDGE
@@ -3590,13 +3624,37 @@ export class GameRenderer {
     if (st.hitFlashTimer > 0) {
       ctx.filter = 'brightness(1.7)';
     }
-    if (st.orientation === 'vertical') {
-      ctx.translate(centerX, wy + TILE_SIZE / 2);
-      ctx.scale(-1, 1);
-      ctx.translate(-centerX, -(wy + TILE_SIZE / 2));
-    }
+    const rot: 0 | 1 | 2 | 3 =
+      st.rotation !== undefined
+        ? st.rotation
+        : st.orientation === 'vertical'
+        ? 1
+        : 0;
 
-    ctx.drawImage(sprite, drawX, drawY, drawW, drawH);
+    if (
+      rot !== 0 &&
+      this.drawRotatedFurnitureOrStation(
+        ctx,
+        st,
+        wx,
+        wy,
+        centerX,
+        drawX,
+        drawY,
+        drawW,
+        drawH,
+        rot
+      )
+    ) {
+      // Custom directional view rendered
+    } else {
+      if (rot === 1 || rot === 3) {
+        ctx.translate(centerX, wy + TILE_SIZE / 2);
+        ctx.scale(-1, 1);
+        ctx.translate(-centerX, -(wy + TILE_SIZE / 2));
+      }
+      ctx.drawImage(sprite, drawX, drawY, drawW, drawH);
+    }
     ctx.restore();
 
     // C. Continuous Structure Ambient FX (Smoke, Embers, Sacred Rings, Fountain Ripples)
@@ -3749,6 +3807,393 @@ export class GameRenderer {
   }
 
   /**
+   * Renders bespoke pixel-art views for 4-directional rotatable furniture, stations, and shelters
+   * when rotated to East (`rot === 1`), North/Rear (`rot === 2`), or West (`rot === 3`).
+   */
+  private drawRotatedFurnitureOrStation(
+    ctx: CanvasRenderingContext2D,
+    st: PlacedStructure,
+    wx: number,
+    wy: number,
+    _centerX: number,
+    drawX: number,
+    drawY: number,
+    drawW: number,
+    drawH: number,
+    rot: 0 | 1 | 2 | 3
+  ): boolean {
+    if (rot === 0) return false;
+
+    // 1. BED (Cama de Madeira) — 4 distinct views
+    if (st.type === PlaceableType.BED) {
+      if (rot === 2) {
+        // Norte (Costas): Headboard at South (front-most), blanket at North, pillow at South
+        ctx.fillStyle = '#3b1d0a';
+        ctx.fillRect(wx + 5, wy + 2, 22, 27);
+        // Crimson blanket at North
+        ctx.fillStyle = '#991b1b';
+        ctx.fillRect(wx + 6, wy + 3, 20, 14);
+        ctx.fillStyle = '#dc2626';
+        ctx.fillRect(wx + 7, wy + 4, 18, 11);
+        ctx.fillStyle = '#facc15';
+        ctx.fillRect(wx + 6, wy + 15, 20, 2);
+        // White pillow near South headboard
+        ctx.fillStyle = '#e2e8f0';
+        ctx.fillRect(wx + 8, wy + 17, 16, 5);
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(wx + 9, wy + 18, 14, 3);
+        // Tall carved oak headboard facing the camera at South
+        ctx.fillStyle = '#451a03';
+        ctx.fillRect(wx + 4, wy + 21, 24, 9);
+        ctx.fillStyle = '#78350f';
+        ctx.fillRect(wx + 5, wy + 22, 22, 7);
+        ctx.fillStyle = '#b45309';
+        ctx.fillRect(wx + 7, wy + 23, 8, 5);
+        ctx.fillRect(wx + 17, wy + 23, 8, 5);
+        ctx.fillStyle = '#facc15';
+        ctx.fillRect(wx + 4, wy + 20, 3, 2);
+        ctx.fillRect(wx + 25, wy + 20, 3, 2);
+        return true;
+      }
+      // Leste (rot === 1: Headboard West, Foot East) or Oeste (rot === 3: Headboard East, Foot West)
+      const headWest = rot === 1;
+      ctx.fillStyle = '#3b1d0a';
+      ctx.fillRect(wx + 1, wy + 6, 30, 22);
+      ctx.fillStyle = '#78350f';
+      ctx.fillRect(wx + 2, wy + 7, 28, 20);
+      // Mattress
+      ctx.fillStyle = '#cbd5e1';
+      ctx.fillRect(wx + 3, wy + 8, 26, 16);
+      // Quilted crimson blanket on foot side
+      const blankX = headWest ? wx + 11 : wx + 3;
+      ctx.fillStyle = '#991b1b';
+      ctx.fillRect(blankX, wy + 8, 18, 16);
+      ctx.fillStyle = '#dc2626';
+      ctx.fillRect(blankX + 1, wy + 9, 16, 13);
+      ctx.fillStyle = '#facc15';
+      ctx.fillRect(headWest ? blankX : blankX + 16, wy + 8, 2, 16);
+      // Pillow on headboard side
+      const pilX = headWest ? wx + 5 : wx + 22;
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(pilX, wy + 9, 5, 13);
+      ctx.fillStyle = '#e2e8f0';
+      ctx.fillRect(pilX + 1, wy + 10, 3, 11);
+      // Tall Side Headboard
+      const hbX = headWest ? wx + 1 : wx + 27;
+      ctx.fillStyle = '#451a03';
+      ctx.fillRect(hbX, wy + 3, 4, 25);
+      ctx.fillStyle = '#b45309';
+      ctx.fillRect(hbX + 1, wy + 4, 2, 22);
+      ctx.fillStyle = '#facc15';
+      ctx.fillRect(hbX + 1, wy + 2, 2, 2);
+      return true;
+    }
+
+    // 2. WORKBENCH (Bancada de Trabalho) — 4 distinct views
+    if (st.type === PlaceableType.WORKBENCH) {
+      if (rot === 2) {
+        // Norte (Costas): Tool rack bar in front, vice on right, blueprint facing North
+        ctx.fillStyle = '#291507';
+        ctx.fillRect(wx + 2, wy + 19, 5, 10);
+        ctx.fillRect(wx + 25, wy + 19, 5, 10);
+        ctx.fillStyle = '#451a03';
+        ctx.fillRect(wx, wy + 6, 32, 15);
+        ctx.fillStyle = '#92400e';
+        ctx.fillRect(wx + 1, wy + 7, 30, 12);
+        ctx.fillStyle = '#b45309';
+        ctx.fillRect(wx + 2, wy + 8, 28, 4);
+        // Blueprint & tools seen from behind
+        ctx.fillStyle = '#fef3c7';
+        ctx.fillRect(wx + 6, wy + 8, 10, 6);
+        // Raised back tool rail at South edge (closest to camera)
+        ctx.fillStyle = '#3b1d0a';
+        ctx.fillRect(wx + 1, wy + 15, 30, 6);
+        ctx.fillStyle = '#78350f';
+        ctx.fillRect(wx + 2, wy + 16, 28, 4);
+        ctx.fillStyle = '#94a3b8';
+        ctx.fillRect(wx + 7, wy + 16, 4, 3);
+        ctx.fillRect(wx + 19, wy + 16, 6, 3);
+        ctx.fillStyle = '#facc15';
+        ctx.fillRect(wx + 13, wy + 16, 3, 3);
+        return true;
+      }
+      // Leste (rot === 1) or Oeste (rot === 3): North-South oriented carpenter table (24x30)
+      const faceEast = rot === 1;
+      ctx.fillStyle = '#291507';
+      ctx.fillRect(wx + 5, wy + 22, 5, 8);
+      ctx.fillRect(wx + 22, wy + 22, 5, 8);
+      ctx.fillStyle = '#451a03';
+      ctx.fillRect(wx + 4, wy + 2, 24, 23);
+      ctx.fillStyle = '#92400e';
+      ctx.fillRect(wx + 5, wy + 3, 22, 20);
+      ctx.fillStyle = '#b45309';
+      ctx.fillRect(wx + 6, wy + 4, 9, 18);
+      ctx.fillRect(wx + 16, wy + 4, 10, 18);
+      // Blueprint scroll & saw oriented vertically
+      ctx.fillStyle = '#fef3c7';
+      ctx.fillRect(wx + 9, wy + 6, 10, 11);
+      ctx.fillStyle = '#38bdf8';
+      ctx.fillRect(wx + 11, wy + 8, 6, 7);
+      // Side iron vice on facing edge
+      const viceX = faceEast ? wx + 26 : wx + 2;
+      ctx.fillStyle = '#334155';
+      ctx.fillRect(viceX, wy + 10, 4, 8);
+      ctx.fillStyle = '#cbd5e1';
+      ctx.fillRect(viceX + 1, wy + 11, 2, 6);
+      return true;
+    }
+
+    // 3. FURNACE (Fornalha de Pedra) — 4 distinct views
+    if (st.type === PlaceableType.FURNACE) {
+      const isLit = GameRenderer.isFurnaceInUse(st);
+      if (rot === 2) {
+        // Norte (Costas): Solid cobbled stone back wall & rear chimney flue (no front grate)
+        ctx.fillStyle = '#0f172a';
+        ctx.fillRect(wx + 2, wy - 10, 28, 39);
+        ctx.fillStyle = '#334155';
+        ctx.fillRect(wx + 3, wy - 8, 26, 36);
+        ctx.fillStyle = '#475569';
+        ctx.fillRect(wx + 5, wy - 6, 10, 10);
+        ctx.fillRect(wx + 17, wy - 6, 10, 10);
+        ctx.fillRect(wx + 4, wy + 6, 12, 10);
+        ctx.fillRect(wx + 18, wy + 6, 9, 10);
+        ctx.fillRect(wx + 6, wy + 18, 19, 8);
+        // Rear iron tension straps & rivets
+        ctx.fillStyle = '#1e293b';
+        ctx.fillRect(wx + 2, wy + 3, 28, 3);
+        ctx.fillRect(wx + 2, wy + 16, 28, 3);
+        ctx.fillStyle = '#94a3b8';
+        ctx.fillRect(wx + 5, wy + 4, 2, 1);
+        ctx.fillRect(wx + 25, wy + 4, 2, 1);
+        // Chimney top crown
+        ctx.fillStyle = '#1e293b';
+        ctx.fillRect(wx + 8, wy - 14, 16, 6);
+        ctx.fillStyle = isLit ? '#fb923c' : '#0f172a';
+        ctx.fillRect(wx + 11, wy - 14, 10, 3);
+        return true;
+      }
+      // Leste (rot === 1) or Oeste (rot === 3): Side profile with firebox mouth on East or West
+      const faceEast = rot === 1;
+      ctx.fillStyle = '#0f172a';
+      ctx.fillRect(wx + 4, wy - 10, 24, 39);
+      ctx.fillStyle = '#334155';
+      ctx.fillRect(wx + 5, wy - 8, 22, 36);
+      ctx.fillStyle = '#64748b';
+      ctx.fillRect(wx + 7, wy - 6, 16, 12);
+      ctx.fillRect(wx + 7, wy + 8, 16, 16);
+      // Chimney top
+      ctx.fillStyle = '#1e293b';
+      ctx.fillRect(wx + 9, wy - 14, 14, 6);
+      // Protruding firebox mouth on facing side
+      const mouthX = faceEast ? wx + 22 : wx + 2;
+      ctx.fillStyle = '#1e293b';
+      ctx.fillRect(mouthX, wy + 7, 8, 18);
+      ctx.fillStyle = isLit ? '#ea580c' : '#090d16';
+      ctx.fillRect(mouthX + (faceEast ? 2 : 1), wy + 10, 5, 12);
+      if (isLit) {
+        ctx.fillStyle = '#fde047';
+        ctx.fillRect(mouthX + (faceEast ? 3 : 2), wy + 13, 3, 7);
+      }
+      // Side leather bellows on opposite side
+      const bellowX = faceEast ? wx + 1 : wx + 26;
+      ctx.fillStyle = '#78350f';
+      ctx.fillRect(bellowX, wy + 12, 5, 11);
+      ctx.fillStyle = '#facc15';
+      ctx.fillRect(bellowX + 1, wy + 14, 3, 2);
+      return true;
+    }
+
+    // 4. WEAVING_TABLE (Mesa de Tecelagem) — 4 distinct views
+    if (st.type === PlaceableType.WEAVING_TABLE) {
+      if (rot === 2) {
+        // Norte (Costas): Loom frame in front, hanging crimson fabric roll & dye vats
+        ctx.fillStyle = '#3b1d0a';
+        ctx.fillRect(wx + 1, wy + 5, 30, 23);
+        ctx.fillStyle = '#78350f';
+        ctx.fillRect(wx + 2, wy + 6, 28, 18);
+        // Hanging woven crimson fabric roll on rear
+        ctx.fillStyle = '#be123c';
+        ctx.fillRect(wx + 6, wy + 8, 12, 14);
+        ctx.fillStyle = '#f43f5e';
+        ctx.fillRect(wx + 7, wy + 9, 10, 10);
+        ctx.fillStyle = '#facc15';
+        ctx.fillRect(wx + 6, wy + 19, 12, 2);
+        // Dye pots on right
+        ctx.fillStyle = '#38bdf8';
+        ctx.fillRect(wx + 21, wy + 9, 4, 4);
+        ctx.fillStyle = '#4ade80';
+        ctx.fillRect(wx + 25, wy + 12, 4, 4);
+        // Elevated wooden loom beam at front-most edge
+        ctx.fillStyle = '#451a03';
+        ctx.fillRect(wx + 3, wy + 1, 26, 6);
+        ctx.fillStyle = '#b45309';
+        ctx.fillRect(wx + 4, wy + 2, 24, 4);
+        return true;
+      }
+      // Leste (rot === 1) or Oeste (rot === 3): North-South side profile of loom table
+      const faceEast = rot === 1;
+      ctx.fillStyle = '#3b1d0a';
+      ctx.fillRect(wx + 4, wy + 2, 24, 28);
+      ctx.fillStyle = '#78350f';
+      ctx.fillRect(wx + 5, wy + 3, 22, 25);
+      ctx.fillStyle = '#b45309';
+      ctx.fillRect(wx + 6, wy + 4, 20, 21);
+      // Vertical cloth loom roller & warp threads
+      const clothX = faceEast ? wx + 15 : wx + 7;
+      ctx.fillStyle = '#be123c';
+      ctx.fillRect(clothX, wy + 5, 9, 16);
+      ctx.fillStyle = '#fb7185';
+      ctx.fillRect(clothX + 1, wy + 6, 7, 13);
+      ctx.fillStyle = '#fef08a';
+      ctx.fillRect(clothX + 2, wy + 7, 5, 2);
+      // 3 colorful dye vats lined vertically on the other side
+      const dyeX = faceEast ? wx + 7 : wx + 19;
+      ctx.fillStyle = '#ef4444';
+      ctx.fillRect(dyeX, wy + 6, 5, 4);
+      ctx.fillStyle = '#38bdf8';
+      ctx.fillRect(dyeX, wy + 12, 5, 4);
+      ctx.fillStyle = '#facc15';
+      ctx.fillRect(dyeX, wy + 18, 5, 4);
+      return true;
+    }
+
+    // 5. MARKET_STALL (Tenda de Vendas) — 4 distinct views
+    if (st.type === PlaceableType.MARKET_STALL) {
+      if (rot === 2) {
+        // Norte (Costas): Rear view with back posts, storage crates under striped awning
+        ctx.fillStyle = '#3b1d0a';
+        ctx.fillRect(drawX + 4, drawY + 12, 5, drawH - 14);
+        ctx.fillRect(drawX + drawW - 9, drawY + 12, 5, drawH - 14);
+        // Merchant counter at North
+        ctx.fillStyle = '#451a03';
+        ctx.fillRect(drawX + 3, wy + 4, drawW - 6, 16);
+        ctx.fillStyle = '#78350f';
+        ctx.fillRect(drawX + 4, wy + 5, drawW - 8, 14);
+        // Rear wooden supply crates & coin chest visible in front
+        ctx.fillStyle = '#92400e';
+        ctx.fillRect(wx + 4, wy + 16, 11, 10);
+        ctx.fillRect(wx + 17, wy + 17, 11, 9);
+        ctx.fillStyle = '#b45309';
+        ctx.fillRect(wx + 5, wy + 17, 9, 7);
+        ctx.fillRect(wx + 18, wy + 18, 9, 6);
+        // Striped Awning Roof seen from rear
+        ctx.fillStyle = '#1f1209';
+        ctx.fillRect(drawX + 1, drawY + 1, drawW - 2, 17);
+        for (let i = 0; i < 6; i++) {
+          ctx.fillStyle = i % 2 === 0 ? '#b91c1c' : '#fef3c7';
+          const sw = Math.floor((drawW - 4) / 6);
+          ctx.fillRect(drawX + 2 + i * sw, drawY + 2, sw, 14);
+        }
+        ctx.fillStyle = '#eab308';
+        ctx.fillRect(drawX + 1, drawY + 16, drawW - 2, 2);
+        return true;
+      }
+      // Leste (rot === 1) or Oeste (rot === 3): Side-oriented market stall
+      const faceEast = rot === 1;
+      ctx.fillStyle = '#3b1d0a';
+      ctx.fillRect(wx + 2, drawY + 10, 4, drawH - 12);
+      ctx.fillRect(wx + 26, drawY + 10, 4, drawH - 12);
+      // Side merchant counter along East or West edge
+      const counterX = faceEast ? wx + 14 : wx + 2;
+      ctx.fillStyle = '#451a03';
+      ctx.fillRect(counterX, wy + 2, 16, 26);
+      ctx.fillStyle = '#92400e';
+      ctx.fillRect(counterX + 1, wy + 3, 14, 24);
+      ctx.fillStyle = '#b45309';
+      ctx.fillRect(counterX + 2, wy + 4, 12, 22);
+      // Side-sloped striped awning canopy
+      ctx.fillStyle = '#1f1209';
+      ctx.fillRect(wx - 2, drawY + 2, 36, 18);
+      for (let row = 0; row < 4; row++) {
+        ctx.fillStyle = row % 2 === 0 ? '#dc2626' : '#fef3c7';
+        ctx.fillRect(wx - 1, drawY + 3 + row * 4, 34, 4);
+      }
+      ctx.fillStyle = '#facc15';
+      ctx.fillRect(faceEast ? wx + 30 : wx - 2, drawY + 3, 3, 16);
+      return true;
+    }
+
+    // 6. EXPLORER_TENT (Tenda do Explorador) — 4 distinct views
+    if (st.type === PlaceableType.EXPLORER_TENT) {
+      if (rot === 2) {
+        // Norte (Costas): Solid rear canvas wall & wooden ridge pole (no front door flap)
+        ctx.fillStyle = '#1c1917';
+        ctx.fillRect(drawX + 3, drawY + 6, drawW - 6, drawH - 8);
+        ctx.fillStyle = '#b45309';
+        ctx.fillRect(drawX + 5, drawY + 8, drawW - 10, drawH - 12);
+        ctx.fillStyle = '#d97706';
+        ctx.fillRect(drawX + 8, drawY + 10, drawW - 16, drawH - 18);
+        // Rear center wooden pole & guy ropes
+        ctx.fillStyle = '#451a03';
+        ctx.fillRect(wx + 14, drawY + 4, 4, drawH - 6);
+        ctx.fillStyle = '#fef3c7';
+        ctx.fillRect(drawX + 7, drawY + 14, drawW - 14, 3);
+        return true;
+      }
+      // Leste (rot === 1) or Oeste (rot === 3): Side profile of ridge tent with entrance on East or West
+      const faceEast = rot === 1;
+      ctx.fillStyle = '#1c1917';
+      ctx.fillRect(drawX + 4, drawY + 8, drawW - 8, drawH - 10);
+      ctx.fillStyle = '#d97706';
+      ctx.fillRect(drawX + 6, drawY + 10, drawW - 12, drawH - 14);
+      ctx.fillStyle = '#f59e0b';
+      ctx.fillRect(drawX + 8, drawY + 11, drawW - 16, 10);
+      // Tent ridge beam along top
+      ctx.fillStyle = '#451a03';
+      ctx.fillRect(drawX + 3, drawY + 7, drawW - 6, 4);
+      // Side entrance opening
+      const openX = faceEast ? drawX + drawW - 14 : drawX + 6;
+      ctx.fillStyle = '#0f172a';
+      ctx.fillRect(openX, drawY + 18, 8, drawH - 22);
+      ctx.fillStyle = '#fef3c7';
+      ctx.fillRect(openX + (faceEast ? -2 : 8), drawY + 16, 2, drawH - 20);
+      return true;
+    }
+
+    // 7. VILLAGE_HOUSE (Cabana Rústica) — 4 distinct views
+    if (st.type === PlaceableType.VILLAGE_HOUSE) {
+      if (rot === 2) {
+        // Norte (Costas): Rear timber/stone wall, back shuttered window & chimney, no front door
+        ctx.fillStyle = '#1f1209';
+        ctx.fillRect(drawX + 6, drawY + 20, drawW - 12, drawH - 22);
+        ctx.fillStyle = '#78350f';
+        ctx.fillRect(drawX + 8, drawY + 22, drawW - 16, drawH - 26);
+        // Pitched terracotta roof from behind
+        ctx.fillStyle = '#7c2d12';
+        ctx.fillRect(drawX + 2, drawY + 4, drawW - 4, 22);
+        ctx.fillStyle = '#c2410c';
+        ctx.fillRect(drawX + 4, drawY + 6, drawW - 8, 18);
+        // Rear window
+        ctx.fillStyle = '#1e293b';
+        ctx.fillRect(wx + 11, drawY + 28, 10, 10);
+        ctx.fillStyle = '#38bdf8';
+        ctx.fillRect(wx + 12, drawY + 29, 8, 8);
+        return true;
+      }
+      // Leste (rot === 1) or Oeste (rot === 3): Side cottage profile
+      const faceEast = rot === 1;
+      ctx.fillStyle = '#1f1209';
+      ctx.fillRect(drawX + 6, drawY + 20, drawW - 12, drawH - 22);
+      ctx.fillStyle = '#92400e';
+      ctx.fillRect(drawX + 8, drawY + 22, drawW - 16, drawH - 26);
+      // Side roof slope
+      ctx.fillStyle = '#7c2d12';
+      ctx.fillRect(drawX + 3, drawY + 5, drawW - 6, 20);
+      ctx.fillStyle = '#ea580c';
+      ctx.fillRect(drawX + 5, drawY + 7, drawW - 10, 16);
+      // Side doorway on facing edge
+      const doorX = faceEast ? drawX + drawW - 18 : drawX + 8;
+      ctx.fillStyle = '#451a03';
+      ctx.fillRect(doorX, drawY + 30, 10, drawH - 34);
+      ctx.fillStyle = '#facc15';
+      ctx.fillRect(doorX + (faceEast ? 2 : 6), drawY + 40, 2, 3);
+      return true;
+    }
+
+    return false;
+  }
+
+  /**
    * Renders live atmospheric effects on placed structures:
    * - Campfire & Furnace: rising smoke puffs & glowing embers
    * - Village House: cozy chimney smoke
@@ -3843,33 +4288,61 @@ export class GameRenderer {
   ): void {
     const hasE = (connMask & 2) !== 0;
     const hasW = (connMask & 8) !== 0;
-    const isVertical =
-      st.orientation === 'vertical' && !hasE && !hasW;
+    const rot: 0 | 1 | 2 | 3 =
+      st.rotation !== undefined
+        ? st.rotation
+        : st.orientation === 'vertical'
+        ? 1
+        : 0;
+    const isVertical = (rot === 1 || rot === 3) && !hasE && !hasW;
+    const isRearView = rot === 2 && !hasE && !hasW;
     const storedCount = Array.isArray(st.storageSlots)
       ? st.storageSlots.filter((s) => s !== null && s.count > 0).length
       : 0;
 
     if (isVertical) {
-      // North-South Vertical Profile Chest (16x24 waist-high profile)
+      // North-South Side Profile Chest (16x24 waist-high profile)
+      // rot === 1: clasp on East (right); rot === 3: clasp on West (left)
+      const facingWest = rot === 3;
       ctx.fillStyle = '#3b1d0a';
       ctx.fillRect(wx + 8, wy + 5, 16, 23);
       ctx.fillStyle = '#78350f';
       ctx.fillRect(wx + 9, wy + 6, 14, 21);
       ctx.fillStyle = '#b45309';
-      ctx.fillRect(wx + 10, wy + 7, 9, 19);
+      ctx.fillRect(facingWest ? wx + 13 : wx + 10, wy + 7, 9, 19);
       // Forged iron bands
       ctx.fillStyle = '#334155';
       ctx.fillRect(wx + 8, wy + 9, 16, 3);
       ctx.fillRect(wx + 8, wy + 21, 16, 3);
-      // Golden side clasp
+      // Golden side clasp on the facing side
       ctx.fillStyle = '#facc15';
-      ctx.fillRect(wx + 21, wy + 14, 4, 5);
+      ctx.fillRect(facingWest ? wx + 7 : wx + 21, wy + 14, 4, 5);
       if (st.isOpen) {
         ctx.fillStyle = '#1e1b4b';
         ctx.fillRect(wx + 11, wy + 8, 8, 15);
         ctx.fillStyle = '#fde047';
         ctx.fillRect(wx + 13, wy + 11, 4, 7);
       }
+      return;
+    }
+
+    if (isRearView) {
+      // Rear View Chest (facing North / away from camera): iron hinges on back, no front lock plate
+      ctx.fillStyle = '#3b1d0a';
+      ctx.fillRect(wx + 3, wy + 6, 26, 22);
+      ctx.fillStyle = '#5c2d10';
+      ctx.fillRect(wx + 4, wy + 7, 24, 20);
+      ctx.fillStyle = '#78350f';
+      ctx.fillRect(wx + 5, wy + 8, 22, 7);
+      // Iron straps & rear double hinges
+      ctx.fillStyle = '#334155';
+      ctx.fillRect(wx + 6, wy + 7, 3, 20);
+      ctx.fillRect(wx + 23, wy + 7, 3, 20);
+      ctx.fillStyle = '#94a3b8';
+      ctx.fillRect(wx + 6, wy + 14, 3, 3);
+      ctx.fillRect(wx + 23, wy + 14, 3, 3);
+      ctx.fillStyle = '#291507';
+      ctx.fillRect(wx + 4, wy + 15, 24, 1);
       return;
     }
 
@@ -4059,7 +4532,7 @@ export class GameRenderer {
     const hasS = (mask & 4) !== 0;
     const hasW = (mask & 8) !== 0;
 
-    // 1. AUTO-ALIGNING DOORS & GATES (WOOD_DOOR, DARK_OAK_DOOR, PINE_DOOR, IRON_GATE — Elevated 40px tall architectural portals)
+    // 1. AUTO-ALIGNING DOORS & GATES (WOOD_DOOR, DARK_OAK_DOOR, PINE_DOOR, IRON_GATE — Elevated 40px tall architectural portals + Double Doors!)
     if (
       st.type === PlaceableType.WOOD_DOOR ||
       st.type === PlaceableType.DARK_OAK_DOOR ||
@@ -4070,8 +4543,12 @@ export class GameRenderer {
         st.tileX,
         st.tileY,
         st.type,
-        st.orientation
+        st.orientation,
+        st.rotation
       );
+      const doubleDoor = world.getPartnerDoubleDoor(st.tileX, st.tileY, st);
+      const isDouble = Boolean(doubleDoor);
+      const isSecondLeaf = Boolean(doubleDoor?.isSecondLeaf);
       const isIron = st.type === PlaceableType.IRON_GATE;
       const isDarkOakDoor = st.type === PlaceableType.DARK_OAK_DOOR;
       const isPineDoor = st.type === PlaceableType.PINE_DOOR;
@@ -4121,120 +4598,159 @@ export class GameRenderer {
       }
 
       if (orient === 'horizontal') {
-        // Left & Right Tall Door Jamb Pillars (wy - 12 to wy + 28 = 40px tall)
-        ctx.fillStyle = postColor;
-        ctx.fillRect(wx, wy - 12, 7, 40);
-        ctx.fillRect(wx + TILE_SIZE - 7, wy - 12, 7, 40);
-        ctx.fillStyle = postTop;
-        ctx.fillRect(wx, wy - 14, 7, 6);
-        ctx.fillRect(wx + TILE_SIZE - 7, wy - 14, 7, 6);
+        // Outer Door Jamb Pillars:
+        // Single door: both West and East jamb pillars.
+        // Double door: West leaf has only West jamb pillar; East leaf has only East jamb pillar so the two leaves meet seamlessly in the middle!
+        const hasLeftJamb = !isDouble || !isSecondLeaf;
+        const hasRightJamb = !isDouble || isSecondLeaf;
 
-        // Top Lintel Beam bridging the doorway above player head
         ctx.fillStyle = postColor;
-        ctx.fillRect(wx + 5, wy - 13, TILE_SIZE - 10, 5);
+        if (hasLeftJamb) ctx.fillRect(wx, wy - 12, 7, 40);
+        if (hasRightJamb) ctx.fillRect(wx + TILE_SIZE - 7, wy - 12, 7, 40);
         ctx.fillStyle = postTop;
-        ctx.fillRect(wx + 5, wy - 14, TILE_SIZE - 10, 2);
+        if (hasLeftJamb) ctx.fillRect(wx, wy - 14, 7, 6);
+        if (hasRightJamb) ctx.fillRect(wx + TILE_SIZE - 7, wy - 14, 7, 6);
+
+        // Top Lintel Beam bridging seamlessly across single or double doorway
+        const lintelX = hasLeftJamb ? wx + 5 : wx;
+        const lintelRight = hasRightJamb ? wx + TILE_SIZE - 5 : wx + TILE_SIZE;
+        const lintelW = lintelRight - lintelX;
+        ctx.fillStyle = postColor;
+        ctx.fillRect(lintelX, wy - 13, lintelW, 5);
+        ctx.fillStyle = postTop;
+        ctx.fillRect(lintelX, wy - 14, lintelW, 2);
+
+        const leafX = hasLeftJamb ? wx + 6 : wx;
+        const leafRight = hasRightJamb ? wx + TILE_SIZE - 6 : wx + TILE_SIZE;
+        const leafW = leafRight - leafX;
+        const handleX = isDouble
+          ? isSecondLeaf
+            ? wx + 2
+            : wx + TILE_SIZE - 5
+          : wx + 19;
 
         if (!isOpen) {
-          // Closed Door / Gate spanning horizontally across the jambs (34px tall leaf)
           if (isIron) {
             ctx.fillStyle = '#1e293b';
-            ctx.fillRect(wx + 6, wy - 6, TILE_SIZE - 12, 4);
-            ctx.fillRect(wx + 6, wy + 12, TILE_SIZE - 12, 4);
-            for (let bx = wx + 8; bx <= wx + TILE_SIZE - 10; bx += 4) {
+            ctx.fillRect(leafX, wy - 6, leafW, 4);
+            ctx.fillRect(leafX, wy + 12, leafW, 4);
+            for (let bx = leafX + 2; bx <= leafRight - 4; bx += 4) {
               ctx.fillStyle = leafColor;
               ctx.fillRect(bx, wy - 9, 2, 34);
               ctx.fillStyle = '#facc15';
               ctx.fillRect(bx, wy - 11, 2, 2);
             }
           } else if (isDarkOakDoor) {
-            // Porta de Carvalho Escuro: Painéis verticais entalhados e ferragens de bronze antigo
             ctx.fillStyle = leafColor;
-            ctx.fillRect(wx + 6, wy - 9, TILE_SIZE - 12, 35);
-            // Recessed twin vertical dark oak panels
+            ctx.fillRect(leafX, wy - 9, leafW, 35);
+            // Recessed vertical dark oak panels
+            const p1X = leafX + 2;
+            const pW = Math.max(5, Math.floor((leafW - 7) / 2));
+            const p2X = p1X + pW + 2;
             ctx.fillStyle = '#140904';
-            ctx.fillRect(wx + 8, wy - 6, 7, 28);
-            ctx.fillRect(wx + 17, wy - 6, 7, 28);
+            ctx.fillRect(p1X, wy - 6, pW, 28);
+            ctx.fillRect(p2X, wy - 6, pW, 28);
             ctx.fillStyle = leafHi;
-            ctx.fillRect(wx + 9, wy - 5, 5, 11);
-            ctx.fillRect(wx + 18, wy - 5, 5, 11);
-            ctx.fillRect(wx + 9, wy + 9, 5, 12);
-            ctx.fillRect(wx + 18, wy + 9, 5, 12);
+            ctx.fillRect(p1X + 1, wy - 5, Math.max(3, pW - 2), 11);
+            ctx.fillRect(p2X + 1, wy - 5, Math.max(3, pW - 2), 11);
+            ctx.fillRect(p1X + 1, wy + 9, Math.max(3, pW - 2), 12);
+            ctx.fillRect(p2X + 1, wy + 9, Math.max(3, pW - 2), 12);
             // Antique bronze trim & ring knocker handle
             ctx.fillStyle = '#b45309';
-            ctx.fillRect(wx + 6, wy - 8, TILE_SIZE - 12, 2);
-            ctx.fillRect(wx + 6, wy + 22, TILE_SIZE - 12, 2);
+            ctx.fillRect(leafX, wy - 8, leafW, 2);
+            ctx.fillRect(leafX, wy + 22, leafW, 2);
             ctx.fillStyle = '#fbbf24';
-            ctx.fillRect(wx + 19, wy + 6, 4, 4);
+            ctx.fillRect(handleX, wy + 6, 4, 4);
             ctx.fillStyle = '#2b170b';
-            ctx.fillRect(wx + 20, wy + 7, 2, 2);
+            ctx.fillRect(handleX + 1, wy + 7, 2, 2);
           } else if (isPineDoor) {
-            // Porta de Pinheiro: Tábuas claras de abeto nórdico com trava diagonal em Z e trinco de cobre
             ctx.fillStyle = leafColor;
-            ctx.fillRect(wx + 6, wy - 9, TILE_SIZE - 12, 35);
+            ctx.fillRect(leafX, wy - 9, leafW, 35);
             ctx.fillStyle = leafHi;
-            ctx.fillRect(wx + 7, wy - 8, 5, 33);
-            ctx.fillRect(wx + 13, wy - 8, 5, 33);
-            ctx.fillRect(wx + 19, wy - 8, 5, 33);
-            // Dark spruce Z-brace crossbars & diagonal
-            ctx.fillStyle = '#5c3a21';
-            ctx.fillRect(wx + 6, wy - 5, TILE_SIZE - 12, 3);
-            ctx.fillRect(wx + 6, wy + 18, TILE_SIZE - 12, 3);
-            for (let s = 0; s < 7; s++) {
-              ctx.fillRect(wx + 8 + s * 2, wy + 15 - s * 3, 3, 3);
+            for (let px = leafX + 1; px < leafRight - 3; px += 6) {
+              ctx.fillRect(px, wy - 8, Math.min(5, leafRight - px - 1), 33);
             }
-            // Copper latch handle
+            ctx.fillStyle = '#5c3a21';
+            ctx.fillRect(leafX, wy - 5, leafW, 3);
+            ctx.fillRect(leafX, wy + 18, leafW, 3);
+            for (let s = 0; s < 7; s++) {
+              const diagX = isSecondLeaf
+                ? leafRight - 5 - s * 2
+                : leafX + 2 + s * 2;
+              ctx.fillRect(diagX, wy + 15 - s * 3, 3, 3);
+            }
             ctx.fillStyle = '#ea580c';
-            ctx.fillRect(wx + 19, wy + 7, 4, 3);
+            ctx.fillRect(handleX, wy + 7, 4, 3);
             ctx.fillStyle = '#fdba74';
-            ctx.fillRect(wx + 20, wy + 7, 2, 1);
+            ctx.fillRect(handleX + 1, wy + 7, 2, 1);
           } else {
-            // Porta de Carvalho: Tábuas douradas de carvalho com cintas de ferro forjado e maçaneta dourada
             ctx.fillStyle = leafColor;
-            ctx.fillRect(wx + 6, wy - 9, TILE_SIZE - 12, 35);
+            ctx.fillRect(leafX, wy - 9, leafW, 35);
             ctx.fillStyle = leafHi;
-            ctx.fillRect(wx + 7, wy - 9, TILE_SIZE - 14, 6);
-            // Iron hinges & golden handle
+            ctx.fillRect(leafX + 1, wy - 9, leafW - 2, 6);
             ctx.fillStyle = '#1e293b';
-            ctx.fillRect(wx + 6, wy - 1, TILE_SIZE - 12, 2);
-            ctx.fillRect(wx + 6, wy + 16, TILE_SIZE - 12, 2);
+            ctx.fillRect(leafX, wy - 1, leafW, 2);
+            ctx.fillRect(leafX, wy + 16, leafW, 2);
             ctx.fillStyle = '#facc15';
-            ctx.fillRect(wx + 19, wy + 7, 3, 4);
+            ctx.fillRect(handleX, wy + 7, 3, 4);
+          }
+          // Center meeting seam line on Double Doors
+          if (isDouble) {
+            ctx.fillStyle = '#0d0704';
+            ctx.fillRect(isSecondLeaf ? wx : wx + TILE_SIZE - 1, wy - 9, 1, 35);
           }
         } else {
-          // Open Door Leaf swung 90 degrees upward/inward on left jamb
+          // Open Door Leaf: left/single leaf swings on West jamb; right double-door leaf swings on East jamb!
+          const swingX = isDouble && isSecondLeaf ? wx + TILE_SIZE - 10 : wx + 5;
           ctx.fillStyle = leafColor;
-          ctx.fillRect(wx + 5, wy - 18, 5, 28);
+          ctx.fillRect(swingX, wy - 18, 5, 28);
           ctx.fillStyle = leafHi;
-          ctx.fillRect(wx + 6, wy - 18, 3, 5);
-          // Subtle green passable indicator dot on threshold
+          ctx.fillRect(swingX + 1, wy - 18, 3, 5);
           ctx.fillStyle = 'rgba(74, 222, 128, 0.55)';
           ctx.fillRect(wx + 14, wy + 16, 4, 4);
         }
       } else {
-        // Side-viewed Vertical Door Orientation (North-South walls): slender 8px wide profile
+        // Side-viewed Vertical Door Orientation (North-South walls): slender 8px wide profile + Double Door support
         const vx = wx + 12;
         const vw = 8;
+        const hasNorthJamb = !isDouble || !isSecondLeaf;
+        const hasSouthJamb = !isDouble || isSecondLeaf;
+
         ctx.fillStyle = postColor;
-        ctx.fillRect(vx, wy - 12, vw, 13);
-        ctx.fillRect(vx, wy + TILE_SIZE - 10, vw, 12);
+        if (hasNorthJamb) ctx.fillRect(vx, wy - 12, vw, 13);
+        if (hasSouthJamb) ctx.fillRect(vx, wy + TILE_SIZE - 10, vw, 12);
         ctx.fillStyle = postTop;
-        ctx.fillRect(vx + 1, wy - 14, vw - 2, 5);
-        ctx.fillRect(vx + 1, wy + TILE_SIZE - 12, vw - 2, 5);
+        if (hasNorthJamb) ctx.fillRect(vx + 1, wy - 14, vw - 2, 5);
+        if (hasSouthJamb) ctx.fillRect(vx + 1, wy + TILE_SIZE - 12, vw - 2, 5);
+
+        const leafTop = hasNorthJamb ? wy - 4 : wy;
+        const leafBot = hasSouthJamb ? wy + TILE_SIZE - 6 : wy + TILE_SIZE;
+        const leafH = leafBot - leafTop;
+        const handleY = isDouble
+          ? isSecondLeaf
+            ? wy + 2
+            : wy + TILE_SIZE - 5
+          : wy + 10;
 
         if (!isOpen) {
           ctx.fillStyle = leafColor;
-          ctx.fillRect(vx + 1, wy - 4, vw - 2, TILE_SIZE - 2);
+          ctx.fillRect(vx + 1, leafTop, vw - 2, leafH);
           ctx.fillStyle = leafHi;
-          ctx.fillRect(vx + 2, wy - 4, 2, TILE_SIZE - 2);
-          ctx.fillStyle = isPineDoor ? '#ea580c' : isDarkOakDoor ? '#fbbf24' : '#facc15';
-          ctx.fillRect(vx + 3, wy + 10, 2, 4);
+          ctx.fillRect(vx + 2, leafTop, 2, leafH);
+          ctx.fillStyle = isPineDoor
+            ? '#ea580c'
+            : isDarkOakDoor
+            ? '#fbbf24'
+            : '#facc15';
+          ctx.fillRect(vx + 3, handleY, 2, 4);
         } else {
-          // Swung open to the East
+          // Swung open to the East at outer hinge jamb
+          const swingY =
+            isDouble && isSecondLeaf ? wy + TILE_SIZE - 12 : wy - 4;
           ctx.fillStyle = leafColor;
-          ctx.fillRect(vx + vw - 1, wy - 4, 12, 6);
+          ctx.fillRect(vx + vw - 1, swingY, 12, 6);
           ctx.fillStyle = leafHi;
-          ctx.fillRect(vx + vw - 1, wy - 4, 12, 2);
+          ctx.fillRect(vx + vw - 1, swingY, 12, 2);
           ctx.fillStyle = 'rgba(74, 222, 128, 0.55)';
           ctx.fillRect(vx + 2, wy + 14, 4, 4);
         }
@@ -4249,27 +4765,37 @@ export class GameRenderer {
 
       const railDark = '#5c3416';
       const railLight = '#9a602d';
-      if (hasW) {
+      const standaloneVertical =
+        mask === 0 &&
+        (st.orientation === 'vertical' || (st.rotation ?? 0) % 2 === 1);
+      const standaloneHorizontal = mask === 0 && !standaloneVertical;
+
+      if (hasW || standaloneHorizontal) {
+        const wStart = hasW ? wx : wx + 4;
+        const wLen = hasW ? 14 : 9;
         ctx.fillStyle = railDark;
-        ctx.fillRect(wx, wy + 8, 14, 4);
-        ctx.fillRect(wx, wy + 17, 14, 4);
+        ctx.fillRect(wStart, wy + 8, wLen, 4);
+        ctx.fillRect(wStart, wy + 17, wLen, 4);
         ctx.fillStyle = railLight;
-        ctx.fillRect(wx, wy + 8, 14, 2);
-        ctx.fillRect(wx, wy + 17, 14, 2);
+        ctx.fillRect(wStart, wy + 8, wLen, 2);
+        ctx.fillRect(wStart, wy + 17, wLen, 2);
       }
-      if (hasE) {
+      if (hasE || standaloneHorizontal) {
+        const eLen = hasE ? 14 : 9;
         ctx.fillStyle = railDark;
-        ctx.fillRect(wx + 18, wy + 8, 14, 4);
-        ctx.fillRect(wx + 18, wy + 17, 14, 4);
+        ctx.fillRect(wx + 18, wy + 8, eLen, 4);
+        ctx.fillRect(wx + 18, wy + 17, eLen, 4);
         ctx.fillStyle = railLight;
-        ctx.fillRect(wx + 18, wy + 8, 14, 2);
-        ctx.fillRect(wx + 18, wy + 17, 14, 2);
+        ctx.fillRect(wx + 18, wy + 8, eLen, 2);
+        ctx.fillRect(wx + 18, wy + 17, eLen, 2);
       }
-      if (hasN) {
+      if (hasN || standaloneVertical) {
+        const nTop = hasN ? wy - 2 : wy + 1;
+        const nLen = hasN ? 12 : 9;
         ctx.fillStyle = railDark;
-        ctx.fillRect(wx + 13, wy - 2, 6, 12);
+        ctx.fillRect(wx + 13, nTop, 6, nLen);
         ctx.fillStyle = railLight;
-        ctx.fillRect(wx + 14, wy - 2, 4, 12);
+        ctx.fillRect(wx + 14, nTop, 4, nLen);
       }
       // Center Post (24px tall waist-high post)
       ctx.fillStyle = '#4a250d';
@@ -4278,11 +4804,12 @@ export class GameRenderer {
       ctx.fillRect(wx + 12, wy + 4, 8, 21);
       ctx.fillStyle = '#b87a3d';
       ctx.fillRect(wx + 11, wy + 1, 10, 4);
-      if (hasS) {
+      if (hasS || standaloneVertical) {
+        const sLen = hasS ? 14 : 11;
         ctx.fillStyle = railDark;
-        ctx.fillRect(wx + 13, wy + 18, 6, 14);
+        ctx.fillRect(wx + 13, wy + 18, 6, sLen);
         ctx.fillStyle = railLight;
-        ctx.fillRect(wx + 14, wy + 18, 4, 14);
+        ctx.fillRect(wx + 14, wy + 18, 4, sLen);
       }
       return;
     }
@@ -4751,6 +5278,7 @@ export class GameRenderer {
       solid: Boolean(bp?.hasHitbox),
       hitFlashTimer: 0,
       orientation: buildOptions?.orientation || 'auto',
+      rotation: buildOptions?.rotation ?? 0,
       isOpen: false,
       attachedToWall: isWallMountTorch,
       flowerColor: heldSlot?.selectedColor || 'amarelo',

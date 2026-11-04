@@ -238,6 +238,8 @@ export enum PlaceableType {
   IRON_GATE = 'IRON_GATE',
   WOOD_FENCE = 'WOOD_FENCE',
   WOOD_FLOOR = 'WOOD_FLOOR',
+  DARK_OAK_FLOOR = 'DARK_OAK_FLOOR',
+  PINE_FLOOR = 'PINE_FLOOR',
   STONE_FLOOR = 'STONE_FLOOR',
   BRICK_FLOOR = 'BRICK_FLOOR',
   ROYAL_CARPET = 'ROYAL_CARPET',
@@ -296,6 +298,8 @@ export interface PlacedStructure {
   isBridge?: boolean;
   isOpen?: boolean; // For WOOD_DOOR & IRON_GATE (true = open/no hitbox, false = closed/solid hitbox)
   orientation?: 'auto' | 'horizontal' | 'vertical';
+  /** 0 = Sul/Frente (Horizontal), 1 = Leste/Direita (Vertical), 2 = Norte/Costas, 3 = Oeste/Esquerda */
+  rotation?: 0 | 1 | 2 | 3;
   lightRadius?: number;
   hitFlashTimer: number;
   breakIdleTimer?: number;
@@ -858,7 +862,7 @@ export interface OnlineActivationStep {
 }
 
 // REGRA PERMANENTE: A cada nova atualização do jogo, incremente a versão para o número seguinte da beta (ex: 0.4.4-beta -> 0.4.5-beta).
-export const GAME_VERSION = '0.7.0-beta';
+export const GAME_VERSION = '0.7.1-beta';
 export const CURRENT_WORLD_GEN_VERSION = 5;
 
 export interface OnlineSessionInfo {
@@ -926,6 +930,7 @@ export type HudElementKey =
   | 'interactBtn'
   | 'placeBtn'
   | 'mountBtn'
+  | 'rotateBtn'
   | 'hotbar'
   | 'statusPlaque'
   | 'topMenu';

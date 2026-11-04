@@ -25,7 +25,11 @@ import {
   Wind,
   X,
 } from 'lucide-react';
-import { ITEMS } from '../game/core/ItemRegistry';
+import {
+  getPlaceableRotationMode,
+  isRotatablePlaceable,
+  ITEMS,
+} from '../game/core/ItemRegistry';
 import { RECIPES } from '../game/core/RecipeRegistry';
 import {
   GameSettings,
@@ -69,6 +73,7 @@ const HUD_ELEMENT_NAMES: Record<HudElementKey, string> = {
   interactBtn: '2. Interação',
   placeBtn: '3. Colocar/Consumir',
   mountBtn: '4. Cavalgar',
+  rotateBtn: '5. Rotacionar Objeto',
   hotbar: 'Hotbar',
   statusPlaque: 'Status',
   topMenu: 'Menu Topo',
@@ -99,6 +104,7 @@ export const MobileHud: React.FC<MobileHudProps> = ({
     nearbyTamedAnimal,
     buildDemolishMode,
     buildOrientation,
+    buildRotation,
     showHitboxPreview,
     innocentFireEnabled,
   } = snapshot;
@@ -225,13 +231,20 @@ export const MobileHud: React.FC<MobileHudProps> = ({
     (r) => !r.requiredStation && engine.getMaxCraftableCount(r) > 0
   ).length;
 
-  const isOrientableItem =
-    selectedItem?.placeableType === PlaceableType.WOOD_WALL ||
-    selectedItem?.placeableType === PlaceableType.STONE_WALL ||
-    selectedItem?.placeableType === PlaceableType.WOOD_DOOR ||
-    selectedItem?.placeableType === PlaceableType.BED ||
-    selectedItem?.placeableType === PlaceableType.VILLAGE_HOUSE ||
-    selectedItem?.placeableType === PlaceableType.MARKET_STALL;
+  const isOrientableItem = isRotatablePlaceable(selectedItem?.placeableType);
+  const rotationMode = getPlaceableRotationMode(selectedItem?.placeableType);
+  const rotationLabel =
+    rotationMode === 'dir4'
+      ? buildRotation === 0
+        ? 'Sul'
+        : buildRotation === 1
+        ? 'Leste'
+        : buildRotation === 2
+        ? 'Norte'
+        : 'Oeste'
+      : buildRotation % 2 === 1 || buildOrientation === 'vertical'
+      ? 'Vert.'
+      : 'Horiz.';
 
   const nearbySaddledMount =
     !activeMount && nearbyTamedAnimal?.hasSaddle ? nearbyTamedAnimal : null;
@@ -867,29 +880,10 @@ export const MobileHud: React.FC<MobileHudProps> = ({
           )}
 
           {/* Compact Build Strip */}
-          {(isOrientableItem ||
-            selectedItem?.placeableType !== undefined ||
+          {(selectedItem?.placeableType !== undefined ||
             buildDemolishMode) &&
             !isEditingHud && (
               <div className="flex items-center gap-1 medieval-panel px-1.5 py-0.5">
-                {isOrientableItem && (
-                  <HoldIconButton
-                    onClick={() => engine.cycleBuildOrientation()}
-                    tooltipTitle="Girar Construção (R)"
-                    tooltipDesc={`Direção atual: ${
-                      buildOrientation === 'vertical'
-                        ? 'Vertical'
-                        : buildOrientation === 'horizontal'
-                        ? 'Horizontal'
-                        : 'Automático'
-                    }`}
-                    tooltipAlign="top"
-                    className="min-h-[26px] px-2 medieval-btn-wood text-[9px] font-pixel font-bold flex items-center gap-1"
-                  >
-                    <RotateCw className="w-3 h-3 text-amber-300" />
-                    <span>Eixo</span>
-                  </HoldIconButton>
-                )}
 
                 <HoldIconButton
                   onClick={() => engine.toggleHitboxPreview()}
@@ -1043,6 +1037,34 @@ export const MobileHud: React.FC<MobileHudProps> = ({
                       </>
                     )}
                   </span>
+                </button>
+              )}
+
+              {/* PRIMAL BUTTON 5: ROTACIONAR (rotateBtn - only appears when holding a rotatable construction item or editing HUD) */}
+              {(isOrientableItem || isEditingHud) && (
+                <button
+                  style={getControlTransformStyle('rotateBtn', 'bottom right')}
+                  onPointerDown={(e) => {
+                    if (isEditingHud) {
+                      handleEditPointerDown('rotateBtn', e);
+                      return;
+                    }
+                    e.stopPropagation();
+                    engine.cycleBuildOrientation();
+                  }}
+                  onPointerMove={handleEditPointerMove}
+                  onPointerUp={handleEditPointerUp}
+                  title="Girar Elemento de Construção (Atalho: R)"
+                  className={`min-h-[38px] px-3 medieval-btn-wood text-[10px] font-pixel font-bold flex items-center gap-1.5 active:scale-95 border border-amber-500/40 ${
+                    isEditingHud
+                      ? selectedEditKey === 'rotateBtn'
+                        ? 'ring-2 ring-amber-400 cursor-move'
+                        : 'ring-1 ring-amber-500/40 cursor-move'
+                      : ''
+                  }`}
+                >
+                  <RotateCw className="w-3.5 h-3.5 text-amber-300 shrink-0" />
+                  <span>Girar ({rotationLabel})</span>
                 </button>
               )}
 

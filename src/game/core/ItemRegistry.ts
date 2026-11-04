@@ -1663,15 +1663,39 @@ export const ITEMS: Record<string, ItemDefinition> = {
   },
   wood_floor: {
     id: 'wood_floor',
-    name: 'Piso de Tábuas',
+    name: 'Piso de Carvalho',
     description:
-      'Camada de Chão com adaptação de bordas contínuas. Permite construir paredes, portas, baús e estações por cima e concede +15% de Velocidade de Movimento (Sem Hitbox).',
+      'Piso de tábuas de Carvalho Dourado com adaptação de bordas contínuas e opção de rotação das tábuas. Permite construir paredes, portas, baús e estações por cima e concede +15% de Velocidade de Movimento (Sem Hitbox).',
     purposeSummary:
-      'Chão Contínuo (Sem Hitbox · +15% Velocidade): Une tábuas sem costuras e aceita móveis/paredes sobre ele.',
+      'Piso de Carvalho (Sem Hitbox · +15% Velocidade): Une tábuas de carvalho sem costuras e aceita móveis/paredes sobre ele.',
     category: ItemCategory.PLACEABLE,
     rarity: RarityTier.BASIC,
     maxStack: 99,
     placeableType: PlaceableType.WOOD_FLOOR,
+  },
+  dark_oak_floor: {
+    id: 'dark_oak_floor',
+    name: 'Piso de Carvalho Escuro',
+    description:
+      'Assoalho nobre entalhado em tábuas escuras de Carvalho Escuro da Floresta Temperada com adaptação de bordas contínuas e rotação de tábuas. Concede +15% de Velocidade de Movimento (Sem Hitbox).',
+    purposeSummary:
+      'Piso de Carvalho Escuro (Sem Hitbox · +15% Velocidade): Assoalho nobre escuro que aceita paredes e móveis por cima.',
+    category: ItemCategory.PLACEABLE,
+    rarity: RarityTier.BASIC,
+    maxStack: 99,
+    placeableType: PlaceableType.DARK_OAK_FLOOR,
+  },
+  pine_floor: {
+    id: 'pine_floor',
+    name: 'Piso de Pinheiro',
+    description:
+      'Piso claro de cabana alpina feito com tábuas de Pinheiro da Taiga, com bordas contínuas e opção de rotação. Concede +15% de Velocidade de Movimento (Sem Hitbox).',
+    purposeSummary:
+      'Piso de Pinheiro (Sem Hitbox · +15% Velocidade): Assoalho boreal claro que aceita estruturas por cima.',
+    category: ItemCategory.PLACEABLE,
+    rarity: RarityTier.BASIC,
+    maxStack: 99,
+    placeableType: PlaceableType.PINE_FLOOR,
   },
   stone_floor: {
     id: 'stone_floor',
@@ -2577,7 +2601,41 @@ export const CONSTRUCTION_BLUEPRINTS: Record<PlaceableType, ConstructionBlueprin
   [PlaceableType.WOOD_FLOOR]: {
     type: PlaceableType.WOOD_FLOOR,
     role: 'CHAO',
-    roleLabel: 'Chão / Piso',
+    roleLabel: 'Piso de Carvalho',
+    layer: 'GROUND',
+    layerLabel: 'Camada de Chão (Aceita Estruturas Acima)',
+    hasHitbox: false,
+    hitboxBehavior: 'NONE',
+    hitboxLabel: 'Sem Hitbox (Livre Passagem)',
+    continuityMode: 'FLOOR_BORDER',
+    continuityLabel: 'Bordas Adaptativas & União Contínua',
+    connectionGroup: 'wood_floor',
+    connectsToGroups: ['wood_floor'],
+    maxHp: 90,
+    lightRadius: 0,
+    speedMultiplier: 1.15,
+  },
+  [PlaceableType.DARK_OAK_FLOOR]: {
+    type: PlaceableType.DARK_OAK_FLOOR,
+    role: 'CHAO',
+    roleLabel: 'Piso de Carvalho Escuro',
+    layer: 'GROUND',
+    layerLabel: 'Camada de Chão (Aceita Estruturas Acima)',
+    hasHitbox: false,
+    hitboxBehavior: 'NONE',
+    hitboxLabel: 'Sem Hitbox (Livre Passagem)',
+    continuityMode: 'FLOOR_BORDER',
+    continuityLabel: 'Bordas Adaptativas & União Contínua',
+    connectionGroup: 'wood_floor',
+    connectsToGroups: ['wood_floor'],
+    maxHp: 90,
+    lightRadius: 0,
+    speedMultiplier: 1.15,
+  },
+  [PlaceableType.PINE_FLOOR]: {
+    type: PlaceableType.PINE_FLOOR,
+    role: 'CHAO',
+    roleLabel: 'Piso de Pinheiro',
     layer: 'GROUND',
     layerLabel: 'Camada de Chão (Aceita Estruturas Acima)',
     hasHitbox: false,
@@ -3719,6 +3777,8 @@ export const ITEM_BASE_PRICES: Record<string, number> = {
   // === TIER 2: CONSTRUÇÕES BÁSICAS, CULINÁRIA INICIAL, FERRAMENTAS & ARMADURAS NV.1 ===
   // Construções Nv.0 / Nv.1 (Calculadas pelo custo das matérias-primas + carpintaria)
   wood_floor: 1,
+  dark_oak_floor: 1,
+  pine_floor: 1,
   wood_fence: 1,
   wood_wall: 2,
   dark_oak_wall: 2,
@@ -4092,6 +4152,18 @@ export const STRUCTURE_MATERIAL_REQUIREMENTS: Record<
 
   // === MADEIRA DE CARVALHO, CARVALHO ESCURO & PINHEIRO (Quebrável com a Mão; ideal com Machado) ===
   [PlaceableType.WOOD_FLOOR]: {
+    materialKind: 'SOFT_WOOD',
+    requiredTool: ToolType.AXE,
+    requiredTier: 0,
+    requirementLabel: 'Mão Livre ou Machado (Ideal: Machado)',
+  },
+  [PlaceableType.DARK_OAK_FLOOR]: {
+    materialKind: 'SOFT_WOOD',
+    requiredTool: ToolType.AXE,
+    requiredTier: 0,
+    requirementLabel: 'Mão Livre ou Machado (Ideal: Machado)',
+  },
+  [PlaceableType.PINE_FLOOR]: {
     materialKind: 'SOFT_WOOD',
     requiredTool: ToolType.AXE,
     requiredTier: 0,
@@ -4838,6 +4910,53 @@ export function getFuelBurnTimeSec(itemId: string): number {
   return FUEL_ITEMS[itemId]?.burnTimeSec || 0;
 }
 
+/**
+ * Classifica o modo de rotação de cada elemento colocável no mundo:
+ * - 'dir4': Possui 4 vistas direcionais distintas (0 = Sul/Frente, 1 = Leste/Direita, 2 = Norte/Costas, 3 = Oeste/Esquerda).
+ * - 'axis2': Possui 2 eixos (0 = Horizontal / Frontal, 1 = Vertical / Lateral). Em paredes/portas/janelas/cercas, a conexão com vizinhos tem prioridade sobre a rotação manual.
+ * - 'none': Elemento radialmente simétrico ou natural/orgânico que não utiliza botão de rotação.
+ */
+export function getPlaceableRotationMode(
+  type?: PlaceableType
+): 'none' | 'axis2' | 'dir4' {
+  if (!type) return 'none';
+  switch (type) {
+    case PlaceableType.BED:
+    case PlaceableType.CHEST:
+    case PlaceableType.WORKBENCH:
+    case PlaceableType.FURNACE:
+    case PlaceableType.WEAVING_TABLE:
+    case PlaceableType.MARKET_STALL:
+    case PlaceableType.EXPLORER_TENT:
+    case PlaceableType.VILLAGE_HOUSE:
+      return 'dir4';
 
+    case PlaceableType.WOOD_WALL:
+    case PlaceableType.DARK_OAK_WALL:
+    case PlaceableType.PINE_WALL:
+    case PlaceableType.STONE_WALL:
+    case PlaceableType.BRICK_WALL:
+    case PlaceableType.WOOD_WINDOW:
+    case PlaceableType.DARK_OAK_WINDOW:
+    case PlaceableType.PINE_WINDOW:
+    case PlaceableType.STONE_WINDOW:
+    case PlaceableType.WOOD_DOOR:
+    case PlaceableType.DARK_OAK_DOOR:
+    case PlaceableType.PINE_DOOR:
+    case PlaceableType.IRON_GATE:
+    case PlaceableType.WOOD_FENCE:
+    case PlaceableType.WOOD_BRIDGE:
+    case PlaceableType.WOOD_FLOOR:
+    case PlaceableType.DARK_OAK_FLOOR:
+    case PlaceableType.PINE_FLOOR:
+    case PlaceableType.BRICK_FLOOR:
+      return 'axis2';
 
+    default:
+      return 'none';
+  }
+}
 
+export function isRotatablePlaceable(type?: PlaceableType): boolean {
+  return getPlaceableRotationMode(type) !== 'none';
+}

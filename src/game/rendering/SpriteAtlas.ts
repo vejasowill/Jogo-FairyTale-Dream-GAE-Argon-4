@@ -2250,12 +2250,12 @@ class SpriteAtlasManager {
       [
         '................',
         '..bbbbbbbbbbbb..',
-        '..bllllllllllb..',
+        '..bllllbbllllb..',
+        '..bbbbbbbbbbbb..',
+        '..bbllllllbllb..',
         '..bbbbbbbbbbbb..',
         '..bllllllllllb..',
         '..bbbbbbbbbbbb..',
-        '................',
-        '................',
         '................',
         '................',
         '................',
@@ -2265,7 +2265,53 @@ class SpriteAtlasManager {
         '................',
         '................',
       ],
-      { b: '#78350f', l: '#b45309' }
+      { b: '#78350f', l: '#d97706' }
+    );
+
+    registerItem(
+      'dark_oak_floor',
+      [
+        '................',
+        '..dddddddddddd..',
+        '..dmmmddmmmmmd..',
+        '..dpppddpppppd..',
+        '..dddddddddddd..',
+        '..dmmmmmddmmmd..',
+        '..dpppppddpppd..',
+        '..dddddddddddd..',
+        '................',
+        '................',
+        '................',
+        '................',
+        '................',
+        '................',
+        '................',
+        '................',
+      ],
+      { d: '#1f0e06', m: '#3d2312', p: '#5c3a21' }
+    );
+
+    registerItem(
+      'pine_floor',
+      [
+        '................',
+        '..cccccccccccc..',
+        '..clllllcllllc..',
+        '..ceeeeeceeeec..',
+        '..cccccccccccc..',
+        '..clllcllllllc..',
+        '..ceeeceeeeeec..',
+        '..cccccccccccc..',
+        '................',
+        '................',
+        '................',
+        '................',
+        '................',
+        '................',
+        '................',
+        '................',
+      ],
+      { c: '#6b4226', l: '#c49a62', e: '#f3d9a4' }
     );
 
     registerItem(
@@ -5492,7 +5538,7 @@ class SpriteAtlasManager {
       })
     );
 
-    // WOOD FLOOR
+    // WOOD FLOOR (Piso de Carvalho)
     this.structureSprites.set(
       PlaceableType.WOOD_FLOOR,
       createFrames(24, 24, (ctx) => {
@@ -5508,6 +5554,52 @@ class SpriteAtlasManager {
           const jx = i % 2 === 0 ? 11 : 15;
           ctx.fillStyle = '#451a03';
           ctx.fillRect(jx, ry, 1, 5);
+          ctx.fillRect(3, ry + 2, 1, 1);
+          ctx.fillRect(20, ry + 2, 1, 1);
+        }
+      })
+    );
+
+    // DARK OAK FLOOR (Piso de Carvalho Escuro — Rich dark espresso planks with bronze dowels)
+    this.structureSprites.set(
+      PlaceableType.DARK_OAK_FLOOR,
+      createFrames(24, 24, (ctx) => {
+        ctx.fillStyle = '#140904';
+        ctx.fillRect(0, 0, 24, 24);
+        const rows = [1, 7, 13, 19];
+        for (let i = 0; i < rows.length; i++) {
+          const ry = rows[i];
+          ctx.fillStyle = i % 2 === 0 ? '#2b170b' : '#3d2312';
+          ctx.fillRect(1, ry, 22, 5);
+          ctx.fillStyle = '#5c3a21';
+          ctx.fillRect(1, ry, 22, 2);
+          const jx = i % 2 === 0 ? 9 : 15;
+          ctx.fillStyle = '#140904';
+          ctx.fillRect(jx, ry, 1, 5);
+          ctx.fillStyle = '#92400e';
+          ctx.fillRect(3, ry + 2, 1, 1);
+          ctx.fillRect(20, ry + 2, 1, 1);
+        }
+      })
+    );
+
+    // PINE FLOOR (Piso de Pinheiro — Pale Nordic spruce planks with warm honey grain)
+    this.structureSprites.set(
+      PlaceableType.PINE_FLOOR,
+      createFrames(24, 24, (ctx) => {
+        ctx.fillStyle = '#5c3a21';
+        ctx.fillRect(0, 0, 24, 24);
+        const rows = [1, 7, 13, 19];
+        for (let i = 0; i < rows.length; i++) {
+          const ry = rows[i];
+          ctx.fillStyle = i % 2 === 0 ? '#b88c56' : '#c49a62';
+          ctx.fillRect(1, ry, 22, 5);
+          ctx.fillStyle = '#e2be8a';
+          ctx.fillRect(1, ry, 22, 2);
+          const jx = i % 2 === 0 ? 12 : 8;
+          ctx.fillStyle = '#5c3a21';
+          ctx.fillRect(jx, ry, 1, 5);
+          ctx.fillStyle = '#78350f';
           ctx.fillRect(3, ry + 2, 1, 1);
           ctx.fillRect(20, ry + 2, 1, 1);
         }
