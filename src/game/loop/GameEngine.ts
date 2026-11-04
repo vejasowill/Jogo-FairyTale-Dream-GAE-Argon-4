@@ -1303,7 +1303,7 @@ export class GameEngine {
       isHumanEntity !== undefined
         ? isHumanEntity
         : !this.player.mountedEntityId && !this.player.mountedCreatureData;
-    return this.world.canEntityOccupyWorldCircle(wx, wy, 6.2, false, human);
+    return this.world.canEntityOccupyWorldCircle(wx, wy, 6.2, true, human);
   }
 
   /**
