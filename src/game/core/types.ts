@@ -211,6 +211,9 @@ export enum NatureNodeType {
   // Forest Biomes (Temperate & Taiga)
   TEMPERATE_TREE = 'TEMPERATE_TREE',
   PINE_TREE = 'PINE_TREE',
+  // Natural Ground Grass (1 HP, 0 animation, 0.5% random seed drop)
+  SHORT_GRASS = 'SHORT_GRASS',
+  TALL_GRASS = 'TALL_GRASS',
   // Wild Flowers (Perlin Noise Patches & 10% Bush Replacement)
   FLOWER_TULIP = 'FLOWER_TULIP',
   FLOWER_LILY = 'FLOWER_LILY',
@@ -237,6 +240,7 @@ export enum PlaceableType {
   PINE_DOOR = 'PINE_DOOR',
   IRON_GATE = 'IRON_GATE',
   WOOD_FENCE = 'WOOD_FENCE',
+  FENCE_GATE = 'FENCE_GATE',
   WOOD_FLOOR = 'WOOD_FLOOR',
   DARK_OAK_FLOOR = 'DARK_OAK_FLOOR',
   PINE_FLOOR = 'PINE_FLOOR',
@@ -284,6 +288,8 @@ export interface NatureNode {
   animOffset: number;
   flowerColor?: ClothingColorId;
   variant?: number; // 0 = tall pine / standard, 1 = small pine
+  offsetX?: number; // Irregular sub-tile X offset in px
+  offsetY?: number; // Irregular sub-tile Y offset in px
 }
 
 export interface PlacedStructure {

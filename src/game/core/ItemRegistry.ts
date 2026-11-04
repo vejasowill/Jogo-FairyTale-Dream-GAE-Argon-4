@@ -468,9 +468,9 @@ export const ITEMS: Record<string, ItemDefinition> = {
     id: 'bone_fertilizer',
     name: 'Adubo Orgânico & Mineral',
     description:
-      'Composto enriquecido com fibras e minerais. Enriquece a terra arada e acelera dramaticamente o crescimento das plantas.',
+      'Composto enriquecido com fibras e minerais. Acelera o crescimento de plantações e mudas ou pode ser usado com "Adubar Chão" para fazer brotar vegetação natural irregular num raio de 60px.',
     purposeSummary:
-      'Aplique na plantação para acelerar o crescimento ou avançar um estágio imediatamente!',
+      'Aplique na plantação/muda para avançar 1 estágio imediatamente, ou use "Adubar Chão" para gerar vegetação natural do bioma (raio 60px)!',
     category: ItemCategory.CONSUMABLE,
     rarity: RarityTier.BASIC,
     maxStack: 50,
@@ -1958,13 +1958,25 @@ export const ITEMS: Record<string, ItemDefinition> = {
     id: 'wood_fence',
     name: 'Cerca Rústica de Pastoreio',
     description:
-      'Cerca modular com postes e travessas que se conectam automaticamente em 16 direções a outras cercas, portões e muros. Ideal para currais de animais e jardins!',
+      'Cerca modular com postes e travessas que se conectam automaticamente em 16 direções a outras cercas, porteiras, portões e muros. Ideal para currais de animais e jardins!',
     purposeSummary:
-      'Cerca Conectável (110 HP · Hitbox de Contenção): Mantém animais seguros e conecta-se a portões.',
+      'Cerca Conectável (110 HP · Hitbox de Contenção): Mantém animais seguros e conecta-se a porteiras e portões.',
     category: ItemCategory.PLACEABLE,
     rarity: RarityTier.BASIC,
     maxStack: 99,
     placeableType: PlaceableType.WOOD_FENCE,
+  },
+  fence_gate: {
+    id: 'fence_gate',
+    name: 'Porteira de Madeira',
+    description:
+      'Porteira articulada complementar à cerca. Abre e fecha ao interagir (inclusive em par duplo), mas mesmo aberta mantém hitbox sólida para todos os animais e monstros, permitindo a passagem apenas de humanos (jogador, aldeões e viajantes)!',
+    purposeSummary:
+      'Porteira de Curral (115 HP · Abre/Fecha): Mesmo aberta, bloqueia animais e mobs; apenas humanos passam livremente.',
+    category: ItemCategory.PLACEABLE,
+    rarity: RarityTier.BASIC,
+    maxStack: 60,
+    placeableType: PlaceableType.FENCE_GATE,
   },
   wood_window: {
     id: 'wood_window',
@@ -2948,6 +2960,23 @@ export const CONSTRUCTION_BLUEPRINTS: Record<PlaceableType, ConstructionBlueprin
     maxHp: 110,
     lightRadius: 0,
   },
+  [PlaceableType.FENCE_GATE]: {
+    type: PlaceableType.FENCE_GATE,
+    role: 'PORTA',
+    roleLabel: 'Porteira de Curral',
+    layer: 'WALL',
+    layerLabel: 'Camada de Contorno / Acesso de Cerca',
+    hasHitbox: true,
+    hitboxBehavior: 'DYNAMIC_DOOR',
+    hitboxLabel: 'Hitbox Seletiva (Aberta: Livre p/ Humanos, Bloqueia Animais e Mobs)',
+    continuityMode: 'DOOR_AUTO',
+    continuityLabel: 'Encaixe em Cercas/Muros & Porteira Dupla Automática',
+    connectionGroup: 'fence',
+    connectsToGroups: ['fence', 'wall'],
+    maxHp: 115,
+    lightRadius: 0,
+    isInteractive: true,
+  },
 
   // === LAYER 3: LIGHTING, TRAPS, STATIONS & FURNITURE ===
   [PlaceableType.TORCH]: {
@@ -3707,6 +3736,32 @@ export const NATURE_BLUEPRINTS: Record<NatureNodeType, NatureNodeBlueprint> = {
       { itemId: 'pine_sapling', min: 1, max: 2, chance: 1.0 },
     ],
   },
+  [NatureNodeType.SHORT_GRASS]: {
+    type: NatureNodeType.SHORT_GRASS,
+    name: 'Grama Baixa',
+    rarity: RarityTier.BASIC,
+    maxHp: 1,
+    materialKind: 'FIBER_FOLIAGE',
+    requiredTool: ToolType.NONE,
+    requiredTier: 0,
+    xpReward: 0,
+    hasHitbox: false,
+    hitboxRadius: 0,
+    drops: [],
+  },
+  [NatureNodeType.TALL_GRASS]: {
+    type: NatureNodeType.TALL_GRASS,
+    name: 'Grama Alta',
+    rarity: RarityTier.BASIC,
+    maxHp: 1,
+    materialKind: 'FIBER_FOLIAGE',
+    requiredTool: ToolType.NONE,
+    requiredTier: 0,
+    xpReward: 0,
+    hasHitbox: false,
+    hitboxRadius: 0,
+    drops: [],
+  },
 };
 
 /**
@@ -3780,6 +3835,7 @@ export const ITEM_BASE_PRICES: Record<string, number> = {
   dark_oak_floor: 1,
   pine_floor: 1,
   wood_fence: 1,
+  fence_gate: 3,
   wood_wall: 2,
   dark_oak_wall: 2,
   pine_wall: 2,
@@ -4230,6 +4286,12 @@ export const STRUCTURE_MATERIAL_REQUIREMENTS: Record<
     requirementLabel: 'Mão Livre ou Machado (Ideal: Machado)',
   },
   [PlaceableType.WOOD_FENCE]: {
+    materialKind: 'SOFT_WOOD',
+    requiredTool: ToolType.AXE,
+    requiredTier: 0,
+    requirementLabel: 'Mão Livre ou Machado (Ideal: Machado)',
+  },
+  [PlaceableType.FENCE_GATE]: {
     materialKind: 'SOFT_WOOD',
     requiredTool: ToolType.AXE,
     requiredTier: 0,
@@ -4945,6 +5007,7 @@ export function getPlaceableRotationMode(
     case PlaceableType.PINE_DOOR:
     case PlaceableType.IRON_GATE:
     case PlaceableType.WOOD_FENCE:
+    case PlaceableType.FENCE_GATE:
     case PlaceableType.WOOD_BRIDGE:
     case PlaceableType.WOOD_FLOOR:
     case PlaceableType.DARK_OAK_FLOOR:

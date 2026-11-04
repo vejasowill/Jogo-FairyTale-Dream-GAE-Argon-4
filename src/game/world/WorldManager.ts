@@ -2199,6 +2199,83 @@ export class WorldManager {
           }
         }
 
+        let nodeOffsetX: number | undefined;
+        let nodeOffsetY: number | undefined;
+
+        if (
+          !nodeType &&
+          biome !== BiomeType.OCEAN &&
+          zone !== EcologicalZone.COASTAL_TROPICS
+        ) {
+          const canGrowNaturalGrass =
+            biome === BiomeType.PLAINS ||
+            biome === BiomeType.FOREST ||
+            biome === BiomeType.TEMPERATE_FOREST ||
+            biome === BiomeType.TAIGA_FOREST ||
+            biome === BiomeType.ISLAND ||
+            (biome === BiomeType.DESERT &&
+              zone === EcologicalZone.DESERT_OASIS);
+
+          if (canGrowNaturalGrass) {
+            const grassPatchWave =
+              (perlin2D(tx * 0.095, ty * 0.095, this.seed + 6823) + 1) * 0.5;
+            const grassMicroWave = smoothNoise(
+              tx * 0.21,
+              ty * 0.21,
+              this.seed + 6917
+            );
+            const grassBlend = grassPatchWave * 0.68 + grassMicroWave * 0.32;
+
+            let baseGrassChance = 0.34;
+            if (biome === BiomeType.PLAINS) {
+              if (
+                zone === EcologicalZone.MEADOW_CLEARING ||
+                zone === EcologicalZone.OVERGROWN_SHRUBLAND
+              ) {
+                baseGrassChance = 0.44;
+              } else if (zone === EcologicalZone.ROCKY_HIGHLANDS) {
+                baseGrassChance = 0.24;
+              } else {
+                baseGrassChance = 0.38;
+              }
+            } else if (
+              biome === BiomeType.FOREST ||
+              biome === BiomeType.TEMPERATE_FOREST
+            ) {
+              baseGrassChance = 0.33;
+            } else if (biome === BiomeType.TAIGA_FOREST) {
+              baseGrassChance = 0.25;
+            } else if (biome === BiomeType.ISLAND) {
+              baseGrassChance = 0.32;
+            } else if (zone === EcologicalZone.DESERT_OASIS) {
+              baseGrassChance = 0.28;
+            }
+
+            const effectiveGrassChance =
+              baseGrassChance * (0.45 + 0.95 * grassBlend);
+            const grassRoll = hash2D(tx, ty, this.seed + 7043);
+
+            if (grassRoll < effectiveGrassChance) {
+              const tallRoll = hash2D(tx, ty, this.seed + 7129);
+              const tallThreshold =
+                0.28 +
+                Math.max(0, grassPatchWave - 0.4) * 0.42 +
+                (zone === EcologicalZone.OVERGROWN_SHRUBLAND ? 0.12 : 0);
+              nodeType =
+                tallRoll < tallThreshold
+                  ? NatureNodeType.TALL_GRASS
+                  : NatureNodeType.SHORT_GRASS;
+              nodeVariant = Math.floor(hash2D(tx, ty, this.seed + 7219) * 3);
+              nodeOffsetX = Math.round(
+                (hash2D(tx, ty, this.seed + 7307) - 0.5) * 12
+              );
+              nodeOffsetY = Math.round(
+                (hash2D(tx, ty, this.seed + 7393) - 0.5) * 12
+              );
+            }
+          }
+        }
+
         if (nodeType) {
           nodes.push(
             this.createNatureNode(
@@ -2207,7 +2284,9 @@ export class WorldManager {
               ty,
               r,
               flowerColor,
-              nodeVariant
+              nodeVariant,
+              nodeOffsetX,
+              nodeOffsetY
             )
           );
         }
@@ -3366,6 +3445,8 @@ export class WorldManager {
     return (
       type === NatureNodeType.BERRY_BUSH ||
       type === NatureNodeType.SAND_DUNE ||
+      type === NatureNodeType.SHORT_GRASS ||
+      type === NatureNodeType.TALL_GRASS ||
       type === NatureNodeType.FLOWER_TULIP ||
       type === NatureNodeType.FLOWER_LILY ||
       type === NatureNodeType.FLOWER_SUNFLOWER ||
@@ -3499,9 +3580,14 @@ export class WorldManager {
     ty: number,
     r: number,
     flowerColor?: ClothingColorId,
-    variant?: number
+    variant?: number,
+    offsetX?: number,
+    offsetY?: number
   ): NatureNode {
     const bp = NATURE_BLUEPRINTS[nodeType];
+    const isGrass =
+      nodeType === NatureNodeType.SHORT_GRASS ||
+      nodeType === NatureNodeType.TALL_GRASS;
     return {
       id: `node_${tx}_${ty}`,
       type: nodeType,
@@ -3513,7 +3599,7 @@ export class WorldManager {
       requiredTool: bp.requiredTool,
       requiredTier: bp.requiredTier,
       hitFlashTimer: 0,
-      animOffset: Math.floor(r * 10),
+      animOffset: isGrass ? 0 : Math.floor(r * 10),
       flowerColor:
         flowerColor ??
         (nodeType === NatureNodeType.FLOWER_TULIP ||
@@ -3526,7 +3612,11 @@ export class WorldManager {
         variant ??
         (nodeType === NatureNodeType.PINE_TREE
           ? Math.abs(tx * 31 + ty * 17) % 2
+          : isGrass
+          ? Math.abs(tx * 19 + ty * 29) % 3
           : undefined),
+      offsetX,
+      offsetY,
     };
   }
 
@@ -3696,13 +3786,22 @@ export class WorldManager {
 
   /**
    * Authoritative check for whether a PlacedStructure currently blocks physical movement (has an active Hitbox).
-   * Ensures floors, carpets, bridges, torches, lanterns, banners, campfires, traps, and OPEN doors/gates
-   * NEVER block the player or creatures — even in legacy saved worlds!
+   * - Floors, carpets, bridges, torches, lanterns, banners, campfires, traps, and OPEN doors/gates do not block.
+   * - Exception (`PlaceableType.FENCE_GATE` / Porteira): when OPEN (`st.isOpen === true`), it STILL has a solid
+   *   hitbox for all animals and mobs (`isHumanEntity === false`), and only has no hitbox for humans
+   *   (Player on foot, Villagers, and Wanderers/Travelers: `isHumanEntity === true`)!
    */
-  public static isStructureCurrentlySolid(st: PlacedStructure): boolean {
+  public static isStructureCurrentlySolid(
+    st: PlacedStructure,
+    isHumanEntity = false
+  ): boolean {
     const bp = CONSTRUCTION_BLUEPRINTS[st.type];
     if (!bp) return Boolean(st.solid);
     if (!bp.hasHitbox) return false;
+    if (st.type === PlaceableType.FENCE_GATE) {
+      if (!st.isOpen) return true;
+      return !isHumanEntity;
+    }
     if (bp.hitboxBehavior === 'DYNAMIC_DOOR') {
       return !st.isOpen;
     }
@@ -3852,7 +3951,12 @@ export class WorldManager {
     return this.getWaterCurrentAtTile(tx, ty, globalTime);
   }
 
-  public isTileWalkable(tx: number, ty: number, allowWater = true): boolean {
+  public isTileWalkable(
+    tx: number,
+    ty: number,
+    allowWater = true,
+    isHumanEntity = true
+  ): boolean {
     const { cx, cy, lx, ly } = this.tileToChunk(tx, ty);
     const chunk = this.getOrCreateChunk(cx, cy);
     const biome = chunk.tiles[ly * CHUNK_SIZE + lx];
@@ -3867,7 +3971,7 @@ export class WorldManager {
         ) {
           hasBridge = true;
         }
-        if (WorldManager.isStructureCurrentlySolid(st)) {
+        if (WorldManager.isStructureCurrentlySolid(st, isHumanEntity)) {
           return false;
         }
       }
@@ -3891,7 +3995,8 @@ export class WorldManager {
 
   /**
    * Sub-tile accurate world-space collision check for Player & Creatures.
-   * - Respects passable objects (bushes, floors, carpets, torches, lanterns, banners, campfires, traps, open doors).
+   * - Respects passable objects (bushes, grass, floors, carpets, torches, lanterns, banners, campfires, traps, open doors).
+   * - Respects FENCE_GATE selective hitbox (open gate is passable ONLY for humans: `isHumanEntity === true`).
    * - Allows swimming in water (`allowWater = true` by default) while supporting dry-land checks (`allowWater = false`).
    * - Uses full tile collision for continuous Walls & closed Doors.
    * - Uses compact radial collision for Trees, Boulders, Fences, and Furniture/Stations so movement never snags on corners.
@@ -3900,7 +4005,8 @@ export class WorldManager {
     wx: number,
     wy: number,
     entityRadius = 6.2,
-    allowWater = true
+    allowWater = true,
+    isHumanEntity = true
   ): boolean {
     // 1. Optional dry-land check at the 4 footprint corners when water is disallowed
     if (!allowWater) {
@@ -3933,7 +4039,7 @@ export class WorldManager {
           if (node.tileX !== tx || node.tileY !== ty) continue;
           const nbp = NATURE_BLUEPRINTS[node.type];
           if (!nbp || !nbp.hasHitbox || nbp.hitboxRadius <= 0) {
-            continue; // e.g., BERRY_BUSH has no hitbox!
+            continue; // e.g., BERRY_BUSH / SHORT_GRASS / TALL_GRASS have no hitbox!
           }
           const nx = tx * TILE_SIZE + TILE_SIZE / 2;
           const ny = ty * TILE_SIZE + TILE_SIZE * 0.58;
@@ -3945,7 +4051,7 @@ export class WorldManager {
         // Check Structures on (tx, ty)
         for (const st of chunk.structures) {
           if (st.tileX !== tx || st.tileY !== ty) continue;
-          if (!WorldManager.isStructureCurrentlySolid(st)) continue;
+          if (!WorldManager.isStructureCurrentlySolid(st, isHumanEntity)) continue;
 
           const bp = CONSTRUCTION_BLUEPRINTS[st.type];
           if (bp && bp.hitboxBehavior === 'SOLID_COMPACT' && bp.hitboxRadius) {
@@ -3955,7 +4061,7 @@ export class WorldManager {
               return false;
             }
           } else {
-            // SOLID_FULL (Walls, Windows) or closed DYNAMIC_DOOR: AABB vs Circle
+            // SOLID_FULL (Walls, Windows) or solid DYNAMIC_DOOR / FENCE_GATE: AABB vs Circle
             // Side-viewed (vertical / North-South) walls & doors have a thinner X profile
             const isVerticalSideWall = this.isWallOrDoorSideProfileAt(tx, ty, st);
             const padX = isVerticalSideWall ? 9 : 1;
@@ -3985,9 +4091,10 @@ export class WorldManager {
   public findNearestSafePosition(
     wx: number,
     wy: number,
-    entityRadius = 6.2
+    entityRadius = 6.2,
+    isHumanEntity = true
   ): { x: number; y: number } {
-    if (this.canEntityOccupyWorldCircle(wx, wy, entityRadius)) {
+    if (this.canEntityOccupyWorldCircle(wx, wy, entityRadius, true, isHumanEntity)) {
       return { x: wx, y: wy };
     }
 
@@ -4022,7 +4129,7 @@ export class WorldManager {
 
         for (const st of chunk.structures) {
           if (st.tileX !== tx || st.tileY !== ty) continue;
-          if (!WorldManager.isStructureCurrentlySolid(st)) continue;
+          if (!WorldManager.isStructureCurrentlySolid(st, isHumanEntity)) continue;
           const sx = tx * TILE_SIZE + TILE_SIZE / 2;
           const sy = ty * TILE_SIZE + TILE_SIZE * 0.54;
           const dist = Math.hypot(wx - sx, wy - sy);
@@ -4046,7 +4153,15 @@ export class WorldManager {
       for (let d = 2; d <= 36; d += 2) {
         const testX = wx + normRx * d;
         const testY = wy + normRy * d;
-        if (this.canEntityOccupyWorldCircle(testX, testY, entityRadius)) {
+        if (
+          this.canEntityOccupyWorldCircle(
+            testX,
+            testY,
+            entityRadius,
+            true,
+            isHumanEntity
+          )
+        ) {
           return { x: testX, y: testY };
         }
       }
@@ -4070,7 +4185,15 @@ export class WorldManager {
         const candX = wx + dirX * r;
         const candY = wy + dirY * r;
 
-        if (this.canEntityOccupyWorldCircle(candX, candY, entityRadius)) {
+        if (
+          this.canEntityOccupyWorldCircle(
+            candX,
+            candY,
+            entityRadius,
+            true,
+            isHumanEntity
+          )
+        ) {
           const alignment =
             repulseMag > 0.01 ? dirX * normRx + dirY * normRy : -Math.abs(dirX) * 0.01 + dirY * 0.02;
           if (alignment > bestAlignment) {
@@ -4523,7 +4646,8 @@ export class WorldManager {
       type === PlaceableType.WOOD_DOOR ||
       type === PlaceableType.DARK_OAK_DOOR ||
       type === PlaceableType.PINE_DOOR ||
-      type === PlaceableType.IRON_GATE
+      type === PlaceableType.IRON_GATE ||
+      type === PlaceableType.FENCE_GATE
     );
   }
 
@@ -4953,13 +5077,9 @@ export class WorldManager {
     const chunk = this.chunks[WorldManager.chunkKey(cx, cy)];
     if (!chunk) return true;
 
-    // Solid nature nodes prevent making a path (passable berry bushes and sand dunes are cleared automatically)
+    // Solid nature nodes prevent making a path (passable berry bushes, grass, and flowers are cleared automatically)
     const node = chunk.nodes.find((n) => n.tileX === tx && n.tileY === ty);
-    if (
-      node &&
-      node.type !== NatureNodeType.BERRY_BUSH &&
-      node.type !== NatureNodeType.SAND_DUNE
-    ) {
+    if (node && !WorldManager.isPassableGroundNode(node.type)) {
       return false;
     }
 
@@ -4993,13 +5113,12 @@ export class WorldManager {
     const { cx, cy } = this.tileToChunk(tx, ty);
     const chunk = this.getOrCreateChunk(cx, cy);
 
-    // Clear any passable berry bush or sand dune on the tile
+    // Clear any passable ground node (berry bush, grass, sand dune, or flower) on the tile
     const bushIdx = chunk.nodes.findIndex(
       (n) =>
         n.tileX === tx &&
         n.tileY === ty &&
-        (n.type === NatureNodeType.BERRY_BUSH ||
-          n.type === NatureNodeType.SAND_DUNE)
+        WorldManager.isPassableGroundNode(n.type)
     );
     if (bushIdx !== -1) {
       chunk.nodes.splice(bushIdx, 1);
@@ -5027,6 +5146,203 @@ export class WorldManager {
       );
     }
     return structure;
+  }
+
+  /**
+   * Returns true if the given tile has fertile natural soil suitable for ground fertilization
+   * (not water, ocean, desert sand, coastal beach sand, or occupied by a floor/structure).
+   */
+  public isTileFertileSoilForGroundFertilizer(tx: number, ty: number): boolean {
+    if (this.isTileSwimmableWater(tx, ty)) return false;
+    const biome = this.getTileBiomeFast(tx, ty);
+    if (biome === BiomeType.OCEAN || biome === BiomeType.DESERT) return false;
+    // Exclude sandy beach strips on islands and mainland coast
+    const subZone = this.getTileSubZone(tx, ty, biome);
+    if (biome === BiomeType.ISLAND && subZone === 1) return false;
+
+    const { cx, cy } = this.tileToChunk(tx, ty);
+    const chunk = this.getOrCreateChunk(cx, cy);
+    // Cannot fertilize over structures, floors, paths, tilled soil, or bridges
+    for (let i = 0; i < chunk.structures.length; i++) {
+      const s = chunk.structures[i];
+      if (s.hp <= 0) continue;
+      if (s.tileX === tx && s.tileY === ty) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  /**
+   * Returns true if a tile is fertile soil AND currently has no living NatureNode on it.
+   */
+  public canFertilizeGroundAtTile(tx: number, ty: number): boolean {
+    if (!this.isTileFertileSoilForGroundFertilizer(tx, ty)) return false;
+    const { cx, cy } = this.tileToChunk(tx, ty);
+    const chunk = this.getOrCreateChunk(cx, cy);
+    for (let i = 0; i < chunk.nodes.length; i++) {
+      const n = chunk.nodes[i];
+      if (n.hp > 0 && n.tileX === tx && n.tileY === ty) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  /**
+   * Applies ground fertilizer centered at (worldX, worldY) within radiusPx (default 60px).
+   * Each valid empty fertile cell within radiusPx has an 80% chance to spawn irregular
+   * natural simple vegetation (short grass, tall grass, and local biome flowers).
+   */
+  public fertilizeGroundAtWorldPos(
+    worldX: number,
+    worldY: number,
+    radiusPx = 60
+  ): {
+    hasValidSoilInRadius: boolean;
+    spawnedNodes: NatureNode[];
+    modifiedChunkKeys: Set<string>;
+  } {
+    const minTx = Math.floor((worldX - radiusPx) / TILE_SIZE);
+    const maxTx = Math.floor((worldX + radiusPx) / TILE_SIZE);
+    const minTy = Math.floor((worldY - radiusPx) / TILE_SIZE);
+    const maxTy = Math.floor((worldY + radiusPx) / TILE_SIZE);
+    const radiusSq = radiusPx * radiusPx;
+
+    let hasValidSoilInRadius = false;
+    const spawnedNodes: NatureNode[] = [];
+    const modifiedChunkKeys = new Set<string>();
+
+    for (let ty = minTy; ty <= maxTy; ty++) {
+      for (let tx = minTx; tx <= maxTx; tx++) {
+        // Check if tile center or nearest point on tile is within radiusPx
+        const tileCenterX = tx * TILE_SIZE + TILE_SIZE * 0.5;
+        const tileCenterY = ty * TILE_SIZE + TILE_SIZE * 0.5;
+        const dx = tileCenterX - worldX;
+        const dy = tileCenterY - worldY;
+        if (dx * dx + dy * dy > radiusSq) continue;
+
+        if (!this.isTileFertileSoilForGroundFertilizer(tx, ty)) continue;
+        hasValidSoilInRadius = true;
+
+        if (!this.canFertilizeGroundAtTile(tx, ty)) continue;
+
+        // 80% chance per valid cell to generate simple natural irregular vegetation
+        if (Math.random() >= 0.80) continue;
+
+        const biome = this.getTileBiomeFast(tx, ty);
+        const roll = Math.random();
+        let nodeType: NatureNodeType = NatureNodeType.SHORT_GRASS;
+
+        if (biome === BiomeType.TAIGA_FOREST) {
+          if (roll < 0.14) {
+            nodeType = NatureNodeType.FLOWER_LILY;
+          } else if (roll < 0.44) {
+            nodeType = NatureNodeType.TALL_GRASS;
+          } else {
+            nodeType = NatureNodeType.SHORT_GRASS;
+          }
+        } else if (biome === BiomeType.TEMPERATE_FOREST) {
+          if (roll < 0.10) {
+            nodeType = NatureNodeType.FLOWER_LILY;
+          } else if (roll < 0.18) {
+            nodeType = NatureNodeType.FLOWER_TULIP;
+          } else if (roll < 0.68) {
+            nodeType = NatureNodeType.TALL_GRASS;
+          } else {
+            nodeType = NatureNodeType.SHORT_GRASS;
+          }
+        } else if (biome === BiomeType.FOREST) {
+          if (roll < 0.09) {
+            nodeType = NatureNodeType.FLOWER_TULIP;
+          } else if (roll < 0.17) {
+            nodeType = NatureNodeType.FLOWER_LILY;
+          } else if (roll < 0.62) {
+            nodeType = NatureNodeType.TALL_GRASS;
+          } else {
+            nodeType = NatureNodeType.SHORT_GRASS;
+          }
+        } else if (biome === BiomeType.ISLAND) {
+          if (roll < 0.10) {
+            nodeType = NatureNodeType.FLOWER_SOLAR_DROP;
+          } else if (roll < 0.18) {
+            nodeType = NatureNodeType.FLOWER_SUNFLOWER;
+          } else if (roll < 0.54) {
+            nodeType = NatureNodeType.TALL_GRASS;
+          } else {
+            nodeType = NatureNodeType.SHORT_GRASS;
+          }
+        } else {
+          // PLAINS and default fertile land
+          if (roll < 0.06) {
+            nodeType = NatureNodeType.FLOWER_TULIP;
+          } else if (roll < 0.11) {
+            nodeType = NatureNodeType.FLOWER_SUNFLOWER;
+          } else if (roll < 0.15) {
+            nodeType = NatureNodeType.FLOWER_LILY;
+          } else if (roll < 0.18) {
+            nodeType = NatureNodeType.FLOWER_SOLAR_DROP;
+          } else if (roll < 0.56) {
+            nodeType = NatureNodeType.TALL_GRASS;
+          } else {
+            nodeType = NatureNodeType.SHORT_GRASS;
+          }
+        }
+
+        // Irregular natural offset within the cell
+        const ox = Math.round((Math.random() - 0.5) * 18);
+        const oy = Math.round((Math.random() - 0.5) * 18);
+        const flowerColors: ClothingColorId[] = [
+          'vermelho',
+          'amarelo',
+          'azul',
+          'branco',
+          'roxo',
+          'rosa',
+          'laranja',
+        ];
+        const isFlowerNode =
+          nodeType === NatureNodeType.FLOWER_TULIP ||
+          nodeType === NatureNodeType.FLOWER_LILY ||
+          nodeType === NatureNodeType.FLOWER_SUNFLOWER ||
+          nodeType === NatureNodeType.FLOWER_SOLAR_DROP;
+        const flowerColor: ClothingColorId | undefined = isFlowerNode
+          ? nodeType === NatureNodeType.FLOWER_SUNFLOWER ||
+            nodeType === NatureNodeType.FLOWER_SOLAR_DROP
+            ? 'amarelo'
+            : flowerColors[Math.floor(Math.random() * flowerColors.length)]
+          : undefined;
+        const node = this.createNatureNode(
+          nodeType,
+          tx,
+          ty,
+          Math.random(),
+          flowerColor,
+          Math.floor(Math.random() * 3),
+          ox,
+          oy
+        );
+
+        const { cx, cy } = this.tileToChunk(tx, ty);
+        const chunk = this.getOrCreateChunk(cx, cy);
+        chunk.nodes.push(node);
+        if (!chunk.preserved) {
+          WorldManager.lockChunkTerrainSnapshot(
+            chunk,
+            chunk.genVersion ?? this.worldGenVersion,
+            chunk.generatedGameVersion ?? GAME_VERSION
+          );
+        }
+        spawnedNodes.push(node);
+        modifiedChunkKeys.add(`${cx},${cy}`);
+      }
+    }
+
+    return {
+      hasValidSoilInRadius,
+      spawnedNodes,
+      modifiedChunkKeys,
+    };
   }
 
   /**

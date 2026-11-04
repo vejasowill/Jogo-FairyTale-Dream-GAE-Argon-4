@@ -1288,8 +1288,22 @@ export class GameEngine {
     }
   }
 
-  private canEntityOccupy(wx: number, wy: number): boolean {
-    return this.world.canEntityOccupyWorldCircle(wx, wy, 6.2);
+  public static isHumanCreatureKind(kind: CreatureKind): boolean {
+    return (
+      kind === CreatureKind.VILLAGER || kind === CreatureKind.WANDERER
+    );
+  }
+
+  private canEntityOccupy(
+    wx: number,
+    wy: number,
+    isHumanEntity?: boolean
+  ): boolean {
+    const human =
+      isHumanEntity !== undefined
+        ? isHumanEntity
+        : !this.player.mountedEntityId && !this.player.mountedCreatureData;
+    return this.world.canEntityOccupyWorldCircle(wx, wy, 6.2, false, human);
   }
 
   /**
@@ -1298,14 +1312,17 @@ export class GameEngine {
    * placed on top of them, or any collision overlap).
    */
   private pushPlayerOutOfHitbox(dt: number, immediate = false): void {
-    if (this.canEntityOccupy(this.player.x, this.player.y)) {
+    const isHumanPlayer =
+      !this.player.mountedEntityId && !this.player.mountedCreatureData;
+    if (this.canEntityOccupy(this.player.x, this.player.y, isHumanPlayer)) {
       return;
     }
 
     const safePos = this.world.findNearestSafePosition(
       this.player.x,
       this.player.y,
-      6.2
+      6.2,
+      isHumanPlayer
     );
     const dx = safePos.x - this.player.x;
     const dy = safePos.y - this.player.y;
@@ -4491,19 +4508,20 @@ export class GameEngine {
         const stepY = effVy * dt;
         const nx = cr.x + stepX;
         const ny = cr.y + stepY;
+        const isHumanCr = GameEngine.isHumanCreatureKind(cr.kind);
 
-        if (this.canEntityOccupy(nx, ny)) {
+        if (this.canEntityOccupy(nx, ny, isHumanCr)) {
           cr.x = nx;
           cr.y = ny;
         } else {
           // Try smooth wall/obstacle sliding along individual axes
           let movedX = false;
           let movedY = false;
-          if (this.canEntityOccupy(nx, cr.y)) {
+          if (this.canEntityOccupy(nx, cr.y, isHumanCr)) {
             cr.x = nx;
             movedX = true;
           }
-          if (this.canEntityOccupy(cr.x, ny)) {
+          if (this.canEntityOccupy(cr.x, ny, isHumanCr)) {
             cr.y = ny;
             movedY = true;
           }
@@ -4522,7 +4540,7 @@ export class GameEngine {
             for (const sAng of slideAngles) {
               const sx = cr.x + Math.cos(sAng) * stepLen;
               const sy = cr.y + Math.sin(sAng) * stepLen;
-              if (this.canEntityOccupy(sx, sy)) {
+              if (this.canEntityOccupy(sx, sy, isHumanCr)) {
                 cr.x = sx;
                 cr.y = sy;
                 if (cr.kind !== CreatureKind.WANDERER) {
@@ -4594,14 +4612,15 @@ export class GameEngine {
     const applySafePush = (c: CreatureEntity, pushX: number, pushY: number): void => {
       const nx = c.x + pushX;
       const ny = c.y + pushY;
-      if (this.canEntityOccupy(nx, ny)) {
+      const isHumanC = GameEngine.isHumanCreatureKind(c.kind);
+      if (this.canEntityOccupy(nx, ny, isHumanC)) {
         c.x = nx;
         c.y = ny;
       } else {
-        if (this.canEntityOccupy(nx, c.y)) {
+        if (this.canEntityOccupy(nx, c.y, isHumanC)) {
           c.x = nx;
         }
-        if (this.canEntityOccupy(c.x, ny)) {
+        if (this.canEntityOccupy(c.x, ny, isHumanC)) {
           c.y = ny;
         }
       }
@@ -4727,9 +4746,10 @@ export class GameEngine {
     tx: number,
     ty: number,
     allowClosedDoors = false,
-    allowWater = false
+    allowWater = false,
+    isHumanEntity = false
   ): boolean {
-    if (this.world.isTileWalkable(tx, ty, allowWater)) return true;
+    if (this.world.isTileWalkable(tx, ty, allowWater, isHumanEntity)) return true;
     if (!allowClosedDoors) return false;
 
     const { cx, cy, lx, ly } = this.world.tileToChunk(tx, ty);
@@ -4752,7 +4772,7 @@ export class GameEngine {
         ) {
           continue; // Humanoids can open doors!
         }
-        if (WorldManager.isStructureCurrentlySolid(st)) {
+        if (WorldManager.isStructureCurrentlySolid(st, isHumanEntity)) {
           return false;
         }
       }
@@ -4778,7 +4798,8 @@ export class GameEngine {
     x1: number,
     y1: number,
     allowClosedDoors = false,
-    allowWater = false
+    allowWater = false,
+    isHumanEntity = false
   ): boolean {
     const dist = Math.hypot(x1 - x0, y1 - y0);
     if (dist <= 10) return true;
@@ -4787,7 +4808,15 @@ export class GameEngine {
       const t = i / steps;
       const px = x0 + (x1 - x0) * t;
       const py = y0 + (y1 - y0) * t;
-      if (!this.world.canEntityOccupyWorldCircle(px, py, 6.8, allowWater)) {
+      if (
+        !this.world.canEntityOccupyWorldCircle(
+          px,
+          py,
+          6.8,
+          allowWater,
+          isHumanEntity
+        )
+      ) {
         if (allowClosedDoors) {
           const tile = this.world.worldToTile(px, py);
           const st = this.world.getStructureAtTile(tile.tx, tile.ty);
@@ -4817,7 +4846,8 @@ export class GameEngine {
     goalX: number,
     goalY: number,
     allowClosedDoors = false,
-    allowWater = false
+    allowWater = false,
+    isHumanEntity = false
   ): { x: number; y: number } | null {
     const startTile = this.world.worldToTile(startX, startY);
     const goalTile = this.world.worldToTile(goalX, goalY);
@@ -4902,7 +4932,8 @@ export class GameEngine {
             targetTx,
             targetTy,
             allowClosedDoors,
-            canTraverseWater
+            canTraverseWater,
+            isHumanEntity
           ))
       ) {
         bestNode = current;
@@ -4932,7 +4963,8 @@ export class GameEngine {
             ntx,
             nty,
             allowClosedDoors,
-            canTraverseWater
+            canTraverseWater,
+            isHumanEntity
           )
         ) {
           continue;
@@ -4945,13 +4977,15 @@ export class GameEngine {
               current.tx + dx,
               current.ty,
               allowClosedDoors,
-              canTraverseWater
+              canTraverseWater,
+              isHumanEntity
             ) ||
             !this.isTileWalkableForCreature(
               current.tx,
               current.ty + dy,
               allowClosedDoors,
-              canTraverseWater
+              canTraverseWater,
+              isHumanEntity
             )
           ) {
             continue;
@@ -5000,7 +5034,8 @@ export class GameEngine {
           wx,
           wy,
           allowClosedDoors,
-          startInWater || destIsWater
+          startInWater || destIsWater,
+          isHumanEntity
         )
       ) {
         chosenIdx = i;
@@ -5034,6 +5069,7 @@ export class GameEngine {
       cr.orbitSign = h % 2 === 0 ? 1 : -1;
     }
 
+    const isHumanCr = GameEngine.isHumanCreatureKind(cr.kind);
     const hasReasonToSwim = this.doesCreatureHaveReasonToSwim(
       cr,
       targetX,
@@ -5059,7 +5095,8 @@ export class GameEngine {
         targetX,
         targetY,
         allowClosedDoors,
-        crInWater
+        crInWater,
+        isHumanCr
       )
     ) {
       const reachedWp =
@@ -5079,7 +5116,8 @@ export class GameEngine {
           targetX,
           targetY,
           allowClosedDoors,
-          hasReasonToSwim
+          hasReasonToSwim,
+          isHumanCr
         );
         if (wp) {
           cr.navWaypointX = wp.x;
@@ -5124,6 +5162,7 @@ export class GameEngine {
       cr.orbitSign = 1;
     }
 
+    const isHumanCr = GameEngine.isHumanCreatureKind(cr.kind);
     const crInWater = this.world.isWorldPosInWater(cr.x, cr.y);
     cr.isSwimming = crInWater;
 
@@ -5131,7 +5170,7 @@ export class GameEngine {
     const swimSpeed = EntityManager.getCreatureSwimSpeed(cr);
     const activeSpeed = crInWater ? swimSpeed : desiredSpeed;
 
-    // Automatically open a closed door immediately in front of an intelligent humanoid (Villager, Wanderer, Bandit)
+    // Automatically open a closed house door (WOOD_DOOR / IRON_GATE) immediately in front of an intelligent humanoid
     if (allowClosedDoors) {
       const doorLookX = cr.x + Math.cos(desiredAngle) * 18;
       const doorLookY = cr.y + Math.sin(desiredAngle) * 18;
@@ -5142,7 +5181,8 @@ export class GameEngine {
         (s) =>
           s.tileX === doorTile.tx &&
           s.tileY === doorTile.ty &&
-          WorldManager.isDoorOrGateStructure(s.type) &&
+          (s.type === PlaceableType.WOOD_DOOR ||
+            s.type === PlaceableType.IRON_GATE) &&
           !s.isOpen
       );
       if (doorSt) {
@@ -5194,7 +5234,7 @@ export class GameEngine {
         // Short feeler (13px) — must be collision-free
         const nearX = cr.x + cosC * 13;
         const nearY = cr.y + sinC * 13;
-        if (!this.canEntityOccupy(nearX, nearY)) {
+        if (!this.canEntityOccupy(nearX, nearY, isHumanCr)) {
           continue;
         }
 
@@ -5211,7 +5251,7 @@ export class GameEngine {
         const midY = cr.y + sinC * 25;
         const midInWater = this.world.isWorldPosInWater(midX, midY);
 
-        if (!this.canEntityOccupy(midX, midY)) {
+        if (!this.canEntityOccupy(midX, midY, isHumanCr)) {
           score -= 1.35;
         }
 
@@ -5230,11 +5270,13 @@ export class GameEngine {
         // Shoulder clearance feelers (±0.38 rad at 15px)
         const leftClear = this.canEntityOccupy(
           cr.x + Math.cos(cand + 0.38) * 15,
-          cr.y + Math.sin(cand + 0.38) * 15
+          cr.y + Math.sin(cand + 0.38) * 15,
+          isHumanCr
         );
         const rightClear = this.canEntityOccupy(
           cr.x + Math.cos(cand - 0.38) * 15,
-          cr.y + Math.sin(cand - 0.38) * 15
+          cr.y + Math.sin(cand - 0.38) * 15,
+          isHumanCr
         );
         if (leftClear && rightClear) {
           score += 0.45;
@@ -5620,6 +5662,8 @@ export class GameEngine {
   private pickWalkableWanderTarget(cr: CreatureEntity): { x: number; y: number } | null {
     const crInWater = this.world.isWorldPosInWater(cr.x, cr.y);
 
+    const isHumanCr = GameEngine.isHumanCreatureKind(cr.kind);
+
     // If currently in water, prioritize finding the nearest dry land tile to swim back ashore!
     if (crInWater) {
       for (let r = 28; r <= 220; r += 24) {
@@ -5629,7 +5673,7 @@ export class GameEngine {
           const candY = cr.y + Math.sin(ang) * r;
           if (
             !this.world.isWorldPosInWater(candX, candY) &&
-            this.canEntityOccupy(candX, candY)
+            this.canEntityOccupy(candX, candY, isHumanCr)
           ) {
             return { x: candX, y: candY };
           }
@@ -5665,7 +5709,7 @@ export class GameEngine {
               if (
                 Math.hypot(sx - anchorX, sy - anchorY) <= maxRadius * 1.35 &&
                 !this.world.isWorldPosInWater(sx, sy) &&
-                this.canEntityOccupy(sx, sy)
+                this.canEntityOccupy(sx, sy, isHumanCr)
               ) {
                 pois.push({ x: sx, y: sy });
               }
@@ -5687,7 +5731,7 @@ export class GameEngine {
       if (
         Math.hypot(candX - cr.x, candY - cr.y) >= 28 &&
         !this.world.isWorldPosInWater(candX, candY) &&
-        this.canEntityOccupy(candX, candY)
+        this.canEntityOccupy(candX, candY, isHumanCr)
       ) {
         return { x: candX, y: candY };
       }
@@ -7004,13 +7048,159 @@ export class GameEngine {
   }
 
   /**
-   * BUTTON 2: BOTÃO DE INTERAÇÃO — Interage com aquilo que está sendo mirado (Bancada, Fornalha, Altar, Fogueira, Animal, Regador ou Recurso)
+   * Returns true if the player is holding `bone_fertilizer` AND is currently aiming at a planted crop or tree sapling.
+   */
+  public isAimingAtCropOrSaplingForFertilizer(
+    aimed?: AimedTargetInfo | null
+  ): boolean {
+    const target = aimed !== undefined ? aimed : this.getAimedTarget();
+    if (target?.kind === 'crop') {
+      if (target.cropType) return true;
+      if (target.structureId) {
+        const t = this.world.worldToTile(target.worldX, target.worldY);
+        const { cx, cy } = this.world.tileToChunk(t.tx, t.ty);
+        const ch = this.world.chunks[WorldManager.chunkKey(cx, cy)];
+        const st = ch?.structures.find((s) => s.id === target.structureId);
+        if (st && WorldManager.isSaplingStructure(st.type)) {
+          return true;
+        }
+      }
+    }
+    if (
+      target?.kind === 'station' &&
+      target.stationType &&
+      WorldManager.isSaplingStructure(target.stationType)
+    ) {
+      return true;
+    }
+    const placementTile = this.getTargetTileForPlacement();
+    if (placementTile) {
+      const { cx, cy } = this.world.tileToChunk(
+        placementTile.tx,
+        placementTile.ty
+      );
+      const chunk = this.world.chunks[WorldManager.chunkKey(cx, cy)];
+      if (chunk) {
+        const hasCropOrSapling = chunk.structures.some(
+          (s) =>
+            s.tileX === placementTile.tx &&
+            s.tileY === placementTile.ty &&
+            (WorldManager.isSaplingStructure(s.type) ||
+              (s.type === PlaceableType.TILLED_SOIL && Boolean(s.cropType)))
+        );
+        if (hasCropOrSapling) return true;
+      }
+    }
+    return false;
+  }
+
+  /**
+   * Returns true if the player is holding `bone_fertilizer` and is NOT aiming at a crop/sapling,
+   * enabling the "Adubar Chão" interaction mode (with a 60px radius effect centered on the player).
+   */
+  public canPlayerFertilizeGroundNow(aimed?: AimedTargetInfo | null): boolean {
+    const heldSlot = this.player.inventory[this.player.selectedHotbarIndex];
+    if (
+      !heldSlot ||
+      heldSlot.itemId !== 'bone_fertilizer' ||
+      heldSlot.count <= 0
+    ) {
+      return false;
+    }
+    return !this.isAimingAtCropOrSaplingForFertilizer(aimed);
+  }
+
+  /**
+   * Fertilizes the natural ground in a 60px radius around the player's current position (`player.x, player.y`).
+   * Each valid cell in the 60px radius has an 80% chance to spawn natural irregular local vegetation
+   * (short grass, tall grass, and local soil/biome flowers).
+   */
+  private tryFertilizeGroundAtPlayer(): boolean {
+    const heldSlot = this.player.inventory[this.player.selectedHotbarIndex];
+    if (
+      !heldSlot ||
+      heldSlot.itemId !== 'bone_fertilizer' ||
+      heldSlot.count <= 0
+    ) {
+      return false;
+    }
+
+    const res = this.world.fertilizeGroundAtWorldPos(
+      this.player.x,
+      this.player.y,
+      60
+    );
+
+    if (!res.hasValidSoilInRadius) {
+      soundManager.playHitStone();
+      this.renderer.spawnRipple(this.player.x, this.player.y, '#f43f5e', 42, 0.35);
+      this.addFloatingText(
+        'Solo inválido para adubar neste local!',
+        this.player.x,
+        this.player.y - 20,
+        '#f43f5e'
+      );
+      return true;
+    }
+
+    if (res.spawnedNodes.length === 0) {
+      soundManager.playHitWood();
+      this.renderer.spawnRipple(this.player.x, this.player.y, '#fbbf24', 42, 0.35);
+      this.addFloatingText(
+        'O solo ao redor já está coberto de vegetação!',
+        this.player.x,
+        this.player.y - 20,
+        '#fbbf24'
+      );
+      return true;
+    }
+
+    this.consumeInventoryAt(this.player.selectedHotbarIndex, 1);
+    soundManager.playLevelUp();
+    this.renderer.spawnRipple(this.player.x, this.player.y, '#4ade80', 60, 0.55);
+    this.renderer.spawnBurst(this.player.x, this.player.y, 'LEAF', 16);
+    this.renderer.spawnBurst(this.player.x, this.player.y, 'GOLD', 10);
+
+    for (const node of res.spawnedNodes) {
+      const nwx = node.tileX * TILE_SIZE + TILE_SIZE * 0.5 + (node.offsetX || 0);
+      const nwy = node.tileY * TILE_SIZE + TILE_SIZE * 0.5 + (node.offsetY || 0);
+      this.renderer.spawnBurst(nwx, nwy, 'LEAF', 4);
+    }
+
+    for (const chunkKey of res.modifiedChunkKeys) {
+      const [cxStr, cyStr] = chunkKey.split(',');
+      const cx = Number(cxStr);
+      const cy = Number(cyStr);
+      if (Number.isFinite(cx) && Number.isFinite(cy)) {
+        this.syncChunkAtTile(cx * 16, cy * 16);
+      }
+    }
+
+    this.addFloatingText(
+      `🌱 Chão Adubado! (+${res.spawnedNodes.length} vegetações naturais)`,
+      this.player.x,
+      this.player.y - 22,
+      '#4ade80'
+    );
+    this.emitUiSnapshot();
+    return true;
+  }
+
+  /**
+   * BUTTON 2: BOTÃO DE INTERAÇÃO — Interage com aquilo que está sendo mirado (Bancada, Fornalha, Altar, Fogueira, Animal, Regador, Adubo no Chão ou Recurso)
    */
   public performInteractAction(): void {
     if (this.isPaused || this.isGameOver) return;
 
     const target = this.getAimedTarget();
     if (this.tryUseWateringCanInteraction(target)) {
+      return;
+    }
+
+    // Ground Fertilizer ("Adubar Chão"): when holding bone_fertilizer and not aiming at a crop/sapling,
+    // pressing "Adubar Chão" fertilizes the ground in a 60px radius around the player!
+    if (this.canPlayerFertilizeGroundNow(target)) {
+      this.tryFertilizeGroundAtPlayer();
       return;
     }
 
@@ -7220,11 +7410,20 @@ export class GameEngine {
             0.35
           );
           this.renderer.spawnBurst(target.worldX, target.worldY, 'WOOD', 5);
+          const isFenceGate = doorSt.type === PlaceableType.FENCE_GATE;
           this.addFloatingText(
             partnerInfo
-              ? doorSt.isOpen
+              ? isFenceGate
+                ? doorSt.isOpen
+                  ? '🔓 Porteiras Duplas Abertas (Livre p/ Humanos · Bloqueia Animais/Mobs)'
+                  : '🔒 Porteiras Duplas Fechadas'
+                : doorSt.isOpen
                 ? '🔓 Portas Duplas Abertas'
                 : '🔒 Portas Duplas Fechadas'
+              : isFenceGate
+              ? doorSt.isOpen
+                ? '🔓 Porteira Aberta (Livre p/ Humanos · Bloqueia Animais/Mobs)'
+                : '🔒 Porteira Fechada (Hitbox Sólida)'
               : doorSt.isOpen
               ? '🔓 Aberto (Passagem Livre)'
               : '🔒 Fechado (Hitbox Sólida)',
@@ -7931,12 +8130,7 @@ export class GameEngine {
       );
 
       if (!soilSt || !soilSt.cropType) {
-        this.addFloatingText(
-          'Use o adubo em uma muda de árvore ou planta em crescimento',
-          this.player.x,
-          this.player.y - 20,
-          '#fde047'
-        );
+        this.tryFertilizeGroundAtPlayer();
         return;
       }
 
@@ -9194,7 +9388,11 @@ export class GameEngine {
       Math.floor(lookTile.ty / 16)
     );
     const node = lookChunk.nodes.find(
-      (n) => n.tileX === lookTile.tx && n.tileY === lookTile.ty
+      (n) =>
+        n.tileX === lookTile.tx &&
+        n.tileY === lookTile.ty &&
+        n.type !== NatureNodeType.SHORT_GRASS &&
+        n.type !== NatureNodeType.TALL_GRASS
     );
     if (node) {
       const bp = NATURE_BLUEPRINTS[node.type];
@@ -9293,18 +9491,31 @@ export class GameEngine {
     node.hitFlashTimer = 0.16;
     node.breakIdleTimer = Math.max(1.25, this.player.swingDuration + 0.55);
 
+    const isGrassNode =
+      node.type === NatureNodeType.SHORT_GRASS ||
+      node.type === NatureNodeType.TALL_GRASS;
+
     if (bp.requiredTool === ToolType.PICKAXE) {
       soundManager.playHitStone();
       this.renderer.spawnBurst(nx, ny, 'STONE', node.hp <= 0 ? 15 : 8);
       this.renderer.spawnBurst(nx, ny, 'SPARK', 4);
+    } else if (isGrassNode) {
+      soundManager.playSwing();
+      this.renderer.spawnBurst(
+        nx + (node.offsetX || 0),
+        ny + (node.offsetY || 0),
+        'LEAF',
+        8
+      );
     } else {
       soundManager.playHitWood();
       this.renderer.spawnBurst(nx, ny, 'LEAF', node.hp <= 0 ? 14 : 7);
       this.renderer.spawnBurst(nx, ny, 'WOOD', node.hp <= 0 ? 10 : 5);
     }
-    this.renderer.spawnRipple(nx, ny, '#fbbf24', 18, 0.3);
-
-    this.addFloatingText(`-${Math.round(power)}`, nx, ny - 12, '#fde047');
+    if (!isGrassNode) {
+      this.renderer.spawnRipple(nx, ny, '#fbbf24', 18, 0.3);
+      this.addFloatingText(`-${Math.round(power)}`, nx, ny - 12, '#fde047');
+    }
 
     if (node.hp <= 0) {
       this.activeBreakingTargetId = null;
@@ -9331,6 +9542,24 @@ export class GameEngine {
           );
         }
       }
+      // Grama Baixa & Grama Alta: 0.5% (0.005) chance to drop 1 seed of any type
+      if (isGrassNode && Math.random() < 0.005) {
+        const seedPool = [
+          'wheat_seeds',
+          'carrot_seeds',
+          'herb_seeds',
+          'solar_seeds',
+          'berry_seeds',
+        ];
+        const randomSeedId =
+          seedPool[Math.floor(Math.random() * seedPool.length)];
+        this.spawnDrop(
+          randomSeedId,
+          1,
+          nx + (node.offsetX || 0),
+          ny + (node.offsetY || 0)
+        );
+      }
       // Arbusto de Frutas: 50% de chance de 1 a 2 sementes aleatórias (trigo, cenoura, erva, solar, amora)
       if (node.type === NatureNodeType.BERRY_BUSH && Math.random() <= 0.5) {
         const seedPool = [
@@ -9351,7 +9580,9 @@ export class GameEngine {
           ny + (Math.random() - 0.5) * 14
         );
       }
-      this.gainXp(bp.xpReward);
+      if (bp.xpReward > 0) {
+        this.gainXp(bp.xpReward);
+      }
       chunk.nodes.splice(nodeIndex, 1);
     }
     this.syncChunkAtTile(node.tileX, node.tileY);
@@ -9535,7 +9766,13 @@ export class GameEngine {
     const dist = Math.max(1, Math.hypot(dx, dy));
     const knockX = cr.x + (dx / dist) * 14 * knockbackMult;
     const knockY = cr.y + (dy / dist) * 14 * knockbackMult;
-    if (this.canEntityOccupy(knockX, knockY)) {
+    if (
+      this.canEntityOccupy(
+        knockX,
+        knockY,
+        GameEngine.isHumanCreatureKind(cr.kind)
+      )
+    ) {
       cr.x = knockX;
       cr.y = knockY;
     }

@@ -626,8 +626,14 @@ export class GameRenderer {
             Boolean(aimedTarget) &&
             Math.floor(aimedTarget!.worldX / TILE_SIZE) === node.tileX &&
             Math.floor(aimedTarget!.worldY / TILE_SIZE) === node.tileY;
+          const isStaticGrassNode =
+            node.type === NatureNodeType.SHORT_GRASS ||
+            node.type === NatureNodeType.TALL_GRASS;
           renderQueue.push({
-            ySort: wy + TILE_SIZE * 0.9,
+            ySort:
+              wy +
+              TILE_SIZE * (isStaticGrassNode ? 0.55 : 0.9) +
+              (node.offsetY || 0),
             draw: (c) =>
               this.drawNatureNode(
                 c,
@@ -689,6 +695,60 @@ export class GameRenderer {
       const boatSprite = spriteAtlas.getCreatureSprite(CreatureKind.BOAT, 0, false);
       ctx.globalAlpha = canPlaceBoat ? 0.82 : 0.45;
       ctx.drawImage(boatSprite, bx - 4, by + 4, 40, 24);
+      ctx.restore();
+    } else if (
+      heldItem &&
+      heldItem.id === 'bone_fertilizer' &&
+      !(
+        aimedTarget &&
+        aimedTarget.kind === 'crop' &&
+        Boolean(aimedTarget.cropType || aimedTarget.structureId)
+      )
+    ) {
+      // Ground Fertilizer 60px Area-of-Effect Circle centered on Player position
+      const fertRadiusPx = 60;
+      const minFertTx = Math.floor((player.x - fertRadiusPx) / TILE_SIZE);
+      const maxFertTx = Math.floor((player.x + fertRadiusPx) / TILE_SIZE);
+      const minFertTy = Math.floor((player.y - fertRadiusPx) / TILE_SIZE);
+      const maxFertTy = Math.floor((player.y + fertRadiusPx) / TILE_SIZE);
+      let hasFertileTileInRadius = false;
+      for (let ty = minFertTy; ty <= maxFertTy && !hasFertileTileInRadius; ty++) {
+        for (let tx = minFertTx; tx <= maxFertTx; tx++) {
+          const cx = tx * TILE_SIZE + TILE_SIZE * 0.5;
+          const cy = ty * TILE_SIZE + TILE_SIZE * 0.5;
+          if (Math.hypot(cx - player.x, cy - player.y) <= fertRadiusPx + 6) {
+            if (world.isTileFertileSoilForGroundFertilizer(tx, ty)) {
+              hasFertileTileInRadius = true;
+              break;
+            }
+          }
+        }
+      }
+
+      ctx.save();
+      ctx.beginPath();
+      ctx.arc(player.x, player.y, fertRadiusPx, 0, Math.PI * 2);
+      ctx.fillStyle = hasFertileTileInRadius
+        ? 'rgba(74, 222, 128, 0.14)'
+        : 'rgba(244, 63, 94, 0.14)';
+      ctx.fill();
+
+      ctx.lineWidth = 1.75;
+      ctx.strokeStyle = hasFertileTileInRadius
+        ? 'rgba(74, 222, 128, 0.88)'
+        : 'rgba(244, 63, 94, 0.82)';
+      ctx.setLineDash([6, 4]);
+      ctx.stroke();
+      ctx.setLineDash([]);
+
+      // Subtle inner ring accent
+      ctx.beginPath();
+      ctx.arc(player.x, player.y, fertRadiusPx - 3, 0, Math.PI * 2);
+      ctx.lineWidth = 0.8;
+      ctx.strokeStyle = hasFertileTileInRadius
+        ? 'rgba(187, 247, 208, 0.45)'
+        : 'rgba(254, 205, 211, 0.40)';
+      ctx.stroke();
       ctx.restore();
     }
 
@@ -2005,7 +2065,12 @@ export class GameRenderer {
       return;
     }
 
-    const animFrame = Math.floor(globalTime * 2.2 + node.animOffset) % 4;
+    const isStaticGrass =
+      node.type === NatureNodeType.SHORT_GRASS ||
+      node.type === NatureNodeType.TALL_GRASS;
+    const animFrame = isStaticGrass
+      ? 0
+      : Math.floor(globalTime * 2.2 + node.animOffset) % 4;
     const sprite = spriteAtlas.getNatureSprite(node.type, animFrame, variant);
 
     const isLargeTree =
@@ -2183,15 +2248,27 @@ export class GameRenderer {
         drawH = Math.round(30 + hNorm * 8);
         groundPadY = 2;
         break;
+
+      case NatureNodeType.SHORT_GRASS:
+        drawW = 24;
+        drawH = 24;
+        groundPadY = 0;
+        break;
+
+      case NatureNodeType.TALL_GRASS:
+        drawW = 28;
+        drawH = 28;
+        groundPadY = 1;
+        break;
     }
 
-    const centerX = wx + TILE_SIZE / 2;
-    const baseY = wy + TILE_SIZE + groundPadY;
+    const centerX = wx + TILE_SIZE / 2 + (node.offsetX || 0);
+    const baseY = wy + TILE_SIZE + groundPadY + (node.offsetY || 0);
     const drawX = Math.round(centerX - drawW / 2);
     const drawY = Math.round(baseY - drawH);
 
-    // Directional Sun/Moon Dappled Ground Shadow scaled to the element's actual width (omitted for subtle SAND_DUNE)
-    if (node.type !== NatureNodeType.SAND_DUNE) {
+    // Directional Sun/Moon Dappled Ground Shadow scaled to the element's actual width (omitted for subtle SAND_DUNE and static grass)
+    if (node.type !== NatureNodeType.SAND_DUNE && !isStaticGrass) {
       const shadowW = Math.round(drawW * (isLargeTree ? 0.68 : 0.76));
       const shadowH = isLargeTree
         ? 9
@@ -4753,6 +4830,177 @@ export class GameRenderer {
           ctx.fillRect(vx + vw - 1, swingY, 12, 2);
           ctx.fillStyle = 'rgba(74, 222, 128, 0.55)';
           ctx.fillRect(vx + 2, wy + 14, 4, 4);
+        }
+      }
+      return;
+    }
+
+    // 1B. WOODEN FENCE GATE (PORTEIRA DE MADEIRA — Waist-high gate complementary to WOOD_FENCE; blocks animals/mobs even when open!)
+    if (st.type === PlaceableType.FENCE_GATE) {
+      const orient = world.getDoorOrientationAt(
+        st.tileX,
+        st.tileY,
+        st.type,
+        st.orientation,
+        st.rotation
+      );
+      const doubleDoor = world.getPartnerDoubleDoor(st.tileX, st.tileY, st);
+      const isDouble = Boolean(doubleDoor);
+      const isSecondLeaf = Boolean(doubleDoor?.isSecondLeaf);
+      const isOpen = Boolean(st.isOpen);
+
+      const postDark = '#4a250d';
+      const postCore = '#7c471e';
+      const postCap = '#b87a3d';
+      const railDark = '#5c3416';
+      const railLight = '#9a602d';
+      const latchGold = '#facc15';
+      const hingeIron = '#334155';
+
+      // Subtle ground shadow
+      ctx.fillStyle = 'rgba(8, 12, 18, 0.24)';
+      if (orient === 'horizontal') {
+        ctx.fillRect(wx + 2 + Math.round(shadowDx * 0.35), wy + 24, TILE_SIZE - 4, 5);
+      } else {
+        ctx.fillRect(wx + 10 + Math.round(shadowDx * 0.35), wy + 2, 12, TILE_SIZE - 4);
+      }
+
+      if (orient === 'horizontal') {
+        const hasLeftPost = !isDouble || !isSecondLeaf;
+        const hasRightPost = !isDouble || isSecondLeaf;
+
+        // Left & Right Fence Gate Posts (waist-high, matching WOOD_FENCE height wy+3..wy+27)
+        if (hasLeftPost) {
+          ctx.fillStyle = postDark;
+          ctx.fillRect(wx, wy + 3, 7, 24);
+          ctx.fillStyle = postCore;
+          ctx.fillRect(wx + 1, wy + 4, 5, 21);
+          ctx.fillStyle = postCap;
+          ctx.fillRect(wx, wy + 1, 7, 4);
+        }
+        if (hasRightPost) {
+          ctx.fillStyle = postDark;
+          ctx.fillRect(wx + TILE_SIZE - 7, wy + 3, 7, 24);
+          ctx.fillStyle = postCore;
+          ctx.fillRect(wx + TILE_SIZE - 6, wy + 4, 5, 21);
+          ctx.fillStyle = postCap;
+          ctx.fillRect(wx + TILE_SIZE - 7, wy + 1, 7, 4);
+        }
+
+        const leafX = hasLeftPost ? wx + 7 : wx;
+        const leafRight = hasRightPost ? wx + TILE_SIZE - 7 : wx + TILE_SIZE;
+        const leafW = leafRight - leafX;
+
+        if (!isOpen) {
+          // Closed horizontal gate leaf: top & bottom horizontal rails + vertical pickets + diagonal brace
+          ctx.fillStyle = railDark;
+          ctx.fillRect(leafX, wy + 8, leafW, 4);
+          ctx.fillRect(leafX, wy + 17, leafW, 4);
+          ctx.fillStyle = railLight;
+          ctx.fillRect(leafX, wy + 8, leafW, 2);
+          ctx.fillRect(leafX, wy + 17, leafW, 2);
+
+          // Center vertical slats & diagonal wood brace
+          const midX = Math.floor(leafX + leafW * 0.5) - 2;
+          ctx.fillStyle = postDark;
+          ctx.fillRect(leafX + 1, wy + 6, 3, 17);
+          ctx.fillRect(leafRight - 4, wy + 6, 3, 17);
+          ctx.fillRect(midX, wy + 6, 4, 17);
+          ctx.fillStyle = railLight;
+          ctx.fillRect(midX + 1, wy + 7, 2, 15);
+
+          // Iron hinges & golden latch
+          ctx.fillStyle = hingeIron;
+          if (hasLeftPost) {
+            ctx.fillRect(wx + 5, wy + 9, 3, 2);
+            ctx.fillRect(wx + 5, wy + 18, 3, 2);
+          }
+          if (hasRightPost) {
+            ctx.fillRect(wx + TILE_SIZE - 8, wy + 9, 3, 2);
+            ctx.fillRect(wx + TILE_SIZE - 8, wy + 18, 3, 2);
+          }
+          ctx.fillStyle = latchGold;
+          const latchX = isDouble
+            ? isSecondLeaf
+              ? leafX + 1
+              : leafRight - 3
+            : midX + 1;
+          ctx.fillRect(latchX, wy + 12, 2, 4);
+        } else {
+          // Open horizontal gate leaf: swung open inward/upward from its outer hinge post
+          // Subtle cattle-grid/threshold bar on ground reminding that animals cannot cross
+          ctx.fillStyle = 'rgba(124, 71, 30, 0.45)';
+          ctx.fillRect(leafX + 1, wy + 22, leafW - 2, 2);
+          ctx.fillRect(leafX + 1, wy + 25, leafW - 2, 2);
+
+          const swingX =
+            isDouble && isSecondLeaf ? wx + TILE_SIZE - 11 : wx + 2;
+          // Swung gate leaf projecting North-South on hinge side
+          ctx.fillStyle = postDark;
+          ctx.fillRect(swingX, wy - 7, 7, 20);
+          ctx.fillStyle = railLight;
+          ctx.fillRect(swingX + 1, wy - 6, 5, 17);
+          ctx.fillStyle = postCap;
+          ctx.fillRect(swingX, wy - 8, 7, 3);
+          ctx.fillStyle = latchGold;
+          ctx.fillRect(swingX + 2, wy - 3, 2, 3);
+        }
+      } else {
+        // Vertical Fence Gate (North-South corridor)
+        const vx = wx + 11;
+        const vw = 10;
+        const hasTopPost = !isDouble || !isSecondLeaf;
+        const hasBottomPost = !isDouble || isSecondLeaf;
+
+        if (hasTopPost) {
+          ctx.fillStyle = postDark;
+          ctx.fillRect(vx, wy - 2, vw, 10);
+          ctx.fillStyle = postCore;
+          ctx.fillRect(vx + 1, wy - 1, vw - 2, 8);
+          ctx.fillStyle = postCap;
+          ctx.fillRect(vx, wy - 4, vw, 4);
+        }
+
+        const spanTop = hasTopPost ? wy + 8 : wy;
+        const spanBot = hasBottomPost ? wy + 22 : wy + TILE_SIZE;
+        const spanH = Math.max(6, spanBot - spanTop);
+
+        if (!isOpen) {
+          ctx.fillStyle = railDark;
+          ctx.fillRect(vx + 2, spanTop, 6, spanH);
+          ctx.fillStyle = railLight;
+          ctx.fillRect(vx + 3, spanTop, 4, spanH);
+          ctx.fillStyle = latchGold;
+          const latchY = isDouble
+            ? isSecondLeaf
+              ? spanTop + 1
+              : spanBot - 4
+            : Math.floor((spanTop + spanBot) * 0.5) - 1;
+          ctx.fillRect(vx + 3, latchY, 3, 3);
+        } else {
+          // Cattle-grid threshold bars reminding animals cannot pass
+          ctx.fillStyle = 'rgba(124, 71, 30, 0.45)';
+          ctx.fillRect(vx + 2, spanTop + 2, 2, spanH - 4);
+          ctx.fillRect(vx + 6, spanTop + 2, 2, spanH - 4);
+
+          // Swung open to the East from hinge post
+          const swingY =
+            isDouble && isSecondLeaf ? wy + TILE_SIZE - 12 : wy + 2;
+          ctx.fillStyle = postDark;
+          ctx.fillRect(vx + vw - 1, swingY, 13, 8);
+          ctx.fillStyle = railLight;
+          ctx.fillRect(vx + vw, swingY + 1, 11, 5);
+          ctx.fillStyle = latchGold;
+          ctx.fillRect(vx + vw + 8, swingY + 2, 2, 3);
+        }
+
+        if (hasBottomPost) {
+          ctx.fillStyle = postDark;
+          ctx.fillRect(vx, wy + 20, vw, 11);
+          ctx.fillStyle = postCore;
+          ctx.fillRect(vx + 1, wy + 21, vw - 2, 9);
+          ctx.fillStyle = postCap;
+          ctx.fillRect(vx, wy + 18, vw, 4);
         }
       }
       return;

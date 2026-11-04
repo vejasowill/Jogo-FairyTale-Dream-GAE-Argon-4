@@ -659,6 +659,18 @@ export const RECIPES: CraftingRecipe[] = [
     ],
   },
   {
+    id: 'craft_fence_gate',
+    resultItemId: 'fence_gate',
+    resultCount: 2,
+    requiredStation: PlaceableType.WORKBENCH,
+    craftTimeSec: 0,
+    rarity: RarityTier.BASIC,
+    ingredients: [
+      { itemId: 'wood', count: 3 },
+      { itemId: 'fiber', count: 2 },
+    ],
+  },
+  {
     id: 'craft_wood_bridge',
     resultItemId: 'wood_bridge',
     resultCount: 2,

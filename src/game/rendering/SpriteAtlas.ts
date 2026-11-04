@@ -3105,6 +3105,30 @@ class SpriteAtlasManager {
       { d: '#2a1205', b: '#78350f', l: '#d97706' }
     );
 
+    // Fence Gate Icon (Porteira de Madeira)
+    registerItem(
+      'fence_gate',
+      [
+        '................',
+        '.dddd......dddd.',
+        '.dbbd......dbbd.',
+        '.dbbddggggddbbd.',
+        '.dbbllllllllbbd.',
+        '.dbbldldldldbbd.',
+        '.dbbdldldlddbbd.',
+        '.dbbllllllllbbd.',
+        '.dbbddddddddbbd.',
+        '.dbbd......dbbd.',
+        '.dddd......dddd.',
+        '................',
+        '................',
+        '................',
+        '................',
+        '................',
+      ],
+      { d: '#2a1205', b: '#78350f', l: '#d97706', g: '#fbbf24' }
+    );
+
     // Parede de Carvalho com Janela Icon
     registerItem(
       'wood_window',
@@ -5242,6 +5266,128 @@ class SpriteAtlasManager {
         drawPineTier(6, 7, 12, sway);
       }
     });
+
+    // 14. SHORT_GRASS (32x32 canvas — Static 0-animation low grass tufts, 3 natural variants)
+    registerNatureVariants(NatureNodeType.SHORT_GRASS, 32, 32, (ctx, _f, v) => {
+      // Base subtle shadow tuft
+      ctx.fillStyle = 'rgba(12, 32, 16, 0.25)';
+      ctx.fillRect(10, 22, 12, 2);
+
+      if (v === 0) {
+        // Variant 0: Crisp three-blade meadow cluster
+        ctx.fillStyle = '#14532d';
+        ctx.fillRect(10, 18, 2, 5);
+        ctx.fillRect(14, 16, 3, 7);
+        ctx.fillRect(19, 18, 2, 5);
+        ctx.fillStyle = '#22c55e';
+        ctx.fillRect(9, 16, 2, 4);
+        ctx.fillRect(14, 14, 2, 6);
+        ctx.fillRect(20, 16, 2, 4);
+        ctx.fillStyle = '#86efac';
+        ctx.fillRect(14, 13, 2, 2);
+        ctx.fillRect(9, 15, 1, 2);
+        ctx.fillRect(21, 15, 1, 2);
+      } else if (v === 1) {
+        // Variant 1: Dual low wild grass clumps
+        ctx.fillStyle = '#14532d';
+        ctx.fillRect(8, 19, 3, 4);
+        ctx.fillRect(12, 17, 2, 6);
+        ctx.fillRect(18, 18, 3, 5);
+        ctx.fillRect(22, 19, 2, 4);
+        ctx.fillStyle = '#16a34a';
+        ctx.fillRect(8, 17, 2, 4);
+        ctx.fillRect(12, 15, 2, 5);
+        ctx.fillRect(18, 16, 2, 4);
+        ctx.fillRect(22, 17, 2, 3);
+        ctx.fillStyle = '#4ade80';
+        ctx.fillRect(12, 14, 2, 2);
+        ctx.fillRect(19, 15, 2, 2);
+      } else {
+        // Variant 2: Asymmetrical low sprout tuft
+        ctx.fillStyle = '#14532d';
+        ctx.fillRect(11, 18, 3, 5);
+        ctx.fillRect(15, 17, 3, 6);
+        ctx.fillRect(19, 19, 2, 4);
+        ctx.fillStyle = '#22c55e';
+        ctx.fillRect(10, 16, 2, 4);
+        ctx.fillRect(15, 14, 2, 6);
+        ctx.fillRect(18, 16, 2, 4);
+        ctx.fillStyle = '#a3e635';
+        ctx.fillRect(15, 13, 2, 2);
+        ctx.fillRect(10, 15, 2, 1);
+      }
+    });
+
+    // 15. TALL_GRASS (32x32 canvas — Static 0-animation tall lush grass blades, 3 natural variants)
+    registerNatureVariants(NatureNodeType.TALL_GRASS, 32, 32, (ctx, _f, v) => {
+      // Ground root shadow
+      ctx.fillStyle = 'rgba(10, 28, 14, 0.32)';
+      ctx.fillRect(7, 24, 18, 3);
+
+      if (v === 0) {
+        // Variant 0: Dense tall wild prairie grass
+        ctx.fillStyle = '#0f3d20';
+        ctx.fillRect(8, 14, 3, 11);
+        ctx.fillRect(12, 10, 3, 15);
+        ctx.fillRect(16, 9, 3, 16);
+        ctx.fillRect(20, 13, 3, 12);
+        ctx.fillStyle = '#16a34a';
+        ctx.fillRect(7, 11, 2, 10);
+        ctx.fillRect(12, 8, 2, 13);
+        ctx.fillRect(16, 7, 2, 14);
+        ctx.fillRect(21, 10, 2, 11);
+        ctx.fillStyle = '#4ade80';
+        ctx.fillRect(7, 9, 2, 4);
+        ctx.fillRect(12, 6, 2, 4);
+        ctx.fillRect(17, 5, 2, 4);
+        ctx.fillRect(22, 8, 2, 4);
+        ctx.fillStyle = '#bbf7d0';
+        ctx.fillRect(12, 5, 1, 2);
+        ctx.fillRect(17, 4, 1, 2);
+      } else if (v === 1) {
+        // Variant 1: Fanning tall meadow grass with seed-head tips
+        ctx.fillStyle = '#0f3d20';
+        ctx.fillRect(7, 15, 3, 10);
+        ctx.fillRect(11, 11, 3, 14);
+        ctx.fillRect(15, 10, 3, 15);
+        ctx.fillRect(19, 12, 3, 13);
+        ctx.fillRect(23, 16, 2, 9);
+        ctx.fillStyle = '#15803d';
+        ctx.fillRect(6, 12, 2, 9);
+        ctx.fillRect(11, 8, 2, 12);
+        ctx.fillRect(15, 7, 2, 13);
+        ctx.fillRect(19, 9, 2, 11);
+        ctx.fillRect(23, 13, 2, 8);
+        ctx.fillStyle = '#22c55e';
+        ctx.fillRect(6, 10, 2, 4);
+        ctx.fillRect(10, 6, 2, 4);
+        ctx.fillRect(15, 5, 2, 4);
+        ctx.fillRect(20, 7, 2, 4);
+        ctx.fillStyle = '#a3e635';
+        ctx.fillRect(10, 5, 2, 2);
+        ctx.fillRect(15, 4, 2, 2);
+        ctx.fillRect(20, 6, 2, 2);
+      } else {
+        // Variant 2: Layered tall bush-grass cluster
+        ctx.fillStyle = '#0f3d20';
+        ctx.fillRect(9, 12, 3, 13);
+        ctx.fillRect(13, 9, 4, 16);
+        ctx.fillRect(18, 11, 3, 14);
+        ctx.fillRect(22, 15, 2, 10);
+        ctx.fillStyle = '#16a34a';
+        ctx.fillRect(8, 9, 2, 11);
+        ctx.fillRect(13, 7, 3, 14);
+        ctx.fillRect(18, 9, 2, 12);
+        ctx.fillRect(22, 12, 2, 9);
+        ctx.fillStyle = '#4ade80';
+        ctx.fillRect(8, 7, 2, 4);
+        ctx.fillRect(14, 5, 2, 4);
+        ctx.fillRect(19, 7, 2, 4);
+        ctx.fillStyle = '#86efac';
+        ctx.fillRect(14, 4, 2, 2);
+        ctx.fillRect(8, 6, 1, 2);
+      }
+    });
   }
 
   private buildStructures(): void {
@@ -6154,6 +6300,27 @@ class SpriteAtlasManager {
         ctx.fillRect(0, 15, 24, 2);
         ctx.fillStyle = '#fbbf24';
         ctx.fillRect(10, 4, 4, 2);
+      })
+    );
+
+    // FENCE GATE (Porteira de Madeira)
+    this.structureSprites.set(
+      PlaceableType.FENCE_GATE,
+      createFrames(24, 24, (ctx) => {
+        ctx.fillStyle = '#1f1209';
+        ctx.fillRect(1, 3, 6, 19);
+        ctx.fillRect(17, 3, 6, 19);
+        ctx.fillRect(5, 6, 14, 13);
+        ctx.fillStyle = '#78350f';
+        ctx.fillRect(2, 4, 4, 17);
+        ctx.fillRect(18, 4, 4, 17);
+        ctx.fillStyle = '#b45309';
+        ctx.fillRect(6, 7, 12, 3);
+        ctx.fillRect(6, 14, 12, 3);
+        ctx.fillRect(8, 7, 3, 10);
+        ctx.fillRect(13, 7, 3, 10);
+        ctx.fillStyle = '#fbbf24';
+        ctx.fillRect(11, 10, 2, 3);
       })
     );
 

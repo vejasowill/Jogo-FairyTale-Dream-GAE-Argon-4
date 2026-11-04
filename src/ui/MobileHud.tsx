@@ -1104,50 +1104,78 @@ export const MobileHud: React.FC<MobileHudProps> = ({
               )}
 
               {/* PRIMAL BUTTON 2: INTERAÇÃO (interactBtn) */}
-              <button
-                style={getControlTransformStyle('interactBtn', 'bottom right')}
-                onPointerDown={(e) => {
-                  if (isEditingHud) {
-                    handleEditPointerDown('interactBtn', e);
-                    return;
-                  }
-                  e.stopPropagation();
-                  engine.performInteractAction();
-                }}
-                onPointerMove={handleEditPointerMove}
-                onPointerUp={handleEditPointerUp}
-                className={`w-12 h-12 sm:w-13 sm:h-13 rounded-full medieval-btn-gold flex flex-col items-center justify-center active:scale-90 ${
-                  snapshot.aimedTarget
-                    ? 'ring-2 ring-amber-300 shadow-[0_0_12px_rgba(251,191,36,0.55)]'
-                    : ''
-                } ${
-                  isEditingHud
-                    ? selectedEditKey === 'interactBtn'
-                      ? 'ring-2 ring-amber-400 cursor-move'
-                      : 'ring-1 ring-amber-500/40 cursor-move'
-                    : ''
-                }`}
-              >
-                <Hand className="w-4 h-4" />
-                <span className="text-[7px] font-pixel font-bold mt-0.5">
-                  {snapshot.aimedTarget?.isPetFeedTarget
-                    ? 'Alimentar'
-                    : (selectedItem?.id === 'watering_can' ||
-                        selectedItem?.id === 'watering_can_full') &&
-                      snapshot.aimedTarget
-                    ? snapshot.aimedTarget.kind === 'water_source' ||
-                      snapshot.aimedTarget.stationType ===
-                        PlaceableType.VILLAGE_WELL ||
-                      snapshot.aimedTarget.stationType ===
-                        PlaceableType.HEALING_FOUNTAIN
-                      ? 'Encher'
-                      : snapshot.aimedTarget.kind === 'crop' &&
-                        snapshot.aimedTarget.cropStage !== 3
-                      ? 'Regar'
-                      : 'Interagir'
-                    : 'Interagir'}
-                </span>
-              </button>
+              {(() => {
+                const isHoldingFertilizer =
+                  selectedItem?.id === 'bone_fertilizer';
+                const isAimingAtCropOrSapling =
+                  snapshot.aimedTarget?.kind === 'crop' &&
+                  Boolean(
+                    snapshot.aimedTarget.cropType ||
+                      snapshot.aimedTarget.structureId
+                  );
+                const isGroundFertilizeMode =
+                  isHoldingFertilizer && !isAimingAtCropOrSapling;
+
+                const interactLabel = snapshot.aimedTarget?.isPetFeedTarget
+                  ? 'Alimentar'
+                  : isGroundFertilizeMode
+                  ? 'Adubar Chão'
+                  : (isHoldingFertilizer ||
+                      selectedItem?.id === 'organic_compost') &&
+                    isAimingAtCropOrSapling
+                  ? 'Adubar'
+                  : (selectedItem?.id === 'watering_can' ||
+                      selectedItem?.id === 'watering_can_full') &&
+                    snapshot.aimedTarget
+                  ? snapshot.aimedTarget.kind === 'water_source' ||
+                    snapshot.aimedTarget.stationType ===
+                      PlaceableType.VILLAGE_WELL ||
+                    snapshot.aimedTarget.stationType ===
+                      PlaceableType.HEALING_FOUNTAIN
+                    ? 'Encher'
+                    : snapshot.aimedTarget.kind === 'crop' &&
+                      snapshot.aimedTarget.cropStage !== 3
+                    ? 'Regar'
+                    : 'Interagir'
+                  : 'Interagir';
+
+                return (
+                  <button
+                    style={getControlTransformStyle(
+                      'interactBtn',
+                      'bottom right'
+                    )}
+                    onPointerDown={(e) => {
+                      if (isEditingHud) {
+                        handleEditPointerDown('interactBtn', e);
+                        return;
+                      }
+                      e.stopPropagation();
+                      engine.performInteractAction();
+                    }}
+                    onPointerMove={handleEditPointerMove}
+                    onPointerUp={handleEditPointerUp}
+                    className={`w-12 h-12 sm:w-13 sm:h-13 rounded-full medieval-btn-gold flex flex-col items-center justify-center active:scale-90 ${
+                      isGroundFertilizeMode
+                        ? 'ring-2 ring-emerald-300 shadow-[0_0_12px_rgba(74,222,128,0.55)]'
+                        : snapshot.aimedTarget
+                        ? 'ring-2 ring-amber-300 shadow-[0_0_12px_rgba(251,191,36,0.55)]'
+                        : ''
+                    } ${
+                      isEditingHud
+                        ? selectedEditKey === 'interactBtn'
+                          ? 'ring-2 ring-amber-400 cursor-move'
+                          : 'ring-1 ring-amber-500/40 cursor-move'
+                        : ''
+                    }`}
+                  >
+                    <Hand className="w-4 h-4" />
+                    <span className="text-[6.5px] leading-tight text-center font-pixel font-bold mt-0.5 px-0.5">
+                      {interactLabel}
+                    </span>
+                  </button>
+                );
+              })()}
             </div>
 
             {/* PRIMAL BUTTON 1: ATAQUE / QUEBRAR (attackBtn) */}
