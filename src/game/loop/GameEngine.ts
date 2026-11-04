@@ -3857,7 +3857,8 @@ export class GameEngine {
           const dx = creatureTarget.x - cr.x;
           const dy = creatureTarget.y - cr.y;
           const dist = Math.max(1, Math.hypot(dx, dy));
-          if (dist > 28) {
+          const npcMonsterReach = cr.npcRole === 'guardiao' ? 44 : 28;
+          if (dist > npcMonsterReach) {
             this.steerCreatureToward(
               cr,
               creatureTarget.x,
@@ -3910,7 +3911,8 @@ export class GameEngine {
             );
           } else {
             cr.aiState = 'chase';
-            if (distToPlayer > 27) {
+            const npcPlayerReach = cr.npcRole === 'guardiao' ? 42 : 27;
+            if (distToPlayer > npcPlayerReach) {
               this.steerCreatureToward(
                 cr,
                 this.player.x,
@@ -9733,6 +9735,16 @@ export class GameEngine {
             pet.combatTargetId = cr.id;
           }
         }
+      }
+    }
+
+    if (
+      !fromNetwork &&
+      (cr.kind === CreatureKind.VILLAGER || cr.kind === CreatureKind.WANDERER)
+    ) {
+      const defReduction = EntityManager.getCreatureDefenseReduction(cr);
+      if (defReduction > 0) {
+        amount = Math.max(1, Math.round(amount * (1 - defReduction)));
       }
     }
 

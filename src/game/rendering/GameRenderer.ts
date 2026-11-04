@@ -25,6 +25,7 @@ import {
 } from '../world/WorldManager';
 import { BuildingRoof, RoofSystem } from '../world/RoofSystem';
 import { Camera } from './Camera';
+import { EntityManager } from '../entities/EntityManager';
 import { spriteAtlas } from './SpriteAtlas';
 
 interface RenderableItem {
@@ -5713,12 +5714,27 @@ export class GameRenderer {
     isSwimming = false,
     allCreatures?: CreatureEntity[]
   ): void {
-    const sprite = spriteAtlas.getCreatureSprite(
-      cr.kind,
-      cr.animFrame,
-      cr.attackTimer > 0,
-      cr.direction
-    );
+    const isHumanNpc = cr.kind === 'VILLAGER' || cr.kind === 'WANDERER';
+    if (isHumanNpc) {
+      EntityManager.ensureNpcHumanAppearance(cr);
+    }
+    const isCrMoving = Math.hypot(cr.vx, cr.vy) > 4;
+    const sprite = isHumanNpc
+      ? spriteAtlas.getPlayerSprite(
+          cr.direction,
+          isCrMoving ? cr.animFrame : 0,
+          {
+            appearance: cr.appearance!,
+            equippedBySlot: cr.equippedBySlot!,
+          } as PlayerState,
+          'none'
+        )
+      : spriteAtlas.getCreatureSprite(
+          cr.kind,
+          cr.animFrame,
+          cr.attackTimer > 0,
+          cr.direction
+        );
 
     // Deterministic individual width & height variation from creature ID
     let idHash = 2166136261;
@@ -5736,16 +5752,20 @@ export class GameRenderer {
     // Independent individual build (width) and stature (height) variation
     const wVar = isBoat
       ? 1.0
+      : isHumanNpc
+      ? 0.97 + ((uHash % 9) / 8) * 0.06 // 0.97x .. 1.03x for human NPCs
       : isHumanoid
       ? 0.94 + ((uHash % 13) / 12) * 0.12 // 0.94x .. 1.06x for humanoids
       : 0.88 + ((uHash % 19) / 18) * 0.24; // 0.88x .. 1.12x for fauna/monsters
     const hVar = isBoat
       ? 1.0
+      : isHumanNpc
+      ? 0.97 + (((uHash >> 5) % 9) / 8) * 0.06
       : isHumanoid
       ? 0.94 + (((uHash >> 5) % 13) / 12) * 0.12
       : 0.88 + (((uHash >> 5) % 19) / 18) * 0.24;
 
-    // Anatomically proportional base width & height relative to the player (30x30 canvas, ~26px body height)
+    // Anatomically proportional base width & height relative to the player
     let baseW = 26;
     let baseH = 30;
     switch (cr.kind) {
@@ -5799,12 +5819,16 @@ export class GameRenderer {
         baseW = 54;
         baseH = 58;
         break;
-      case 'ZOMBIE':
-      case 'BANDIT':
       case 'VILLAGER':
       case 'WANDERER':
+        // Composite 48x42 human body structure matching the player character (45 x 39.375)
+        baseW = 45;
+        baseH = 39.375;
+        break;
+      case 'ZOMBIE':
+      case 'BANDIT':
       default:
-        // Humanoid stature matching the player character
+        // Humanoid stature
         baseW = 26;
         baseH = 30;
         break;
@@ -5813,9 +5837,8 @@ export class GameRenderer {
     const eliteScale = cr.isElite ? 1.18 : 1.0;
     const drawW = Math.round(baseW * wVar * eliteScale);
     const drawH = Math.round(baseH * hVar * eliteScale);
+    const bodyRefW = isHumanNpc ? Math.round(25 * wVar * eliteScale) : drawW;
     const footY = cr.y + 10; // Ground contact anchor matching renderQueue ySort
-
-    const isCrMoving = Math.hypot(cr.vx, cr.vy) > 4;
 
     if (isBoat) {
       // Water wake & ripple ring under the floating boat
@@ -5842,7 +5865,7 @@ export class GameRenderer {
       ctx.save();
       ctx.fillStyle = 'rgba(8, 47, 73, 0.36)';
       ctx.beginPath();
-      ctx.ellipse(cr.x, waterLineY + 1, drawW * 0.34, 4, 0, 0, Math.PI * 2);
+      ctx.ellipse(cr.x, waterLineY + 1, bodyRefW * 0.34, 4, 0, 0, Math.PI * 2);
       ctx.fill();
 
       ctx.strokeStyle = 'rgba(186, 230, 253, 0.62)';
@@ -5851,7 +5874,7 @@ export class GameRenderer {
       ctx.ellipse(
         cr.x,
         waterLineY,
-        Math.max(6, drawW * 0.38 + ripplePulse),
+        Math.max(6, bodyRefW * 0.38 + ripplePulse),
         Math.max(2.5, 4.2 + ripplePulse * 0.35),
         0,
         0,
@@ -5861,7 +5884,7 @@ export class GameRenderer {
       ctx.restore();
     } else {
       // Directional Ground Shadow scaled to actual creature width
-      const shadowW = Math.round(drawW * 0.68);
+      const shadowW = Math.round(bodyRefW * 0.68);
       ctx.fillStyle = 'rgba(0, 0, 0, 0.30)';
       ctx.fillRect(
         Math.round(cr.x - shadowW / 2 + shadowDx * 0.4),
@@ -5886,7 +5909,7 @@ export class GameRenderer {
           : 'rgba(245, 158, 11, 0.55)';
       ctx.lineWidth = 1.5;
       ctx.beginPath();
-      ctx.ellipse(cr.x, footY - 2, drawW * 0.38, 5, 0, 0, Math.PI * 2);
+      ctx.ellipse(cr.x, footY - 2, bodyRefW * 0.4, 4.5, 0, 0, Math.PI * 2);
       ctx.stroke();
       ctx.restore();
     }
@@ -5949,7 +5972,7 @@ export class GameRenderer {
     if (cr.hitFlashTimer > 0) {
       ctx.filter = 'brightness(2.0) contrast(1.2)';
     }
-    if (cr.direction === 'left') {
+    if (!isHumanNpc && cr.direction === 'left') {
       ctx.scale(-breathScaleX, breathScaleY);
     } else {
       ctx.scale(breathScaleX, breathScaleY);
@@ -6004,6 +6027,73 @@ export class GameRenderer {
     }
     ctx.restore();
 
+    // Render held weapon/tool on Human NPCs (e.g. Iron Sword on Village Guardian, Iron Pickaxe on Blacksmith, Spear/Sword on Wanderer)
+    if (isHumanNpc && cr.heldItemId && ITEMS[cr.heldItemId]) {
+      const itemCanvas = spriteAtlas.getItemCanvas(cr.heldItemId);
+      const isSwinging = cr.attackTimer > 0;
+      const swingProgress = isSwinging ? Math.max(0, Math.min(1, 1 - cr.attackTimer / 0.34)) : 0;
+      const humanFrame = isCrMoving ? cr.animFrame : 0;
+      const stepL = humanFrame === 1 ? -2 : humanFrame === 3 ? 2 : 0;
+      const stepR = -stepL;
+      const npcTorsoY = footY - 10 - walkBounce + atkLungeY + (isSwimming ? 5 : 0);
+
+      let baseAngle = 0;
+      let handOffsetX = 0;
+      let handOffsetY = 0;
+      if (cr.direction === 'up') {
+        baseAngle = -Math.PI / 2;
+        handOffsetX = 6.5;
+        handOffsetY = -1.5 + stepR * 1.1;
+      } else if (cr.direction === 'down') {
+        baseAngle = Math.PI / 2;
+        handOffsetX = -6.5;
+        handOffsetY = -1.0 + stepL * 1.1;
+      } else if (cr.direction === 'left') {
+        baseAngle = Math.PI;
+        handOffsetX = -2.2 - stepL * 0.6;
+        handOffsetY = -1.0 + stepL * 1.1;
+      } else {
+        baseAngle = 0;
+        handOffsetX = 2.2 + stepR * 0.6;
+        handOffsetY = -1.0 + stepR * 1.1;
+      }
+
+      ctx.save();
+      ctx.translate(cr.x + atkLungeX + handOffsetX, npcTorsoY + handOffsetY);
+      if (isSwinging) {
+        const swingArc = (swingProgress - 0.5) * 2.2;
+        ctx.rotate(baseAngle + swingArc);
+        ctx.strokeStyle =
+          cr.heldItemId === 'iron_sword'
+            ? 'rgba(250, 204, 21, 0.55)'
+            : 'rgba(226, 232, 240, 0.45)';
+        ctx.lineWidth = 4.5;
+        ctx.beginPath();
+        ctx.arc(0, 0, 21, -0.75, 0.65);
+        ctx.stroke();
+        ctx.drawImage(itemCanvas, -3, -17, 20, 20);
+      } else {
+        if (cr.direction === 'left') {
+          ctx.scale(-1, 1);
+          ctx.rotate(-0.12);
+          ctx.drawImage(itemCanvas, -3, -11, 14, 14);
+        } else if (cr.direction === 'right') {
+          ctx.rotate(-0.12);
+          ctx.drawImage(itemCanvas, -3, -11, 14, 14);
+        } else if (cr.direction === 'down') {
+          ctx.scale(-1, 1);
+          ctx.rotate(0.35);
+          ctx.drawImage(itemCanvas, -3, -11, 14, 14);
+        } else {
+          ctx.rotate(-0.25);
+          ctx.drawImage(itemCanvas, -3, -11, 14, 14);
+        }
+        ctx.fillStyle = cr.appearance?.skinColor || '#f1c27d';
+        ctx.fillRect(-1.5, -1.5, 3, 3);
+      }
+      ctx.restore();
+    }
+
     // Stone Golem 3-second Seismic Charge visual aura
     if (
       cr.kind === 'STONE_GOLEM' &&
@@ -6032,8 +6122,8 @@ export class GameRenderer {
         ctx,
         cr,
         footY - walkBounce,
-        drawW,
-        drawH
+        bodyRefW,
+        isHumanNpc ? Math.round(30 * hVar * eliteScale) : drawH
       );
     }
 
@@ -6043,13 +6133,17 @@ export class GameRenderer {
       ctx.strokeStyle = 'rgba(224, 242, 254, 0.75)';
       ctx.lineWidth = 1.2;
       ctx.beginPath();
-      ctx.moveTo(cr.x - drawW * 0.28, footY - 1);
-      ctx.lineTo(cr.x + drawW * 0.28, footY - 1);
+      ctx.moveTo(cr.x - bodyRefW * 0.28, footY - 1);
+      ctx.lineTo(cr.x + bodyRefW * 0.28, footY - 1);
       ctx.stroke();
       ctx.restore();
     }
 
-    const headTopY = isSwimming ? footY - visibleDrawH - 2 : footY - drawH;
+    const headTopY = isSwimming
+      ? footY - visibleDrawH - 2
+      : isHumanNpc
+      ? footY - Math.round(31 * hVar * eliteScale)
+      : footY - drawH;
 
     // VILLAGE NPC & WANDERER Nameplate, Profession, Housing & Affinity / Hostility Status
     if (cr.kind === 'VILLAGER' || cr.kind === 'WANDERER') {
@@ -6402,26 +6496,50 @@ export class GameRenderer {
       }
 
       case 'VILLAGER': {
-        // Village Guard / Defender spear-blade thrust & emerald-gold sweep
-        const thrustX = 6 + Math.sin(p * Math.PI) * (reach + 5);
-        ctx.strokeStyle = '#10b981';
-        ctx.lineWidth = 2.4;
-        ctx.beginPath();
-        ctx.arc(4, 0, reach + 2, -0.75 + p * 0.4, 0.75 - p * 0.4);
-        ctx.stroke();
+        if (cr.npcRole === 'guardiao' || cr.heldItemId === 'iron_sword') {
+          // Village Guardian Iron Broadsword wide steel-and-gold slash arc
+          const slashAng = -1.25 + p * 2.5;
+          ctx.strokeStyle = '#e2e8f0';
+          ctx.lineWidth = 3.2;
+          ctx.beginPath();
+          ctx.arc(4, 0, reach + 5, slashAng - 0.75, slashAng + 0.3);
+          ctx.stroke();
 
-        // Steel spear/blade thrust
-        ctx.fillStyle = '#92400e';
-        ctx.fillRect(4, -1.5, thrustX - 4, 3);
-        ctx.fillStyle = '#f8fafc';
-        ctx.beginPath();
-        ctx.moveTo(thrustX + 6, 0);
-        ctx.lineTo(thrustX - 2, -4);
-        ctx.lineTo(thrustX - 2, 4);
-        ctx.closePath();
-        ctx.fill();
-        ctx.fillStyle = '#fde047';
-        ctx.fillRect(thrustX - 3, -3, 2, 6);
+          ctx.strokeStyle = '#fbbf24';
+          ctx.lineWidth = 2.0;
+          ctx.beginPath();
+          ctx.arc(4, 0, reach + 2, slashAng - 0.6, slashAng + 0.2);
+          ctx.stroke();
+
+          ctx.save();
+          ctx.rotate(slashAng);
+          ctx.fillStyle = '#f8fafc';
+          ctx.fillRect(6, -2, reach + 4, 4);
+          ctx.fillStyle = '#fbbf24';
+          ctx.fillRect(5, -4, 2.5, 8);
+          ctx.restore();
+        } else {
+          // Village Defender spear-blade thrust & emerald-gold sweep
+          const thrustX = 6 + Math.sin(p * Math.PI) * (reach + 5);
+          ctx.strokeStyle = '#10b981';
+          ctx.lineWidth = 2.4;
+          ctx.beginPath();
+          ctx.arc(4, 0, reach + 2, -0.75 + p * 0.4, 0.75 - p * 0.4);
+          ctx.stroke();
+
+          // Steel spear/blade thrust
+          ctx.fillStyle = '#92400e';
+          ctx.fillRect(4, -1.5, thrustX - 4, 3);
+          ctx.fillStyle = '#f8fafc';
+          ctx.beginPath();
+          ctx.moveTo(thrustX + 6, 0);
+          ctx.lineTo(thrustX - 2, -4);
+          ctx.lineTo(thrustX - 2, 4);
+          ctx.closePath();
+          ctx.fill();
+          ctx.fillStyle = '#fde047';
+          ctx.fillRect(thrustX - 3, -3, 2, 6);
+        }
         break;
       }
 

@@ -87,6 +87,16 @@ const SKIN_MARKS: { id: SkinMarkId; label: string; desc: string }[] = [
     label: 'Ambos',
     desc: 'Sardas nas bochechas + Cicatriz no olho',
   },
+  {
+    id: 'beard_stubble',
+    label: 'Barba Cerrada',
+    desc: 'Barba por fazer sombreada na mandíbula e queixo',
+  },
+  {
+    id: 'elder_wrinkles',
+    label: 'Rugas Sábias',
+    desc: 'Linhas de expressão de sabedoria ancestral na testa e face',
+  },
 ];
 
 const SKIN_TONES: {
@@ -103,8 +113,10 @@ const SKIN_TONES: {
   { label: 'Trigo Solar', group: 'Média Quente', color: '#fdba74', subTone: '#d98f48' },
   { label: 'Areia Dourada', group: 'Média Oliva', color: '#eab676', subTone: '#c48d4c' },
   { label: 'Amêndoa', group: 'Média Neutra', color: '#e0ac69', subTone: '#b88242' },
+  { label: 'Oliva Mercante', group: 'Oliva Quente', color: '#c68642', subTone: '#9c6429' },
   { label: 'Mel Tostado', group: 'Bronze Clara', color: '#d49454', subTone: '#aa6c2f' },
   { label: 'Bronze Dourado', group: 'Bronze Quente', color: '#d97706', subTone: '#a85703' },
+  { label: 'Bronze Forja', group: 'Bronze Intenso', color: '#9c5221', subTone: '#713812' },
   { label: 'Canela', group: 'Morena Quente', color: '#b45309', subTone: '#873b05' },
   { label: 'Castanho Médio', group: 'Morena Dourada', color: '#a16207', subTone: '#754604' },
   { label: 'Terra Queimada', group: 'Morena Escura', color: '#8c4318', subTone: '#612b0c' },
@@ -124,6 +136,10 @@ const HAIR_STYLES: { id: HairStyleId; label: string }[] = [
   { id: 'samurai_bun', label: 'Coque' },
   { id: 'noble_waves', label: 'Ondulado' },
   { id: 'valkyrie_bangs', label: 'Valquíria' },
+  { id: 'blacksmith_beard', label: 'Barba Forja' },
+  { id: 'elder_sage', label: 'Sábio Ancião' },
+  { id: 'merchant_crown', label: 'Mercante' },
+  { id: 'nomad_wind', label: 'Vento Nômade' },
 ];
 
 const HAIR_COLORS: {
@@ -153,6 +169,7 @@ const HAIR_COLORS: {
   // Grisalhos & Prata
   { label: 'Cinza Lobo', group: 'Grisalho', color: '#64748b', subTone: '#334155' },
   { label: 'Prata Ancestral', group: 'Prateado', color: '#e2e8f0', subTone: '#94a3b8' },
+  { label: 'Branco Sábio', group: 'Alvo', color: '#f8fafc', subTone: '#cbd5e1' },
   // Fantasia / Místicos
   { label: 'Azul Astral', group: 'Safira', color: '#0284c7', subTone: '#03537d' },
   { label: 'Turquesa Abissal', group: 'Turquesa', color: '#0d9488', subTone: '#085e56' },
@@ -168,6 +185,8 @@ const EYE_STYLES: { id: EyeStyleId; label: string; desc: string }[] = [
   { id: 'calm', label: 'Sereno', desc: 'Pálpebras suaves e expressão tranquila' },
   { id: 'fierce', label: 'Feroz', desc: 'Sobrancelha angulada e olhar determinado' },
   { id: 'mystic', label: 'Místico', desc: 'Pupila luminosa de brilho ancestral' },
+  { id: 'wise', label: 'Sábio', desc: 'Olhar sereno com sobrancelhas arqueadas de ancião' },
+  { id: 'veteran', label: 'Veterano', desc: 'Olhar firme e experiente de guardião de batalha' },
 ];
 
 const EYE_COLORS: {
@@ -188,6 +207,7 @@ const EYE_COLORS: {
   { label: 'Verde Musgo', group: 'Verde Escuro', color: '#15803d', subTone: '#22c55e' },
   { label: 'Esmeralda Viva', group: 'Esmeralda', color: '#10b981', subTone: '#6ee7b7' },
   { label: 'Jade Místico', group: 'Verde Água', color: '#0d9488', subTone: '#5eead4' },
+  { label: 'Turquesa Nômade', group: 'Turquesa', color: '#14b8a6', subTone: '#99f6e4' },
   // Azuis
   { label: 'Azul Oceano', group: 'Azul Escuro', color: '#1d4ed8', subTone: '#60a5fa' },
   { label: 'Safira Real', group: 'Safira', color: '#0284c7', subTone: '#38bdf8' },
@@ -197,6 +217,7 @@ const EYE_COLORS: {
   { label: 'Lilás Lunar', group: 'Lavanda', color: '#a855f7', subTone: '#f3e8ff' },
   { label: 'Rubi Carmesim', group: 'Rubi', color: '#e11d48', subTone: '#fda4af' },
   { label: 'Prata Cinzento', group: 'Cinza', color: '#64748b', subTone: '#cbd5e1' },
+  { label: 'Prata Lunar', group: 'Prata Claro', color: '#94a3b8', subTone: '#f1f5f9' },
 ];
 
 export const CharacterPetsModal: React.FC<CharacterPetsModalProps> = ({
@@ -685,7 +706,7 @@ export const CharacterPetsModal: React.FC<CharacterPetsModalProps> = ({
                           )?.label || 'Sem Marcas'}
                         </span>
                       </div>
-                      <div className="grid grid-cols-4 gap-1.5">
+                      <div className="grid grid-cols-3 sm:grid-cols-6 gap-1.5">
                         {SKIN_MARKS.map((mark) => {
                           const isSelected =
                             (app.skinMark || 'none') === mark.id;
@@ -924,7 +945,7 @@ export const CharacterPetsModal: React.FC<CharacterPetsModalProps> = ({
                     <div className="bg-[#120b07] p-2 border border-[#4a301e] space-y-1.5">
                       <div className="flex items-center justify-between">
                         <span className="font-pixel text-[9px] text-amber-400 uppercase">
-                          Formatos de Olhos (6 Variantes)
+                          Formatos de Olhos ({EYE_STYLES.length} Variantes)
                         </span>
                         <span className="text-[9px] text-[#c4ab7d]">
                           {EYE_STYLES.find(
@@ -932,7 +953,7 @@ export const CharacterPetsModal: React.FC<CharacterPetsModalProps> = ({
                           )?.label || 'Clássico'}
                         </span>
                       </div>
-                      <div className="grid grid-cols-3 sm:grid-cols-6 gap-1.5">
+                      <div className="grid grid-cols-4 gap-1.5">
                         {EYE_STYLES.map((es) => {
                           const isSelected =
                             (app.eyeStyle || 'classic') === es.id;
@@ -1546,7 +1567,7 @@ export const AccountAppearanceModal: React.FC<AccountAppearanceModalProps> = ({
                         )?.label || 'Sem Marcas'}
                       </span>
                     </div>
-                    <div className="grid grid-cols-4 gap-1.5">
+                    <div className="grid grid-cols-3 sm:grid-cols-6 gap-1.5">
                       {SKIN_MARKS.map((mark) => {
                         const isSelected = (app.skinMark || 'none') === mark.id;
                         return (
@@ -1772,7 +1793,7 @@ export const AccountAppearanceModal: React.FC<AccountAppearanceModalProps> = ({
                   <div className="bg-[#120b07] p-2 border border-[#4a301e] space-y-1.5">
                     <div className="flex items-center justify-between">
                       <span className="font-pixel text-[9px] text-amber-400 uppercase">
-                        Formatos de Olhos (6 Variantes)
+                        Formatos de Olhos ({EYE_STYLES.length} Variantes)
                       </span>
                       <span className="text-[9px] text-[#c4ab7d]">
                         {EYE_STYLES.find(
@@ -1780,7 +1801,7 @@ export const AccountAppearanceModal: React.FC<AccountAppearanceModalProps> = ({
                         )?.label || 'Clássico'}
                       </span>
                     </div>
-                    <div className="grid grid-cols-3 sm:grid-cols-6 gap-1.5">
+                    <div className="grid grid-cols-4 gap-1.5">
                       {EYE_STYLES.map((es) => {
                         const isSelected =
                           (app.eyeStyle || 'classic') === es.id;

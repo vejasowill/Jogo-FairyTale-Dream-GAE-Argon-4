@@ -1601,6 +1601,58 @@ export const RECIPES: CraftingRecipe[] = [
       { itemId: 'solar_crystal', count: 2 },
     ],
   },
+  {
+    id: 'weave_blacksmith_bandana',
+    resultItemId: 'blacksmith_bandana',
+    resultCount: 1,
+    requiredStation: PlaceableType.WEAVING_TABLE,
+    craftTimeSec: 180, // 3 min
+    rarity: RarityTier.BASIC,
+    ingredients: [
+      { itemId: 'wool', count: 4 },
+      { itemId: 'leather', count: 2 },
+      { itemId: 'fiber', count: 3 },
+    ],
+  },
+  {
+    id: 'weave_merchant_cap',
+    resultItemId: 'merchant_cap',
+    resultCount: 1,
+    requiredStation: PlaceableType.WEAVING_TABLE,
+    craftTimeSec: 240, // 4 min
+    rarity: RarityTier.BASIC,
+    ingredients: [
+      { itemId: 'wool', count: 6 },
+      { itemId: 'feather', count: 2 },
+      { itemId: 'fiber', count: 3 },
+    ],
+  },
+  {
+    id: 'weave_elder_mitre',
+    resultItemId: 'elder_mitre',
+    resultCount: 1,
+    requiredStation: PlaceableType.WEAVING_TABLE,
+    craftTimeSec: 240, // 4 min
+    rarity: RarityTier.BASIC,
+    ingredients: [
+      { itemId: 'wool', count: 6 },
+      { itemId: 'fiber', count: 4 },
+      { itemId: 'gold_coin', count: 2 },
+    ],
+  },
+  {
+    id: 'weave_wanderer_hood',
+    resultItemId: 'wanderer_hood',
+    resultCount: 1,
+    requiredStation: PlaceableType.WEAVING_TABLE,
+    craftTimeSec: 210, // 3.5 min
+    rarity: RarityTier.BASIC,
+    ingredients: [
+      { itemId: 'wool', count: 5 },
+      { itemId: 'leather', count: 2 },
+      { itemId: 'fiber', count: 4 },
+    ],
+  },
 
   // --- SUPERIOR ---
   {
@@ -1651,6 +1703,58 @@ export const RECIPES: CraftingRecipe[] = [
       { itemId: 'fiber', count: 6 },
     ],
   },
+  {
+    id: 'weave_blacksmith_apron',
+    resultItemId: 'blacksmith_apron',
+    resultCount: 1,
+    requiredStation: PlaceableType.WEAVING_TABLE,
+    craftTimeSec: 270, // 4.5 min
+    rarity: RarityTier.BASIC,
+    ingredients: [
+      { itemId: 'leather', count: 6 },
+      { itemId: 'wool', count: 5 },
+      { itemId: 'fiber', count: 4 },
+    ],
+  },
+  {
+    id: 'weave_merchant_doublet',
+    resultItemId: 'merchant_doublet',
+    resultCount: 1,
+    requiredStation: PlaceableType.WEAVING_TABLE,
+    craftTimeSec: 300, // 5 min
+    rarity: RarityTier.BASIC,
+    ingredients: [
+      { itemId: 'wool', count: 9 },
+      { itemId: 'leather', count: 2 },
+      { itemId: 'fiber', count: 5 },
+    ],
+  },
+  {
+    id: 'weave_elder_robe',
+    resultItemId: 'elder_robe',
+    resultCount: 1,
+    requiredStation: PlaceableType.WEAVING_TABLE,
+    craftTimeSec: 330, // 5.5 min
+    rarity: RarityTier.BASIC,
+    ingredients: [
+      { itemId: 'wool', count: 11 },
+      { itemId: 'fiber', count: 6 },
+      { itemId: 'gold_coin', count: 2 },
+    ],
+  },
+  {
+    id: 'weave_wanderer_poncho',
+    resultItemId: 'wanderer_poncho',
+    resultCount: 1,
+    requiredStation: PlaceableType.WEAVING_TABLE,
+    craftTimeSec: 270, // 4.5 min
+    rarity: RarityTier.BASIC,
+    ingredients: [
+      { itemId: 'wool', count: 8 },
+      { itemId: 'leather', count: 3 },
+      { itemId: 'fiber', count: 4 },
+    ],
+  },
 
   // --- INFERIOR ---
   {
@@ -1690,6 +1794,31 @@ export const RECIPES: CraftingRecipe[] = [
       { itemId: 'leather', count: 2 },
     ],
   },
+  {
+    id: 'weave_merchant_slacks',
+    resultItemId: 'merchant_slacks',
+    resultCount: 1,
+    requiredStation: PlaceableType.WEAVING_TABLE,
+    craftTimeSec: 210, // 3.5 min
+    rarity: RarityTier.BASIC,
+    ingredients: [
+      { itemId: 'wool', count: 7 },
+      { itemId: 'fiber', count: 4 },
+    ],
+  },
+  {
+    id: 'weave_wanderer_leggings',
+    resultItemId: 'wanderer_leggings',
+    resultCount: 1,
+    requiredStation: PlaceableType.WEAVING_TABLE,
+    craftTimeSec: 210, // 3.5 min
+    rarity: RarityTier.BASIC,
+    ingredients: [
+      { itemId: 'wool', count: 5 },
+      { itemId: 'leather', count: 3 },
+      { itemId: 'fiber', count: 3 },
+    ],
+  },
 
   // --- PÉS ---
   {
@@ -1713,6 +1842,18 @@ export const RECIPES: CraftingRecipe[] = [
     rarity: RarityTier.BASIC,
     ingredients: [
       { itemId: 'leather', count: 5 },
+      { itemId: 'fiber', count: 3 },
+    ],
+  },
+  {
+    id: 'weave_blacksmith_boots',
+    resultItemId: 'blacksmith_boots',
+    resultCount: 1,
+    requiredStation: PlaceableType.WEAVING_TABLE,
+    craftTimeSec: 240, // 4 min
+    rarity: RarityTier.BASIC,
+    ingredients: [
+      { itemId: 'leather', count: 6 },
       { itemId: 'fiber', count: 3 },
     ],
   },

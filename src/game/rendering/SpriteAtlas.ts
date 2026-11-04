@@ -593,6 +593,259 @@ class SpriteAtlasManager {
         ],
         { o, m, d, l, y: '#fde047', s: '#1c0d04' }
       );
+    } else if (baseId === 'blacksmith_bandana') {
+      drawPixelMatrix(
+        ctx,
+        [
+          '................',
+          '................',
+          '....oooooooo....',
+          '..oodlllllldoo..',
+          '.odmmmmmmmmmmddo',
+          '.odmyymmmmmyymdo',
+          '.odddddddddddddo',
+          '..oooooooooooodo',
+          '............odmo',
+          '...........odmmo',
+          '...........odoo.',
+          '................',
+          '................',
+          '................',
+          '................',
+          '................',
+        ],
+        { o, m, d, l, y: '#fbbf24' }
+      );
+    } else if (baseId === 'blacksmith_apron') {
+      drawPixelMatrix(
+        ctx,
+        [
+          '....oo....oo....',
+          '...oddo..oddo...',
+          '..oooooooooooo..',
+          '.osllmddddmllso.',
+          '.oslmddddddmlso.',
+          '..oo.odlyldo.oo.',
+          '....odmmmmmdo...',
+          '...odlmmmmmldo..',
+          '...odmyyyyymdo..',
+          '...odlmmmmmldo..',
+          '...odmmmmmmmdo..',
+          '...odddddddddo..',
+          '....ooooooooo...',
+          '................',
+          '................',
+          '................',
+        ],
+        { o, m, d, l, y: '#fbbf24', s: '#cbd5e1' }
+      );
+    } else if (baseId === 'blacksmith_boots') {
+      drawPixelMatrix(
+        ctx,
+        [
+          '................',
+          '................',
+          '..ooooo..ooooo..',
+          '.odmmmmo.odmmmmo',
+          '.odlmmmo.odlmmmo',
+          '.odmymmo.odmymmo',
+          '.odddddo.odddddo',
+          'ooiimmmdooiimmmd',
+          'oiiimmmdoiiimmmd',
+          'osssssssoossssss',
+          '.ooooooo..oooooo',
+          '................',
+          '................',
+          '................',
+          '................',
+          '................',
+        ],
+        { o, m, d, l, y: '#fbbf24', i: '#cbd5e1', s: '#0f172a' }
+      );
+    } else if (baseId === 'merchant_cap') {
+      drawPixelMatrix(
+        ctx,
+        [
+          '..........ooo...',
+          '.........offfo..',
+          '....ooooofffo...',
+          '..oodlllmmffo...',
+          '.odllmmmmmmmmdo.',
+          '.odmmmmmmmyymdo.',
+          '..odddddddddddo.',
+          '...ooooooooooo..',
+          '................',
+          '................',
+          '................',
+          '................',
+          '................',
+          '................',
+          '................',
+          '................',
+        ],
+        { o, m, d, l, y: '#fde047', f: '#f8fafc' }
+      );
+    } else if (baseId === 'merchant_doublet') {
+      drawPixelMatrix(
+        ctx,
+        [
+          '...oooo..oooo...',
+          '..odllmoomlldo..',
+          '.odlmmmyymmmldo.',
+          '.odmmymmmmymmmdo',
+          '.odmmmybbymmmmdo',
+          '.odddmmmmmmddddo',
+          '..ooodmyymdooo..',
+          '....odssssdo....',
+          '....odmyymdo....',
+          '....oddddddo....',
+          '.....oooooo.....',
+          '................',
+          '................',
+          '................',
+          '................',
+          '................',
+        ],
+        { o, m, d, l, y: '#fde047', b: '#f8fafc', s: '#78350f' }
+      );
+    } else if (baseId === 'merchant_slacks') {
+      drawPixelMatrix(
+        ctx,
+        [
+          '................',
+          '................',
+          '...oooooooooo...',
+          '..odyyyyyyyydo..',
+          '..odlmmmmmmldo..',
+          '..odlmmddmmldo..',
+          '..odlmmoommdo...',
+          '..odlmmoommdo...',
+          '..odlmmoommdo...',
+          '..odmmmoommdo...',
+          '..odyyyooyyydo..',
+          '..oddddo.odddo..',
+          '...oooo...oooo..',
+          '................',
+          '................',
+          '................',
+        ],
+        { o, m, d, l, y: '#fde047' }
+      );
+    } else if (baseId === 'elder_mitre') {
+      drawPixelMatrix(
+        ctx,
+        [
+          '................',
+          '......oooo......',
+          '....oodyyddo....',
+          '..oodlmyyymloo..',
+          '.odllmmccmmlldo.',
+          '.odmmmmyyymmmmdo',
+          '.odddddddddddddo',
+          '..ooooooooooooo.',
+          '................',
+          '................',
+          '................',
+          '................',
+          '................',
+          '................',
+          '................',
+          '................',
+        ],
+        { o, m, d, l, y: '#fde047', c: '#38bdf8' }
+      );
+    } else if (baseId === 'elder_robe') {
+      drawPixelMatrix(
+        ctx,
+        [
+          '...oooo..oooo...',
+          '..odllmoomlldo..',
+          '.odlmmmyymmmldo.',
+          '.odmmmmyymmmmmdo',
+          '.odddmmyymmddddo',
+          '..ooodmyymdooo..',
+          '....odmyymdo....',
+          '...odlmyymldo...',
+          '..odlmmyymmldo..',
+          '..odmmmyymmmmdo.',
+          '.odlyyyyyyyyldo.',
+          '.oddddddddddddo.',
+          '..oooooooooooo..',
+          '................',
+          '................',
+          '................',
+        ],
+        { o, m, d, l, y: '#fde047' }
+      );
+    } else if (baseId === 'wanderer_hood') {
+      drawPixelMatrix(
+        ctx,
+        [
+          '....oooooooo....',
+          '..oodlllllldoo..',
+          '.odlmmmmmmmmldo.',
+          '.odmmmooooommdo.',
+          '.odmmo....ommdo.',
+          '.odmmddddddmmdo.',
+          '..odssssssssdo..',
+          '..odssyyyyssdo..',
+          '...oooooooooo...',
+          '................',
+          '................',
+          '................',
+          '................',
+          '................',
+          '................',
+          '................',
+        ],
+        { o, m, d, l, s: '#78350f', y: '#fbbf24' }
+      );
+    } else if (baseId === 'wanderer_poncho') {
+      drawPixelMatrix(
+        ctx,
+        [
+          '....oooooooo....',
+          '..oodssssssdoo..',
+          '.odllmmccmmlldo.',
+          '.odlmmmmmmmmldo.',
+          'odlmmmmmmmmmmldo',
+          'odmmmyyyyyymmmmd',
+          '.odmmmmmmmmmmmdo',
+          '..odmmyyyymmmdo.',
+          '...odddddddddo..',
+          '...o.o.oo.o.o...',
+          '................',
+          '................',
+          '................',
+          '................',
+          '................',
+          '................',
+        ],
+        { o, m, d, l, s: '#78350f', c: '#fde047', y: '#fef08a' }
+      );
+    } else if (baseId === 'wanderer_leggings') {
+      drawPixelMatrix(
+        ctx,
+        [
+          '................',
+          '................',
+          '...oooooooooo...',
+          '..odssssssssco..',
+          '..odlmmmmmmldo..',
+          '..odlmmddmmldo..',
+          '..odlmmoommdo...',
+          '..odsssoossso...',
+          '..odlmmoommdo...',
+          '..odsssoossso...',
+          '..oddddo.odddo..',
+          '...oooo...oooo..',
+          '................',
+          '................',
+          '................',
+          '................',
+        ],
+        { o, m, d, l, s: '#78350f', c: '#fbbf24' }
+      );
     }
     return c;
   }
@@ -6813,6 +7066,24 @@ class SpriteAtlasManager {
       ctx.fillRect(16, 12, 1, 3);
     }
 
+    if (mark === 'beard_stubble') {
+      // Barba Cerrada: Jawline & chin 5 o'clock shadow
+      ctx.fillStyle = 'rgba(30, 41, 59, 0.42)';
+      ctx.fillRect(5, 14, 14, 5);
+      ctx.fillStyle = 'rgba(15, 23, 42, 0.55)';
+      ctx.fillRect(6, 17, 12, 2);
+      ctx.fillRect(9, 14, 6, 1);
+      ctx.fillStyle = skinBase;
+      ctx.fillRect(10, 15, 4, 2);
+    } else if (mark === 'elder_wrinkles') {
+      // Rugas Sábias: Forehead wisdom creases & cheek lines
+      ctx.fillStyle = this.shadeHexColor(skinBase, -28);
+      ctx.fillRect(8, 6, 8, 1);
+      ctx.fillRect(9, 8, 6, 1);
+      ctx.fillRect(6, 13, 2, 2);
+      ctx.fillRect(16, 13, 2, 2);
+    }
+
     const url = c.toDataURL();
     this.itemDataUrls.set(key, url);
     return url;
@@ -6959,6 +7230,8 @@ class SpriteAtlasManager {
     const legsId = eq.legs || null;
     const feetId = eq.feet || null;
     const headId = eq.head || null;
+    const headDef = headId ? ITEMS[headId] : null;
+    const headBaseId = headDef?.garmentBaseId || headId;
 
     // 1. Ground Shadow (on bodyCtx)
     ctx = bodyCtx;
@@ -6969,8 +7242,13 @@ class SpriteAtlasManager {
 
     // 2. Back Hair Layer (drawn on headCtx)
     ctx = headCtx;
-    if (!headId || headId === 'astral_crown') {
-      if (hStyle === 'long_mane') {
+    if (
+      !headId ||
+      headId === 'astral_crown' ||
+      headBaseId === 'elder_mitre' ||
+      headBaseId === 'blacksmith_bandana'
+    ) {
+      if (hStyle === 'long_mane' || hStyle === 'elder_sage') {
         ctx.fillStyle = hairDeep;
         ctx.fillRect(8, 7, 16, 11);
         ctx.fillStyle = hairShadow;
@@ -7393,6 +7671,174 @@ class SpriteAtlasManager {
         ctx.fillStyle = d;
         ctx.fillRect(farX, 15 + stepL, 2, 5);
       }
+    } else if (bodyBaseId === 'blacksmith_apron') {
+      // Avental de Ferreiro: Charcoal workshop undershirt + heavy leather forge apron with chest strap & hammer loop
+      const m = bodyColorDef.hex;
+      const d = bodyColorDef.darkHex;
+      const l = bodyColorDef.lightHex;
+      // Charcoal linen workshop shirt under the apron
+      ctx.fillStyle = '#334155';
+      ctx.fillRect(11, 14, 10, 8);
+      // Rolled-up short sleeves on arms
+      if (dir === 'down' || dir === 'up') {
+        const sL = mountPose === 'none' ? stepL : 0;
+        const sR = mountPose === 'none' ? stepR : 0;
+        ctx.fillStyle = '#475569';
+        ctx.fillRect(8, 14 + sL, 3, 3);
+        ctx.fillRect(21, 14 + sR, 3, 3);
+      }
+      if (dir === 'down') {
+        // Leather neck/shoulder straps
+        ctx.fillStyle = d;
+        ctx.fillRect(12, 14, 2, 3);
+        ctx.fillRect(18, 14, 2, 3);
+        // Heavy forge apron bib & body
+        ctx.fillStyle = m;
+        ctx.fillRect(12, 16, 8, 6);
+        ctx.fillStyle = l;
+        ctx.fillRect(13, 17, 6, 3);
+        // Brass rivets & blacksmith belt with iron buckle
+        ctx.fillStyle = '#fbbf24';
+        ctx.fillRect(12, 16, 1, 1);
+        ctx.fillRect(19, 16, 1, 1);
+        ctx.fillStyle = '#1e293b';
+        ctx.fillRect(11, 19, 10, 1);
+        ctx.fillStyle = '#94a3b8';
+        ctx.fillRect(15, 19, 2, 1);
+        // Tongs / hammer pocket on apron front
+        ctx.fillStyle = d;
+        ctx.fillRect(14, 20, 4, 2);
+      } else if (dir === 'up') {
+        // Crossed leather straps on back
+        ctx.fillStyle = d;
+        ctx.fillRect(12, 14, 2, 4);
+        ctx.fillRect(18, 14, 2, 4);
+        ctx.fillRect(14, 17, 4, 2);
+        ctx.fillRect(11, 19, 10, 2);
+      } else {
+        ctx.fillStyle = d;
+        ctx.fillRect(14, 14, 3, 3);
+        ctx.fillStyle = m;
+        ctx.fillRect(11, 16, 10, 6);
+        ctx.fillStyle = '#1e293b';
+        ctx.fillRect(11, 19, 10, 1);
+      }
+    } else if (bodyBaseId === 'merchant_doublet') {
+      // Gibão de Mercador: Noble tailored doublet with gold lapel trim, puffed shoulders, and coin pouch belt
+      const m = bodyColorDef.hex;
+      const d = bodyColorDef.darkHex;
+      const l = bodyColorDef.lightHex;
+      ctx.fillStyle = m;
+      ctx.fillRect(11, 14, 10, 8);
+      ctx.fillStyle = l;
+      ctx.fillRect(12, 15, 8, 5);
+      // Leather merchant belt & gold coin pouch
+      ctx.fillStyle = '#451a03';
+      ctx.fillRect(11, 20, 10, 1);
+      ctx.fillStyle = '#fde047';
+      ctx.fillRect(15, 20, 2, 1);
+      if (dir === 'down') {
+        // White silk cravat & golden V-lapels
+        ctx.fillStyle = '#f8fafc';
+        ctx.fillRect(15, 14, 2, 3);
+        ctx.fillStyle = '#fde047';
+        ctx.fillRect(13, 14, 2, 4);
+        ctx.fillRect(17, 14, 2, 4);
+        ctx.fillRect(15, 17, 2, 3);
+        // Bulging gold coin pouch at right hip
+        ctx.fillStyle = '#ca8a04';
+        ctx.fillRect(18, 20, 3, 2);
+        ctx.fillStyle = '#fde047';
+        ctx.fillRect(19, 20, 1, 1);
+      } else if (dir === 'up') {
+        ctx.fillStyle = '#fde047';
+        ctx.fillRect(12, 14, 8, 1);
+        ctx.fillRect(15, 15, 2, 5);
+        ctx.fillStyle = d;
+        ctx.fillRect(11, 21, 10, 1);
+      } else {
+        ctx.fillStyle = '#fde047';
+        ctx.fillRect(14, 14, 4, 1);
+        ctx.fillRect(15, 15, 2, 5);
+      }
+      if (dir === 'down' || dir === 'up') {
+        const sL = mountPose === 'none' ? stepL : 0;
+        const sR = mountPose === 'none' ? stepR : 0;
+        ctx.fillStyle = m;
+        ctx.fillRect(7, 14 + sL, 4, 5);
+        ctx.fillRect(21, 14 + sR, 4, 5);
+        ctx.fillStyle = '#fde047';
+        ctx.fillRect(7, 14 + sL, 4, 1);
+        ctx.fillRect(21, 14 + sR, 4, 1);
+        ctx.fillStyle = d;
+        ctx.fillRect(8, 18 + sL, 3, 1);
+        ctx.fillRect(21, 18 + sR, 3, 1);
+      }
+    } else if (bodyBaseId === 'elder_robe') {
+      // Manto do Ancião: Flowing sage tunic with wide ceremonial sleeves and golden runic stole
+      const m = bodyColorDef.hex;
+      const d = bodyColorDef.darkHex;
+      const l = bodyColorDef.lightHex;
+      ctx.fillStyle = m;
+      ctx.fillRect(11, 14, 10, 8);
+      ctx.fillStyle = l;
+      ctx.fillRect(12, 15, 8, 5);
+      // Golden runic stole & sash
+      ctx.fillStyle = '#fde047';
+      ctx.fillRect(11, 20, 10, 2);
+      if (dir === 'down') {
+        ctx.fillRect(13, 14, 2, 7);
+        ctx.fillRect(17, 14, 2, 7);
+        ctx.fillStyle = '#38bdf8';
+        ctx.fillRect(15, 15, 2, 2);
+      } else if (dir === 'up') {
+        ctx.fillRect(13, 14, 6, 3);
+        ctx.fillRect(15, 17, 2, 4);
+      } else {
+        ctx.fillRect(14, 14, 4, 7);
+      }
+      if (dir === 'down' || dir === 'up') {
+        const sL = mountPose === 'none' ? stepL : 0;
+        const sR = mountPose === 'none' ? stepR : 0;
+        ctx.fillStyle = m;
+        ctx.fillRect(7, 14 + sL, 4, 6);
+        ctx.fillRect(21, 14 + sR, 4, 6);
+        ctx.fillStyle = d;
+        ctx.fillRect(7, 18 + sL, 4, 2);
+        ctx.fillRect(21, 18 + sR, 4, 2);
+        ctx.fillStyle = '#fde047';
+        ctx.fillRect(7, 19 + sL, 4, 1);
+        ctx.fillRect(21, 19 + sR, 4, 1);
+      }
+    } else if (bodyBaseId === 'wanderer_poncho') {
+      // Poncho de Andarilho: Layered frontier traveler poncho with fringed hem, compass clasp, and satchel strap
+      const m = bodyColorDef.hex;
+      const d = bodyColorDef.darkHex;
+      const l = bodyColorDef.lightHex;
+      ctx.fillStyle = m;
+      ctx.fillRect(10, 14, 12, 8);
+      ctx.fillStyle = l;
+      ctx.fillRect(11, 15, 10, 5);
+      // Leather collar & golden compass clasp
+      ctx.fillStyle = '#78350f';
+      ctx.fillRect(12, 14, 8, 2);
+      ctx.fillStyle = '#fde047';
+      ctx.fillRect(15, 14, 2, 2);
+      // Poncho geometric border & lower fringe
+      ctx.fillStyle = '#fef08a';
+      ctx.fillRect(10, 19, 12, 1);
+      ctx.fillStyle = d;
+      ctx.fillRect(10, 20, 12, 2);
+      if (dir === 'down' || dir === 'up') {
+        const sL = mountPose === 'none' ? stepL : 0;
+        const sR = mountPose === 'none' ? stepR : 0;
+        ctx.fillStyle = m;
+        ctx.fillRect(7, 14 + sL, 4, 5);
+        ctx.fillRect(21, 14 + sR, 4, 5);
+        ctx.fillStyle = '#fef08a';
+        ctx.fillRect(7, 18 + sL, 4, 1);
+        ctx.fillRect(21, 18 + sR, 4, 1);
+      }
     } else if (bodyId === 'leather_tunic') {
       // ROBUST STUDDED LEATHER CUIRASS: Reinforced brown hide, sheep-wool collar, diagonal chest baldric & brass rivets
       ctx.fillStyle = '#92400e';
@@ -7536,14 +7982,28 @@ class SpriteAtlasManager {
       ctx.fillStyle = skinShadow;
       ctx.fillRect(nearX, 20 + nearStep, 3, 1);
 
-      if (bodyBaseId === 'sweater') {
-        // Suéter covers the entire foreground arm down to the wrist (y=15..19), leaving hand at y=20 visible
+      if (
+        bodyBaseId === 'sweater' ||
+        bodyBaseId === 'merchant_doublet' ||
+        bodyBaseId === 'elder_robe' ||
+        bodyBaseId === 'wanderer_poncho'
+      ) {
+        // Full/draped sleeve covers the foreground arm in side profile
         ctx.fillStyle = bodyColorDef.hex;
         ctx.fillRect(nearX, 14 + nearStep, 3, 6);
         ctx.fillStyle = bodyColorDef.lightHex;
         ctx.fillRect(nearX + (dir === 'left' ? 0 : 1), 15 + nearStep, 2, 4);
-        ctx.fillStyle = bodyColorDef.darkHex;
+        ctx.fillStyle =
+          bodyBaseId === 'merchant_doublet' || bodyBaseId === 'elder_robe'
+            ? '#fde047'
+            : bodyBaseId === 'wanderer_poncho'
+            ? '#fef08a'
+            : bodyColorDef.darkHex;
         ctx.fillRect(nearX, 19 + nearStep, 3, 1);
+      } else if (bodyBaseId === 'blacksmith_apron') {
+        // Rolled-up workshop shirt sleeve on upper arm + bare muscular forearm
+        ctx.fillStyle = '#475569';
+        ctx.fillRect(nearX, 14 + nearStep, 3, 3);
       } else if (bodyId === 'leather_tunic') {
         ctx.fillStyle = '#78350f';
         ctx.fillRect(nearX - 1, 14 + nearStep, 5, 4);
@@ -7570,14 +8030,20 @@ class SpriteAtlasManager {
       }
     }
 
-    // If wearing Short Dress or Long Dress, draw the lower skirt BEFORE leg armor so leg armor overrides it if equipped!
+    // If wearing Short Dress, Long Dress, or Elder Robe, draw the lower skirt/robe BEFORE leg armor so leg armor overrides it if equipped!
     if (bodyBaseId === 'short_dress') {
       drawDressLowerSkirt(false);
-    } else if (bodyBaseId === 'long_dress') {
+    } else if (bodyBaseId === 'long_dress' || bodyBaseId === 'elder_robe') {
       drawDressLowerSkirt(true);
+      if (bodyBaseId === 'elder_robe' && mountPose === 'none') {
+        // Golden ceremonial center stole & bottom hem border on Elder Robe
+        ctx.fillStyle = '#fde047';
+        ctx.fillRect(15, 22, 2, 5);
+        ctx.fillRect(9, 27, 14, 1);
+      }
     }
 
-    // 6. Equipped LEGS Garments (Bermuda, Calça, Macacão, or Robust Armor Greaves/Pants)
+    // 6. Equipped LEGS Garments (Bermuda, Calça, Macacão, Calça de Alfaiataria, Perneiras, or Robust Armor Greaves/Pants)
     if (legsBaseId === 'shorts') {
       // Bermuda (any of the 17 colors, including brown_shorts): knee-length shorts leaving lower calves bare
       const m = legsColorDef.hex;
@@ -7607,24 +8073,32 @@ class SpriteAtlasManager {
           ctx.fillRect(21, 22, 4, 3);
         }
       }
-    } else if (legsBaseId === 'pants' || legsBaseId === 'overalls') {
-      // Calça or Macacão lower trousers: full-length pants covering legs down to ankles (y=21..27)
+    } else if (
+      legsBaseId === 'pants' ||
+      legsBaseId === 'overalls' ||
+      legsBaseId === 'merchant_slacks' ||
+      legsBaseId === 'wanderer_leggings'
+    ) {
+      // Calça, Macacão, Calça de Alfaiataria or Perneiras de Caminhante: full-length pants covering legs down to ankles (y=21..27)
       const m = legsColorDef.hex;
       const d = legsColorDef.darkHex;
       const l = legsColorDef.lightHex;
       if (mountPose === 'none') {
-        if (legsBaseId === 'pants') {
-          ctx.fillStyle = '#451a03';
-          ctx.fillRect(11, 21, 10, 1);
-          ctx.fillStyle = '#fbbf24';
-          ctx.fillRect(15, 21, 2, 1);
-        } else {
+        if (legsBaseId === 'overalls') {
           // Overalls waist seam & brass side buttons
           ctx.fillStyle = d;
           ctx.fillRect(11, 21, 10, 1);
           ctx.fillStyle = '#fbbf24';
           ctx.fillRect(11, 21, 1, 1);
           ctx.fillRect(20, 21, 1, 1);
+        } else if (legsBaseId === 'merchant_slacks') {
+          ctx.fillStyle = '#fde047';
+          ctx.fillRect(11, 21, 10, 1);
+        } else {
+          ctx.fillStyle = '#451a03';
+          ctx.fillRect(11, 21, 10, 1);
+          ctx.fillStyle = '#fbbf24';
+          ctx.fillRect(15, 21, 2, 1);
         }
         ctx.fillStyle = m;
         ctx.fillRect(11, 22, 10, 2);
@@ -7636,8 +8110,22 @@ class SpriteAtlasManager {
         ctx.fillStyle = d;
         ctx.fillRect(14, 24, 1, 3);
         ctx.fillRect(17, 24, 1, 3);
-        ctx.fillRect(11, 26, 4, 1);
-        ctx.fillRect(17, 26, 4, 1);
+        if (legsBaseId === 'merchant_slacks') {
+          // Gold-trimmed cuffs
+          ctx.fillStyle = '#fde047';
+          ctx.fillRect(11, 26, 4, 1);
+          ctx.fillRect(17, 26, 4, 1);
+        } else if (legsBaseId === 'wanderer_leggings') {
+          // Strapped leather knee & shin wraps
+          ctx.fillStyle = '#78350f';
+          ctx.fillRect(11, 24, 4, 1);
+          ctx.fillRect(17, 24, 4, 1);
+          ctx.fillRect(11, 26, 4, 1);
+          ctx.fillRect(17, 26, 4, 1);
+        } else {
+          ctx.fillRect(11, 26, 4, 1);
+          ctx.fillRect(17, 26, 4, 1);
+        }
       } else if (mountPose === 'horse') {
         ctx.fillStyle = m;
         if (dir === 'left' || dir === 'right') {
@@ -7731,25 +8219,35 @@ class SpriteAtlasManager {
           ctx.fillRect(22, 27, 3, 1);
         }
       }
-    } else if (feetBaseId === 'cowboy_boots') {
+    } else if (feetBaseId === 'cowboy_boots' || feetBaseId === 'blacksmith_boots') {
       const m = feetColorDef.hex;
       const d = feetColorDef.darkHex;
       const l = feetColorDef.lightHex;
       if (mountPose === 'none') {
         const leftBootY = 25 + Math.max(0, stepL);
         const rightBootY = 25 + Math.max(0, stepR);
-        // Tall Western boot shaft & V-cut collar
+        // Tall boot shaft
         ctx.fillStyle = m;
         ctx.fillRect(10, leftBootY, 5, 4);
         ctx.fillRect(17, rightBootY, 5, 4);
         ctx.fillStyle = l;
         ctx.fillRect(10, leftBootY, 2, 3);
         ctx.fillRect(19, rightBootY, 2, 3);
-        // Western golden embroidery stitch & spur stud
-        ctx.fillStyle = '#fde047';
-        ctx.fillRect(12, leftBootY + 1, 1, 1);
-        ctx.fillRect(19, rightBootY + 1, 1, 1);
-        // Dark angled riding heel & sole
+        if (feetBaseId === 'blacksmith_boots') {
+          // Iron-plated toe caps & brass cuff rivet for Botas de Forja
+          ctx.fillStyle = '#cbd5e1';
+          ctx.fillRect(10, leftBootY + 2, 3, 1);
+          ctx.fillRect(19, rightBootY + 2, 3, 1);
+          ctx.fillStyle = '#fbbf24';
+          ctx.fillRect(12, leftBootY, 1, 1);
+          ctx.fillRect(19, rightBootY, 1, 1);
+        } else {
+          // Western golden embroidery stitch & spur stud
+          ctx.fillStyle = '#fde047';
+          ctx.fillRect(12, leftBootY + 1, 1, 1);
+          ctx.fillRect(19, rightBootY + 1, 1, 1);
+        }
+        // Dark angled riding/forge heel & sole
         ctx.fillStyle = d;
         ctx.fillRect(10, leftBootY + 3, 5, 1);
         ctx.fillRect(17, rightBootY + 3, 5, 1);
@@ -7904,7 +8402,42 @@ class SpriteAtlasManager {
       }
     }
 
-    // 10. EYES: 6 Distinct Shape Variants (classic, sharp, large, calm, fierce, mystic)
+    if (skinMark === 'beard_stubble') {
+      // Barba Cerrada: Jawline & chin 5 o'clock shadow
+      ctx.fillStyle = 'rgba(30, 41, 59, 0.42)';
+      if (dir === 'down') {
+        ctx.fillRect(10, 10, 12, 3);
+        ctx.fillStyle = 'rgba(15, 23, 42, 0.55)';
+        ctx.fillRect(11, 12, 10, 1);
+        ctx.fillRect(14, 10, 4, 1);
+        ctx.fillStyle = skinBase;
+        ctx.fillRect(14, 11, 4, 1);
+      } else if (dir === 'left') {
+        ctx.fillRect(10, 10, 6, 3);
+        ctx.fillStyle = 'rgba(15, 23, 42, 0.55)';
+        ctx.fillRect(10, 12, 5, 1);
+      } else if (dir === 'right') {
+        ctx.fillRect(16, 10, 6, 3);
+        ctx.fillStyle = 'rgba(15, 23, 42, 0.55)';
+        ctx.fillRect(17, 12, 5, 1);
+      }
+    } else if (skinMark === 'elder_wrinkles') {
+      // Rugas Sábias: Forehead wisdom lines & cheek creases
+      ctx.fillStyle = skinDeep;
+      if (dir === 'down') {
+        ctx.fillRect(13, 5, 6, 1);
+        ctx.fillRect(11, 10, 1, 2);
+        ctx.fillRect(20, 10, 1, 2);
+      } else if (dir === 'left') {
+        ctx.fillRect(11, 5, 3, 1);
+        ctx.fillRect(12, 10, 1, 2);
+      } else if (dir === 'right') {
+        ctx.fillRect(18, 5, 3, 1);
+        ctx.fillRect(19, 10, 1, 2);
+      }
+    }
+
+    // 10. EYES: 8 Distinct Shape Variants (classic, sharp, large, calm, fierce, mystic, wise, veteran)
     const drawEyePairDown = () => {
       // Left eye at x=11..13, Right eye at x=18..20, y=7..9
       if (eyeStyle === 'sharp') {
@@ -7991,6 +8524,37 @@ class SpriteAtlasManager {
         ctx.fillStyle = eyeLight;
         ctx.fillRect(12, 9, 1, 1);
         ctx.fillRect(19, 9, 1, 1);
+      } else if (eyeStyle === 'wise') {
+        // Sábio: Expressive arched sage brows & warm deep gaze
+        ctx.fillStyle = hairMain;
+        ctx.fillRect(10, 6, 4, 1);
+        ctx.fillRect(18, 6, 4, 1);
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(11, 7, 3, 2);
+        ctx.fillRect(18, 7, 3, 2);
+        ctx.fillStyle = eyeMain;
+        ctx.fillRect(12, 7, 2, 2);
+        ctx.fillRect(18, 7, 2, 2);
+        ctx.fillStyle = '#fde047';
+        ctx.fillRect(12, 7, 1, 1);
+        ctx.fillRect(18, 7, 1, 1);
+        ctx.fillStyle = skinShadow;
+        ctx.fillRect(11, 9, 3, 1);
+        ctx.fillRect(18, 9, 3, 1);
+      } else if (eyeStyle === 'veteran') {
+        // Veterano: Heavy stern guardian brow & focused steel iris
+        ctx.fillStyle = '#0f172a';
+        ctx.fillRect(10, 6, 4, 2);
+        ctx.fillRect(18, 6, 4, 2);
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(11, 8, 3, 2);
+        ctx.fillRect(18, 8, 3, 2);
+        ctx.fillStyle = eyeDark;
+        ctx.fillRect(12, 8, 2, 2);
+        ctx.fillRect(18, 8, 2, 2);
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(13, 8, 1, 1);
+        ctx.fillRect(19, 8, 1, 1);
       } else {
         // 'classic': Balanced 3x3 RPG eyes
         ctx.fillStyle = '#0f172a';
@@ -8318,6 +8882,104 @@ class SpriteAtlasManager {
         }
         ctx.fillStyle = '#fde047';
         ctx.fillRect(10, 3, 12, 1);
+      } else if (hStyle === 'blacksmith_beard') {
+        // Barba de Forja: Swept forge hair + thick braided smith beard with brass ring
+        ctx.fillStyle = hairMain;
+        if (dir === 'down') {
+          ctx.fillRect(9, 3, 14, 3);
+          ctx.fillRect(9, 6, 2, 6);
+          ctx.fillRect(21, 6, 2, 6);
+          // Full smith mustache & braided beard
+          ctx.fillStyle = hairShadow;
+          ctx.fillRect(10, 10, 12, 4);
+          ctx.fillStyle = hairMain;
+          ctx.fillRect(11, 11, 10, 4);
+          ctx.fillRect(13, 14, 6, 3);
+          ctx.fillStyle = '#fbbf24';
+          ctx.fillRect(14, 15, 4, 1);
+        } else if (dir === 'left') {
+          ctx.fillRect(9, 3, 5, 2);
+          ctx.fillRect(10, 10, 6, 5);
+          ctx.fillRect(9, 12, 4, 4);
+          ctx.fillStyle = '#fbbf24';
+          ctx.fillRect(10, 14, 3, 1);
+        } else if (dir === 'right') {
+          ctx.fillRect(18, 3, 5, 2);
+          ctx.fillRect(16, 10, 6, 5);
+          ctx.fillRect(19, 12, 4, 4);
+          ctx.fillStyle = '#fbbf24';
+          ctx.fillRect(19, 14, 3, 1);
+        }
+      } else if (hStyle === 'elder_sage') {
+        // Sábio Ancião: Venerable flowing temple locks & long sage beard
+        ctx.fillStyle = hairMain;
+        if (dir === 'down') {
+          ctx.fillRect(8, 3, 3, 12);
+          ctx.fillRect(21, 3, 3, 12);
+          // Flowing mustache & long venerable beard
+          ctx.fillStyle = hairHighlight;
+          ctx.fillRect(11, 10, 10, 2);
+          ctx.fillStyle = hairMain;
+          ctx.fillRect(11, 11, 10, 5);
+          ctx.fillRect(12, 15, 8, 3);
+          ctx.fillRect(14, 17, 4, 2);
+        } else if (dir === 'up') {
+          ctx.fillStyle = hairMain;
+          ctx.fillRect(8, 3, 16, 14);
+          ctx.fillStyle = hairHighlight;
+          ctx.fillRect(11, 4, 10, 3);
+        } else if (dir === 'left') {
+          ctx.fillRect(14, 3, 9, 13);
+          ctx.fillRect(9, 10, 6, 6);
+          ctx.fillRect(8, 13, 5, 5);
+        } else if (dir === 'right') {
+          ctx.fillRect(9, 3, 9, 13);
+          ctx.fillRect(17, 10, 6, 6);
+          ctx.fillRect(19, 13, 5, 5);
+        }
+      } else if (hStyle === 'merchant_crown') {
+        // Trança Mercante: Elegant braided crown updo with golden hairpins & curled side locks
+        ctx.fillStyle = hairDeep;
+        ctx.fillRect(10, 0, 12, 3);
+        ctx.fillStyle = hairMain;
+        ctx.fillRect(9, 1, 14, 4);
+        ctx.fillStyle = '#fde047';
+        ctx.fillRect(11, 2, 2, 1);
+        ctx.fillRect(15, 1, 2, 1);
+        ctx.fillRect(19, 2, 2, 1);
+        if (dir === 'down') {
+          ctx.fillStyle = hairMain;
+          ctx.fillRect(8, 4, 2, 8);
+          ctx.fillRect(22, 4, 2, 8);
+        } else if (dir === 'left') {
+          ctx.fillStyle = hairMain;
+          ctx.fillRect(10, 4, 2, 7);
+        } else if (dir === 'right') {
+          ctx.fillStyle = hairMain;
+          ctx.fillRect(20, 4, 2, 7);
+        }
+      } else if (hStyle === 'nomad_wind') {
+        // Vento Nômade: Wind-swept frontier locks with leather brow band
+        ctx.fillStyle = hairMain;
+        if (dir === 'down') {
+          ctx.fillRect(8, 2, 16, 4);
+          ctx.fillRect(7, 4, 3, 7);
+          ctx.fillRect(21, 4, 4, 6);
+          ctx.fillStyle = '#78350f';
+          ctx.fillRect(9, 5, 14, 1);
+          ctx.fillStyle = '#38bdf8';
+          ctx.fillRect(15, 5, 2, 1);
+        } else if (dir === 'left') {
+          ctx.fillRect(9, 2, 15, 4);
+          ctx.fillRect(16, 5, 9, 7);
+          ctx.fillStyle = '#78350f';
+          ctx.fillRect(10, 5, 12, 1);
+        } else if (dir === 'right') {
+          ctx.fillRect(8, 2, 15, 4);
+          ctx.fillRect(7, 5, 9, 7);
+          ctx.fillStyle = '#78350f';
+          ctx.fillRect(10, 5, 12, 1);
+        }
       } else {
         // 'adventurer': Classic layered spiky fringe
         ctx.fillStyle = hairMain;
@@ -8340,9 +9002,7 @@ class SpriteAtlasManager {
       }
     }
 
-    // 12. Equipped HEAD Slot Overlay (Chapéu de Fibras, Chapéu de Couro, Colar Solar, or Robust Armors)
-    const headDef = headId ? ITEMS[headId] : null;
-    const headBaseId = headDef?.garmentBaseId || headId;
+    // 12. Equipped HEAD Slot Overlay (Chapéus, Bandana, Boina, Tiara, Capuz, Colar Solar, or Robust Armors)
     const headColorDef =
       CLOTHING_COLOR_MAP[headDef?.garmentColorId || 'marrom'] ||
       CLOTHING_COLOR_MAP.marrom;
@@ -8377,6 +9037,106 @@ class SpriteAtlasManager {
       ctx.fillRect(9, 2, 14, 1);
       ctx.fillStyle = '#fbbf24';
       ctx.fillRect(15, 2, 2, 1);
+    } else if (headBaseId === 'blacksmith_bandana') {
+      // Bandana de Forja: Tied artisan headband across brow with side/back knot tails
+      const m = headColorDef.hex;
+      const d = headColorDef.darkHex;
+      const l = headColorDef.lightHex;
+      ctx.fillStyle = d;
+      ctx.fillRect(9, 3, 14, 3);
+      ctx.fillStyle = m;
+      ctx.fillRect(9, 3, 14, 2);
+      ctx.fillStyle = l;
+      ctx.fillRect(11, 3, 10, 1);
+      ctx.fillStyle = '#fbbf24';
+      ctx.fillRect(12, 4, 1, 1);
+      ctx.fillRect(19, 4, 1, 1);
+      if (dir === 'down' || dir === 'up') {
+        ctx.fillStyle = m;
+        ctx.fillRect(23, 4, 2, 4);
+        ctx.fillStyle = d;
+        ctx.fillRect(24, 6, 2, 3);
+      } else if (dir === 'left') {
+        ctx.fillStyle = m;
+        ctx.fillRect(22, 4, 3, 4);
+      } else if (dir === 'right') {
+        ctx.fillStyle = m;
+        ctx.fillRect(7, 4, 3, 4);
+      }
+    } else if (headBaseId === 'merchant_cap') {
+      // Boina de Mercador: Puffed velvet beret with gold brooch & white feather plume
+      const m = headColorDef.hex;
+      const d = headColorDef.darkHex;
+      const l = headColorDef.lightHex;
+      ctx.fillStyle = '#0f172a';
+      ctx.fillRect(7, 1, 18, 5);
+      ctx.fillStyle = m;
+      ctx.fillRect(8, 1, 16, 4);
+      ctx.fillStyle = l;
+      ctx.fillRect(9, 1, 12, 2);
+      ctx.fillStyle = d;
+      ctx.fillRect(9, 4, 14, 1);
+      // Golden brooch & white feather plume
+      ctx.fillStyle = '#fde047';
+      ctx.fillRect(19, 3, 2, 2);
+      ctx.fillStyle = '#f8fafc';
+      ctx.fillRect(21, 0, 3, 3);
+      ctx.fillRect(23, 0, 2, 2);
+    } else if (headBaseId === 'elder_mitre') {
+      // Tiara do Ancião: Ceremonial sage diadem/mitre with radiant solar crystal emblem
+      const m = headColorDef.hex;
+      const d = headColorDef.darkHex;
+      const l = headColorDef.lightHex;
+      ctx.fillStyle = d;
+      ctx.fillRect(9, 2, 14, 3);
+      ctx.fillStyle = m;
+      ctx.fillRect(9, 3, 14, 2);
+      ctx.fillRect(13, 1, 6, 3);
+      ctx.fillStyle = l;
+      ctx.fillRect(14, 1, 4, 2);
+      ctx.fillStyle = '#fde047';
+      ctx.fillRect(10, 4, 12, 1);
+      ctx.fillStyle = '#38bdf8';
+      ctx.fillRect(15, 2, 2, 2);
+    } else if (headBaseId === 'wanderer_hood') {
+      // Capuz de Andarilho: Nomad traveler cowl with integrated neck scarf
+      const m = headColorDef.hex;
+      const d = headColorDef.darkHex;
+      const l = headColorDef.lightHex;
+      ctx.fillStyle = d;
+      ctx.fillRect(7, 1, 18, 5);
+      ctx.fillStyle = m;
+      ctx.fillRect(8, 1, 16, 4);
+      ctx.fillStyle = l;
+      ctx.fillRect(10, 1, 12, 2);
+      // Integrated neck scarf at chin/collar
+      ctx.fillStyle = '#78350f';
+      ctx.fillRect(10, 12, 12, 2);
+      ctx.fillStyle = '#fbbf24';
+      ctx.fillRect(15, 13, 2, 1);
+      if (dir === 'down') {
+        ctx.fillStyle = m;
+        ctx.fillRect(8, 5, 2, 8);
+        ctx.fillRect(22, 5, 2, 8);
+        ctx.fillStyle = d;
+        ctx.fillRect(9, 5, 1, 7);
+        ctx.fillRect(22, 5, 1, 7);
+      } else if (dir === 'up') {
+        ctx.fillStyle = m;
+        ctx.fillRect(8, 5, 16, 9);
+        ctx.fillStyle = d;
+        ctx.fillRect(14, 3, 4, 10);
+      } else if (dir === 'left') {
+        ctx.fillStyle = m;
+        ctx.fillRect(13, 4, 11, 9);
+        ctx.fillStyle = d;
+        ctx.fillRect(13, 5, 2, 7);
+      } else if (dir === 'right') {
+        ctx.fillStyle = m;
+        ctx.fillRect(8, 4, 11, 9);
+        ctx.fillStyle = d;
+        ctx.fillRect(17, 5, 2, 7);
+      }
     } else if (headBaseId === 'solar_necklace') {
       // Colar Solar: Drawn on bodyCtx so it fits the 1.5x chest/collarbone seamlessly
       ctx = bodyCtx;

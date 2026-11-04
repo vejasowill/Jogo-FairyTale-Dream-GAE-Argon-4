@@ -6,10 +6,17 @@ import {
   CreatureKind,
   Direction,
   EcologicalZone,
+  EyeStyleId,
+  HairStyleId,
   NpcRole,
   NpcTradeOffer,
   PlaceableType,
+  PlayerAppearance,
+  PlayerEquipment,
+  PlayerGender,
+  SkinMarkId,
 } from '../core/types';
+import { getDyedGarmentItemId, ITEMS } from '../core/ItemRegistry';
 import { CHUNK_SIZE, TILE_SIZE, WorldManager } from '../world/WorldManager';
 
 export const MAX_VILLAGERS_PER_HOUSE = 2;
@@ -156,11 +163,11 @@ const VILLAGER_PROFILES: Record<
     names: ['Capitão Thorne', 'Sentinela Garrick', 'Valéria Escudo-Solar', 'Comandante Roland'],
     professionLabel: 'Guardião Juramentado da Vila',
     dialogues: [
-      'Mantenha a paz em nosso vilarejo e minha lâmina protegerá você contra qualquer monstro.',
+      'Com minha Armadura de Ferro e Espada Longa de Ferro, protegerei este vilarejo contra qualquer monstro!',
       'Pagamos recompensas em ouro para quem eliminar Zumbis, Ogros e Saqueadores!',
     ],
-    hp: 220,
-    attackDamage: 36,
+    hp: 285,
+    attackDamage: 61,
     moveSpeed: 54,
     trades: [
       {
@@ -841,9 +848,290 @@ export class EntityManager {
           : undefined,
     };
     entity.faction = EntityManager.getFaction(entity);
+    if (
+      entity.kind === CreatureKind.VILLAGER ||
+      entity.kind === CreatureKind.WANDERER
+    ) {
+      EntityManager.ensureNpcHumanAppearance(entity);
+    }
 
     this.creatures.push(entity);
     return entity;
+  }
+
+  /**
+   * Garante que qualquer Aldeão (VILLAGER) ou Andarilho (WANDERER) possua aparência humana completa
+   * (olhos, cabelos, pele, marcas faciais) e o traje específico da sua função, além da Armadura de Ferro
+   * e Espada de Ferro para o Guardião da Vila.
+   */
+  public static ensureNpcHumanAppearance(cr: CreatureEntity): void {
+    if (
+      cr.kind !== CreatureKind.VILLAGER &&
+      cr.kind !== CreatureKind.WANDERER
+    ) {
+      return;
+    }
+
+    const role: NpcRole =
+      cr.kind === CreatureKind.WANDERER
+        ? 'andarilho'
+        : cr.npcRole || 'mercador';
+
+    // Deterministic hash from ID + Name so each NPC has a persistent phenotype
+    const seedStr = `${cr.id || ''}|${cr.name || ''}`;
+    let hash = 2166136261;
+    for (let i = 0; i < seedStr.length; i++) {
+      hash ^= seedStr.charCodeAt(i);
+      hash = Math.imul(hash, 16777619);
+    }
+    const h = Math.abs(hash);
+
+    const lowerName = (cr.name || '').toLowerCase();
+    const isFemaleName =
+      lowerName.includes('lyra') ||
+      lowerName.includes('selene') ||
+      lowerName.includes('elara') ||
+      lowerName.includes('valéria') ||
+      lowerName.includes('valeria') ||
+      lowerName.includes('aurelia') ||
+      lowerName.includes('mira') ||
+      lowerName.includes('lyris') ||
+      lowerName.includes('vesper') ||
+      lowerName.includes('nyx') ||
+      lowerName.includes('mercadora') ||
+      lowerName.includes('matriarca') ||
+      lowerName.includes('peregrina') ||
+      lowerName.includes('exploradora');
+
+    if (!cr.appearance || !cr.appearance.hairStyle || !cr.appearance.eyeStyle) {
+      const skinPalette = [
+        '#fde68a',
+        '#fdba74',
+        '#e09f67',
+        '#c68642',
+        '#d97706',
+        '#9c5221',
+        '#92400e',
+        '#5c2d16',
+      ];
+      const gender: PlayerGender = isFemaleName ? 'feminino' : 'masculino';
+      let skinColor = skinPalette[h % skinPalette.length];
+      let skinMark: SkinMarkId = 'none';
+      let hairStyle: HairStyleId = 'adventurer';
+      let hairColor = '#451a03';
+      let eyeStyle: EyeStyleId = 'classic';
+      let eyeColor = '#0f172a';
+
+      if (role === 'ferreiro') {
+        const smithSkins = ['#c68642', '#9c5221', '#d97706', '#fdba74', '#92400e'];
+        const smithHairs = ['#451a03', '#1e293b', '#9a3412', '#b45309'];
+        const smithEyes = ['#d97706', '#0f172a', '#16a34a'];
+        skinColor = smithSkins[h % smithSkins.length];
+        hairColor = smithHairs[(h >> 3) % smithHairs.length];
+        eyeColor = smithEyes[(h >> 5) % smithEyes.length];
+        hairStyle = isFemaleName
+          ? (['ponytail', 'braided'][h % 2] as HairStyleId)
+          : (['blacksmith_beard', 'warrior_crest', 'samurai_bun'][
+              h % 3
+            ] as HairStyleId);
+        skinMark = isFemaleName
+          ? 'freckles'
+          : (['beard_stubble', 'eye_scar', 'none'][h % 3] as SkinMarkId);
+        eyeStyle = (['fierce', 'veteran', 'sharp'][h % 3] as EyeStyleId);
+      } else if (role === 'mercador') {
+        const merchSkins = ['#fdba74', '#fde68a', '#e09f67', '#c68642', '#92400e'];
+        const merchHairs = ['#9a3412', '#eab308', '#451a03', '#7e22ce', '#1e293b'];
+        const merchEyes = ['#16a34a', '#2563eb', '#9333ea', '#14b8a6'];
+        skinColor = merchSkins[h % merchSkins.length];
+        hairColor = merchHairs[(h >> 3) % merchHairs.length];
+        eyeColor = merchEyes[(h >> 5) % merchEyes.length];
+        hairStyle = isFemaleName
+          ? (['merchant_crown', 'valkyrie_bangs', 'noble_waves', 'twin_tails'][
+              h % 4
+            ] as HairStyleId)
+          : (['noble_waves', 'merchant_crown', 'curly_crown'][
+              h % 3
+            ] as HairStyleId);
+        skinMark = (['none', 'freckles'][h % 2] as SkinMarkId);
+        eyeStyle = (['large', 'classic', 'calm'][h % 3] as EyeStyleId);
+      } else if (role === 'guardiao') {
+        const guardSkins = ['#e09f67', '#c68642', '#fdba74', '#9c5221', '#92400e'];
+        const guardHairs = ['#1e293b', '#451a03', '#eab308', '#dc2626'];
+        const guardEyes = ['#2563eb', '#94a3b8', '#d97706', '#0f172a'];
+        skinColor = guardSkins[h % guardSkins.length];
+        hairColor = guardHairs[(h >> 3) % guardHairs.length];
+        eyeColor = guardEyes[(h >> 5) % guardEyes.length];
+        hairStyle = isFemaleName
+          ? (['valkyrie_bangs', 'ponytail', 'braided'][h % 3] as HairStyleId)
+          : (['warrior_crest', 'samurai_bun', 'blacksmith_beard'][
+              h % 3
+            ] as HairStyleId);
+        skinMark = (['eye_scar', 'freckles_and_scar', 'beard_stubble'][
+          h % 3
+        ] as SkinMarkId);
+        eyeStyle = (['veteran', 'fierce', 'sharp'][h % 3] as EyeStyleId);
+      } else if (role === 'anciao') {
+        const elderSkins = ['#e09f67', '#fdba74', '#c68642', '#92400e'];
+        const elderHairs = ['#f8fafc', '#cbd5e1', '#eab308'];
+        const elderEyes = ['#94a3b8', '#14b8a6', '#9333ea', '#2563eb'];
+        skinColor = elderSkins[h % elderSkins.length];
+        hairColor = elderHairs[(h >> 3) % elderHairs.length];
+        eyeColor = elderEyes[(h >> 5) % elderEyes.length];
+        hairStyle = isFemaleName
+          ? (['merchant_crown', 'long_mane', 'noble_waves'][
+              h % 3
+            ] as HairStyleId)
+          : (['elder_sage', 'long_mane'][h % 2] as HairStyleId);
+        skinMark = 'elder_wrinkles';
+        eyeStyle = (['wise', 'mystic', 'calm'][h % 3] as EyeStyleId);
+      } else {
+        // andarilho (Wanderer)
+        const wandHairs = [
+          '#451a03',
+          '#1e293b',
+          '#9a3412',
+          '#eab308',
+          '#cbd5e1',
+          '#0d9488',
+        ];
+        const wandEyes = [
+          '#14b8a6',
+          '#16a34a',
+          '#d97706',
+          '#2563eb',
+          '#0f172a',
+        ];
+        skinColor = skinPalette[h % skinPalette.length];
+        hairColor = wandHairs[(h >> 3) % wandHairs.length];
+        eyeColor = wandEyes[(h >> 5) % wandEyes.length];
+        hairStyle = isFemaleName
+          ? (['nomad_wind', 'ponytail', 'braided', 'valkyrie_bangs'][
+              h % 4
+            ] as HairStyleId)
+          : (['nomad_wind', 'adventurer', 'braided', 'samurai_bun'][
+              h % 4
+            ] as HairStyleId);
+        skinMark = (['none', 'freckles', 'eye_scar', 'beard_stubble'][
+          h % 4
+        ] as SkinMarkId);
+        if (isFemaleName && skinMark === 'beard_stubble') {
+          skinMark = 'freckles';
+        }
+        eyeStyle = (['sharp', 'calm', 'classic', 'wise'][h % 4] as EyeStyleId);
+      }
+
+      cr.appearance = {
+        gender,
+        skinColor,
+        skinMark,
+        hairColor,
+        hairStyle,
+        eyeStyle,
+        eyeColor,
+      };
+    }
+
+    // Equip role-specific clothing/armor & held weapon
+    if (role === 'guardiao') {
+      cr.equippedBySlot = {
+        head: 'iron_helmet',
+        body: 'iron_armor',
+        legs: 'iron_greaves',
+        feet: 'iron_boots',
+      };
+      cr.heldItemId = 'iron_sword';
+      // Ensure Guardian stats include Iron Armor (+65 HP) & Iron Sword (+25 ATQ)
+      if (cr.maxHp < 285) {
+        const hpRatio = cr.maxHp > 0 ? cr.hp / cr.maxHp : 1;
+        cr.maxHp = 285;
+        cr.hp = Math.max(1, Math.round(285 * hpRatio));
+      }
+      if (cr.attackDamage < 61) {
+        cr.attackDamage = 61;
+      }
+    } else if (role === 'ferreiro') {
+      const bandanaColors = ['vermelho', 'laranja', 'marrom', 'preto'] as const;
+      const apronColors = ['marrom', 'preto', 'cinza', 'vermelho'] as const;
+      const bandanaColor = bandanaColors[h % bandanaColors.length];
+      const apronColor = apronColors[(h >> 2) % apronColors.length];
+      cr.equippedBySlot = {
+        head: getDyedGarmentItemId('blacksmith_bandana', bandanaColor),
+        body: getDyedGarmentItemId('blacksmith_apron', apronColor),
+        legs: getDyedGarmentItemId('pants', 'cinza'),
+        feet: 'blacksmith_boots',
+      };
+      cr.heldItemId = 'iron_pickaxe';
+    } else if (role === 'mercador') {
+      const capColors = ['roxo', 'vermelho', 'azul', 'verde', 'magenta'] as const;
+      const doubletColors = ['vermelho', 'roxo', 'azul', 'verde', 'laranja'] as const;
+      const capColor = capColors[h % capColors.length];
+      const doubletColor = doubletColors[(h >> 2) % doubletColors.length];
+      cr.equippedBySlot = {
+        head: getDyedGarmentItemId('merchant_cap', capColor),
+        body: getDyedGarmentItemId('merchant_doublet', doubletColor),
+        legs: 'merchant_slacks',
+        feet: 'cowboy_boots',
+      };
+      cr.heldItemId = null;
+    } else if (role === 'anciao') {
+      const mitreColors = ['amarelo', 'branco', 'azul_claro', 'roxo'] as const;
+      const robeColors = ['azul', 'branco', 'roxo', 'ciano'] as const;
+      const mitreColor = mitreColors[h % mitreColors.length];
+      const robeColor = robeColors[(h >> 2) % robeColors.length];
+      cr.equippedBySlot = {
+        head: getDyedGarmentItemId('elder_mitre', mitreColor),
+        body: getDyedGarmentItemId('elder_robe', robeColor),
+        legs: getDyedGarmentItemId('pants', 'branco'),
+        feet: 'sandals',
+      };
+      cr.heldItemId = null;
+    } else {
+      // andarilho (Wanderer)
+      const hoodColors = ['ciano', 'verde', 'marrom', 'azul', 'cinza'] as const;
+      const ponchoColors = [
+        'azul_claro',
+        'ciano',
+        'verde',
+        'laranja',
+        'bege',
+      ] as const;
+      const legColors = ['bege', 'marrom', 'cinza'] as const;
+      const hoodColor = hoodColors[h % hoodColors.length];
+      const ponchoColor = ponchoColors[(h >> 2) % ponchoColors.length];
+      const legColor = legColors[(h >> 4) % legColors.length];
+      cr.equippedBySlot = {
+        head: getDyedGarmentItemId('wanderer_hood', hoodColor),
+        body: getDyedGarmentItemId('wanderer_poncho', ponchoColor),
+        legs: getDyedGarmentItemId('wanderer_leggings', legColor),
+        feet: 'cowboy_boots',
+      };
+      cr.heldItemId = h % 2 === 0 ? 'wood_sword' : 'flint_spear';
+    }
+  }
+
+  /**
+   * Calcula a redução percentual de dano (0.0 a 0.75) conferida pelas roupas ou armaduras equipadas pelo NPC humano.
+   * No caso do Guardião da Vila (Armadura de Ferro completa), concede 47% de redução de dano (0.10 + 0.18 + 0.11 + 0.08).
+   */
+  public static getCreatureDefenseReduction(cr: CreatureEntity): number {
+    if (
+      cr.kind !== CreatureKind.VILLAGER &&
+      cr.kind !== CreatureKind.WANDERER
+    ) {
+      return 0;
+    }
+    EntityManager.ensureNpcHumanAppearance(cr);
+    const eq: PlayerEquipment | undefined = cr.equippedBySlot;
+    if (!eq) return 0;
+    let totalDef = 0;
+    const slots: Array<keyof PlayerEquipment> = ['head', 'body', 'legs', 'feet'];
+    for (const slot of slots) {
+      const itemId = eq[slot];
+      if (itemId && ITEMS[itemId]?.defenseBonus) {
+        totalDef += ITEMS[itemId].defenseBonus!;
+      }
+    }
+    return Math.min(0.75, Math.max(0, totalDef));
   }
 
   /**
@@ -889,6 +1177,7 @@ export class EntityManager {
     cr.wanderAngle = undefined;
     cr.aiState = 'wander';
     cr.aiTimer = 1.5;
+    EntityManager.ensureNpcHumanAppearance(cr);
   }
 
   /**

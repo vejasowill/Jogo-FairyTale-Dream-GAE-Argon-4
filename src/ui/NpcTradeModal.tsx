@@ -11,6 +11,7 @@ import {
 } from 'lucide-react';
 import { ITEMS } from '../game/core/ItemRegistry';
 import { CreatureEntity, PlayerState } from '../game/core/types';
+import { EntityManager } from '../game/entities/EntityManager';
 import { GameEngine } from '../game/loop/GameEngine';
 import { spriteAtlas } from '../game/rendering/SpriteAtlas';
 import { WindowHelpButton, WindowHelpModal } from './UiTooltipAndHelp';
@@ -135,6 +136,19 @@ export const NpcTradeModal: React.FC<NpcTradeModalProps> = ({
       )
     : null;
 
+  EntityManager.ensureNpcHumanAppearance(npc);
+  const npcPortraitUrl = spriteAtlas
+    .getPlayerSprite(
+      'down',
+      0,
+      {
+        appearance: npc.appearance!,
+        equippedBySlot: npc.equippedBySlot!,
+      } as PlayerState,
+      'none'
+    )
+    .toDataURL();
+
   return (
     <div
       className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-2 sm:p-4"
@@ -147,11 +161,11 @@ export const NpcTradeModal: React.FC<NpcTradeModalProps> = ({
         {/* Top Header */}
         <div className="px-3 py-2 border-b-2 border-[#4a301e] bg-[#1c120b] flex items-center justify-between gap-2 shrink-0">
           <div className="flex items-center gap-2 min-w-0">
-            <div className="w-9 h-9 mc-slot-active flex items-center justify-center shrink-0">
+            <div className="w-10 h-10 mc-slot-active flex items-center justify-center shrink-0 overflow-hidden">
               <img
-                src={spriteAtlas.getItemIconUrl('gold_coin')}
+                src={npcPortraitUrl}
                 alt={npc.name}
-                className="w-6 h-6 pixelated"
+                className="w-10 h-10 object-contain pixelated"
               />
             </div>
             <div className="min-w-0">

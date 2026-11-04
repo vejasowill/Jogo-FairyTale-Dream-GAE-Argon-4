@@ -509,6 +509,10 @@ export interface CreatureEntity {
   peaceDebtCoins?: number;
   // Village Elder permission state for Wanderer seeking a village rest point
   elderApprovedHouseId?: string;
+  // Human NPC appearance, clothing/armor & held weapon (shared with Player rendering & customization)
+  appearance?: PlayerAppearance;
+  equippedBySlot?: PlayerEquipment;
+  heldItemId?: string | null;
 }
 
 export type TransportSeatRole = 'pilot' | 'passenger';
@@ -704,7 +708,9 @@ export type SkinMarkId =
   | 'none'
   | 'freckles'
   | 'eye_scar'
-  | 'freckles_and_scar';
+  | 'freckles_and_scar'
+  | 'beard_stubble'
+  | 'elder_wrinkles';
 
 export type HairStyleId =
   | 'adventurer'
@@ -716,7 +722,11 @@ export type HairStyleId =
   | 'curly_crown'
   | 'samurai_bun'
   | 'noble_waves'
-  | 'valkyrie_bangs';
+  | 'valkyrie_bangs'
+  | 'blacksmith_beard'
+  | 'elder_sage'
+  | 'merchant_crown'
+  | 'nomad_wind';
 
 export type EyeStyleId =
   | 'classic'
@@ -724,7 +734,9 @@ export type EyeStyleId =
   | 'large'
   | 'calm'
   | 'fierce'
-  | 'mystic';
+  | 'mystic'
+  | 'wise'
+  | 'veteran';
 
 export interface PlayerAppearance {
   gender?: PlayerGender;
@@ -868,7 +880,7 @@ export interface OnlineActivationStep {
 }
 
 // REGRA PERMANENTE: A cada nova atualização do jogo, incremente a versão para o número seguinte da beta (ex: 0.4.4-beta -> 0.4.5-beta).
-export const GAME_VERSION = '0.7.1-beta';
+export const GAME_VERSION = '0.7.2-beta';
 export const CURRENT_WORLD_GEN_VERSION = 5;
 
 export interface OnlineSessionInfo {
