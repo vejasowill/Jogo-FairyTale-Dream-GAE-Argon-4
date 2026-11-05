@@ -558,7 +558,7 @@ async function startServer() {
   const httpServer = createHttpServer(app);
   const PORT = Number(process.env.PORT) || 3000;
 
-  app.use(express.json({ limit: '15mb' }));
+  app.use(express.json({ limit: '50mb' }));
 
   // Health check endpoint
   app.get('/api/health', (_req, res) => {
@@ -984,7 +984,7 @@ async function startServer() {
 
   // Save or update a world
   app.post('/api/worlds', (req, res) => {
-    const worldData = req.body;
+    const worldData = req.body?.world || req.body?.data || req.body;
     if (!worldData || !worldData.metadata || !worldData.metadata.id) {
       res.status(400).json({ error: 'Invalid world save payload' });
       return;

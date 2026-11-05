@@ -601,24 +601,25 @@ export const WorldMapModal: React.FC<WorldMapModalProps> = ({
       ctx.stroke();
     }
 
-    const exploredChunks = Object.values(world.chunks).filter((c) =>
-      c.explored.some((e) => e === 1)
-    );
+    const exploredChunks = Object.values(world.chunks).filter((c) => {
+      if (!c) return false;
+      const chunkLeft = centerX + (c.cx * CHUNK_SIZE - playerTx) * zoom;
+      const chunkTop = centerY + (c.cy * CHUNK_SIZE - playerTy) * zoom;
+      if (
+        chunkLeft + CHUNK_SIZE * zoom < -24 ||
+        chunkLeft > w + 24 ||
+        chunkTop + CHUNK_SIZE * zoom < -24 ||
+        chunkTop > h + 24
+      ) {
+        return false;
+      }
+      return Boolean(c.compactExplored) || c.explored.some((e) => e === 1);
+    });
 
     // =========================================================================
     // PASS 1: TRUE MINIATURE BIOME & SUB-ZONE TERRAIN + SHORELINE CONTOURS
     // =========================================================================
     for (const chunk of exploredChunks) {
-      const chunkLeft = centerX + (chunk.cx * CHUNK_SIZE - playerTx) * zoom;
-      const chunkTop = centerY + (chunk.cy * CHUNK_SIZE - playerTy) * zoom;
-      if (
-        chunkLeft + CHUNK_SIZE * zoom < -16 ||
-        chunkLeft > w + 16 ||
-        chunkTop + CHUNK_SIZE * zoom < -16 ||
-        chunkTop > h + 16
-      ) {
-        continue;
-      }
 
       for (let ly = 0; ly < CHUNK_SIZE; ly++) {
         for (let lx = 0; lx < CHUNK_SIZE; lx++) {

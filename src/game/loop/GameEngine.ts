@@ -172,19 +172,32 @@ export class GameEngine {
   private claimedWorldActionKeys = new Map<string, number>();
   private pendingContainerWithdraws = new Set<string>();
   private stallCustomerSpawnTimer = 3.5;
+  public isSavingOrExiting = false;
+
+  public isAuthoritativeLocalWorld(): boolean {
+    return !this.isGuestWorldSession && this.multiplayer.role !== 'GUEST';
+  }
+
   private boundHandlePageUnload = () => {
-    if (!this.multiplayer.isConnectionUnstable() && !this.isGameOver) {
-      void this.saveGame(true);
+    if (
+      !this.isGameOver &&
+      !this.isSavingOrExiting &&
+      (this.isAuthoritativeLocalWorld() ||
+        !this.multiplayer.isConnectionUnstable())
+    ) {
+      void this.saveGame(true, true);
     }
   };
   private boundHandleVisibilityChange = () => {
     if (
       typeof document !== 'undefined' &&
       document.visibilityState === 'hidden' &&
-      !this.multiplayer.isConnectionUnstable() &&
-      !this.isGameOver
+      !this.isGameOver &&
+      !this.isSavingOrExiting &&
+      (this.isAuthoritativeLocalWorld() ||
+        !this.multiplayer.isConnectionUnstable())
     ) {
-      void this.saveGame(true);
+      void this.saveGame(true, true);
     }
   };
   public static readonly WELL_VILLAGE_RADIUS = 380;
@@ -407,6 +420,7 @@ export class GameEngine {
 
     if (typeof window !== 'undefined') {
       window.addEventListener('beforeunload', this.boundHandlePageUnload);
+      window.addEventListener('pagehide', this.boundHandlePageUnload);
     }
     if (typeof document !== 'undefined') {
       document.addEventListener(
@@ -432,6 +446,7 @@ export class GameEngine {
   public destroy(): void {
     if (typeof window !== 'undefined') {
       window.removeEventListener('beforeunload', this.boundHandlePageUnload);
+      window.removeEventListener('pagehide', this.boundHandlePageUnload);
     }
     if (typeof document !== 'undefined') {
       document.removeEventListener(
@@ -575,6 +590,17 @@ export class GameEngine {
         if (this.multiplayer.isOnline) {
           this.updateMultiplayerSync(dt);
         }
+      } else if (this.isAuthoritativeLocalWorld()) {
+        // Authoritative Host / Single-player world ALWAYS auto-saves locally even if internet flickers
+        this.autoSaveTimer += dt;
+        const intervalSec = Math.max(
+          10,
+          Math.min(20, this.settings.autoSaveIntervalSec || 15)
+        );
+        if (this.autoSaveTimer >= intervalSec) {
+          this.autoSaveTimer = 0;
+          void this.saveGame(true);
+        }
       }
       this.uiUpdateTimer += dt;
       if (this.uiUpdateTimer >= 0.15) {
@@ -691,8 +717,11 @@ export class GameEngine {
       this.performUseOrPlaceHeldItemAction();
     }
 
-    // Periodic Auto-Save (every 10-20s when connection is healthy)
-    if (!this.multiplayer.isConnectionUnstable()) {
+    // Periodic Auto-Save (every 10-20s; always runs for authoritative local Host/Solo worlds, or when Guest connection is healthy)
+    if (
+      this.isAuthoritativeLocalWorld() ||
+      !this.multiplayer.isConnectionUnstable()
+    ) {
       this.autoSaveTimer += dt;
       const intervalSec = Math.max(
         10,
@@ -2466,10 +2495,35 @@ export class GameEngine {
     return avgAff >= 75;
   }
 
+  private extractTileCoordsFromStructureId(
+    structureId: string
+  ): { tx: number; ty: number } | null {
+    const m =
+      /^(?:world_struct|struct|house|well|island_fountain|chest|stall)_(-?\d+)_(-?\d+)/.exec(
+        structureId
+      );
+    if (!m) return null;
+    const tx = Number(m[1]);
+    const ty = Number(m[2]);
+    if (!Number.isFinite(tx) || !Number.isFinite(ty)) return null;
+    return { tx, ty };
+  }
+
   /**
    * Finds a Rest Point structure (`BED`, `EXPLORER_TENT`, `VILLAGE_HOUSE`) by its `structureId`.
    */
   public getRestPointById(structureId: string): PlacedStructure | null {
+    const coords = this.extractTileCoordsFromStructureId(structureId);
+    if (coords) {
+      const { cx, cy } = this.world.tileToChunk(coords.tx, coords.ty);
+      const fastChunk = this.world.chunks[WorldManager.chunkKey(cx, cy)];
+      if (fastChunk) {
+        const fastFound = fastChunk.structures.find(
+          (s) => s.id === structureId && this.isRestPointStructure(s)
+        );
+        if (fastFound) return fastFound;
+      }
+    }
     for (const chunk of Object.values(this.world.chunks)) {
       if (!chunk) continue;
       const found = chunk.structures.find(
@@ -2499,10 +2553,15 @@ export class GameEngine {
       for (let cx = minCx; cx <= maxCx; cx++) {
         const chunk = this.world.chunks[WorldManager.chunkKey(cx, cy)];
         if (!chunk) continue;
+        let modified = false;
         for (const st of chunk.structures) {
           if (building.footprintSet.has(`${st.tileX},${st.tileY}`)) {
             st.villageId = villageId;
+            modified = true;
           }
+        }
+        if (modified) {
+          this.world.markChunkDirty(chunk);
         }
       }
     }
@@ -2513,6 +2572,17 @@ export class GameEngine {
   // =========================================================================
 
   public getVillageWellById(wellId: string): PlacedStructure | null {
+    const coords = this.extractTileCoordsFromStructureId(wellId);
+    if (coords) {
+      const { cx, cy } = this.world.tileToChunk(coords.tx, coords.ty);
+      const fastChunk = this.world.chunks[WorldManager.chunkKey(cx, cy)];
+      if (fastChunk) {
+        const fastFound = fastChunk.structures.find(
+          (s) => s.id === wellId && s.type === PlaceableType.VILLAGE_WELL
+        );
+        if (fastFound) return this.ensureVillageWellInitialized(fastFound);
+      }
+    }
     for (const chunk of Object.values(this.world.chunks)) {
       if (!chunk) continue;
       const found = chunk.structures.find(
@@ -5365,16 +5435,8 @@ export class GameEngine {
     }
 
     if (cr.homeHouseId) {
-      let validAssignedHouse = false;
-      for (const chunk of Object.values(this.world.chunks)) {
-        if (!chunk) continue;
-        const found = chunk.structures.find((s) => s.id === cr.homeHouseId);
-        if (found && this.canNpcOccupyHouse(found)) {
-          validAssignedHouse = true;
-          break;
-        }
-      }
-      if (!validAssignedHouse) {
+      const assignedHouse = this.getRestPointById(cr.homeHouseId);
+      if (!assignedHouse || !this.canNpcOccupyHouse(assignedHouse)) {
         cr.homeHouseId = undefined;
         cr.homeX = undefined;
         cr.homeY = undefined;
@@ -11761,6 +11823,8 @@ export class GameEngine {
     }
 
     chunk.structures.splice(targetIdx, 1);
+    this.world.markChunkDirty(chunk);
+    this.world.syncChunkAgricultureIndex(chunk);
 
     // If a wall was dismantled and still had an attached torch on the same tile, refund/drop that torch too
     if (WorldManager.isWallMountableStructure(st.type)) {
@@ -12047,6 +12111,11 @@ export class GameEngine {
     const { cx, cy } = this.world.tileToChunk(tx, ty);
     const key = WorldManager.chunkKey(cx, cy);
     this.lastLocalChunkEditAt.set(key, Date.now());
+    const chunk = this.world.chunks[key];
+    if (chunk) {
+      this.world.markChunkDirty(chunk);
+      this.world.syncChunkAgricultureIndex(chunk);
+    }
   }
 
   private mergeFlowerColorCountsIntoSlot(
@@ -15026,6 +15095,7 @@ export class GameEngine {
                 (st.cookingInputCount || 0) > 0
               ) {
                 if (this.tickSingleThermalStation(st, dt)) {
+                  this.world.markChunkDirty(chunk);
                   anyChanged = true;
                 }
               }
@@ -18405,10 +18475,14 @@ export class GameEngine {
   }
 
   public syncChunkAtTile(tx: number, ty: number): void {
-    if (!this.multiplayer.isOnline || this.isApplyingNetworkEvent) return;
     const { cx, cy } = this.world.tileToChunk(tx, ty);
     const key = WorldManager.chunkKey(cx, cy);
     const chunk = this.world.chunks[key];
+    if (chunk) {
+      this.world.markChunkDirty(chunk);
+      this.world.syncChunkAgricultureIndex(chunk);
+    }
+    if (!this.multiplayer.isOnline || this.isApplyingNetworkEvent) return;
     if (chunk) {
       this.multiplayer.sendChunkSync(key, chunk);
     }
@@ -18582,7 +18656,49 @@ export class GameEngine {
     };
   }
 
-  public async saveGame(isAuto = false): Promise<void> {
+  private activeSavePromise: Promise<void> | null = null;
+  private queuedSaveRequest: { isAuto: boolean; forceExitSave: boolean } | null =
+    null;
+
+  public async saveGame(isAuto = false, forceExitSave = false): Promise<void> {
+    if (this.activeSavePromise) {
+      this.queuedSaveRequest = {
+        isAuto: this.queuedSaveRequest
+          ? this.queuedSaveRequest.isAuto && isAuto
+          : isAuto,
+        forceExitSave:
+          Boolean(this.queuedSaveRequest?.forceExitSave) || forceExitSave,
+      };
+      await this.activeSavePromise;
+      if (this.queuedSaveRequest) {
+        const nextReq = this.queuedSaveRequest;
+        this.queuedSaveRequest = null;
+        await this.saveGame(nextReq.isAuto, nextReq.forceExitSave);
+      }
+      return;
+    }
+
+    this.activeSavePromise = this.executeSaveGameInternal(
+      isAuto,
+      forceExitSave
+    );
+    try {
+      await this.activeSavePromise;
+    } finally {
+      this.activeSavePromise = null;
+    }
+
+    if (this.queuedSaveRequest) {
+      const nextReq = this.queuedSaveRequest;
+      this.queuedSaveRequest = null;
+      await this.saveGame(nextReq.isAuto, nextReq.forceExitSave);
+    }
+  }
+
+  private async executeSaveGameInternal(
+    isAuto = false,
+    forceExitSave = false
+  ): Promise<void> {
     this.syncPlayerMountedCreatureData();
     const now = Date.now();
     this.player.savedAt = now;
@@ -18594,7 +18710,7 @@ export class GameEngine {
           `wildborn_guest_player_${this.metadata.id}`,
           JSON.stringify(this.player)
         );
-        if (isConnHealthy && this.multiplayer.isOnline) {
+        if ((isConnHealthy || forceExitSave) && this.multiplayer.isOnline) {
           this.multiplayer.sendGuestProfileSave(this.player);
           this.lastAutoSaveAt = now;
           this.lastAutoSavePlayerSnapshot = JSON.parse(
@@ -18611,16 +18727,31 @@ export class GameEngine {
       return;
     }
 
+    // Periodically prune unvisited/unexplored border chunks far from active players so RAM stays bounded over multi-hour marathons
+    const activePositions: { x: number; y: number }[] = [
+      { x: this.player.x, y: this.player.y },
+    ];
+    for (const rp of this.multiplayer.remotePlayers.values()) {
+      activePositions.push({ x: rp.x, y: rp.y });
+    }
+    this.world.pruneUnexploredDistantChunks(activePositions, 6);
+
     const data = this.buildSaveData();
-    const okLocal = SaveManager.saveWorldLocal(data);
-    if (okLocal && isConnHealthy) {
+    const okLocal = await SaveManager.saveWorldGuaranteed(data);
+    if (
+      okLocal &&
+      (isConnHealthy || this.isAuthoritativeLocalWorld() || forceExitSave)
+    ) {
       this.lastAutoSaveAt = now;
       this.lastAutoSavePlayerSnapshot = JSON.parse(JSON.stringify(this.player));
       this.lastAutoSaveWorldSnapshot = data;
     }
 
-    if (this.settings.serverSyncEnabled && isConnHealthy) {
-      const serverRes = await SaveManager.syncWorldToServer(data, this.settings);
+    if (this.settings.serverSyncEnabled && (isConnHealthy || forceExitSave)) {
+      const serverRes = await SaveManager.syncWorldToServer(
+        data,
+        this.settings
+      );
       this.lastSaveStatus = serverRes.ok
         ? isAuto
           ? 'Auto-salvo (v2)'
@@ -18641,11 +18772,37 @@ export class GameEngine {
   }
 
   /**
+   * Freezes the game loop immediately and performs a guaranteed, authoritative save to
+   * In-Memory Cache, IndexedDB, localStorage, and Server before exiting to the main menu.
+   */
+  public async saveAndPrepareForExit(): Promise<WorldSaveData> {
+    this.isSavingOrExiting = true;
+    if (this.rafId !== null) {
+      cancelAnimationFrame(this.rafId);
+      this.rafId = null;
+    }
+    this.player.vx = 0;
+    this.player.vy = 0;
+    this.player.isMoving = false;
+    this.hudAttackButtonHeld = false;
+    this.input.actionHeld = false;
+    this.input.actionPressed = false;
+
+    await this.saveGame(false, true);
+    return this.buildSaveData();
+  }
+
+  /**
    * Used when the player chooses to exit during a prolonged internet connection failure:
    * restores the last periodic auto-save snapshot so any unconfirmed actions since the connection
    * dropped are cleanly discarded and the last confirmed auto-save is preserved on disk.
    */
   public async revertToLastAutoSaveAndPrepareExit(): Promise<void> {
+    this.isSavingOrExiting = true;
+    if (this.rafId !== null) {
+      cancelAnimationFrame(this.rafId);
+      this.rafId = null;
+    }
     if (this.isGuestWorldSession || this.multiplayer.role === 'GUEST') {
       if (this.lastAutoSavePlayerSnapshot) {
         this.player = JSON.parse(
@@ -18664,9 +18821,9 @@ export class GameEngine {
     }
 
     if (this.lastAutoSaveWorldSnapshot) {
-      SaveManager.saveWorldLocal(this.lastAutoSaveWorldSnapshot);
+      await SaveManager.saveWorldGuaranteed(this.lastAutoSaveWorldSnapshot);
     } else {
-      await this.saveGame(false);
+      await this.saveGame(false, true);
     }
   }
 

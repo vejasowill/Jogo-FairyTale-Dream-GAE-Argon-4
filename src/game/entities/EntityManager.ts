@@ -1242,6 +1242,7 @@ export class EntityManager {
         if (!chunk.explored.some((e) => e === 1)) continue;
 
         chunk.mobsPopulated = true;
+        chunk.dirtyRev = (chunk.dirtyRev || 0) + 1;
         this.spawnChunkLandmarkMobs(world, chunk);
       }
     }
@@ -1832,6 +1833,7 @@ export class EntityManager {
   ): void {
     if (!chunk || chunk.islandMobsPopulated) return;
     chunk.islandMobsPopulated = true;
+    chunk.dirtyRev = (chunk.dirtyRev || 0) + 1;
 
     const islandTiles: { tx: number; ty: number; zone: EcologicalZone }[] = [];
     for (let ly = 0; ly < CHUNK_SIZE; ly++) {

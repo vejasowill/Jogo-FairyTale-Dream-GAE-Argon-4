@@ -93,6 +93,10 @@ export const WorldSelectScreen: React.FC<WorldSelectScreenProps> = ({
     const localList = SaveManager.listWorlds();
     setWorlds(localList);
 
+    SaveManager.hydrateFromIndexedDB().then((hydrated) => {
+      setWorlds(hydrated);
+    });
+
     SaveManager.fetchWorldsFromServer(settings).then((merged) => {
       setWorlds(merged);
     });
@@ -112,13 +116,16 @@ export const WorldSelectScreen: React.FC<WorldSelectScreenProps> = ({
     onStartWorld(newSave);
   };
 
-  const handleLoadWorld = (id: string) => {
+  const handleLoadWorld = async (id: string) => {
     if (isTransitioningWorld || isJoiningOnline) return;
-    const loaded = SaveManager.loadWorldLocal(id);
+    setIsTransitioningWorld(true);
+    const loaded =
+      (await SaveManager.loadWorldGuaranteed(id)) ||
+      SaveManager.loadWorldLocal(id);
     if (loaded) {
-      setIsTransitioningWorld(true);
       onStartWorld(loaded);
     } else {
+      setIsTransitioningWorld(false);
       setStatusMessage('Não foi possível carregar este mundo.');
     }
   };
@@ -171,11 +178,13 @@ export const WorldSelectScreen: React.FC<WorldSelectScreenProps> = ({
     onJoinOnlineWorld(res.worldSave, res.manager);
   };
 
-  const handleSaveEdit = (e: React.FormEvent) => {
+  const handleSaveEdit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!editingWorld) return;
     SaveManager.updateWorldMetadata(editingWorld.id, worldName, difficulty);
-    const updated = SaveManager.loadWorldLocal(editingWorld.id);
+    const updated =
+      (await SaveManager.loadWorldGuaranteed(editingWorld.id)) ||
+      SaveManager.loadWorldLocal(editingWorld.id);
     if (updated && settings.serverSyncEnabled) {
       SaveManager.syncWorldToServer(updated, settings);
     }
@@ -191,8 +200,10 @@ export const WorldSelectScreen: React.FC<WorldSelectScreenProps> = ({
     setStatusMessage('Mundo excluído permanentemente.');
   };
 
-  const handleExportWorld = (id: string) => {
-    const data = SaveManager.loadWorldLocal(id);
+  const handleExportWorld = async (id: string) => {
+    const data =
+      (await SaveManager.loadWorldGuaranteed(id)) ||
+      SaveManager.loadWorldLocal(id);
     if (data) {
       SaveManager.downloadWorldFile(data);
       setStatusMessage('Arquivo (.wildborn.json) baixado com sucesso.');

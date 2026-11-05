@@ -434,8 +434,12 @@ export default function App() {
     return () => {
       window.clearTimeout(readyTimer);
       window.removeEventListener('resize', resizeCanvas);
-      if (!engine.multiplayer.isConnectionUnstable()) {
-        void engine.saveGame(true);
+      if (
+        !engine.isSavingOrExiting &&
+        (engine.isAuthoritativeLocalWorld() ||
+          !engine.multiplayer.isConnectionUnstable())
+      ) {
+        void engine.saveGame(true, true);
       }
       engine.destroy();
       engineRef.current = null;
@@ -509,8 +513,8 @@ export default function App() {
         engineRef.current.closeChest(activeChestId);
       }
       if (engineRef.current) {
-        // Save FIRST before disconnecting so Guest / Host roles and online states are intact!
-        await engineRef.current.saveGame(false);
+        // Freeze game loop and commit guaranteed save FIRST before disconnecting so Guest / Host roles and online states are intact!
+        await engineRef.current.saveAndPrepareForExit();
         setTransitionState((prev) =>
           prev
             ? {

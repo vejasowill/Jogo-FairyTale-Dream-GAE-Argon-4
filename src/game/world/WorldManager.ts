@@ -60,6 +60,49 @@ const COMPACT_ZONE_LIST: EcologicalZone[] = [
   EcologicalZone.DEEP_OCEAN,
 ];
 
+const COMPACT_NODE_TYPE_LIST: NatureNodeType[] = [
+  NatureNodeType.OAK_TREE,
+  NatureNodeType.BERRY_BUSH,
+  NatureNodeType.SAND_DUNE,
+  NatureNodeType.BOULDER,
+  NatureNodeType.CACTUS,
+  NatureNodeType.PALM_TREE,
+  NatureNodeType.IRON_OUTCROP,
+  NatureNodeType.HARDWOOD_TREE,
+  NatureNodeType.DESERT_CRYSTAL,
+  NatureNodeType.SUNSTONE_OBELISK,
+  NatureNodeType.PEARL_CLAM,
+  NatureNodeType.ANCIENT_WORLD_TREE,
+  NatureNodeType.TEMPERATE_TREE,
+  NatureNodeType.PINE_TREE,
+  NatureNodeType.SHORT_GRASS,
+  NatureNodeType.TALL_GRASS,
+  NatureNodeType.FLOWER_TULIP,
+  NatureNodeType.FLOWER_LILY,
+  NatureNodeType.FLOWER_SUNFLOWER,
+  NatureNodeType.FLOWER_SOLAR_DROP,
+];
+
+const COMPACT_FLOWER_COLOR_LIST: ClothingColorId[] = [
+  'preto',
+  'cinza',
+  'cinza_claro',
+  'branco',
+  'vermelho',
+  'laranja',
+  'amarelo',
+  'bege',
+  'verde_lima',
+  'verde',
+  'ciano',
+  'azul_claro',
+  'azul',
+  'roxo',
+  'magenta',
+  'rosa',
+  'marrom',
+];
+
 function hash2D(x: number, y: number, seed: number): number {
   let n = Math.imul(x, 374761393) + Math.imul(y, 668265263) + Math.imul(seed, 1442695041);
   n = (n ^ (n >>> 13)) * 1274126177;
@@ -169,6 +212,76 @@ export class WorldManager {
    */
   public legacyChunkGenVersion: number;
   public chunks: Record<string, ChunkData> = {};
+  public activeAgricultureChunkKeys = new Set<string>();
+
+  public markChunkDirty(chunk: ChunkData | undefined | null): void {
+    if (!chunk) return;
+    chunk.dirtyRev = (chunk.dirtyRev || 0) + 1;
+  }
+
+  public markTileChunkDirty(tx: number, ty: number): void {
+    const { cx, cy } = this.tileToChunk(tx, ty);
+    const chunk = this.chunks[WorldManager.chunkKey(cx, cy)];
+    if (chunk) {
+      chunk.dirtyRev = (chunk.dirtyRev || 0) + 1;
+    }
+  }
+
+  public syncChunkAgricultureIndex(chunk: ChunkData | undefined | null): void {
+    if (!chunk) return;
+    const key = WorldManager.chunkKey(chunk.cx, chunk.cy);
+    const hasAgri =
+      Array.isArray(chunk.structures) &&
+      chunk.structures.some(
+        (s) =>
+          s &&
+          (s.type === PlaceableType.TILLED_SOIL ||
+            WorldManager.isSaplingStructure(s.type))
+      );
+    if (hasAgri) {
+      this.activeAgricultureChunkKeys.add(key);
+    } else {
+      this.activeAgricultureChunkKeys.delete(key);
+    }
+  }
+
+  /**
+   * Removes completely unexplored and unmodified border chunks (created by AI/collision queries)
+   * that are far from all active players so RAM never leaks during multi-hour exploration.
+   */
+  public pruneUnexploredDistantChunks(
+    activePositions: Array<{ x: number; y: number }>,
+    minRadiusChunks = 5
+  ): number {
+    let pruned = 0;
+    const anchors =
+      activePositions.length > 0 ? activePositions : [{ x: 0, y: 0 }];
+    const anchorChunks = anchors.map((p) => ({
+      cx: Math.floor(p.x / (TILE_SIZE * CHUNK_SIZE)),
+      cy: Math.floor(p.y / (TILE_SIZE * CHUNK_SIZE)),
+    }));
+
+    for (const [key, chunk] of Object.entries(this.chunks)) {
+      if (!chunk) {
+        delete this.chunks[key];
+        continue;
+      }
+      if (WorldManager.isChunkExploredOrModified(chunk)) {
+        continue;
+      }
+      const isNearAnyPlayer = anchorChunks.some(
+        (ac) =>
+          Math.abs(chunk.cx - ac.cx) <= minRadiusChunks &&
+          Math.abs(chunk.cy - ac.cy) <= minRadiusChunks
+      );
+      if (!isNearAnyPlayer) {
+        this.activeAgricultureChunkKeys.delete(key);
+        delete this.chunks[key];
+        pruned++;
+      }
+    }
+    return pruned;
+  }
 
   constructor(
     seed: number,
@@ -391,6 +504,141 @@ export class WorldManager {
   }
 
   /**
+   * Encodes `NatureNode[]` into an ultra-compact semicolon-delimited string (~6 bytes per node instead of ~65 bytes)
+   * so large explored worlds with thousands of grass/tree/flower nodes never exceed localStorage's 5MB quota.
+   */
+  public static encodeCompactNodes(
+    nodes: NatureNode[] | undefined,
+    cx: number,
+    cy: number
+  ): string | undefined {
+    if (!Array.isArray(nodes) || nodes.length === 0) return '';
+    const baseTx = cx * CHUNK_SIZE;
+    const baseTy = cy * CHUNK_SIZE;
+    const parts: string[] = [];
+    for (let i = 0; i < nodes.length; i++) {
+      const n = nodes[i];
+      if (!n) continue;
+      const typeIdx = COMPACT_NODE_TYPE_LIST.indexOf(n.type);
+      const typeCode =
+        typeIdx >= 0 ? typeIdx.toString(36).toUpperCase() : String(n.type);
+      const lx = n.tileX - baseTx;
+      const ly = n.tileY - baseTy;
+      const posCode =
+        lx >= 0 && lx < CHUNK_SIZE && ly >= 0 && ly < CHUNK_SIZE
+          ? (ly * CHUNK_SIZE + lx).toString(16).toUpperCase().padStart(2, '0')
+          : `${n.tileX},${n.tileY}`;
+      const varCode = typeof n.variant === 'number' ? String(n.variant & 3) : '0';
+      const hasDamagedHp =
+        typeof n.hp === 'number' &&
+        typeof n.maxHp === 'number' &&
+        n.hp < n.maxHp;
+      const hpCode = hasDamagedHp ? String(Math.max(1, Math.round(n.hp))) : '';
+      let colorCode = '';
+      if (n.flowerColor) {
+        const cIdx = COMPACT_FLOWER_COLOR_LIST.indexOf(n.flowerColor);
+        colorCode = cIdx >= 0 ? cIdx.toString(36).toUpperCase() : n.flowerColor;
+      }
+      if (colorCode) {
+        parts.push(`${typeCode}:${posCode}:${varCode}:${hpCode}:${colorCode}`);
+      } else if (hpCode) {
+        parts.push(`${typeCode}:${posCode}:${varCode}:${hpCode}`);
+      } else {
+        parts.push(`${typeCode}:${posCode}:${varCode}`);
+      }
+    }
+    return parts.join(';');
+  }
+
+  public static decodeCompactNodes(
+    compact: string | undefined,
+    cx: number,
+    cy: number
+  ): NatureNode[] | null {
+    if (typeof compact !== 'string') return null;
+    if (compact.length === 0) return [];
+    const baseTx = cx * CHUNK_SIZE;
+    const baseTy = cy * CHUNK_SIZE;
+    const tokens = compact.split(';');
+    const out: NatureNode[] = [];
+    for (let i = 0; i < tokens.length; i++) {
+      const tok = tokens[i];
+      if (!tok) continue;
+      const fields = tok.split(':');
+      if (fields.length < 2) continue;
+      const [typeField, posField, varField, hpField, colorField] = fields;
+      let nodeType: NatureNodeType = NatureNodeType.OAK_TREE;
+      if (typeField.length === 1) {
+        const tIdx = parseInt(typeField, 36);
+        if (
+          !Number.isNaN(tIdx) &&
+          tIdx >= 0 &&
+          tIdx < COMPACT_NODE_TYPE_LIST.length
+        ) {
+          nodeType = COMPACT_NODE_TYPE_LIST[tIdx];
+        }
+      } else {
+        nodeType = typeField as NatureNodeType;
+      }
+
+      let tileX = baseTx;
+      let tileY = baseTy;
+      if (posField.includes(',')) {
+        const [txStr, tyStr] = posField.split(',');
+        tileX = parseInt(txStr, 10) || baseTx;
+        tileY = parseInt(tyStr, 10) || baseTy;
+      } else {
+        const flat = parseInt(posField, 16);
+        if (!Number.isNaN(flat) && flat >= 0 && flat < CHUNK_SIZE * CHUNK_SIZE) {
+          tileX = baseTx + (flat % CHUNK_SIZE);
+          tileY = baseTy + Math.floor(flat / CHUNK_SIZE);
+        }
+      }
+
+      const variant = varField ? parseInt(varField, 10) || 0 : 0;
+      const bp = NATURE_BLUEPRINTS[nodeType];
+      const maxHp = bp ? bp.maxHp : 40;
+      const hp =
+        hpField && hpField.length > 0
+          ? Math.min(maxHp, Math.max(1, parseInt(hpField, 10) || maxHp))
+          : maxHp;
+
+      let flowerColor: ClothingColorId | undefined;
+      if (colorField && colorField.length > 0) {
+        if (colorField.length === 1) {
+          const cIdx = parseInt(colorField, 36);
+          if (
+            !Number.isNaN(cIdx) &&
+            cIdx >= 0 &&
+            cIdx < COMPACT_FLOWER_COLOR_LIST.length
+          ) {
+            flowerColor = COMPACT_FLOWER_COLOR_LIST[cIdx];
+          }
+        } else {
+          flowerColor = colorField as ClothingColorId;
+        }
+      }
+
+      out.push({
+        id: `node_${tileX}_${tileY}`,
+        type: nodeType,
+        tileX,
+        tileY,
+        hp,
+        maxHp,
+        variant,
+        rarity: bp ? bp.rarity : ('basic' as any),
+        requiredTool: bp ? bp.requiredTool : ('axe' as any),
+        requiredTier: bp ? bp.requiredTier : 1,
+        hitFlashTimer: 0,
+        animOffset: 0,
+        ...(flowerColor ? { flowerColor } : {}),
+      });
+    }
+    return out;
+  }
+
+  /**
    * Freezes and locks a chunk's terrain arrays into compact strings so future world generation
    * updates NEVER alter already-explored chunks.
    */
@@ -544,6 +792,23 @@ export class WorldManager {
       chunk.explored = full;
     }
 
+    // Restore compactNodes if chunk.nodes is empty and compactNodes is present
+    if (
+      (!Array.isArray(chunk.nodes) || chunk.nodes.length === 0) &&
+      typeof chunk.compactNodes === 'string'
+    ) {
+      const decodedNodes = WorldManager.decodeCompactNodes(
+        chunk.compactNodes,
+        chunk.cx,
+        chunk.cy
+      );
+      if (decodedNodes) {
+        chunk.nodes = decodedNodes;
+      }
+      // Clear compactNodes on the live hydrated chunk so in-game node harvesting/chopping is always authoritative
+      delete chunk.compactNodes;
+    }
+
     // Restore static blueprint properties on NatureNodes WITHOUT deleting or altering existing nodes!
     if (Array.isArray(chunk.nodes)) {
       for (let i = 0; i < chunk.nodes.length; i++) {
@@ -596,6 +861,11 @@ export class WorldManager {
       );
     }
 
+    if (!chunk.dirtyRev) {
+      chunk.dirtyRev = 1;
+    }
+    this.syncChunkAgricultureIndex(chunk);
+
     return chunk;
   }
 
@@ -632,7 +902,9 @@ export class WorldManager {
       generated.compactVariants = WorldManager.encodeCompactVariants(
         generated.tileVariants
       );
+      generated.dirtyRev = 1;
       this.chunks[key] = generated;
+      this.syncChunkAgricultureIndex(generated);
     } else if (
       !Array.isArray(this.chunks[key].tiles) ||
       this.chunks[key].tiles.length !== CHUNK_SIZE * CHUNK_SIZE
@@ -3656,6 +3928,7 @@ export class WorldManager {
     }
     // Lock terrain snapshot and update compactExplored bitmask on all newly revealed chunks
     for (const chunk of touchedChunks) {
+      chunk.dirtyRev = (chunk.dirtyRev || 0) + 1;
       if (!chunk.preserved) {
         WorldManager.lockChunkTerrainSnapshot(
           chunk,
@@ -4920,6 +5193,8 @@ export class WorldManager {
         chunk.generatedGameVersion ?? GAME_VERSION
       );
     }
+    chunk.dirtyRev = (chunk.dirtyRev || 0) + 1;
+    this.syncChunkAgricultureIndex(chunk);
 
     return { placed: true, replacedItemId, attachedToWall: isMountingTorchOnWall };
   }
@@ -4949,7 +5224,13 @@ export class WorldManager {
   public getExploredChunksCount(): number {
     let count = 0;
     for (const chunk of Object.values(this.chunks)) {
-      if (chunk.explored.some((v) => v === 1)) {
+      if (!chunk) continue;
+      if (
+        (Array.isArray(chunk.explored) && chunk.explored.some((v) => v > 0)) ||
+        (typeof chunk.compactExplored === 'string' &&
+          chunk.compactExplored.length > 0 &&
+          !/^0+$/.test(chunk.compactExplored))
+      ) {
         count++;
       }
     }
@@ -5062,6 +5343,15 @@ export class WorldManager {
     };
 
     chunk.structures.push(structure);
+    if (!chunk.preserved) {
+      WorldManager.lockChunkTerrainSnapshot(
+        chunk,
+        chunk.genVersion ?? this.worldGenVersion,
+        chunk.generatedGameVersion ?? GAME_VERSION
+      );
+    }
+    chunk.dirtyRev = (chunk.dirtyRev || 0) + 1;
+    this.activeAgricultureChunkKeys.add(WorldManager.chunkKey(cx, cy));
     return structure;
   }
 
@@ -5145,6 +5435,7 @@ export class WorldManager {
         chunk.generatedGameVersion ?? GAME_VERSION
       );
     }
+    chunk.dirtyRev = (chunk.dirtyRev || 0) + 1;
     return structure;
   }
 
@@ -5333,6 +5624,7 @@ export class WorldManager {
             chunk.generatedGameVersion ?? GAME_VERSION
           );
         }
+        chunk.dirtyRev = (chunk.dirtyRev || 0) + 1;
         spawnedNodes.push(node);
         modifiedChunkKeys.add(`${cx},${cy}`);
       }
@@ -5380,17 +5672,29 @@ export class WorldManager {
         chunk.generatedGameVersion ?? GAME_VERSION
       );
     }
+    chunk.dirtyRev = (chunk.dirtyRev || 0) + 1;
+    this.syncChunkAgricultureIndex(chunk);
     return true;
   }
 
   /**
    * Updates agriculture state (moisture evaporation, crop growth, and tree sapling 3-stage growth).
-   * Called during each tick for active chunks.
+   * Iterates ONLY over `activeAgricultureChunkKeys` so marathon exploration (3,000+ chunks) has O(1) cost.
    */
   public updateAgriculture(dt: number, isRaining = false): void {
+    if (this.activeAgricultureChunkKeys.size === 0) return;
     const stageDuration = 22; // ~22s per stage watered, or ~11s with fertilizer
 
-    for (const chunk of Object.values(this.chunks)) {
+    for (const chunkKey of Array.from(this.activeAgricultureChunkKeys)) {
+      const chunk = this.chunks[chunkKey];
+      if (!chunk || !Array.isArray(chunk.structures)) {
+        this.activeAgricultureChunkKeys.delete(chunkKey);
+        continue;
+      }
+
+      let hasAnyAgriInChunk = false;
+      let chunkModified = false;
+
       for (let i = chunk.structures.length - 1; i >= 0; i--) {
         const st = chunk.structures[i];
         if (!st) continue;
@@ -5400,12 +5704,14 @@ export class WorldManager {
         // Oak Sapling total = 180s (3 minutes -> 90s per stage transition)
         // Palm Sapling total = 300s (5 minutes -> 150s per stage transition)
         if (WorldManager.isSaplingStructure(st.type)) {
+          hasAnyAgriInChunk = true;
           const saplingStageDuration =
             st.type === PlaceableType.PALM_SAPLING ? 150 : 90;
           const fertBoost = st.fertilized ? 2.0 : 1.0;
           const progressSpeed = (1 / saplingStageDuration) * fertBoost;
           st.growthStage = st.growthStage ?? 0;
           st.growthProgress = (st.growthProgress || 0) + dt * progressSpeed;
+          chunkModified = true;
 
           if (st.growthProgress >= 1) {
             st.growthProgress = 0;
@@ -5418,17 +5724,22 @@ export class WorldManager {
         }
 
         if (st.type !== PlaceableType.TILLED_SOIL) continue;
+        hasAnyAgriInChunk = true;
 
         // 1. Water & Hydration logic
         const nearWater = this.isTileNearWater(st.tileX, st.tileY, 3);
         if (isRaining || nearWater) {
-          st.isWatered = true;
-          st.waterLevel = 100;
+          if (!st.isWatered || st.waterLevel !== 100) {
+            st.isWatered = true;
+            st.waterLevel = 100;
+            chunkModified = true;
+          }
         } else if (st.waterLevel !== undefined && st.waterLevel > 0) {
           st.waterLevel = Math.max(0, st.waterLevel - dt * 2.2);
           if (st.waterLevel <= 0) {
             st.isWatered = false;
           }
+          chunkModified = true;
         }
 
         // 2. Crop Growth logic
@@ -5437,6 +5748,7 @@ export class WorldManager {
             const fertBoost = st.fertilized ? 2.0 : 1.0;
             const progressSpeed = (1 / stageDuration) * fertBoost;
             st.growthProgress = (st.growthProgress || 0) + dt * progressSpeed;
+            chunkModified = true;
 
             if (st.growthProgress >= 1) {
               st.growthProgress = 0;
@@ -5444,6 +5756,13 @@ export class WorldManager {
             }
           }
         }
+      }
+
+      if (chunkModified) {
+        chunk.dirtyRev = (chunk.dirtyRev || 0) + 1;
+      }
+      if (!hasAnyAgriInChunk) {
+        this.activeAgricultureChunkKeys.delete(chunkKey);
       }
     }
   }

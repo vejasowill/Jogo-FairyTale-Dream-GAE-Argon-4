@@ -384,6 +384,8 @@ export interface ChunkData {
   compactZones?: string; // 256-char compact encoding of ecologicalZones ('0'..'B')
   compactVariants?: string; // 256-char compact encoding of tileVariants ('0'..'3')
   compactExplored?: string; // 64-char hex bitmask encoding of the 256 explored flags (0/1)
+  compactNodes?: string; // Ultra-compact string encoding of NatureNode[] to prevent localStorage 5MB quota overflow
+  dirtyRev?: number; // Monotonic revision counter incremented whenever chunk exploration, nodes, or structures change
 }
 
 export enum CreatureKind {
@@ -880,7 +882,7 @@ export interface OnlineActivationStep {
 }
 
 // REGRA PERMANENTE: A cada nova atualização do jogo, incremente a versão para o número seguinte da beta (ex: 0.4.4-beta -> 0.4.5-beta).
-export const GAME_VERSION = '0.7.2-beta';
+export const GAME_VERSION = '0.7.4-beta';
 export const CURRENT_WORLD_GEN_VERSION = 5;
 
 export interface OnlineSessionInfo {

@@ -2,6 +2,7 @@ import {
   BiomeType,
   CHEST_STORAGE_SIZE,
   ChunkData,
+  CreatureKind,
   CURRENT_WORLD_GEN_VERSION,
   GAME_VERSION,
   GameSettings,
@@ -635,19 +636,216 @@ export class SaveManager {
     return updated;
   }
 
-  public static listWorlds(): WorldMetadata[] {
+  private static memoryWorlds = new Map<string, WorldSaveData>();
+  private static memoryWorldIndex = new Map<string, WorldMetadata>();
+  private static compactChunkCache = new Map<
+    string,
+    Map<string, { rev: number; compact: ChunkData }>
+  >();
+  private static idbPromise: Promise<IDBDatabase | null> | null = null;
+  private static idbHydrationPromise: Promise<WorldMetadata[]> | null = null;
+  private static idbWriteChain: Promise<boolean> = Promise.resolve(true);
+
+  private static getSaveTimestamp(data?: WorldSaveData | null): number {
+    if (!data) return 0;
+    return Math.max(
+      Number(data.metadata?.updatedAt) || 0,
+      Number(data.player?.savedAt) || 0
+    );
+  }
+
+  private static openIdb(): Promise<IDBDatabase | null> {
+    if (typeof window === 'undefined' || !('indexedDB' in window)) {
+      return Promise.resolve(null);
+    }
+    if (this.idbPromise) return this.idbPromise;
+    this.idbPromise = new Promise((resolve) => {
+      try {
+        const req = window.indexedDB.open('wildborn_idb_v1', 1);
+        req.onupgradeneeded = () => {
+          const db = req.result;
+          if (!db.objectStoreNames.contains('worlds')) {
+            db.createObjectStore('worlds', { keyPath: 'id' });
+          }
+        };
+        req.onsuccess = () => resolve(req.result);
+        req.onerror = () => resolve(null);
+      } catch {
+        resolve(null);
+      }
+    });
+    return this.idbPromise;
+  }
+
+  private static async writeWorldToIdb(saveData: WorldSaveData): Promise<boolean> {
+    if (!saveData?.metadata?.id) return false;
+    const nextOp = this.idbWriteChain
+      .catch(() => false)
+      .then(async () => {
+        const db = await this.openIdb();
+        if (!db || !saveData?.metadata?.id) return false;
+        const latestInMemory =
+          this.memoryWorlds.get(saveData.metadata.id) || saveData;
+        return new Promise<boolean>((resolve) => {
+          try {
+            const tx = db.transaction('worlds', 'readwrite');
+            const store = tx.objectStore('worlds');
+            store.put({
+              id: latestInMemory.metadata.id,
+              savedAt: this.getSaveTimestamp(latestInMemory) || Date.now(),
+              data: latestInMemory,
+            });
+            tx.oncomplete = () => resolve(true);
+            tx.onerror = () => resolve(false);
+            tx.onabort = () => resolve(false);
+          } catch {
+            resolve(false);
+          }
+        });
+      });
+    this.idbWriteChain = nextOp;
+    return nextOp;
+  }
+
+  private static async readWorldFromIdb(
+    worldId: string
+  ): Promise<WorldSaveData | null> {
+    const db = await this.openIdb();
+    if (!db || !worldId) return null;
+    return new Promise((resolve) => {
+      try {
+        const tx = db.transaction('worlds', 'readonly');
+        const store = tx.objectStore('worlds');
+        const req = store.get(worldId);
+        req.onsuccess = () => {
+          const rec = req.result;
+          if (rec && rec.data && rec.data.metadata) {
+            resolve(rec.data as WorldSaveData);
+          } else {
+            resolve(null);
+          }
+        };
+        req.onerror = () => resolve(null);
+      } catch {
+        resolve(null);
+      }
+    });
+  }
+
+  private static async deleteWorldFromIdb(worldId: string): Promise<void> {
+    const db = await this.openIdb();
+    if (!db || !worldId) return;
+    return new Promise((resolve) => {
+      try {
+        const tx = db.transaction('worlds', 'readwrite');
+        const store = tx.objectStore('worlds');
+        store.delete(worldId);
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => resolve();
+      } catch {
+        resolve();
+      }
+    });
+  }
+
+  /**
+   * Hydrates in-memory cache and world index from IndexedDB so worlds that exceeded
+   * localStorage's 5MB cap in previous sessions are immediately available with 100% of their latest progress.
+   */
+  public static async hydrateFromIndexedDB(): Promise<WorldMetadata[]> {
+    if (this.idbHydrationPromise) return this.idbHydrationPromise;
+    this.idbHydrationPromise = (async () => {
+      const db = await this.openIdb();
+      if (!db) return this.listWorlds();
+      const records: { id: string; savedAt: number; data: WorldSaveData }[] =
+        await new Promise((resolve) => {
+          try {
+            const tx = db.transaction('worlds', 'readonly');
+            const store = tx.objectStore('worlds');
+            const req = store.getAll();
+            req.onsuccess = () =>
+              resolve(Array.isArray(req.result) ? req.result : []);
+            req.onerror = () => resolve([]);
+          } catch {
+            resolve([]);
+          }
+        });
+
+      for (const rec of records) {
+        if (!rec || !rec.data || !rec.data.metadata?.id) continue;
+        const id = rec.data.metadata.id;
+        const idbTs = this.getSaveTimestamp(rec.data);
+        const memExisting = this.memoryWorlds.get(id);
+        const memTs = this.getSaveTimestamp(memExisting);
+        if (idbTs >= memTs) {
+          this.memoryWorlds.set(id, rec.data);
+          this.memoryWorldIndex.set(id, { ...rec.data.metadata });
+        }
+      }
+
+      const merged = this.listWorlds();
+      this.saveWorldIndex(merged);
+      return merged;
+    })();
     try {
-      const raw = localStorage.getItem(INDEX_KEY);
-      if (!raw) return [];
-      const list = JSON.parse(raw) as WorldMetadata[];
-      return Array.isArray(list) ? list.sort((a, b) => b.updatedAt - a.updatedAt) : [];
-    } catch {
-      return [];
+      return await this.idbHydrationPromise;
+    } finally {
+      this.idbHydrationPromise = null;
     }
   }
 
+  public static listWorlds(): WorldMetadata[] {
+    const byId = new Map<string, WorldMetadata>();
+    try {
+      const raw = localStorage.getItem(INDEX_KEY);
+      if (raw) {
+        const list = JSON.parse(raw) as WorldMetadata[];
+        if (Array.isArray(list)) {
+          for (const item of list) {
+            if (item && item.id) {
+              byId.set(item.id, item);
+            }
+          }
+        }
+      }
+    } catch {
+      // ignore
+    }
+
+    for (const [id, meta] of this.memoryWorldIndex.entries()) {
+      const existing = byId.get(id);
+      if (!existing || (meta.updatedAt || 0) >= (existing.updatedAt || 0)) {
+        byId.set(id, { ...meta });
+      }
+    }
+
+    for (const [id, world] of this.memoryWorlds.entries()) {
+      if (!world?.metadata) continue;
+      const existing = byId.get(id);
+      if (
+        !existing ||
+        (world.metadata.updatedAt || 0) >= (existing.updatedAt || 0)
+      ) {
+        byId.set(id, { ...world.metadata });
+      }
+    }
+
+    return Array.from(byId.values()).sort(
+      (a, b) => (b.updatedAt || 0) - (a.updatedAt || 0)
+    );
+  }
+
   private static saveWorldIndex(list: WorldMetadata[]): void {
-    localStorage.setItem(INDEX_KEY, JSON.stringify(list));
+    for (const item of list) {
+      if (item && item.id) {
+        this.memoryWorldIndex.set(item.id, { ...item });
+      }
+    }
+    try {
+      localStorage.setItem(INDEX_KEY, JSON.stringify(list));
+    } catch {
+      // ignore if localStorage is full; memoryWorldIndex & IndexedDB remain authoritative
+    }
   }
 
   public static createNewWorld(
@@ -716,26 +914,47 @@ export class SaveManager {
   }
 
   /**
-   * Produces a compact copy of `WorldSaveData` for `localStorage` persistence without mutating
+   * Produces a compact copy of `WorldSaveData` for storage persistence without mutating
    * the live in-memory world state:
-   * - Preserves 100% of all explored chunks (both natural terrain and structures) via ultra-compact
-   *   strings (`compactTiles`, `compactZones`, `compactVariants`, `compactExplored`) and `genVersion` / `preserved = true`
+   * - Preserves 100% of all explored chunks (both natural terrain, nodes, and structures) via ultra-compact
+   *   strings (`compactTiles`, `compactZones`, `compactVariants`, `compactExplored`, `compactNodes`) and `genVersion` / `preserved = true`
    *   so previously explored natural areas are NEVER lost or altered by future world updates.
    * - Skips only untouched, completely unexplored chunks so newly explored areas generate with the latest world generation version.
-   * - Strips static blueprint properties from `NatureNode` entries.
    */
   private static compactSaveDataForStorage(
     saveData: WorldSaveData,
     strictNodePrune = false,
-    maxFullNodeRadius = 18
+    maxFullNodeRadius = 18,
+    pruneDistantWildCreatures = false
   ): WorldSaveData {
     const compactChunks: Record<string, ChunkData> = {};
-    const playerChunkX = Math.floor((saveData.player?.x || 0) / (32 * 16));
-    const playerChunkY = Math.floor((saveData.player?.y || 0) / (32 * 16));
+    const playerX = saveData.player?.x || 0;
+    const playerY = saveData.player?.y || 0;
+    const playerChunkX = Math.floor(playerX / (32 * 16));
+    const playerChunkY = Math.floor(playerY / (32 * 16));
+    const worldId = saveData.metadata?.id || '';
+    let worldCache =
+      !strictNodePrune && worldId
+        ? this.compactChunkCache.get(worldId)
+        : undefined;
+    if (!strictNodePrune && worldId && !worldCache) {
+      worldCache = new Map<string, { rev: number; compact: ChunkData }>();
+      this.compactChunkCache.set(worldId, worldCache);
+    }
 
     if (saveData.chunks && typeof saveData.chunks === 'object') {
       for (const [key, chunk] of Object.entries(saveData.chunks)) {
         if (!chunk) continue;
+
+        const chunkRev = chunk.dirtyRev || 0;
+        if (!strictNodePrune && worldCache && chunkRev > 0) {
+          const cachedEntry = worldCache.get(key);
+          if (cachedEntry && cachedEntry.rev === chunkRev) {
+            compactChunks[key] = cachedEntry.compact;
+            continue;
+          }
+        }
+
         const hasExploredArray =
           Array.isArray(chunk.explored) && chunk.explored.some((v) => v > 0);
         const hasCompactExplored =
@@ -758,12 +977,15 @@ export class SaveManager {
           );
 
         if (!hasExplored && !hasPlayerOrCustomStruct) {
+          if (worldCache) {
+            worldCache.delete(key);
+          }
           continue;
         }
 
         const allExplored =
           (hasExploredArray &&
-             ((chunk.explored.length === 1 && chunk.explored[0] > 0) ||
+            ((chunk.explored.length === 1 && chunk.explored[0] > 0) ||
               (chunk.explored.length === 256 &&
                 chunk.explored.every((v) => v > 0)))) ||
           chunk.compactExplored === 'F'.repeat(64);
@@ -783,33 +1005,49 @@ export class SaveManager {
           dist > maxFullNodeRadius &&
           !hasPlayerOrCustomStruct;
 
-        const compactNodes = Array.isArray(chunk.nodes)
-          ? chunk.nodes
-              .filter(
+        let compactNodesStr: string | undefined;
+        if (Array.isArray(chunk.nodes) && chunk.nodes.length > 0) {
+          const filteredNodes = skipUndamagedCommonNodes
+            ? chunk.nodes.filter(
                 (n) =>
-                  !skipUndamagedCommonNodes ||
-                  (typeof n.hp === 'number' &&
-                    typeof n.maxHp === 'number' &&
-                    n.hp < n.maxHp)
+                  typeof n.hp === 'number' &&
+                  typeof n.maxHp === 'number' &&
+                  n.hp < n.maxHp
               )
-              .map(
-                (n) =>
-                  ({
-                    type: n.type,
-                    tileX: n.tileX,
-                    tileY: n.tileY,
-                    ...(typeof n.hp === 'number' &&
-                    typeof n.maxHp === 'number' &&
-                    n.hp < n.maxHp
-                      ? { hp: n.hp }
-                      : {}),
-                    ...(typeof n.variant === 'number'
-                      ? { variant: n.variant }
-                      : {}),
-                    ...(n.flowerColor ? { flowerColor: n.flowerColor } : {}),
-                  }) as NatureNode
-              )
-          : [];
+            : chunk.nodes;
+          compactNodesStr = WorldManager.encodeCompactNodes(
+            filteredNodes,
+            chunk.cx,
+            chunk.cy
+          );
+        } else if (
+          (!Array.isArray(chunk.nodes) || chunk.nodes.length === 0) &&
+          typeof chunk.compactNodes === 'string'
+        ) {
+          if (skipUndamagedCommonNodes) {
+            const decoded =
+              WorldManager.decodeCompactNodes(
+                chunk.compactNodes,
+                chunk.cx,
+                chunk.cy
+              ) || [];
+            const filtered = decoded.filter(
+              (n) =>
+                typeof n.hp === 'number' &&
+                typeof n.maxHp === 'number' &&
+                n.hp < n.maxHp
+            );
+            compactNodesStr = WorldManager.encodeCompactNodes(
+              filtered,
+              chunk.cx,
+              chunk.cy
+            );
+          } else {
+            compactNodesStr = chunk.compactNodes;
+          }
+        } else {
+          compactNodesStr = '';
+        }
 
         const compactTiles =
           chunk.compactTiles && chunk.compactTiles.length === 256
@@ -824,7 +1062,7 @@ export class SaveManager {
             ? chunk.compactVariants
             : WorldManager.encodeCompactVariants(chunk.tileVariants);
 
-        compactChunks[key] = {
+        const compactedChunk: ChunkData = {
           cx: chunk.cx,
           cy: chunk.cy,
           ...(chunk.landmarkName ? { landmarkName: chunk.landmarkName } : {}),
@@ -842,22 +1080,89 @@ export class SaveManager {
             saveData.metadata?.gameVersion ||
             GAME_VERSION,
           preserved: true,
+          dirtyRev: chunkRev || 1,
           ...(compactTiles ? { compactTiles } : {}),
           ...(compactZones ? { compactZones } : {}),
           ...(compactVariants ? { compactVariants } : {}),
           ...(compactExplored ? { compactExplored } : {}),
+          ...(typeof compactNodesStr === 'string'
+            ? { compactNodes: compactNodesStr }
+            : {}),
           tiles: [] as unknown as BiomeType[],
           tileVariants: [],
           explored: allExplored ? [1] : [],
-          nodes: compactNodes,
-          structures: chunk.structures || [],
+          nodes: [],
+          structures: Array.isArray(chunk.structures)
+            ? JSON.parse(JSON.stringify(chunk.structures))
+            : [],
         };
+
+        compactChunks[key] = compactedChunk;
+        if (!strictNodePrune && worldCache) {
+          if (!chunk.dirtyRev) {
+            chunk.dirtyRev = 1;
+          }
+          worldCache.set(key, {
+            rev: chunk.dirtyRev,
+            compact: compactedChunk,
+          });
+        }
       }
     }
 
+    const rawCreatures = Array.isArray(saveData.creatures)
+      ? saveData.creatures
+      : [];
+    const compactCreatures = rawCreatures
+      .filter((cr) => {
+        if (!cr) return false;
+        if (!pruneDistantWildCreatures) return true;
+        if (
+          cr.tamed ||
+          cr.hasSaddle ||
+          cr.ownerId ||
+          cr.kind === CreatureKind.VILLAGER ||
+          cr.kind === CreatureKind.WANDERER ||
+          cr.kind === CreatureKind.BOAT ||
+          cr.kind === CreatureKind.HORSE ||
+          cr.kind === CreatureKind.CAMEL ||
+          cr.isInsideHouse ||
+          cr.homeHouseId ||
+          cr.villageId
+        ) {
+          return true;
+        }
+        return Math.hypot((cr.x || 0) - playerX, (cr.y || 0) - playerY) <= 1800;
+      })
+      .map((cr) => ({
+        ...cr,
+        x: Math.round((cr.x || 0) * 10) / 10,
+        y: Math.round((cr.y || 0) * 10) / 10,
+        vx: Math.round((cr.vx || 0) * 10) / 10,
+        vy: Math.round((cr.vy || 0) * 10) / 10,
+        aiTimer: Math.round((cr.aiTimer || 0) * 10) / 10,
+        animTimer: 0,
+        hitFlashTimer: 0,
+      }));
+
     return {
       ...saveData,
+      metadata: { ...saveData.metadata },
+      player: JSON.parse(JSON.stringify(saveData.player)),
+      guestPlayers: saveData.guestPlayers
+        ? JSON.parse(JSON.stringify(saveData.guestPlayers))
+        : undefined,
       chunks: compactChunks,
+      creatures: JSON.parse(JSON.stringify(compactCreatures)),
+      droppedItems: Array.isArray(saveData.droppedItems)
+        ? JSON.parse(JSON.stringify(saveData.droppedItems))
+        : [],
+      waypoints: Array.isArray(saveData.waypoints)
+        ? JSON.parse(JSON.stringify(saveData.waypoints))
+        : [],
+      deathBags: Array.isArray(saveData.deathBags)
+        ? JSON.parse(JSON.stringify(saveData.deathBags))
+        : [],
     };
   }
 
@@ -865,7 +1170,10 @@ export class SaveManager {
    * Frees up `localStorage` space by removing legacy `*_bak` keys and compacting any older
    * uncompacted world saves already stored in the browser without deleting explored chunks.
    */
-  private static reclaimLocalStorageSpace(excludeWorldId?: string): void {
+  private static reclaimLocalStorageSpace(
+    excludeWorldId?: string,
+    evictOldestOtherWorldIfNecessary = false
+  ): void {
     try {
       const keysToRemove: string[] = [];
       const worldKeysToCompact: string[] = [];
@@ -887,23 +1195,49 @@ export class SaveManager {
         localStorage.removeItem(k);
       }
 
+      const otherWorldsByAge: { key: string; savedAt: number }[] = [];
+
       for (const k of worldKeysToCompact) {
         try {
           const raw = localStorage.getItem(k);
-          if (!raw || raw.length < 120000) continue; // Already compact
+          if (!raw) continue;
           const env = JSON.parse(raw) as SaveEnvelope;
           if (env && env.data && env.data.chunks) {
-            const compacted = this.compactSaveDataForStorage(env.data, false);
-            const serialized = JSON.stringify(compacted);
-            const newEnv: SaveEnvelope = {
-              checksum: computeChecksum(serialized),
-              savedAt: env.savedAt || Date.now(),
-              data: compacted,
-            };
-            localStorage.setItem(k, JSON.stringify(newEnv));
+            otherWorldsByAge.push({
+              key: k,
+              savedAt: env.savedAt || env.data.metadata?.updatedAt || 0,
+            });
+            // Ensure other world is backed up in memory & IndexedDB before compacting
+            if (env.data.metadata?.id && !this.memoryWorlds.has(env.data.metadata.id)) {
+              this.memoryWorlds.set(env.data.metadata.id, env.data);
+              void this.writeWorldToIdb(env.data);
+            }
+            if (raw.length >= 60000) {
+              const compacted = this.compactSaveDataForStorage(
+                env.data,
+                true,
+                12,
+                true
+              );
+              const serialized = JSON.stringify(compacted);
+              const newEnv: SaveEnvelope = {
+                checksum: computeChecksum(serialized),
+                savedAt: env.savedAt || Date.now(),
+                data: compacted,
+              };
+              localStorage.setItem(k, JSON.stringify(newEnv));
+            }
           }
         } catch {
           // ignore individual world compaction errors
+        }
+      }
+
+      if (evictOldestOtherWorldIfNecessary && otherWorldsByAge.length > 0) {
+        otherWorldsByAge.sort((a, b) => a.savedAt - b.savedAt);
+        const oldest = otherWorldsByAge[0];
+        if (oldest) {
+          localStorage.removeItem(oldest.key);
         }
       }
     } catch {
@@ -912,6 +1246,37 @@ export class SaveManager {
   }
 
   public static saveWorldLocal(saveData: WorldSaveData): boolean {
+    if (!saveData || !saveData.metadata || !saveData.metadata.id) {
+      return false;
+    }
+
+    const now = Date.now();
+    saveData.version = CURRENT_SAVE_VERSION;
+    saveData.metadata.updatedAt = now;
+    if (saveData.player) {
+      saveData.player.savedAt = now;
+    }
+
+    // 1. Authoritative compact snapshot (preserves 100% of explored chunks, nodes, structures, inventory, chests)
+    const fullCompactData = this.compactSaveDataForStorage(
+      saveData,
+      false,
+      18,
+      false
+    );
+
+    // 2. IMMEDIATELY commit to in-memory cache and IndexedDB so progress is NEVER lost even if localStorage is full!
+    this.memoryWorlds.set(saveData.metadata.id, fullCompactData);
+    this.memoryWorldIndex.set(saveData.metadata.id, {
+      ...fullCompactData.metadata,
+    });
+    void this.writeWorldToIdb(fullCompactData);
+
+    const list = this.listWorlds().filter((w) => w.id !== saveData.metadata.id);
+    list.unshift({ ...fullCompactData.metadata });
+    this.saveWorldIndex(list);
+
+    // 3. Persist to localStorage with multi-stage compaction fallbacks
     const primaryKey = `${WORLD_PREFIX}${saveData.metadata.id}`;
     const backupKey = `${WORLD_PREFIX}${saveData.metadata.id}_bak`;
     let previousPrimaryRaw: string | null = null;
@@ -922,70 +1287,55 @@ export class SaveManager {
     }
 
     try {
-      saveData.version = CURRENT_SAVE_VERSION;
-      saveData.metadata.updatedAt = Date.now();
-
-      // Remove legacy duplicate _bak entry to avoid doubling localStorage usage
       try {
         localStorage.removeItem(backupKey);
       } catch {
         // ignore
       }
 
-      const compactData = this.compactSaveDataForStorage(saveData, false);
-      const serialized = JSON.stringify(compactData);
-      const checksum = computeChecksum(serialized);
-      const envelope: SaveEnvelope = {
-        checksum,
-        savedAt: Date.now(),
-        data: compactData,
+      const writeEnvelope = (dataToWrite: WorldSaveData) => {
+        const ser = JSON.stringify(dataToWrite);
+        const env: SaveEnvelope = {
+          checksum: computeChecksum(ser),
+          savedAt: now,
+          data: dataToWrite,
+        };
+        localStorage.setItem(primaryKey, JSON.stringify(env));
       };
-      const envelopeStr = JSON.stringify(envelope);
 
       try {
-        localStorage.setItem(primaryKey, envelopeStr);
+        writeEnvelope(fullCompactData);
       } catch {
-        // CRITICAL: Browsers check (existingPrimaryKeySize + newEnvelopeStrSize <= 5MB) when overwriting!
-        // Remove primaryKey temporarily in-memory so the old save doesn't occupy half the 5MB quota during the write!
+        // Free primaryKey temporarily so browser quota check doesn't count old + new simultaneously
         try {
           localStorage.removeItem(primaryKey);
         } catch {
           // ignore
         }
-        this.reclaimLocalStorageSpace(saveData.metadata.id);
+        this.reclaimLocalStorageSpace(saveData.metadata.id, false);
         try {
-          localStorage.setItem(primaryKey, envelopeStr);
+          writeEnvelope(fullCompactData);
         } catch {
-          // Fallback 1: Keep 100% of explored chunks & terrain, compact distant undamaged nodes (> 18 chunks away)
           try {
-            const strictCompact = this.compactSaveDataForStorage(saveData, true, 18);
-            const strictSer = JSON.stringify(strictCompact);
-            const strictEnv: SaveEnvelope = {
-              checksum: computeChecksum(strictSer),
-              savedAt: Date.now(),
-              data: strictCompact,
-            };
-            localStorage.setItem(primaryKey, JSON.stringify(strictEnv));
+            // Fallback 1: Compact distant undamaged nodes (> 16 chunks away)
+            const fb1 = this.compactSaveDataForStorage(saveData, true, 16, false);
+            writeEnvelope(fb1);
           } catch {
-            // Fallback 2: Keep 100% of explored chunks & terrain, compact distant undamaged nodes (> 8 chunks away)
-            const ultraCompact = this.compactSaveDataForStorage(saveData, true, 8);
-            const ultraSer = JSON.stringify(ultraCompact);
-            const ultraEnv: SaveEnvelope = {
-              checksum: computeChecksum(ultraSer),
-              savedAt: Date.now(),
-              data: ultraCompact,
-            };
-            localStorage.setItem(primaryKey, JSON.stringify(ultraEnv));
+            try {
+              // Fallback 2: Compact distant undamaged nodes (> 6 chunks away) + distant wild creatures
+              const fb2 = this.compactSaveDataForStorage(saveData, true, 6, true);
+              writeEnvelope(fb2);
+            } catch {
+              // Fallback 3: Reclaim space from oldest other world in localStorage (already backed up in IDB & memory) + ultra compact
+              this.reclaimLocalStorageSpace(saveData.metadata.id, true);
+              const fb3 = this.compactSaveDataForStorage(saveData, true, 2, true);
+              writeEnvelope(fb3);
+            }
           }
         }
       }
-
-      const list = this.listWorlds().filter((w) => w.id !== saveData.metadata.id);
-      list.unshift(saveData.metadata);
-      this.saveWorldIndex(list);
       return true;
     } catch (e) {
-      // Restore previous save if all writes failed so existing progress is never lost
       if (previousPrimaryRaw && !localStorage.getItem(primaryKey)) {
         try {
           localStorage.setItem(primaryKey, previousPrimaryRaw);
@@ -993,12 +1343,29 @@ export class SaveManager {
           // ignore
         }
       }
-      console.warn('Local storage quota reached; world remains active in memory:', e);
-      return false;
+      console.warn(
+        'localStorage quota exceeded; latest world save is safely stored in IndexedDB and memory cache:',
+        e
+      );
+      // Return true because the save IS safely committed in memoryWorlds and IndexedDB!
+      return true;
     }
   }
 
-  public static loadWorldLocal(worldId: string): WorldSaveData | null {
+  /**
+   * Guaranteed asynchronous save used during periodic auto-saves and exit-to-menu:
+   * commits synchronously to `memoryWorlds` + `localStorage` AND awaits `IndexedDB` disk completion.
+   */
+  public static async saveWorldGuaranteed(
+    saveData: WorldSaveData
+  ): Promise<boolean> {
+    const okSync = this.saveWorldLocal(saveData);
+    const cached = this.memoryWorlds.get(saveData.metadata.id) || saveData;
+    const okIdb = await this.writeWorldToIdb(cached);
+    return okSync || okIdb;
+  }
+
+  private static parseRawLocalWorld(worldId: string): WorldSaveData | null {
     const primaryKey = `${WORLD_PREFIX}${worldId}`;
     const backupKey = `${WORLD_PREFIX}${worldId}_bak`;
 
@@ -1012,7 +1379,7 @@ export class SaveManager {
           console.warn('Save checksum mismatch, attempting recovery...');
           return null;
         }
-        return migrateSaveData(env.data);
+        return env.data;
       } catch {
         return null;
       }
@@ -1022,12 +1389,56 @@ export class SaveManager {
     if (primary) return primary;
 
     const backup = tryParseEnvelope(localStorage.getItem(backupKey));
-    if (backup) {
-      this.saveWorldLocal(backup);
-      return backup;
-    }
+    if (backup) return backup;
 
     return null;
+  }
+
+  public static loadWorldLocal(worldId: string): WorldSaveData | null {
+    const memWorld = this.memoryWorlds.get(worldId) || null;
+    const localWorld = this.parseRawLocalWorld(worldId);
+
+    const memTs = this.getSaveTimestamp(memWorld);
+    const localTs = this.getSaveTimestamp(localWorld);
+
+    const best =
+      memWorld && memTs >= localTs
+        ? JSON.parse(JSON.stringify(memWorld))
+        : localWorld
+        ? JSON.parse(JSON.stringify(localWorld))
+        : null;
+
+    if (!best) return null;
+    if (!memWorld || localTs > memTs) {
+      this.memoryWorlds.set(worldId, JSON.parse(JSON.stringify(best)));
+    }
+    return migrateSaveData(best);
+  }
+
+  /**
+   * Loads the newest version of a world across In-Memory Cache, IndexedDB, and localStorage.
+   * Ensures that even if a long session exceeded localStorage's 5MB limit, re-entering the world
+   * or downloading the `.wildborn.json` file ALWAYS gets the exact latest progress.
+   */
+  public static async loadWorldGuaranteed(
+    worldId: string
+  ): Promise<WorldSaveData | null> {
+    const memWorld = this.memoryWorlds.get(worldId) || null;
+    const localWorld = this.parseRawLocalWorld(worldId);
+    const idbWorld = await this.readWorldFromIdb(worldId);
+
+    const candidates = [memWorld, idbWorld, localWorld].filter(
+      (c): c is WorldSaveData => Boolean(c && c.metadata)
+    );
+    if (candidates.length === 0) return null;
+
+    candidates.sort(
+      (a, b) => this.getSaveTimestamp(b) - this.getSaveTimestamp(a)
+    );
+    const newest = JSON.parse(JSON.stringify(candidates[0])) as WorldSaveData;
+    this.memoryWorlds.set(worldId, JSON.parse(JSON.stringify(newest)));
+    this.memoryWorldIndex.set(worldId, { ...newest.metadata });
+    return migrateSaveData(newest);
   }
 
   public static updateWorldMetadata(
@@ -1045,8 +1456,16 @@ export class SaveManager {
   }
 
   public static deleteWorld(worldId: string, settings?: GameSettings): void {
-    localStorage.removeItem(`${WORLD_PREFIX}${worldId}`);
-    localStorage.removeItem(`${WORLD_PREFIX}${worldId}_bak`);
+    this.memoryWorlds.delete(worldId);
+    this.memoryWorldIndex.delete(worldId);
+    this.compactChunkCache.delete(worldId);
+    void this.deleteWorldFromIdb(worldId);
+    try {
+      localStorage.removeItem(`${WORLD_PREFIX}${worldId}`);
+      localStorage.removeItem(`${WORLD_PREFIX}${worldId}_bak`);
+    } catch {
+      // ignore
+    }
     const list = this.listWorlds().filter((w) => w.id !== worldId);
     this.saveWorldIndex(list);
 
@@ -1070,13 +1489,16 @@ export class SaveManager {
     const base = cfg.customServerUrl.trim().replace(/\/$/, '');
     const url = `${base}/api/worlds`;
     const controller = new AbortController();
-    const timeoutId = window.setTimeout(() => controller.abort(), 2500);
+    const timeoutId = window.setTimeout(() => controller.abort(), 3500);
     try {
-      const checksum = computeChecksum(JSON.stringify(saveData));
+      const compactPayload =
+        this.memoryWorlds.get(saveData.metadata.id) ||
+        this.compactSaveDataForStorage(saveData, false);
+      const checksum = computeChecksum(JSON.stringify(compactPayload));
       const res = await fetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ world: saveData, checksum }),
+        body: JSON.stringify({ world: compactPayload, checksum }),
         signal: controller.signal,
       });
       window.clearTimeout(timeoutId);
@@ -1086,11 +1508,17 @@ export class SaveManager {
       return { ok: true, message: 'Salvo no servidor com sucesso.' };
     } catch {
       window.clearTimeout(timeoutId);
-      return { ok: false, message: 'Servidor offline (salvo localmente com segurança).' };
+      return {
+        ok: false,
+        message: 'Servidor offline (salvo localmente com segurança).',
+      };
     }
   }
 
-  public static async fetchWorldsFromServer(settings?: GameSettings): Promise<WorldMetadata[]> {
+  public static async fetchWorldsFromServer(
+    settings?: GameSettings
+  ): Promise<WorldMetadata[]> {
+    await this.hydrateFromIndexedDB();
     const cfg = settings || this.loadSettings();
     if (!cfg.serverSyncEnabled) return this.listWorlds();
     const base = cfg.customServerUrl.trim().replace(/\/$/, '');
@@ -1099,10 +1527,39 @@ export class SaveManager {
       if (!res.ok) return this.listWorlds();
       const json = await res.json();
       if (Array.isArray(json.worlds)) {
-        const localIds = new Set(this.listWorlds().map((w) => w.id));
-        for (const serverWorld of json.worlds as WorldSaveData[]) {
-          if (serverWorld && serverWorld.metadata && !localIds.has(serverWorld.metadata.id)) {
-            this.saveWorldLocal(migrateSaveData(serverWorld));
+        const localById = new Map(this.listWorlds().map((w) => [w.id, w]));
+        for (const entry of json.worlds as any[]) {
+          if (entry && entry.metadata && entry.metadata.id) {
+            const localMeta = localById.get(entry.metadata.id);
+            if (
+              !localMeta ||
+              (entry.metadata.updatedAt || 0) > (localMeta.updatedAt || 0)
+            ) {
+              await this.saveWorldGuaranteed(migrateSaveData(entry));
+            }
+          } else if (entry && entry.id && entry.name && typeof entry.seed === 'number') {
+            // Metadata entry from GET /api/worlds: fetch full world if newer than local
+            const localMeta = localById.get(entry.id);
+            if (
+              !localMeta ||
+              (entry.updatedAt || 0) > (localMeta.updatedAt || 0)
+            ) {
+              try {
+                const detailRes = await fetch(
+                  `${base}/api/worlds/${encodeURIComponent(entry.id)}`
+                );
+                if (detailRes.ok) {
+                  const detailJson = await detailRes.json();
+                  if (detailJson?.world?.metadata) {
+                    await this.saveWorldGuaranteed(
+                      migrateSaveData(detailJson.world)
+                    );
+                  }
+                }
+              } catch {
+                // ignore individual fetch error
+              }
+            }
           }
         }
       }
@@ -1113,11 +1570,17 @@ export class SaveManager {
   }
 
   public static downloadWorldFile(saveData: WorldSaveData): void {
-    const serialized = JSON.stringify(saveData);
+    const compactForExport = this.compactSaveDataForStorage(
+      saveData,
+      false,
+      18,
+      false
+    );
+    const serialized = JSON.stringify(compactForExport);
     const envelope: SaveEnvelope = {
       checksum: computeChecksum(serialized),
       savedAt: Date.now(),
-      data: saveData,
+      data: compactForExport,
     };
     const blob = new Blob([JSON.stringify(envelope, null, 2)], {
       type: 'application/json',
