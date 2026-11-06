@@ -1493,33 +1493,33 @@ export default function App() {
             </div>
           )}
 
-          {/* Sleep Countdown & Multiplayer Sync Overlay */}
+          {/* Sleep Countdown & Multiplayer Sync Overlay (keeps center clear so the sleeping character in bed is visible) */}
           {snapshot?.player.isSleeping && engineRef.current && (() => {
             const sleepStatus = engineRef.current.getSleepStatus();
             return (
-              <div className="fixed inset-0 z-[85] bg-black/85 backdrop-blur-sm flex items-center justify-center p-4 select-none">
-                <div className="w-full max-w-sm medieval-panel p-6 text-center space-y-5 border-2 border-amber-500/70 shadow-[0_0_32px_rgba(0,0,0,0.9)]">
-                  <div className="text-3xl">🌙</div>
-                  <div className="space-y-2">
-                    <h2 className="font-pixel text-base sm:text-lg font-bold text-amber-300 tracking-wide">
+              <div className="fixed inset-0 z-[85] bg-black/35 flex flex-col items-center justify-end pb-8 sm:pb-12 p-4 select-none pointer-events-auto">
+                <div className="w-full max-w-sm medieval-panel p-4 sm:p-5 text-center space-y-3.5 border-2 border-amber-500/70 shadow-[0_0_32px_rgba(0,0,0,0.9)] bg-[#140d08]/95">
+                  <div className="flex items-center justify-center gap-2">
+                    <span className="text-xl">🌙</span>
+                    <h2 className="font-pixel text-sm sm:text-base font-bold text-amber-300 tracking-wide">
                       {sleepStatus.allSleeping
-                        ? `Dormindo... (${sleepStatus.countdownSec})`
+                        ? `Dormindo na Cama... (${sleepStatus.countdownSec}s)`
                         : `Jogadores na cama (${sleepStatus.sleepingCount}/${sleepStatus.totalPlayers})`}
                     </h2>
-                    <p className="text-xs text-[#e5d5b5]">
-                      {sleepStatus.allSleeping
-                        ? 'Aguarde a contagem terminar para concluir o sono e avançar para o amanhecer.'
-                        : 'Aguardando todos os jogadores conectados deitarem na cama para o dia passar...'}
-                    </p>
                   </div>
+                  <p className="text-[11px] text-[#e5d5b5]">
+                    {sleepStatus.allSleeping
+                      ? 'Você está protegido na cama. Aguarde a contagem terminar para avançar para o amanhecer.'
+                      : 'Você está deitado e protegido na cama. Aguardando os demais jogadores deitarem...'}
+                  </p>
                   <button
                     type="button"
                     onClick={() => {
                       engineRef.current?.cancelSleep('Você levantou da cama.');
                     }}
-                    className="w-full min-h-[42px] medieval-btn-crimson font-pixel text-xs font-bold tracking-wider"
+                    className="w-full min-h-[38px] medieval-btn-crimson font-pixel text-xs font-bold tracking-wider"
                   >
-                    LEVANTAR
+                    LEVANTAR DA CAMA
                   </button>
                 </div>
               </div>

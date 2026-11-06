@@ -1075,7 +1075,9 @@ export class GameRenderer {
         ? false
         : Boolean(rp.isSwimming || world.isWorldPosInWater(rp.x, rp.y));
       renderQueue.push({
-        ySort: (rpMount ? rpMount.y : rp.y) + 10.2,
+        ySort: rp.isSleeping
+          ? rp.y + 18
+          : (rpMount ? rpMount.y : rp.y) + 10.2,
         draw: (c) =>
           this.drawRemotePlayer(c, rp, globalTime, shadowDx, rpSwimming, rpMount),
       });
@@ -1120,7 +1122,9 @@ export class GameRenderer {
       ? false
       : Boolean(player.isSwimming || world.isWorldPosInWater(player.x, player.y));
     renderQueue.push({
-      ySort: (playerMount ? playerMount.y : player.y) + 10.25,
+      ySort: player.isSleeping
+        ? player.y + 18
+        : (playerMount ? playerMount.y : player.y) + 10.25,
       draw: (c) =>
         this.drawPlayer(c, player, globalTime, shadowDx, playerSwimming, playerMount),
     });
@@ -5903,7 +5907,8 @@ export class GameRenderer {
           cr.kind,
           cr.animFrame,
           cr.attackTimer > 0,
-          cr.direction
+          cr.direction,
+          { isSheared: cr.isSheared, isBaby: cr.isBaby }
         );
 
     // Deterministic individual width & height variation from creature ID
@@ -6005,8 +6010,9 @@ export class GameRenderer {
     }
 
     const eliteScale = cr.isElite ? 1.18 : 1.0;
-    const drawW = Math.round(baseW * wVar * eliteScale);
-    const drawH = Math.round(baseH * hVar * eliteScale);
+    const babyScale = cr.isBaby ? 0.65 : 1.0;
+    const drawW = Math.round(baseW * wVar * eliteScale * babyScale);
+    const drawH = Math.round(baseH * hVar * eliteScale * babyScale);
     const bodyRefW = isHumanNpc ? Math.round(25 * wVar * eliteScale) : drawW;
     const footY = cr.y + 10; // Ground contact anchor matching renderQueue ySort
 
@@ -6190,7 +6196,8 @@ export class GameRenderer {
           pet.kind,
           pet.animFrame,
           false,
-          pet.direction
+          pet.direction,
+          { isSheared: pet.isSheared, isBaby: pet.isBaby }
         );
         ctx.drawImage(petSprite, -16, -24, 22, 18);
       }
@@ -6419,15 +6426,54 @@ export class GameRenderer {
       ctx.textAlign = 'center';
       ctx.fillStyle = '#f43f5e';
       ctx.fillText('♥', cr.x - 14, headTopY - 3 + heartPulse);
-      ctx.fillStyle = '#fde047';
+      ctx.fillStyle = cr.isBaby ? '#fda4af' : '#fde047';
       const saddleBadge = cr.hasSaddle ? ' 鞍' : '';
       const ownerTag = cr.ownerName ? ` · ${cr.ownerName}` : '';
+      const roleTag = cr.isBaby
+        ? '[Filhote]'
+        : cr.aiState === 'stay'
+        ? '[Base]'
+        : '[Aliado]';
       ctx.fillText(
-        `${cr.aiState === 'stay' ? '[Base]' : '[Aliado]'}${saddleBadge}${ownerTag}`,
+        `${roleTag}${saddleBadge}${ownerTag}`,
         cr.x + 4,
         headTopY - 3
       );
       ctx.restore();
+
+      // Active 30s Reproduction Love Heart above the animal's head & 5s Mating Progress Bar
+      if ((cr.loveTimer ?? 0) > 0 && !cr.isBaby) {
+        const loveBob = Math.sin(globalTime * 8 + cr.x * 0.2) * 2.2;
+        const isMatingContact = (cr.matingTimer ?? 0) > 0;
+        ctx.save();
+        ctx.textAlign = 'center';
+        ctx.font = isMatingContact
+          ? 'bold 12px "Plus Jakarta Sans", sans-serif'
+          : 'bold 11px "Plus Jakarta Sans", sans-serif';
+        ctx.fillStyle = '#1c1008';
+        ctx.fillText(
+          isMatingContact ? '♥♥' : '♥',
+          cr.x + 1,
+          headTopY - 12 + loveBob
+        );
+        ctx.fillStyle = isMatingContact ? '#fb7185' : '#f43f5e';
+        ctx.fillText(
+          isMatingContact ? '♥♥' : '♥',
+          cr.x,
+          headTopY - 13 + loveBob
+        );
+        ctx.restore();
+
+        if (isMatingContact) {
+          this.drawMiniBar(
+            ctx,
+            cr.x,
+            headTopY - 9,
+            Math.min(1, (cr.matingTimer || 0) / 5.0),
+            '#f43f5e'
+          );
+        }
+      }
     } else if (cr.tameProgress > 0 && !cr.isHostile) {
       this.drawMiniBar(
         ctx,
@@ -6801,6 +6847,49 @@ export class GameRenderer {
     isSwimming = false,
     mountEntity: CreatureEntity | null = null
   ): void {
+    // When sleeping on a bed/rest point, render the player tucked into the bed with ONLY their head visible!
+    if (player.isSleeping) {
+      const sleepSprite = spriteAtlas.getPlayerSprite(
+        'down',
+        0,
+        player,
+        'none'
+      );
+      const sleepBob = Math.sin(globalTime * 2.2) * 0.5;
+      const hx = Math.round(player.x);
+      const hy = Math.round(player.y - 3 + sleepBob);
+
+      ctx.save();
+      // Draw ONLY the head portion (top 15 rows of the 48x42 composite sprite) resting on the pillow
+      ctx.drawImage(
+        sleepSprite,
+        0,
+        0,
+        sleepSprite.width,
+        15,
+        hx - 22.5,
+        hy - 13,
+        45,
+        14
+      );
+      // Tucked blanket collar edge right below the chin so the body stays inside the covers
+      ctx.fillStyle = '#facc15';
+      ctx.fillRect(hx - 8, hy, 16, 2);
+      ctx.fillStyle = '#dc2626';
+      ctx.fillRect(hx - 8, hy + 2, 16, 4);
+      ctx.fillStyle = '#991b1b';
+      ctx.fillRect(hx - 8, hy + 5, 16, 2);
+
+      // Floating "Zzz" sleep indicator above the head
+      const zFloat = (globalTime * 1.4) % 1;
+      ctx.font = 'bold 8px "Plus Jakarta Sans", sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillStyle = `rgba(253, 224, 71, ${(1 - zFloat * 0.7).toFixed(2)})`;
+      ctx.fillText('Zzz', hx + 9 + zFloat * 4, hy - 14 - zFloat * 8);
+      ctx.restore();
+      return;
+    }
+
     const frame = player.isMoving && !mountEntity ? player.animFrame : 0;
     const isBoatMount = Boolean(mountEntity && mountEntity.kind === 'BOAT');
     const mountPose: 'none' | 'horse' | 'boat' = !mountEntity
@@ -7191,6 +7280,47 @@ export class GameRenderer {
     isSwimming = false,
     mountEntity: CreatureEntity | null = null
   ): void {
+    // When a remote player is sleeping on a bed/rest point, render ONLY their head visible on the bed!
+    if (rp.isSleeping) {
+      const sleepSprite = spriteAtlas.getPlayerSprite(
+        'down',
+        0,
+        rp as unknown as PlayerState,
+        'none'
+      );
+      const sleepBob = Math.sin(globalTime * 2.2 + rp.x * 0.1) * 0.5;
+      const hx = Math.round(rp.x);
+      const hy = Math.round(rp.y - 3 + sleepBob);
+
+      ctx.save();
+      ctx.drawImage(
+        sleepSprite,
+        0,
+        0,
+        sleepSprite.width,
+        15,
+        hx - 22.5,
+        hy - 13,
+        45,
+        14
+      );
+      ctx.fillStyle = '#facc15';
+      ctx.fillRect(hx - 8, hy, 16, 2);
+      ctx.fillStyle = '#dc2626';
+      ctx.fillRect(hx - 8, hy + 2, 16, 4);
+      ctx.fillStyle = '#991b1b';
+      ctx.fillRect(hx - 8, hy + 5, 16, 2);
+
+      ctx.font = 'bold 7px "Plus Jakarta Sans", sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillStyle = 'rgba(10, 14, 23, 0.85)';
+      ctx.fillRect(hx - 40, hy - 28, 80, 11);
+      ctx.fillStyle = '#fde047';
+      ctx.fillText(`💤 ${rp.name}`, hx, hy - 20);
+      ctx.restore();
+      return;
+    }
+
     const frame = rp.isMoving && !mountEntity ? rp.animFrame : 0;
     const isBoatMount = Boolean(mountEntity && mountEntity.kind === 'BOAT');
     const mountPose: 'none' | 'horse' | 'boat' = !mountEntity

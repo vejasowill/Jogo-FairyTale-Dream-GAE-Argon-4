@@ -415,6 +415,65 @@ export class EntityManager {
   }
 
   /**
+   * Alimento específico para reprodução de cada animal já domesticado:
+   * - Ovelha: Frutas Silvestres ('berry')
+   * - Javali: Maçã Dourada do Bosque ('apple')
+   * - Vaca: Trigo ('wheat')
+   * - Camelo: Fruto de Cacto ('cactus_fruit')
+   * - Cavalo: Maçã Dourada do Bosque ('apple')
+   */
+  public static getBreedingFoodId(kind: CreatureKind): string | null {
+    switch (kind) {
+      case CreatureKind.SHEEP:
+        return 'berry';
+      case CreatureKind.BOAR:
+        return 'apple';
+      case CreatureKind.COW:
+        return 'wheat';
+      case CreatureKind.CAMEL:
+        return 'cactus_fruit';
+      case CreatureKind.HORSE:
+        return 'apple';
+      default:
+        return null;
+    }
+  }
+
+  public static getBabyName(kind: CreatureKind): string {
+    switch (kind) {
+      case CreatureKind.SHEEP:
+        return 'Filhote de Ovelha';
+      case CreatureKind.BOAR:
+        return 'Filhote de Javali';
+      case CreatureKind.COW:
+        return 'Filhote de Vaca';
+      case CreatureKind.CAMEL:
+        return 'Filhote de Camelo';
+      case CreatureKind.HORSE:
+        return 'Filhote de Cavalo';
+      default:
+        return 'Filhote';
+    }
+  }
+
+  public static getAdultName(kind: CreatureKind): string {
+    switch (kind) {
+      case CreatureKind.SHEEP:
+        return 'Ovelha da Planície';
+      case CreatureKind.BOAR:
+        return 'Javali Silvestre';
+      case CreatureKind.COW:
+        return 'Vaca da Planície';
+      case CreatureKind.CAMEL:
+        return 'Camelo do Deserto';
+      case CreatureKind.HORSE:
+        return 'Cavalo da Planície';
+      default:
+        return 'Animal';
+    }
+  }
+
+  /**
    * Counts living hostile mobs and untamed wild animals currently inside chunk `(cx, cy)`.
    * Used to enforce the global natural spawn cap of max 3 hostile mobs and max 3 wild animals per chunk separately.
    */

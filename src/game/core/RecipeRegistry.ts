@@ -237,6 +237,18 @@ export const RECIPES: CraftingRecipe[] = [
     ],
   },
   {
+    id: 'craft_shears',
+    resultItemId: 'shears',
+    resultCount: 1,
+    requiredStation: PlaceableType.WORKBENCH,
+    craftTimeSec: 0,
+    rarity: RarityTier.RARE,
+    ingredients: [
+      { itemId: 'iron_bar', count: 2 },
+      { itemId: 'wood', count: 1 },
+    ],
+  },
+  {
     id: 'craft_iron_axe',
     resultItemId: 'iron_axe',
     resultCount: 1,

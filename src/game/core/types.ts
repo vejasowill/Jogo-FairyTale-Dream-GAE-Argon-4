@@ -47,6 +47,7 @@ export enum ToolType {
   SHOVEL = 'SHOVEL',
   WATERING_CAN = 'WATERING_CAN',
   FISHING_ROD = 'FISHING_ROD',
+  SHEARS = 'SHEARS',
 }
 
 export type Direction = 'down' | 'up' | 'left' | 'right';
@@ -476,6 +477,16 @@ export interface CreatureEntity {
   tameProgress: number; // 0 to 100
   favoriteFoodIds: string[];
   produceTimer: number;
+  // Sheep Shearing & Wool Regrowth (tamed and wild sheep)
+  isSheared?: boolean;
+  woolRegrowTimer?: number; // 120s to 180s (2 to 3 minutes)
+  // Tamed Animal Reproduction & Baby Growth
+  loveTimer?: number; // 30s heart duration after eating specific breeding food
+  matingTimer?: number; // 5s contact timer when touching partner
+  matingPartnerId?: string | null;
+  breedingCooldown?: number; // 300s (5 minutes) cooldown after giving birth
+  isBaby?: boolean; // True while the animal is a baby (filhote)
+  babyGrowthTimer?: number; // 300s (5 minutes) countdown until becoming adult
   isElite?: boolean;
   homeX?: number;
   homeY?: number;
@@ -825,6 +836,8 @@ export interface PlayerState {
   sleepingStructureType?: PlaceableType | null;
   sleepingTargetX?: number;
   sleepingTargetY?: number;
+  sleepingPrevX?: number;
+  sleepingPrevY?: number;
   // Animation state
   isMoving: boolean;
   isSwimming?: boolean;
@@ -858,6 +871,7 @@ export interface RemotePlayerState {
   mountedCreatureData?: CreatureEntity | null;
   isGalloping?: boolean;
   isSleeping?: boolean;
+  sleepingStructureType?: PlaceableType | null;
   animFrame: number;
   animTimer: number;
   swingTimer: number;
@@ -886,7 +900,7 @@ export interface OnlineActivationStep {
 }
 
 // REGRA PERMANENTE: A cada nova atualização do jogo, incremente a versão para o número seguinte da beta (ex: 0.4.4-beta -> 0.4.5-beta).
-export const GAME_VERSION = '0.7.4-beta';
+export const GAME_VERSION = '0.7.5-beta';
 export const CURRENT_WORLD_GEN_VERSION = 5;
 
 export interface OnlineSessionInfo {

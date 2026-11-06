@@ -994,6 +994,24 @@ export const ITEMS: Record<string, ItemDefinition> = {
     attackRange: 33,
     harvestPower: 20,
   },
+  shears: {
+    id: 'shears',
+    name: 'Tesoura',
+    description:
+      'Ferramenta de lâminas articuladas. Use para tosquiar Ovelhas (domesticadas ou selvagens) obtendo de 1 a 2 Lãs, e garante 100% de chance de obter 1 Fibra ao quebrar grama!',
+    purposeSummary:
+      'Ferramenta de Tosquia & Poda: Interaja com Ovelha para tosquiar 1–2 Lãs e quebre grama com 100% de chance de 1 Fibra.',
+    category: ItemCategory.TOOL,
+    rarity: RarityTier.RARE,
+    maxStack: 1,
+    toolType: ToolType.SHEARS,
+    toolTier: 2,
+    attackDamage: 8,
+    attackDelivery: 'melee',
+    attackTargetScope: 'single',
+    attackRange: 34,
+    harvestPower: 18,
+  },
   iron_sword: {
     id: 'iron_sword',
     name: 'Espada Longa de Ferro',
@@ -4301,6 +4319,7 @@ export const ITEM_BASE_PRICES: Record<string, number> = {
   // Ferramentas & Armas Nv.2 (Ferro Forjado & Monstros)
   iron_hoe: 160,
   iron_shovel: 155,
+  shears: 115,
   iron_axe: 220,
   iron_pickaxe: 275,
   ogre_club: 290,
@@ -5002,6 +5021,20 @@ export const HAND_AND_TOOL_MATERIAL_STRENGTH: Record<
     forceByMaterial: {
       FIBER_FOLIAGE: 40,
       SOFT_WOOD: 0,
+      ROUGH_STONE: 0,
+      HARDWOOD: 0,
+      IRON_MINERAL: 0,
+      PRIMORDIAL_WOOD: 0,
+      ASTRAL_MINERAL: 0,
+    },
+  },
+  shears: {
+    label: 'Tesoura (Nv.2)',
+    toolType: ToolType.SHEARS,
+    toolTier: 2,
+    forceByMaterial: {
+      FIBER_FOLIAGE: 35,
+      SOFT_WOOD: 5,
       ROUGH_STONE: 0,
       HARDWOOD: 0,
       IRON_MINERAL: 0,

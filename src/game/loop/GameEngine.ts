@@ -880,7 +880,10 @@ export class GameEngine {
     if (this.player.statusEffects.length > 0) {
       for (const eff of this.player.statusEffects) {
         eff.duration = Math.max(0, eff.duration - dt);
-        if (eff.id === 'poison_1' || eff.id === 'poison_2') {
+        if (
+          !this.player.isSleeping &&
+          (eff.id === 'poison_1' || eff.id === 'poison_2')
+        ) {
           eff.tickAccumulator = (eff.tickAccumulator || 0) + dt;
           while (eff.tickAccumulator >= 1.0 && this.player.hp > 0) {
             eff.tickAccumulator -= 1.0;
@@ -1239,8 +1242,12 @@ export class GameEngine {
     // Keep player.mountedCreatureData continuously synchronized with activeMount (integrated with player body)
     this.syncPlayerMountedCreatureData();
 
-    // Secondary post-movement check to guarantee the character never stays stuck inside a hitbox
-    if (!isBoatMount && !this.canEntityOccupy(this.player.x, this.player.y)) {
+    // Secondary post-movement check to guarantee the character never stays stuck inside a hitbox (skip while sleeping in bed!)
+    if (
+      !this.player.isSleeping &&
+      !isBoatMount &&
+      !this.canEntityOccupy(this.player.x, this.player.y)
+    ) {
       this.pushPlayerOutOfHitbox(dt, false);
     }
 
@@ -1282,7 +1289,7 @@ export class GameEngine {
         Math.hypot(c.x - this.player.x, c.y - this.player.y) < 150
     );
 
-    if (this.player.hunger <= 0) {
+    if (this.player.hunger <= 0 && !this.player.isSleeping) {
       // Enquanto a fome estiver zero, a penalidade por fome é sempre aplicada quando a vida estiver acima de 10%
       const minStarveHp = Math.ceil(this.player.maxHp * 0.1);
       if (this.player.hp > minStarveHp) {
@@ -3310,6 +3317,185 @@ export class GameEngine {
   }
 
   /**
+   * Returns all nearby Rest Points (`BED`, `EXPLORER_TENT`, `VILLAGE_HOUSE`) within an expanded radius
+   * around the player and the invited Wanderer so the player can visually pick and confirm which bed
+   * to delegate in the Super-Expanded Mini-Map modal.
+   */
+  public getNearbyRestPointsForInvite(
+    npcId: string,
+    searchRadiusPx = 768
+  ): Array<{
+    id: string;
+    type: PlaceableType;
+    label: string;
+    tileX: number;
+    tileY: number;
+    worldX: number;
+    worldY: number;
+    distFromPlayer: number;
+    distFromNpc: number;
+    currentResidents: number;
+    maxCapacity: number;
+    ownerType?: 'PLAYER' | 'VILLAGER';
+    ownerName?: string;
+    canDelegate: boolean;
+    statusReason: string;
+  }> {
+    const wanderer = this.entities.creatures.find(
+      (c) => c.id === npcId && c.kind === CreatureKind.WANDERER && c.hp > 0
+    );
+    const refX = wanderer ? (wanderer.x + this.player.x) * 0.5 : this.player.x;
+    const refY = wanderer ? (wanderer.y + this.player.y) * 0.5 : this.player.y;
+    const centerTile = this.world.worldToTile(refX, refY);
+    const centerChunk = this.world.tileToChunk(centerTile.tx, centerTile.ty);
+    const chunkRadius = Math.max(2, Math.ceil(searchRadiusPx / (16 * TILE_SIZE)) + 1);
+
+    const results: Array<{
+      id: string;
+      type: PlaceableType;
+      label: string;
+      tileX: number;
+      tileY: number;
+      worldX: number;
+      worldY: number;
+      distFromPlayer: number;
+      distFromNpc: number;
+      currentResidents: number;
+      maxCapacity: number;
+      ownerType?: 'PLAYER' | 'VILLAGER';
+      ownerName?: string;
+      canDelegate: boolean;
+      statusReason: string;
+    }> = [];
+
+    for (let dy = -chunkRadius; dy <= chunkRadius; dy++) {
+      for (let dx = -chunkRadius; dx <= chunkRadius; dx++) {
+        const chunk =
+          this.world.chunks[
+            WorldManager.chunkKey(centerChunk.cx + dx, centerChunk.cy + dy)
+          ];
+        if (!chunk) continue;
+
+        for (const st of chunk.structures) {
+          if (!this.isRestPointStructure(st)) continue;
+          const hx = st.tileX * TILE_SIZE + TILE_SIZE / 2;
+          const hy = st.tileY * TILE_SIZE + TILE_SIZE / 2;
+          const distFromPlayer = Math.hypot(this.player.x - hx, this.player.y - hy);
+          const distFromNpc = wanderer
+            ? Math.hypot(wanderer.x - hx, wanderer.y - hy)
+            : distFromPlayer;
+          if (Math.min(distFromPlayer, distFromNpc) > searchRadiusPx) continue;
+
+          const residents = this.getHouseResidents(st.id);
+          const maxCap =
+            st.type === PlaceableType.BED ? 1 : MAX_VILLAGERS_PER_HOUSE;
+          const typeLabel =
+            st.type === PlaceableType.BED
+              ? 'Cama de Madeira'
+              : st.type === PlaceableType.EXPLORER_TENT
+              ? 'Tenda do Aventureiro'
+              : 'Casa de Vila';
+
+          let canDelegate = true;
+          let statusReason = 'Disponível para delegar';
+          if (st.ownerType === 'PLAYER') {
+            canDelegate = false;
+            statusReason = `Pertence a ${st.ownerName || 'Jogador'}`;
+          } else if (residents.length >= maxCap) {
+            canDelegate = false;
+            statusReason = `Ocupado (${residents.length}/${maxCap})`;
+          } else if (st.ownerType === 'VILLAGER' && st.type === PlaceableType.BED) {
+            canDelegate = false;
+            statusReason = `Ocupado por ${st.ownerName || 'Aldeão'}`;
+          } else if (residents.length > 0) {
+            statusReason = `Vaga compartilhada (${residents.length}/${maxCap})`;
+          }
+
+          results.push({
+            id: st.id,
+            type: st.type,
+            label: st.customName || typeLabel,
+            tileX: st.tileX,
+            tileY: st.tileY,
+            worldX: hx,
+            worldY: hy,
+            distFromPlayer: Math.round(distFromPlayer),
+            distFromNpc: Math.round(distFromNpc),
+            currentResidents: residents.length,
+            maxCapacity: maxCap,
+            ownerType: st.ownerType,
+            ownerName: st.ownerName,
+            canDelegate,
+            statusReason,
+          });
+        }
+      }
+    }
+
+    results.sort((a, b) => {
+      if (a.canDelegate !== b.canDelegate) return a.canDelegate ? -1 : 1;
+      return a.distFromPlayer - b.distFromPlayer;
+    });
+    return results;
+  }
+
+  /**
+   * Delegates a specific rest point (`structureId`) chosen by the player in the Super-Expanded Mini-Map modal
+   * to the invited Wanderer (`npcId`).
+   */
+  public inviteWandererToSpecificRestPoint(
+    npcId: string,
+    structureId: string
+  ): {
+    ok: boolean;
+    message: string;
+  } {
+    const wanderer = this.entities.creatures.find(
+      (c) => c.id === npcId && c.kind === CreatureKind.WANDERER && c.hp > 0
+    );
+    if (!wanderer) {
+      return { ok: false, message: 'Andarilho não encontrado.' };
+    }
+
+    let targetHouse: PlacedStructure | null = null;
+    for (const chunk of Object.values(this.world.chunks)) {
+      if (!chunk) continue;
+      const found = chunk.structures.find((s) => s.id === structureId);
+      if (found) {
+        targetHouse = found;
+        break;
+      }
+    }
+
+    if (!targetHouse || !this.isRestPointStructure(targetHouse)) {
+      return {
+        ok: false,
+        message: 'Ponto de descanso selecionado não foi encontrado.',
+      };
+    }
+
+    if (targetHouse.ownerType === 'PLAYER') {
+      return {
+        ok: false,
+        message: 'Este ponto de descanso pertence a um jogador!',
+      };
+    }
+
+    const ok = this.settleWandererIntoHouse(wanderer, targetHouse, true);
+    if (!ok) {
+      return {
+        ok: false,
+        message: 'Não foi possível delegar este ponto de descanso ao andarilho.',
+      };
+    }
+
+    return {
+      ok: true,
+      message: `🏠 Você delegou o ponto de descanso (${targetHouse.tileX}, ${targetHouse.tileY}) para ${wanderer.name}!`,
+    };
+  }
+
+  /**
    * Invites a Wanderer (`npcId`) to occupy a nearby unoccupied rest point.
    */
   public inviteWandererToRestPoint(npcId: string): {
@@ -3708,16 +3894,149 @@ export class GameEngine {
         }
       }
 
+      // Sheep Wool Regrowth Timer (2 to 3 minutes = 120s to 180s, applies to both tamed & wild sheep)
+      if (cr.kind === CreatureKind.SHEEP && cr.isSheared) {
+        cr.woolRegrowTimer = Math.max(0, (cr.woolRegrowTimer ?? 150) - dt);
+        if (cr.woolRegrowTimer <= 0) {
+          cr.isSheared = false;
+          cr.woolRegrowTimer = 0;
+          if (distToPlayer <= 340) {
+            this.renderer.spawnBurst(cr.x, cr.y - 4, 'HEAL', 6);
+            this.addFloatingText(
+              '🐑 A lã da ovelha cresceu novamente!',
+              cr.x,
+              cr.y - 18,
+              '#f8fafc'
+            );
+          }
+        }
+      }
+
+      // Baby Animal Growth Timer (5 minutes = 300s to become adult)
+      if (cr.isBaby) {
+        cr.babyGrowthTimer = Math.max(0, (cr.babyGrowthTimer ?? 300) - dt);
+        if (cr.babyGrowthTimer <= 0) {
+          cr.isBaby = false;
+          cr.babyGrowthTimer = 0;
+          cr.name = EntityManager.getAdultName(cr.kind);
+          cr.maxHp =
+            cr.kind === CreatureKind.CAMEL
+              ? 95
+              : cr.kind === CreatureKind.HORSE
+              ? 90
+              : cr.kind === CreatureKind.BOAR
+              ? 75
+              : cr.kind === CreatureKind.COW
+              ? 70
+              : 45;
+          cr.hp = cr.maxHp;
+          if (distToPlayer <= 420) {
+            soundManager.playLevelUp();
+            this.renderer.spawnBurst(cr.x, cr.y - 6, 'GOLD', 14);
+            this.renderer.spawnRipple(cr.x, cr.y, '#4ade80', 26, 0.5);
+            this.addFloatingText(
+              `✦ ${cr.name} cresceu e tornou-se adulto!`,
+              cr.x,
+              cr.y - 22,
+              '#4ade80'
+            );
+          }
+        }
+      }
+
+      // Breeding Cooldown Timer (5 minutes = 300s after giving birth)
+      if ((cr.breedingCooldown ?? 0) > 0) {
+        cr.breedingCooldown = Math.max(0, (cr.breedingCooldown ?? 0) - dt);
+      }
+
       // =====================================================================
-      // 1. FACTION: PLAYER_ALLY (Tamed Pets — 3 States: 'stay', 'follow', 'graze')
+      // 1. FACTION: PLAYER_ALLY (Tamed Pets — 3 States: 'stay', 'follow', 'graze' + Reproduction)
       // =====================================================================
       if (cr.tamed) {
-        if (cr.kind === CreatureKind.SHEEP) {
-          cr.produceTimer -= dt;
-          if (cr.produceTimer <= 0) {
-            cr.produceTimer = 45;
-            this.spawnDrop('wool', 1, cr.x, cr.y + 8);
-            this.addFloatingText('+1 Lã Macia', cr.x, cr.y - 16, '#f8fafc');
+        // Active Reproduction Mode: 30s heart overhead, seeks same-species partner in love, walks toward each other, stays 5s touching -> spawns baby!
+        if (!cr.isBaby && (cr.loveTimer ?? 0) > 0) {
+          let partner: CreatureEntity | null = null;
+          if (cr.matingPartnerId) {
+            partner =
+              this.entities.creatures.find(
+                (o) =>
+                  o.id === cr.matingPartnerId &&
+                  o.hp > 0 &&
+                  o.tamed &&
+                  !o.isBaby &&
+                  o.kind === cr.kind &&
+                  (o.loveTimer ?? 0) > 0 &&
+                  (o.breedingCooldown ?? 0) <= 0
+              ) || null;
+          }
+          if (!partner) {
+            let bestDist = 340;
+            for (const other of this.entities.creatures) {
+              if (
+                other.id !== cr.id &&
+                other.hp > 0 &&
+                other.tamed &&
+                !other.isBaby &&
+                other.kind === cr.kind &&
+                (other.loveTimer ?? 0) > 0 &&
+                (other.breedingCooldown ?? 0) <= 0 &&
+                (!other.matingPartnerId || other.matingPartnerId === cr.id)
+              ) {
+                const d = Math.hypot(other.x - cr.x, other.y - cr.y);
+                if (d < bestDist) {
+                  bestDist = d;
+                  partner = other;
+                }
+              }
+            }
+          }
+
+          if (partner) {
+            cr.matingPartnerId = partner.id;
+            partner.matingPartnerId = cr.id;
+            const dPartner = Math.hypot(partner.x - cr.x, partner.y - cr.y);
+            if (dPartner <= 26) {
+              // Touching partner! Stay together for 5 seconds
+              cr.vx = 0;
+              cr.vy = 0;
+              cr.direction = EntityManager.vectorToDirection(
+                partner.x - cr.x,
+                partner.y - cr.y,
+                cr.direction
+              );
+              // Keep loveTimer alive while actively touching so the 5s contact completes cleanly
+              cr.loveTimer = Math.max(2.0, cr.loveTimer ?? 2.0);
+              partner.loveTimer = Math.max(2.0, partner.loveTimer ?? 2.0);
+              cr.matingTimer = (cr.matingTimer ?? 0) + dt;
+              partner.matingTimer = Math.max(
+                partner.matingTimer ?? 0,
+                cr.matingTimer
+              );
+
+              if (cr.matingTimer >= 5.0) {
+                this.completeAnimalReproduction(cr, partner);
+              }
+            } else {
+              // Walking toward each other
+              cr.matingTimer = 0;
+              cr.loveTimer = Math.max(0, (cr.loveTimer ?? 0) - dt);
+              if (cr.loveTimer <= 0) {
+                cr.matingPartnerId = null;
+              } else {
+                this.steerCreatureToward(
+                  cr,
+                  partner.x,
+                  partner.y,
+                  cr.moveSpeed * 1.05,
+                  dt,
+                  false
+                );
+              }
+            }
+          } else {
+            cr.matingPartnerId = null;
+            cr.matingTimer = 0;
+            cr.loveTimer = Math.max(0, (cr.loveTimer ?? 0) - dt);
           }
         }
 
@@ -3730,8 +4049,13 @@ export class GameEngine {
           cr.aiState = 'follow';
         }
 
+        // If actively walking toward or touching a breeding partner, skip normal stay/graze/follow movement override
+        if (!cr.isBaby && (cr.loveTimer ?? 0) > 0 && cr.matingPartnerId) {
+          cr.combatTargetId = null;
+          cr.retaliateTargetId = undefined;
+        }
         // STATE 1: BASE ('stay') — Pet stays still at the spot
-        if (cr.aiState === 'stay') {
+        else if (cr.aiState === 'stay') {
           cr.combatTargetId = null;
           cr.retaliateTargetId = undefined;
           cr.vx = 0;
@@ -3743,10 +4067,11 @@ export class GameEngine {
           cr.retaliateTargetId = undefined;
           this.updatePetGrazeAi(cr, dt);
         }
-        // STATE 3: SEGUINDO ('follow') — Pet follows owner as an ally; ONLY Camel and Boar engage in combat
+        // STATE 3: SEGUINDO ('follow') — Pet follows owner as an ally; ONLY adult Camel and Boar engage in combat
         else if (cr.aiState === 'follow') {
           const ownerTarget = this.getPetOwnerTarget(cr);
-          const canFightAsAlly = EntityManager.isCombatAllyKind(cr.kind);
+          const canFightAsAlly =
+            !cr.isBaby && EntityManager.isCombatAllyKind(cr.kind);
 
           // Resolve single focused combat target (`combatTargetId`) ONLY for combat-capable allies (Camel & Boar)
           let enemyTarget: CreatureEntity | null = null;
@@ -3960,6 +4285,7 @@ export class GameEngine {
           }
         } else if (
           cr.isHostile &&
+          !this.player.isSleeping &&
           distToPlayer < 220 &&
           !this.isTargetHiddenInClosedStructureFrom(
             this.player.x,
@@ -4119,6 +4445,7 @@ export class GameEngine {
 
         if (
           this.player.hp > 0 &&
+          !this.player.isSleeping &&
           distToPlayer < bestEnemyDist &&
           !this.isTargetHiddenInClosedStructureFrom(
             this.player.x,
@@ -4132,7 +4459,7 @@ export class GameEngine {
         }
 
         for (const rp of this.remotePlayersList) {
-          if (rp.hp <= 0) continue;
+          if (rp.hp <= 0 || rp.isSleeping) continue;
           const dRp = Math.hypot(rp.x - cr.x, rp.y - cr.y);
           if (
             dRp < bestEnemyDist &&
@@ -4225,6 +4552,7 @@ export class GameEngine {
 
             if (
               this.player.hp > 0 &&
+              !this.player.isSleeping &&
               Math.hypot(this.player.x - cr.x, this.player.y - cr.y) <=
                 SEISMIC_RADIUS
             ) {
@@ -4706,6 +5034,21 @@ export class GameEngine {
       for (let j = i + 1; j < count; j++) {
         const b = creatures[j];
         if (!isEligible(b)) continue;
+
+        // Allow mating partners in love to touch each other without overlap push-apart
+        if (
+          a.matingPartnerId === b.id ||
+          b.matingPartnerId === a.id ||
+          (a.tamed &&
+            b.tamed &&
+            a.kind === b.kind &&
+            !a.isBaby &&
+            !b.isBaby &&
+            (a.loveTimer ?? 0) > 0 &&
+            (b.loveTimer ?? 0) > 0)
+        ) {
+          continue;
+        }
 
         const minDist = radA + getRadius(b);
         const dx = a.x - b.x;
@@ -7798,13 +8141,23 @@ export class GameEngine {
       }
     }
 
-    // 2. Interacting with a Wild Domesticable Animal -> Tame!
+    // 2. Interacting with a Wild Domesticable Animal -> Shear Sheep (if holding Shears) or Tame!
     if (target.kind === 'wild_animal' && target.creatureId) {
       const wild = this.entities.creatures.find((c) => c.id === target.creatureId);
       if (!wild) return;
 
-      let foodSlotIdx = -1;
       const held = this.player.inventory[this.player.selectedHotbarIndex];
+      if (
+        wild.kind === CreatureKind.SHEEP &&
+        !wild.isBaby &&
+        held &&
+        (held.itemId === 'shears' || ITEMS[held.itemId]?.toolType === ToolType.SHEARS)
+      ) {
+        this.shearSheepCreature(wild);
+        return;
+      }
+
+      let foodSlotIdx = -1;
       if (held && wild.favoriteFoodIds.includes(held.itemId)) {
         foodSlotIdx = this.player.selectedHotbarIndex;
       } else {
@@ -7895,7 +8248,21 @@ export class GameEngine {
         return;
       }
 
-      // Exclusive pet/mount ownership check: Only the owner of a Horse, Camel, Sheep, or Boar can interact with it!
+      const heldSlot = this.player.inventory[this.player.selectedHotbarIndex];
+
+      // 3A-2. Shearing a Tamed Sheep with Shears (Tesoura)
+      if (
+        tamed.kind === CreatureKind.SHEEP &&
+        !tamed.isBaby &&
+        heldSlot &&
+        (heldSlot.itemId === 'shears' ||
+          ITEMS[heldSlot.itemId]?.toolType === ToolType.SHEARS)
+      ) {
+        this.shearSheepCreature(tamed);
+        return;
+      }
+
+      // Exclusive pet/mount ownership check: Only the owner of a Horse, Camel, Sheep, Cow, or Boar can interact with it!
       if (!this.isCreatureOwnedByLocalPlayer(tamed)) {
         soundManager.playHitWood();
         this.renderer.spawnRipple(tamed.x, tamed.y, '#ef4444', 22, 0.35);
@@ -7908,9 +8275,63 @@ export class GameEngine {
         return;
       }
 
-      const heldSlot = this.player.inventory[this.player.selectedHotbarIndex];
+      // 3B. Holding Specific Breeding Food on an Adult Tamed Animal -> Trigger Reproduction (30s Heart) & Heal!
+      const breedingFoodId = EntityManager.getBreedingFoodId(tamed.kind);
+      if (
+        !tamed.isBaby &&
+        heldSlot &&
+        breedingFoodId &&
+        heldSlot.itemId === breedingFoodId
+      ) {
+        if ((tamed.loveTimer ?? 0) > 0) {
+          soundManager.playPickup();
+          this.addFloatingText(
+            `♥ ${tamed.name} já está em modo de reprodução (${Math.ceil(tamed.loveTimer!)}s)!`,
+            tamed.x,
+            tamed.y - 22,
+            '#f43f5e'
+          );
+          return;
+        }
+        if ((tamed.breedingCooldown ?? 0) > 0 && tamed.hp >= tamed.maxHp) {
+          const remSec = Math.ceil(tamed.breedingCooldown!);
+          const mins = Math.floor(remSec / 60);
+          const secs = remSec % 60;
+          soundManager.playHitWood();
+          this.addFloatingText(
+            `⏳ ${tamed.name} poderá procriar novamente em ${mins}m ${secs}s`,
+            tamed.x,
+            tamed.y - 22,
+            '#fde047'
+          );
+          return;
+        }
 
-      // 3B. Holding Food + Pressing Interact: Heal tamed pet!
+        // If not on breeding cooldown, start 30s loveTimer!
+        if ((tamed.breedingCooldown ?? 0) <= 0) {
+          this.consumeInventoryAt(this.player.selectedHotbarIndex, 1);
+          tamed.hp = tamed.maxHp;
+          tamed.loveTimer = 30.0;
+          tamed.matingTimer = 0;
+          tamed.matingPartnerId = null;
+          soundManager.playTameSuccess(tamed.x, tamed.y);
+          this.renderer.spawnBurst(tamed.x, tamed.y - 10, 'TAME', 16);
+          this.renderer.spawnRipple(tamed.x, tamed.y, '#f43f5e', 28, 0.5);
+          this.addFloatingText(
+            `♥ ${tamed.name} quer reproduzir (30s)! Alimente outro(a) da mesma espécie!`,
+            tamed.x,
+            tamed.y - 24,
+            '#f43f5e'
+          );
+          if (this.multiplayer.isOnline && this.multiplayer.role === 'HOST') {
+            this.multiplayer.sendCreaturesSync(this.entities.creatures);
+          }
+          this.emitUiSnapshot();
+          return;
+        }
+      }
+
+      // 3B-2. Holding Food + Pressing Interact: Heal tamed pet!
       if (heldSlot && this.isFoodItemForPet(heldSlot.itemId, tamed)) {
         if (tamed.hp < tamed.maxHp) {
           const foodDef = ITEMS[heldSlot.itemId];
@@ -7962,9 +8383,16 @@ export class GameEngine {
           }
           this.emitUiSnapshot();
         } else {
+          const breedItemName = breedingFoodId
+            ? ITEMS[breedingFoodId]?.name || breedingFoodId
+            : null;
           soundManager.playPickup();
           this.addFloatingText(
-            `♥ ${tamed.name} já está com a vida cheia (${tamed.maxHp}/${tamed.maxHp})!`,
+            tamed.isBaby
+              ? `🍼 ${tamed.name} cresce em ${Math.ceil(tamed.babyGrowthTimer ?? 0)}s`
+              : breedItemName
+              ? `♥ Vida cheia! Para reproduzir, alimente com ${breedItemName}`
+              : `♥ ${tamed.name} já está com a vida cheia (${tamed.maxHp}/${tamed.maxHp})!`,
             tamed.x,
             tamed.y - 22,
             '#4ade80'
@@ -7973,8 +8401,9 @@ export class GameEngine {
         return;
       }
 
-      // 3C. Horse or Camel: If holding a Saddle and unsaddled, equip the Saddle!
+      // 3C. Horse or Camel (Adults only): If holding a Saddle and unsaddled, equip the Saddle!
       if (
+        !tamed.isBaby &&
         (tamed.kind === CreatureKind.HORSE || tamed.kind === CreatureKind.CAMEL) &&
         !tamed.hasSaddle &&
         heldSlot &&
@@ -7993,7 +8422,7 @@ export class GameEngine {
         return;
       }
 
-      // 3E. Unsaddled Horse/Camel or Sheep/Boar: Cycle through 3 Pet States ('follow' -> 'stay' -> 'graze')
+      // 3E. Unsaddled Horse/Camel or Sheep/Boar/Cow: Cycle through 3 Pet States ('follow' -> 'stay' -> 'graze')
       const prevState = tamed.aiState;
       this.toggleTamedAnimalState(tamed.id);
       if (tamed.aiState !== prevState) {
@@ -9275,6 +9704,11 @@ export class GameEngine {
       const distPlayer = Math.hypot(cr.x - this.player.x, cr.y - this.player.y);
       if (distPlayer > 84) continue;
 
+      const isHoldingShears =
+        Boolean(heldSlot) &&
+        (heldSlot!.itemId === 'shears' ||
+          ITEMS[heldSlot!.itemId]?.toolType === ToolType.SHEARS);
+
       if (
         !cr.isHostile &&
         !cr.tamed &&
@@ -9282,6 +9716,24 @@ export class GameEngine {
         cr.kind !== CreatureKind.WANDERER &&
         cr.kind !== CreatureKind.BOAT
       ) {
+        if (cr.kind === CreatureKind.SHEEP && !cr.isBaby && isHoldingShears) {
+          candidates.push({
+            score: computeDirectionalScore(cr.x, cr.y, -5),
+            info: {
+              kind: 'wild_animal',
+              label: cr.isSheared ? `${cr.name} (Tosquiada)` : cr.name,
+              actionHint: cr.isSheared
+                ? `Sem Lã ✂️ (Cresce em ${Math.ceil(cr.woolRegrowTimer || 0)}s)`
+                : 'Tosquiar Ovelha ✂️ (1–2 Lãs)',
+              worldX: cr.x,
+              worldY: cr.y,
+              creatureId: cr.id,
+              iconItemId: 'shears',
+            },
+          });
+          continue;
+        }
+
         const favId = cr.favoriteFoodIds[0] || 'berry';
         candidates.push({
           score: computeDirectionalScore(cr.x, cr.y, -2),
@@ -9297,7 +9749,8 @@ export class GameEngine {
         });
       } else if (cr.tamed || cr.kind === CreatureKind.BOAT) {
         const isMountSpecies =
-          cr.kind === CreatureKind.HORSE || cr.kind === CreatureKind.CAMEL;
+          !cr.isBaby &&
+          (cr.kind === CreatureKind.HORSE || cr.kind === CreatureKind.CAMEL);
 
         if (cr.kind === CreatureKind.BOAT) {
           const hasDriver =
@@ -9350,6 +9803,24 @@ export class GameEngine {
             : 'Outro Jogador');
         const petFullLabel = `${cr.name} · Dono: ${petOwnerLabel}`;
 
+        if (cr.kind === CreatureKind.SHEEP && !cr.isBaby && isHoldingShears) {
+          candidates.push({
+            score: computeDirectionalScore(cr.x, cr.y, -6),
+            info: {
+              kind: 'tamed_animal',
+              label: cr.isSheared ? `${petFullLabel} (Tosquiada)` : petFullLabel,
+              actionHint: cr.isSheared
+                ? `Sem Lã ✂️ (Cresce em ${Math.ceil(cr.woolRegrowTimer || 0)}s)`
+                : 'Tosquiar Ovelha ✂️ (1–2 Lãs)',
+              worldX: cr.x,
+              worldY: cr.y,
+              creatureId: cr.id,
+              iconItemId: 'shears',
+            },
+          });
+          continue;
+        }
+
         if (!isOwnedByLocal) {
           candidates.push({
             score: computeDirectionalScore(cr.x, cr.y, 4),
@@ -9368,6 +9839,36 @@ export class GameEngine {
           continue;
         }
 
+        const breedingFoodId = EntityManager.getBreedingFoodId(cr.kind);
+        if (
+          !cr.isBaby &&
+          heldSlot &&
+          breedingFoodId &&
+          heldSlot.itemId === breedingFoodId
+        ) {
+          const foodName = ITEMS[heldSlot.itemId]?.name || 'Alimento';
+          const hint =
+            (cr.loveTimer ?? 0) > 0
+              ? `Em Amor ♥ (${Math.ceil(cr.loveTimer!)}s)`
+              : (cr.breedingCooldown ?? 0) > 0 && cr.hp >= cr.maxHp
+              ? `Descanso Procriação (${Math.ceil(cr.breedingCooldown!)}s)`
+              : `Reproduzir ♥ (${foodName})`;
+          candidates.push({
+            score: computeDirectionalScore(cr.x, cr.y, -6),
+            info: {
+              kind: 'tamed_animal',
+              label: petFullLabel,
+              actionHint: hint,
+              worldX: cr.x,
+              worldY: cr.y,
+              creatureId: cr.id,
+              iconItemId: heldSlot.itemId,
+              isPetFeedTarget: true,
+            },
+          });
+          continue;
+        }
+
         if (heldSlot && this.isFoodItemForPet(heldSlot.itemId, cr)) {
           candidates.push({
             score: computeDirectionalScore(cr.x, cr.y, -5),
@@ -9377,6 +9878,8 @@ export class GameEngine {
               actionHint:
                 cr.hp < cr.maxHp
                   ? `Curar Pet ♥ (${ITEMS[heldSlot.itemId]?.name || 'Comida'})`
+                  : cr.isBaby
+                  ? `Filhote 🍼 (${Math.ceil(cr.babyGrowthTimer || 0)}s p/ crescer)`
                   : 'Vida Cheia ♥',
               worldX: cr.x,
               worldY: cr.y,
@@ -9427,7 +9930,9 @@ export class GameEngine {
           info: {
             kind: 'tamed_animal',
             label: petFullLabel,
-            actionHint: 'Alternar (Seguindo / Base / Pastar)',
+            actionHint: cr.isBaby
+              ? `Alternar Estado · Cresce em ${Math.ceil(cr.babyGrowthTimer || 0)}s`
+              : 'Alternar (Seguindo / Base / Pastar)',
             worldX: cr.x,
             worldY: cr.y,
             creatureId: cr.id,
@@ -9597,6 +10102,18 @@ export class GameEngine {
             node.flowerColor
           );
         }
+      }
+      // Tesoura (Shears): 100% de chance de conseguir 1 fibra ao quebrar uma grama segurando a tesoura!
+      if (
+        isGrassNode &&
+        (toolType === ToolType.SHEARS || heldItemId === 'shears')
+      ) {
+        this.spawnDrop(
+          'fiber',
+          1,
+          nx + (node.offsetX || 0),
+          ny + (node.offsetY || 0)
+        );
       }
       // Grama Baixa & Grama Alta: 0.5% (0.005) chance to drop 1 seed of any type
       if (isGrassNode && Math.random() < 0.005) {
@@ -10092,9 +10609,13 @@ export class GameEngine {
           }
         }
       } else if (cr.kind === CreatureKind.SHEEP) {
-        // Ovelha (1 a 2 lãs; 1 carne de cordeiro)
-        this.spawnDrop('wool', 1 + Math.floor(Math.random() * 2), cr.x, cr.y);
-        this.spawnDrop('raw_lamb', 1, cr.x + 6, cr.y);
+        // Ovelha (1 a 2 lãs se não estiver tosqueada e for adulta; 1 carne de cordeiro)
+        if (!cr.isSheared && !cr.isBaby) {
+          this.spawnDrop('wool', 1 + Math.floor(Math.random() * 2), cr.x, cr.y);
+        }
+        if (!cr.isBaby) {
+          this.spawnDrop('raw_lamb', 1, cr.x + 6, cr.y);
+        }
         grantPlayerXp(15);
       } else if (cr.kind === CreatureKind.BOAR) {
         // Javali (1 a 2 carnes suínas + 50% de chance de dropar 1 couro)
@@ -10452,6 +10973,9 @@ export class GameEngine {
     sourceY: number,
     attackerCreature?: CreatureEntity
   ): void {
+    // Enquanto o jogador estiver deitado na cama (dormindo / aguardando outro jogador), ele não recebe dano de ninguém!
+    if (this.player.isSleeping) return;
+
     const reduction = this.getTotalDefenseBonus();
     const finalDmg = Math.max(1, Math.round(rawAmount * (1 - reduction)));
 
@@ -15568,8 +16092,149 @@ export class GameEngine {
   }
 
   // =========================================================================
+  // SHEEP SHEARING & TAMED ANIMAL REPRODUCTION / BABY BIRTH
+  // =========================================================================
+
+  private shearSheepCreature(sheep: CreatureEntity): void {
+    if (sheep.kind !== CreatureKind.SHEEP || sheep.isBaby) return;
+
+    if (sheep.isSheared) {
+      const remSec = Math.max(1, Math.ceil(sheep.woolRegrowTimer || 0));
+      const mins = Math.floor(remSec / 60);
+      const secs = remSec % 60;
+      soundManager.playHitWood();
+      this.addFloatingText(
+        `🐑 Ovelha sem lã! Volta a crescer em ${mins > 0 ? `${mins}m ` : ''}${secs}s`,
+        sheep.x,
+        sheep.y - 22,
+        '#94a3b8'
+      );
+      return;
+    }
+
+    const woolCount = 1 + Math.floor(Math.random() * 2); // 1 to 2 wool
+    sheep.isSheared = true;
+    sheep.woolRegrowTimer = 120 + Math.random() * 60; // 2 to 3 minutes (120s..180s)
+
+    this.spawnDrop('wool', woolCount, sheep.x, sheep.y + 4, 0.18);
+    soundManager.playSwing();
+    this.renderer.spawnBurst(sheep.x, sheep.y - 4, 'WOOD', 10);
+    this.renderer.spawnRipple(sheep.x, sheep.y, '#f8fafc', 22, 0.4);
+    this.addFloatingText(
+      `✂️ Tosquiou +${woolCount} Lã! (Cresce em 2–3 min)`,
+      sheep.x,
+      sheep.y - 22,
+      '#f8fafc'
+    );
+    this.gainXp(12);
+
+    if (this.multiplayer.isOnline && this.multiplayer.role === 'HOST') {
+      this.multiplayer.sendCreaturesSync(this.entities.creatures);
+    }
+    this.emitUiSnapshot();
+  }
+
+  private completeAnimalReproduction(
+    parentA: CreatureEntity,
+    parentB: CreatureEntity
+  ): void {
+    // End breeding love state and apply 5-minute (300s) breeding cooldown to both parents
+    parentA.loveTimer = 0;
+    parentA.matingTimer = 0;
+    parentA.matingPartnerId = null;
+    parentA.breedingCooldown = 300;
+
+    parentB.loveTimer = 0;
+    parentB.matingTimer = 0;
+    parentB.matingPartnerId = null;
+    parentB.breedingCooldown = 300;
+
+    const midX = (parentA.x + parentB.x) * 0.5;
+    const midY = (parentA.y + parentB.y) * 0.5;
+    const safePos = this.world.findNearestSafePosition(midX, midY + 6, 4.5);
+
+    const baby = this.entities.trySpawnCreatureAt(
+      this.world,
+      parentA.kind,
+      safePos.x,
+      safePos.y,
+      {
+        customName: EntityManager.getBabyName(parentA.kind),
+        ignoreNaturalChunkCap: true,
+      }
+    );
+
+    if (baby) {
+      baby.tamed = true;
+      baby.tameProgress = 100;
+      baby.isBaby = true;
+      baby.babyGrowthTimer = 300; // Grows into an adult in 5 minutes (300s)
+      baby.maxHp = Math.max(20, Math.round(baby.maxHp * 0.6));
+      baby.hp = baby.maxHp;
+      baby.ownerId = parentA.ownerId || parentB.ownerId || this.getLocalOwnerId();
+      baby.ownerName =
+        parentA.ownerName ||
+        parentB.ownerName ||
+        this.multiplayer.localPlayerName ||
+        this.settings.playerName ||
+        'Aventureiro';
+      baby.aiState = 'follow';
+
+      soundManager.playTameSuccess(safePos.x, safePos.y);
+      this.renderer.spawnBurst(safePos.x, safePos.y - 6, 'TAME', 22);
+      this.renderer.spawnBurst(safePos.x, safePos.y - 6, 'GOLD', 12);
+      this.renderer.spawnRipple(safePos.x, safePos.y, '#f43f5e', 34, 0.6);
+      this.addFloatingText(
+        `🍼 Nasceu um ${baby.name}! (Cresce em 5 min)`,
+        safePos.x,
+        safePos.y - 24,
+        '#f43f5e'
+      );
+      this.gainXp(35);
+
+      if (this.multiplayer.isOnline && this.multiplayer.role === 'HOST') {
+        this.multiplayer.sendCreaturesSync(this.entities.creatures);
+      }
+      this.emitUiSnapshot();
+    }
+  }
+
+  // =========================================================================
   // SLEEPING SYSTEM (5s COUNTDOWN + "LEVANTAR" + ONLINE MULTIPLAYER SYNC)
   // =========================================================================
+
+  /**
+   * Checks if any nearby hostile enemy (Monster or provoked hostile NPC) is currently targeting
+   * or within active aggro range of the local player.
+   */
+  public getNearbyEnemyTargetingPlayer(): CreatureEntity | null {
+    for (const cr of this.entities.creatures) {
+      if (!cr || cr.hp <= 0 || cr.isInsideHouse || cr.tamed) continue;
+      const isEnemy = EntityManager.isMonsterKind(cr.kind) || Boolean(cr.isHostile);
+      if (!isEnemy) continue;
+
+      const dist = Math.hypot(cr.x - this.player.x, cr.y - this.player.y);
+      const aggroRadius =
+        cr.kind === CreatureKind.OGRE
+          ? 230
+          : cr.kind === CreatureKind.STONE_GOLEM
+          ? 165
+          : 215;
+
+      if (
+        dist <= aggroRadius &&
+        !this.isTargetHiddenInClosedStructureFrom(
+          this.player.x,
+          this.player.y,
+          cr.x,
+          cr.y
+        )
+      ) {
+        return cr;
+      }
+    }
+    return null;
+  }
 
   public startSleepingAtStructure(
     houseSt: PlacedStructure | null,
@@ -15577,9 +16242,34 @@ export class GameEngine {
     worldX: number,
     worldY: number
   ): void {
+    // Impede o jogador de dormir enquanto for alvo de algum inimigo próximo!
+    const targetingEnemy = this.getNearbyEnemyTargetingPlayer();
+    if (targetingEnemy) {
+      soundManager.playHitWood();
+      this.renderer.spawnRipple(this.player.x, this.player.y, '#ef4444', 26, 0.45);
+      this.addFloatingText(
+        `⚠️ Impossível dormir: ${targetingEnemy.name} próximo mirando em você!`,
+        this.player.x,
+        this.player.y - 24,
+        '#f43f5e'
+      );
+      this.emitUiSnapshot();
+      return;
+    }
+
     if (this.player.mountedEntityId) {
       this.dismountCreature();
     }
+    if (this.player.fishingState) {
+      this.player.fishingState = null;
+    }
+
+    // Guarda a posição anterior e posiciona o jogador diretamente em cima da cama
+    this.player.sleepingPrevX = this.player.x;
+    this.player.sleepingPrevY = this.player.y;
+    this.player.x = worldX;
+    this.player.y = worldY;
+    this.player.direction = 'down';
     this.player.isSleeping = true;
     this.player.sleepTimer = 5.0;
     this.player.sleepingStructureId = houseSt?.id || null;
@@ -15596,14 +16286,42 @@ export class GameEngine {
     this.emitUiSnapshot();
   }
 
+  private restorePlayerPositionAfterSleep(
+    bedX: number,
+    bedY: number
+  ): void {
+    const prevX = this.player.sleepingPrevX;
+    const prevY = this.player.sleepingPrevY;
+    this.player.sleepingPrevX = undefined;
+    this.player.sleepingPrevY = undefined;
+
+    if (
+      prevX !== undefined &&
+      prevY !== undefined &&
+      Math.hypot(prevX - bedX, prevY - bedY) <= 96 &&
+      this.canEntityOccupy(prevX, prevY, true)
+    ) {
+      this.player.x = prevX;
+      this.player.y = prevY;
+      return;
+    }
+
+    const safePos = this.world.findNearestSafePosition(bedX, bedY + 14, 6.2);
+    this.player.x = safePos.x;
+    this.player.y = safePos.y;
+  }
+
   public cancelSleep(reason?: string): void {
     if (!this.player.isSleeping) return;
+    const targetX = this.player.sleepingTargetX ?? this.player.x;
+    const targetY = this.player.sleepingTargetY ?? this.player.y;
     this.player.isSleeping = false;
     this.player.sleepTimer = 0;
     this.player.sleepingStructureId = null;
     this.player.sleepingStructureType = null;
     this.player.sleepingTargetX = undefined;
     this.player.sleepingTargetY = undefined;
+    this.restorePlayerPositionAfterSleep(targetX, targetY);
     if (reason) {
       this.addFloatingText(
         reason,
@@ -15707,6 +16425,7 @@ export class GameEngine {
     this.player.sleepingStructureType = null;
     this.player.sleepingTargetX = undefined;
     this.player.sleepingTargetY = undefined;
+    this.restorePlayerPositionAfterSleep(targetX, targetY);
 
     if (advanceWorldClock) {
       if (this.metadata.timeOfDay >= 18) {

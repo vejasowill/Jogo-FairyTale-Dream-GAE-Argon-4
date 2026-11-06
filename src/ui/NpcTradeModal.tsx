@@ -1,19 +1,30 @@
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   ArrowRight,
+  BedDouble,
+  Check,
   Gift,
   Heart,
   Lock,
+  MapPin,
   ShieldAlert,
   Sparkles,
   Swords,
   X,
+  ZoomIn,
+  ZoomOut,
 } from 'lucide-react';
 import { ITEMS } from '../game/core/ItemRegistry';
-import { CreatureEntity, PlayerState } from '../game/core/types';
+import {
+  BiomeType,
+  CreatureEntity,
+  PlaceableType,
+  PlayerState,
+} from '../game/core/types';
 import { EntityManager } from '../game/entities/EntityManager';
 import { GameEngine } from '../game/loop/GameEngine';
 import { spriteAtlas } from '../game/rendering/SpriteAtlas';
+import { CHUNK_SIZE, TILE_SIZE, WorldManager } from '../game/world/WorldManager';
 import { WindowHelpButton, WindowHelpModal } from './UiTooltipAndHelp';
 
 interface NpcTradeModalProps {
@@ -43,9 +54,282 @@ export const NpcTradeModal: React.FC<NpcTradeModalProps> = ({
   const [tab, setTab] = useState<'trades' | 'diplomacy'>('trades');
   const [showHelp, setShowHelp] = useState(false);
 
+  // Super-Expanded Rest Point Delegation Mini-Map Modal State
+  const [showRestPointMap, setShowRestPointMap] = useState(false);
+  const [selectedRestPointId, setSelectedRestPointId] = useState<string | null>(
+    null
+  );
+  const [mapZoom, setMapZoom] = useState<number>(1.35);
+  const mapCanvasRef = useRef<HTMLCanvasElement | null>(null);
+
   const npc: CreatureEntity | undefined = engine.entities.creatures.find(
     (c) => c.id === npcId
   );
+
+  const nearbyRestPoints =
+    npc && npc.kind === 'WANDERER'
+      ? engine.getNearbyRestPointsForInvite(npc.id, 768)
+      : [];
+  const delegatableRestPoints = nearbyRestPoints.filter((r) => r.canDelegate);
+
+  useEffect(() => {
+    if (!showRestPointMap || !npc) return;
+    const canvas = mapCanvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    const W = canvas.width;
+    const H = canvas.height;
+    ctx.clearRect(0, 0, W, H);
+
+    // Center camera between player and NPC
+    const centerWorldX = (engine.player.x + npc.x) * 0.5;
+    const centerWorldY = (engine.player.y + npc.y) * 0.5;
+    const centerTileX = Math.floor(centerWorldX / TILE_SIZE);
+    const centerTileY = Math.floor(centerWorldY / TILE_SIZE);
+
+    const pxPerTile = Math.max(6, Math.round(9 * mapZoom));
+    const halfTilesX = Math.ceil(W / (2 * pxPerTile)) + 1;
+    const halfTilesY = Math.ceil(H / (2 * pxPerTile)) + 1;
+
+    // 1. Draw Terrain Tiles
+    for (let dy = -halfTilesY; dy <= halfTilesY; dy++) {
+      for (let dx = -halfTilesX; dx <= halfTilesX; dx++) {
+        const tx = centerTileX + dx;
+        const ty = centerTileY + dy;
+        const screenX = Math.round(
+          W / 2 + (tx * TILE_SIZE - centerWorldX) * (pxPerTile / TILE_SIZE)
+        );
+        const screenY = Math.round(
+          H / 2 + (ty * TILE_SIZE - centerWorldY) * (pxPerTile / TILE_SIZE)
+        );
+
+        const biome = engine.world.getTileBiomeFast(tx, ty);
+        let tileColor = '#2e5a27';
+        if (biome === BiomeType.OCEAN) tileColor = '#0c4a6e';
+        else if (biome === BiomeType.ISLAND) tileColor = '#fde047';
+        else if (biome === BiomeType.DESERT) tileColor = '#d97706';
+        else if (biome === BiomeType.FOREST) tileColor = '#166534';
+        else if (biome === BiomeType.TEMPERATE_FOREST) tileColor = '#15803d';
+        else if (biome === BiomeType.TAIGA_FOREST) tileColor = '#115e59';
+
+        ctx.fillStyle = tileColor;
+        ctx.fillRect(screenX, screenY, pxPerTile + 1, pxPerTile + 1);
+      }
+    }
+
+    // 2. Draw Nearby Structures (Walls, Floors, Doors) for clear architectural context
+    const minChunkX = Math.floor((centerTileX - halfTilesX) / CHUNK_SIZE);
+    const maxChunkX = Math.floor((centerTileX + halfTilesX) / CHUNK_SIZE);
+    const minChunkY = Math.floor((centerTileY - halfTilesY) / CHUNK_SIZE);
+    const maxChunkY = Math.floor((centerTileY + halfTilesY) / CHUNK_SIZE);
+
+    for (let cy = minChunkY; cy <= maxChunkY; cy++) {
+      for (let cx = minChunkX; cx <= maxChunkX; cx++) {
+        const chunk = engine.world.chunks[WorldManager.chunkKey(cx, cy)];
+        if (!chunk) continue;
+        for (const st of chunk.structures) {
+          const sx = Math.round(
+            W / 2 +
+              (st.tileX * TILE_SIZE - centerWorldX) * (pxPerTile / TILE_SIZE)
+          );
+          const sy = Math.round(
+            H / 2 +
+              (st.tileY * TILE_SIZE - centerWorldY) * (pxPerTile / TILE_SIZE)
+          );
+          if (sx < -20 || sx > W + 20 || sy < -20 || sy > H + 20) continue;
+
+          if (
+            st.type === PlaceableType.WOOD_FLOOR ||
+            st.type === PlaceableType.DARK_OAK_FLOOR ||
+            st.type === PlaceableType.PINE_FLOOR ||
+            st.type === PlaceableType.PALM_FLOOR ||
+            st.type === PlaceableType.STONE_FLOOR ||
+            st.type === PlaceableType.BRICK_FLOOR ||
+            st.type === PlaceableType.WOOD_BRIDGE
+          ) {
+            ctx.fillStyle = 'rgba(180, 125, 72, 0.72)';
+            ctx.fillRect(sx, sy, pxPerTile, pxPerTile);
+          } else if (
+            st.type !== PlaceableType.BED &&
+            st.type !== PlaceableType.EXPLORER_TENT &&
+            st.type !== PlaceableType.VILLAGE_HOUSE
+          ) {
+            ctx.fillStyle = '#3b2516';
+            ctx.fillRect(sx, sy, pxPerTile, pxPerTile);
+            ctx.strokeStyle = '#78350f';
+            ctx.lineWidth = 1;
+            ctx.strokeRect(sx + 0.5, sy + 0.5, pxPerTile - 1, pxPerTile - 1);
+          }
+        }
+      }
+    }
+
+    // Subtle coordinate grid overlay
+    ctx.strokeStyle = 'rgba(15, 23, 42, 0.18)';
+    ctx.lineWidth = 1;
+    for (let x = 0; x < W; x += pxPerTile * 2) {
+      ctx.beginPath();
+      ctx.moveTo(x, 0);
+      ctx.lineTo(x, H);
+      ctx.stroke();
+    }
+    for (let y = 0; y < H; y += pxPerTile * 2) {
+      ctx.beginPath();
+      ctx.moveTo(0, y);
+      ctx.lineTo(W, y);
+      ctx.stroke();
+    }
+
+    const toScreen = (wx: number, wy: number) => ({
+      x: Math.round(W / 2 + (wx - centerWorldX) * (pxPerTile / TILE_SIZE)),
+      y: Math.round(H / 2 + (wy - centerWorldY) * (pxPerTile / TILE_SIZE)),
+    });
+
+    const npcPos = toScreen(npc.x, npc.y);
+    const playerPos = toScreen(engine.player.x, engine.player.y);
+
+    // 3. If a Rest Point is selected, draw a dashed delegation path line from the NPC to that bed!
+    const selectedRp = nearbyRestPoints.find(
+      (r) => r.id === selectedRestPointId
+    );
+    if (selectedRp) {
+      const rpPos = toScreen(selectedRp.worldX, selectedRp.worldY);
+      ctx.save();
+      ctx.strokeStyle = selectedRp.canDelegate ? '#34d399' : '#f87171';
+      ctx.lineWidth = 2.2;
+      ctx.setLineDash([5, 4]);
+      ctx.beginPath();
+      ctx.moveTo(npcPos.x, npcPos.y);
+      ctx.lineTo(rpPos.x, rpPos.y);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.restore();
+    }
+
+    // 4. Draw all nearby Rest Points (Beds, Tents, Houses) as interactive markers
+    for (const rp of nearbyRestPoints) {
+      const pos = toScreen(rp.worldX, rp.worldY);
+      const isSelected = rp.id === selectedRestPointId;
+      const radius = isSelected ? 13 : 10;
+
+      ctx.save();
+      if (isSelected) {
+        ctx.strokeStyle = '#fde047';
+        ctx.lineWidth = 2.5;
+        ctx.beginPath();
+        ctx.arc(pos.x, pos.y, radius + 4, 0, Math.PI * 2);
+        ctx.stroke();
+      }
+
+      ctx.fillStyle = rp.canDelegate
+        ? isSelected
+          ? '#059669'
+          : '#065f46'
+        : '#450a0a';
+      ctx.strokeStyle = rp.canDelegate
+        ? isSelected
+          ? '#fef08a'
+          : '#34d399'
+        : '#f87171';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(pos.x, pos.y, radius, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+
+      // Draw pixel bed icon inside the marker
+      ctx.fillStyle = '#78350f';
+      ctx.fillRect(pos.x - 6, pos.y - 3, 12, 7);
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(pos.x - 5, pos.y - 2, 3, 4);
+      ctx.fillStyle = rp.canDelegate ? '#ef4444' : '#64748b';
+      ctx.fillRect(pos.x - 1, pos.y - 2, 6, 4);
+
+      // Small occupancy tag under bed marker
+      ctx.font = 'bold 9px "Plus Jakarta Sans", sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillStyle = '#090d16';
+      ctx.fillText(
+        `${rp.currentResidents}/${rp.maxCapacity}`,
+        pos.x + 1,
+        pos.y + radius + 10
+      );
+      ctx.fillStyle = rp.canDelegate ? '#a7f3d0' : '#fca5a5';
+      ctx.fillText(
+        `${rp.currentResidents}/${rp.maxCapacity}`,
+        pos.x,
+        pos.y + radius + 9
+      );
+      ctx.restore();
+    }
+
+    // 5. Draw Player Head Marker
+    const playerSprite = spriteAtlas.getPlayerSprite(
+      'down',
+      0,
+      engine.player,
+      'none'
+    );
+    ctx.save();
+    ctx.fillStyle = '#0f172a';
+    ctx.strokeStyle = '#38bdf8';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(playerPos.x, playerPos.y, 10, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+    ctx.drawImage(
+      playerSprite,
+      8,
+      0,
+      32,
+      16,
+      playerPos.x - 9,
+      playerPos.y - 8,
+      18,
+      14
+    );
+    ctx.font = 'bold 9px "Plus Jakarta Sans", sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillStyle = '#38bdf8';
+    ctx.fillText('Você', playerPos.x, playerPos.y - 13);
+    ctx.restore();
+
+    // 6. Draw Invited Wanderer NPC Head Marker
+    EntityManager.ensureNpcHumanAppearance(npc);
+    const npcSprite = spriteAtlas.getPlayerSprite(
+      'down',
+      0,
+      {
+        appearance: npc.appearance!,
+        equippedBySlot: npc.equippedBySlot!,
+      } as PlayerState,
+      'none'
+    );
+    ctx.save();
+    ctx.fillStyle = '#0f172a';
+    ctx.strokeStyle = '#facc15';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(npcPos.x, npcPos.y, 10, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+    ctx.drawImage(npcSprite, 8, 0, 32, 16, npcPos.x - 9, npcPos.y - 8, 18, 14);
+    ctx.font = 'bold 9px "Plus Jakarta Sans", sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillStyle = '#fde047';
+    ctx.fillText(npc.name, npcPos.x, npcPos.y - 13);
+    ctx.restore();
+  }, [
+    showRestPointMap,
+    selectedRestPointId,
+    mapZoom,
+    npc,
+    engine,
+    nearbyRestPoints,
+  ]);
 
   if (!npc) {
     return null;
@@ -93,12 +377,59 @@ export const NpcTradeModal: React.FC<NpcTradeModalProps> = ({
     setFeedback({ ok: res.ok, text: res.message });
   };
 
-  const handleSettleWanderer = () => {
-    const res = engine.inviteWandererToRestPoint(npc.id);
+  const handleOpenRestPointDelegationMap = () => {
+    const firstValid = delegatableRestPoints[0] || nearbyRestPoints[0] || null;
+    setSelectedRestPointId(firstValid ? firstValid.id : null);
+    setShowRestPointMap(true);
+  };
+
+  const handleConfirmRestPointDelegation = () => {
+    if (!selectedRestPointId) return;
+    const res = engine.inviteWandererToSpecificRestPoint(
+      npc.id,
+      selectedRestPointId
+    );
     setFeedback({
       ok: res.ok,
       text: res.message,
     });
+    if (res.ok) {
+      setShowRestPointMap(false);
+    }
+  };
+
+  const handleMapCanvasClick = (e: React.MouseEvent<HTMLCanvasElement>) => {
+    const canvas = mapCanvasRef.current;
+    if (!canvas) return;
+    const rect = canvas.getBoundingClientRect();
+    const scaleX = canvas.width / rect.width;
+    const scaleY = canvas.height / rect.height;
+    const clickX = (e.clientX - rect.left) * scaleX;
+    const clickY = (e.clientY - rect.top) * scaleY;
+
+    const W = canvas.width;
+    const H = canvas.height;
+    const centerWorldX = (engine.player.x + npc.x) * 0.5;
+    const centerWorldY = (engine.player.y + npc.y) * 0.5;
+    const pxPerTile = Math.max(6, Math.round(9 * mapZoom));
+
+    let closestId: string | null = null;
+    let closestDist = 26;
+    for (const rp of nearbyRestPoints) {
+      const sx =
+        W / 2 + (rp.worldX - centerWorldX) * (pxPerTile / TILE_SIZE);
+      const sy =
+        H / 2 + (rp.worldY - centerWorldY) * (pxPerTile / TILE_SIZE);
+      const d = Math.hypot(clickX - sx, clickY - sy);
+      if (d <= closestDist) {
+        closestDist = d;
+        closestId = rp.id;
+      }
+    }
+
+    if (closestId) {
+      setSelectedRestPointId(closestId);
+    }
   };
 
   const handleProvoke = () => {
@@ -127,14 +458,6 @@ export const NpcTradeModal: React.FC<NpcTradeModalProps> = ({
   const homeResidentCount = npc.homeHouseId
     ? engine.getHouseResidents(npc.homeHouseId).length
     : 0;
-  const nearbyOpenHouse = isWanderer
-    ? engine.findVacantRestPointForInviteNear(npc.x, npc.y, 420) ||
-      engine.findVacantRestPointForInviteNear(
-        engine.player.x,
-        engine.player.y,
-        420
-      )
-    : null;
 
   EntityManager.ensureNpcHumanAppearance(npc);
   const npcPortraitUrl = spriteAtlas
@@ -148,6 +471,9 @@ export const NpcTradeModal: React.FC<NpcTradeModalProps> = ({
       'none'
     )
     .toDataURL();
+
+  const selectedRestPointObj =
+    nearbyRestPoints.find((r) => r.id === selectedRestPointId) || null;
 
   return (
     <div
@@ -228,17 +554,20 @@ export const NpcTradeModal: React.FC<NpcTradeModalProps> = ({
             />
           </div>
 
-          {isWanderer && !isHostile && nearbyOpenHouse && (
+          {isWanderer && !isHostile && (
             <div className="flex items-center justify-between gap-2 pt-1">
               <span className="text-[10px] text-sky-200">
-                Ponto de descanso desocupado por perto:
+                {delegatableRestPoints.length > 0
+                  ? `${delegatableRestPoints.length} ponto(s) de descanso disponível(is) na região:`
+                  : 'Delegar cama ou abrigo próximo para este andarilho:'}
               </span>
               <button
                 type="button"
-                onClick={handleSettleWanderer}
-                className="px-2.5 min-h-[28px] medieval-btn-emerald font-pixel text-[9px] font-bold"
+                onClick={handleOpenRestPointDelegationMap}
+                className="px-2.5 min-h-[28px] medieval-btn-emerald font-pixel text-[9px] font-bold flex items-center gap-1"
               >
-                Convidar para Morar
+                <BedDouble className="w-3.5 h-3.5" />
+                <span>Convidar para Morar</span>
               </button>
             </div>
           )}
@@ -478,6 +807,202 @@ export const NpcTradeModal: React.FC<NpcTradeModalProps> = ({
         </div>
       </div>
 
+      {/* Super-Expanded Mini-Map Modal for Delegating Rest Point to Invited Wanderer */}
+      {showRestPointMap && (
+        <div
+          className="fixed inset-0 z-[70] bg-black/85 flex items-center justify-center p-2 sm:p-4"
+          onClick={() => setShowRestPointMap(false)}
+        >
+          <div
+            className="w-full max-w-2xl max-h-[94dvh] medieval-panel flex flex-col overflow-hidden border-2 border-amber-500/80 shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Header */}
+            <div className="px-3 py-2 bg-[#1c120b] border-b-2 border-[#4a301e] flex items-center justify-between gap-2 shrink-0">
+              <div className="flex items-center gap-2 min-w-0">
+                <BedDouble className="w-4 h-4 text-amber-400 shrink-0" />
+                <div className="min-w-0">
+                  <h3 className="font-pixel text-xs sm:text-sm font-bold text-amber-300 truncate">
+                    Delegar Ponto de Descanso — {npc.name}
+                  </h3>
+                  <p className="text-[10px] text-[#c4ab7d] truncate">
+                    Clique na cama desejada no mini-mapa expandido e confirme a
+                    delegação
+                  </p>
+                </div>
+              </div>
+              <div className="flex items-center gap-1 shrink-0">
+                <button
+                  type="button"
+                  onClick={() =>
+                    setMapZoom((z) => Math.max(0.75, +(z - 0.25).toFixed(2)))
+                  }
+                  className="min-h-[30px] min-w-[30px] medieval-btn-wood flex items-center justify-center"
+                  title="Reduzir Zoom"
+                >
+                  <ZoomOut className="w-3.5 h-3.5" />
+                </button>
+                <button
+                  type="button"
+                  onClick={() =>
+                    setMapZoom((z) => Math.min(2.5, +(z + 0.25).toFixed(2)))
+                  }
+                  className="min-h-[30px] min-w-[30px] medieval-btn-wood flex items-center justify-center"
+                  title="Aumentar Zoom"
+                >
+                  <ZoomIn className="w-3.5 h-3.5" />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setShowRestPointMap(false)}
+                  className="min-h-[30px] min-w-[30px] medieval-btn-crimson flex items-center justify-center"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+            </div>
+
+            {/* Body: Interactive Super-Expanded Mini-Map Canvas + Clickable List */}
+            <div className="p-3 overflow-y-auto flex-1 space-y-3 bg-[#140d08]">
+              <div className="relative w-full border-2 border-[#4a301e] bg-[#0b131e] overflow-hidden">
+                <canvas
+                  ref={mapCanvasRef}
+                  width={540}
+                  height={320}
+                  onClick={handleMapCanvasClick}
+                  className="w-full h-[230px] sm:h-[290px] block cursor-pointer select-none"
+                />
+                <div className="absolute top-2 left-2 px-2 py-1 bg-black/75 border border-[#4a301e] text-[9px] text-[#e5d5b5] flex flex-wrap items-center gap-2 pointer-events-none">
+                  <span className="flex items-center gap-1">
+                    <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 inline-block border border-amber-200" />
+                    Disponível
+                  </span>
+                  <span className="flex items-center gap-1">
+                    <span className="w-2.5 h-2.5 rounded-full bg-rose-800 inline-block border border-rose-400" />
+                    Ocupado
+                  </span>
+                  <span className="flex items-center gap-1">
+                    <span className="w-2.5 h-2.5 rounded-full bg-sky-400 inline-block" />
+                    Você
+                  </span>
+                  <span className="flex items-center gap-1">
+                    <span className="w-2.5 h-2.5 rounded-full bg-amber-300 inline-block" />
+                    {npc.name}
+                  </span>
+                </div>
+              </div>
+
+              {/* Selected Rest Point Details Card */}
+              {selectedRestPointObj ? (
+                <div
+                  className={`p-2.5 border flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 ${
+                    selectedRestPointObj.canDelegate
+                      ? 'bg-emerald-950/35 border-emerald-500/60'
+                      : 'bg-rose-950/35 border-rose-500/60'
+                  }`}
+                >
+                  <div className="space-y-0.5 min-w-0">
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      <MapPin className="w-3.5 h-3.5 text-amber-300 shrink-0" />
+                      <span className="font-pixel text-[11px] font-bold text-amber-200">
+                        {selectedRestPointObj.label}
+                      </span>
+                      <span className="text-[9px] px-1.5 py-0.5 bg-black/50 border border-[#4a301e] text-[#c4ab7d]">
+                        Tile ({selectedRestPointObj.tileX},{' '}
+                        {selectedRestPointObj.tileY})
+                      </span>
+                    </div>
+                    <p className="text-[10px] text-[#e5d5b5]">
+                      {selectedRestPointObj.statusReason} · Ocupação:{' '}
+                      <strong>
+                        {selectedRestPointObj.currentResidents}/
+                        {selectedRestPointObj.maxCapacity}
+                      </strong>{' '}
+                      · Distância:{' '}
+                      <strong>
+                        {Math.round(selectedRestPointObj.distFromNpc / 32)}m
+                      </strong>
+                    </p>
+                  </div>
+                </div>
+              ) : (
+                <div className="p-2.5 border border-[#4a301e] bg-[#1a110a] text-[11px] text-[#c4ab7d] text-center">
+                  {nearbyRestPoints.length === 0
+                    ? 'Nenhuma cama ou ponto de descanso encontrado nas proximidades. Construa e coloque uma Cama primeiro!'
+                    : 'Toque em uma cama no mapa acima para selecioná-la.'}
+                </div>
+              )}
+
+              {/* Quick Selector Pills for Nearby Rest Points */}
+              {nearbyRestPoints.length > 0 && (
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 max-h-28 overflow-y-auto pr-1">
+                  {nearbyRestPoints.map((rp) => {
+                    const isSel = rp.id === selectedRestPointId;
+                    return (
+                      <button
+                        key={rp.id}
+                        type="button"
+                        onClick={() => setSelectedRestPointId(rp.id)}
+                        className={`p-2 text-left border flex items-center justify-between gap-2 transition-colors ${
+                          isSel
+                            ? 'bg-[#2a1b10] border-amber-400 text-amber-200'
+                            : 'bg-[#180f09] border-[#3b2516] text-[#c4ab7d]'
+                        }`}
+                      >
+                        <div className="min-w-0">
+                          <div className="text-[10px] font-bold truncate">
+                            {rp.label} ({rp.tileX}, {rp.tileY})
+                          </div>
+                          <div
+                            className={`text-[9px] truncate ${
+                              rp.canDelegate
+                                ? 'text-emerald-400'
+                                : 'text-rose-400'
+                            }`}
+                          >
+                            {rp.statusReason}
+                          </div>
+                        </div>
+                        <span className="text-[9px] font-bold px-1.5 py-0.5 bg-black/40 border border-[#4a301e] shrink-0">
+                          {rp.currentResidents}/{rp.maxCapacity}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+
+            {/* Footer Confirm / Cancel Actions */}
+            <div className="px-3 py-2.5 bg-[#1c120b] border-t-2 border-[#4a301e] flex items-center justify-end gap-2 shrink-0">
+              <button
+                type="button"
+                onClick={() => setShowRestPointMap(false)}
+                className="px-4 min-h-[36px] medieval-btn-crimson font-pixel text-[10px] font-bold flex items-center gap-1.5"
+              >
+                <X className="w-3.5 h-3.5" />
+                <span>CANCELAR</span>
+              </button>
+              <button
+                type="button"
+                disabled={
+                  !selectedRestPointObj || !selectedRestPointObj.canDelegate
+                }
+                onClick={handleConfirmRestPointDelegation}
+                className={`px-4 min-h-[36px] font-pixel text-[10px] font-bold flex items-center gap-1.5 ${
+                  selectedRestPointObj?.canDelegate
+                    ? 'medieval-btn-emerald'
+                    : 'medieval-btn-wood opacity-50 cursor-not-allowed'
+                }`}
+              >
+                <Check className="w-3.5 h-3.5" />
+                <span>CONFIRMAR CAMA</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {showHelp && (
         <WindowHelpModal
           title="Ajuda — Comércio & Diplomacia"
@@ -489,8 +1014,8 @@ export const NpcTradeModal: React.FC<NpcTradeModalProps> = ({
               body: 'Realizar trocas ou entregar presentes na aba Presentes aumenta sua Afinidade com a vila. Ao atingir ♥75 (Aliado), trocas especiais e o Cofre da Vila são liberados.',
             },
             {
-              title: '2. Andarilhos e Moradias',
-              body: 'Andarilhos nômades podem ser convidados para morar em casas vazias ou com 1 morador (máximo de 2 aldeões por casa).',
+              title: '2. Andarilhos e Delegação de Cama no Mini-Mapa',
+              body: 'Andarilhos nômades podem ser convidados para morar. Ao clicar em Convidar para Morar, abre-se o mini-mapa expandido de pontos de descanso próximos para que você clique na cama desejada e confirme a delegação.',
             },
             {
               title: '3. Hostilidade e Tratado da Paz',

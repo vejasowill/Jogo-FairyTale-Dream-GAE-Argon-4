@@ -893,16 +893,37 @@ class SpriteAtlasManager {
     kind: CreatureKind,
     frame: number,
     isAttacking: boolean,
-    dir: Direction = 'down'
+    dir: Direction = 'down',
+    options?: { isSheared?: boolean; isBaby?: boolean }
   ): HTMLCanvasElement {
     this.ensureInitialized();
+    const suffix = isAttacking ? 'atk' : `${frame % 4}`;
+    if (options?.isBaby) {
+      const babyKey = `${kind}_BABY_${suffix}`;
+      if (this.creatureSprites.has(babyKey)) {
+        return this.creatureSprites.get(babyKey)!;
+      }
+      const babyFallback = `${kind}_BABY_${frame % 4}`;
+      if (this.creatureSprites.has(babyFallback)) {
+        return this.creatureSprites.get(babyFallback)!;
+      }
+    }
+    if (kind === CreatureKind.SHEEP && options?.isSheared && !options?.isBaby) {
+      const shornKey = `${CreatureKind.SHEEP}_SHORN_${suffix}`;
+      if (this.creatureSprites.has(shornKey)) {
+        return this.creatureSprites.get(shornKey)!;
+      }
+      const shornFallback = `${CreatureKind.SHEEP}_SHORN_${frame % 4}`;
+      if (this.creatureSprites.has(shornFallback)) {
+        return this.creatureSprites.get(shornFallback)!;
+      }
+    }
     const perspective =
       dir === 'up'
         ? 'up'
         : dir === 'left' || dir === 'right'
         ? 'side'
         : 'down';
-    const suffix = isAttacking ? 'atk' : `${frame % 4}`;
     const dirKey = `${kind}_${perspective}_${suffix}`;
     if (this.creatureSprites.has(dirKey)) {
       return this.creatureSprites.get(dirKey)!;
@@ -1923,6 +1944,37 @@ class SpriteAtlasManager {
     buildSword('wood_sword', '#94a3b8', '#cbd5e1', '#8b5a2b');
     buildSword('iron_sword', '#e2e8f0', '#ffffff', '#f59e0b');
     buildSword('astral_sword', '#38bdf8', '#fef08a', '#d97706');
+
+    // Tesoura (Shears — hinged steel blades with wooden/leather handles)
+    registerItem(
+      'shears',
+      [
+        '.........ooo....',
+        '........olllo...',
+        '.......olsslo...',
+        '......olsslo.oo.',
+        '.....olsslo.ollo',
+        '....olsslo.olslo',
+        '....osslo.olsslo',
+        '.....ooopposslo.',
+        '....ohhhppools..',
+        '...ohddhoohhh...',
+        '..ohddho..ohdho.',
+        '..ohhho...ohdho.',
+        '...ooo.....ohho.',
+        '............oo..',
+        '................',
+        '................',
+      ],
+      {
+        o: '#0f172a',
+        l: '#f8fafc',
+        s: '#94a3b8',
+        p: '#fbbf24',
+        h: '#92400e',
+        d: '#451a03',
+      }
+    );
 
     // Armors & Garments (Head, Body, Legs, Feet)
     // Starter Equipped Clothing: White Tank Top & Brown Shorts
@@ -9891,6 +9943,213 @@ class SpriteAtlasManager {
       // Eye
       ctx.fillStyle = '#0f172a';
       ctx.fillRect(27, 7, 1, 2);
+    });
+
+    const buildCustomCreatureVariant = (
+      variantKeyPrefix: string,
+      w: number,
+      h: number,
+      drawer: (ctx: CanvasRenderingContext2D, frame: number, isAtk: boolean) => void
+    ) => {
+      for (let f = 0; f < 4; f++) {
+        const c = createPixelCanvas(w, h);
+        drawer(c.getContext('2d')!, f, false);
+        this.creatureSprites.set(`${variantKeyPrefix}_${f}`, c);
+      }
+      const atkC = createPixelCanvas(w, h);
+      drawer(atkC.getContext('2d')!, 1, true);
+      this.creatureSprites.set(`${variantKeyPrefix}_atk`, atkC);
+    };
+
+    // SHORN SHEEP (26x20 — Skinny shorn sheep without wool coat: slender torso, exposed pinkish-tan skin & thin legs)
+    buildCustomCreatureVariant(`${CreatureKind.SHEEP}_SHORN`, 26, 20, (ctx, f) => {
+      const leg = f % 2;
+      ctx.fillStyle = 'rgba(0,0,0,0.24)';
+      ctx.fillRect(4, 16, 17, 2);
+      // Thin dark outline (much narrower/skinnier torso without wool!)
+      ctx.fillStyle = '#0f172a';
+      ctx.fillRect(4, 7, 14, 6);
+      ctx.fillRect(16, 4, 7, 7);
+      // Thin exposed legs & hooves
+      ctx.fillStyle = '#475569';
+      ctx.fillRect(5, 12, 2, 3 + leg);
+      ctx.fillRect(9, 12, 2, 4 - leg);
+      ctx.fillRect(13, 12, 2, 3 + leg);
+      ctx.fillRect(16, 12, 2, 4 - leg);
+      ctx.fillStyle = '#1e293b';
+      ctx.fillRect(5, 14 + leg, 2, 2);
+      ctx.fillRect(16, 15 - leg, 2, 2);
+      // Skinny shorn pinkish-beige body with subtle rib/clip marks
+      ctx.fillStyle = '#e2c2b3';
+      ctx.fillRect(5, 8, 12, 4);
+      ctx.fillStyle = '#f5d6c6';
+      ctx.fillRect(6, 8, 10, 2);
+      ctx.fillStyle = '#cba393';
+      ctx.fillRect(8, 9, 1, 2);
+      ctx.fillRect(11, 9, 1, 2);
+      ctx.fillRect(14, 9, 1, 2);
+      // Tiny skinny tail
+      ctx.fillStyle = '#cbd5e1';
+      ctx.fillRect(3, 8, 2, 2);
+      // Head & Ears (disproportionately prominent on skinny shorn body)
+      ctx.fillStyle = '#334155';
+      ctx.fillRect(17, 5, 5, 5);
+      ctx.fillRect(15, 6, 2, 2);
+      // Little tuft of wool left on forehead
+      ctx.fillStyle = '#f8fafc';
+      ctx.fillRect(17, 4, 3, 1);
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(20, 6, 1, 1);
+    });
+
+    // BABY SHEEP / CORDEIRINHO (20x16 — Tiny fluffy lamb with oversized ears & stubby legs)
+    buildCustomCreatureVariant(`${CreatureKind.SHEEP}_BABY`, 20, 16, (ctx, f) => {
+      const leg = f % 2;
+      ctx.fillStyle = 'rgba(0,0,0,0.24)';
+      ctx.fillRect(3, 13, 13, 2);
+      ctx.fillStyle = '#0f172a';
+      ctx.fillRect(3, 5, 10, 7);
+      ctx.fillRect(11, 3, 6, 6);
+      // Stubby baby hooves
+      ctx.fillStyle = '#1e293b';
+      ctx.fillRect(4, 11 + leg, 2, 3);
+      ctx.fillRect(7, 12 - leg, 2, 2);
+      ctx.fillRect(10, 11 + leg, 2, 3);
+      // Soft cottony baby fleece
+      ctx.fillStyle = '#f1f5f9';
+      ctx.fillRect(4, 6, 8, 5);
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(5, 6, 6, 3);
+      // Cute baby lamb head, pink nose & big eye
+      ctx.fillStyle = '#334155';
+      ctx.fillRect(12, 4, 4, 4);
+      ctx.fillRect(10, 4, 2, 2); // Floppy ear
+      ctx.fillStyle = '#f8fafc';
+      ctx.fillRect(12, 3, 3, 1); // Wool tuft
+      ctx.fillStyle = '#fda4af';
+      ctx.fillRect(15, 6, 1, 1); // Pink nose
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(14, 5, 1, 1);
+    });
+
+    // BABY COW / BEZERRINHO (22x18 — Small spotted calf with hornless head, big ears & pink muzzle)
+    buildCustomCreatureVariant(`${CreatureKind.COW}_BABY`, 22, 18, (ctx, f) => {
+      const leg = f % 2;
+      ctx.fillStyle = 'rgba(0,0,0,0.25)';
+      ctx.fillRect(3, 15, 15, 2);
+      ctx.fillStyle = '#0f172a';
+      ctx.fillRect(3, 6, 12, 7);
+      ctx.fillRect(13, 4, 7, 7);
+      // Calf legs
+      ctx.fillStyle = '#e2e8f0';
+      ctx.fillRect(4, 12 + leg, 2, 3);
+      ctx.fillRect(8, 13 - leg, 2, 2);
+      ctx.fillRect(12, 12 + leg, 2, 3);
+      ctx.fillStyle = '#1e293b';
+      ctx.fillRect(4, 14 + leg, 2, 1);
+      ctx.fillRect(12, 14 + leg, 2, 1);
+      // White calf coat & cute single spot
+      ctx.fillStyle = '#f8fafc';
+      ctx.fillRect(4, 7, 10, 5);
+      ctx.fillStyle = '#1e293b';
+      ctx.fillRect(6, 7, 4, 3);
+      // Hornless baby calf head & big pink snout
+      ctx.fillStyle = '#f8fafc';
+      ctx.fillRect(14, 5, 5, 5);
+      ctx.fillStyle = '#1e293b';
+      ctx.fillRect(12, 5, 2, 2); // Ear
+      ctx.fillRect(14, 5, 2, 2);
+      ctx.fillStyle = '#fda4af';
+      ctx.fillRect(17, 7, 3, 3);
+      ctx.fillStyle = '#0f172a';
+      ctx.fillRect(16, 6, 1, 2);
+    });
+
+    // BABY BOAR / JAVALIZINHO LISTRADO (20x16 — Striped wild piglet without tusks)
+    buildCustomCreatureVariant(`${CreatureKind.BOAR}_BABY`, 20, 16, (ctx, f) => {
+      const leg = f % 2;
+      ctx.fillStyle = 'rgba(0,0,0,0.25)';
+      ctx.fillRect(3, 13, 13, 2);
+      ctx.fillStyle = '#1a0a03';
+      ctx.fillRect(3, 6, 11, 6);
+      ctx.fillRect(12, 5, 6, 6);
+      // Little trotters
+      ctx.fillRect(4, 11 + leg, 2, 3);
+      ctx.fillRect(8, 12 - leg, 2, 2);
+      ctx.fillRect(11, 11 + leg, 2, 3);
+      // Warm brown piglet coat with cream longitudinal stripes (classic wild boar piglet!)
+      ctx.fillStyle = '#78350f';
+      ctx.fillRect(4, 7, 9, 4);
+      ctx.fillStyle = '#fde68a';
+      ctx.fillRect(5, 7, 7, 1);
+      ctx.fillRect(5, 9, 6, 1);
+      // Piglet head & pink snout (no tusks yet)
+      ctx.fillStyle = '#78350f';
+      ctx.fillRect(13, 6, 4, 4);
+      ctx.fillStyle = '#fda4af';
+      ctx.fillRect(16, 7, 2, 3);
+      ctx.fillStyle = '#0f172a';
+      ctx.fillRect(14, 7, 1, 1);
+    });
+
+    // BABY CAMEL / CAMELINHO (26x26 — Fluffy light-golden baby dromedary with tiny hump & long gangly legs)
+    buildCustomCreatureVariant(`${CreatureKind.CAMEL}_BABY`, 26, 26, (ctx, f) => {
+      const leg = f % 2;
+      ctx.fillStyle = 'rgba(0,0,0,0.26)';
+      ctx.fillRect(4, 22, 17, 2);
+      ctx.fillStyle = '#2a1205';
+      ctx.fillRect(5, 10, 13, 8);
+      ctx.fillRect(8, 7, 6, 4);
+      ctx.fillRect(16, 4, 6, 10);
+      // Gangly baby camel legs
+      ctx.fillStyle = '#b45309';
+      ctx.fillRect(6, 17 + leg, 2, 6);
+      ctx.fillRect(10, 18 - leg, 2, 5);
+      ctx.fillRect(15, 17 + leg, 2, 6);
+      // Soft sandy-cream baby coat & tiny hump
+      ctx.fillStyle = '#f59e0b';
+      ctx.fillRect(6, 11, 11, 6);
+      ctx.fillRect(9, 8, 4, 3);
+      ctx.fillRect(17, 5, 4, 8);
+      ctx.fillStyle = '#fde68a';
+      ctx.fillRect(7, 11, 9, 3);
+      ctx.fillRect(18, 5, 3, 3);
+      ctx.fillStyle = '#0f172a';
+      ctx.fillRect(19, 6, 1, 2);
+    });
+
+    // BABY HORSE / POTRINHO (26x24 — Cute foal with short upright mane, white blaze & slender legs)
+    buildCustomCreatureVariant(`${CreatureKind.HORSE}_BABY`, 26, 24, (ctx, f) => {
+      const leg = f % 2;
+      ctx.fillStyle = 'rgba(0,0,0,0.26)';
+      ctx.fillRect(4, 20, 17, 2);
+      ctx.fillStyle = '#1c1008';
+      ctx.fillRect(5, 9, 13, 7);
+      ctx.fillRect(15, 4, 7, 9);
+      // Short bushy foal tail
+      ctx.fillStyle = '#27170c';
+      ctx.fillRect(2, 10 + leg, 3, 4);
+      // Foal legs & hooves
+      ctx.fillStyle = '#78350f';
+      ctx.fillRect(6, 15 + leg, 2, 6);
+      ctx.fillRect(10, 16 - leg, 2, 5);
+      ctx.fillRect(15, 15 + leg, 2, 6);
+      ctx.fillStyle = '#1e293b';
+      ctx.fillRect(6, 20 + leg, 2, 1);
+      ctx.fillRect(15, 20 + leg, 2, 1);
+      // Warm chestnut foal coat & head
+      ctx.fillStyle = '#a16207';
+      ctx.fillRect(6, 10, 11, 5);
+      ctx.fillRect(16, 5, 4, 7);
+      ctx.fillRect(18, 6, 3, 3);
+      ctx.fillStyle = '#fef3c7';
+      ctx.fillRect(20, 6, 1, 2);
+      // Short foal mane & ears
+      ctx.fillStyle = '#27170c';
+      ctx.fillRect(15, 5, 2, 5);
+      ctx.fillRect(17, 3, 2, 2);
+      ctx.fillStyle = '#0f172a';
+      ctx.fillRect(18, 6, 1, 2);
     });
 
     // BOAT (40x24 — Sturdy Twin-Seat Wooden Rowboat with curved prow, benches, and oars)
