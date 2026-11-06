@@ -80,6 +80,17 @@ export const ITEMS: Record<string, ItemDefinition> = {
     rarity: RarityTier.BASIC,
     maxStack: 99,
   },
+  palm_wood: {
+    id: 'palm_wood',
+    name: 'Madeira de Coqueiro',
+    description:
+      'Troncos cilíndricos anelados e fibrosos extraídos de Coqueiros nas costas tropicais, ilhas e oásis do deserto. Pode ser escolhida como madeira em qualquer receita, usada em construções de troncos enfileirados ou como combustível.',
+    purposeSummary:
+      'Cria Pisos, Paredes, Janelas e Portas de Coqueiro (troncos inteiros enfileirados), substitui madeira comum e serve como combustível.',
+    category: ItemCategory.RESOURCE,
+    rarity: RarityTier.BASIC,
+    maxStack: 99,
+  },
   stone: {
     id: 'stone',
     name: 'Pedra Bruta',
@@ -1860,6 +1871,18 @@ export const ITEMS: Record<string, ItemDefinition> = {
     maxStack: 99,
     placeableType: PlaceableType.PINE_WALL,
   },
+  palm_wall: {
+    id: 'palm_wall',
+    name: 'Parede de Coqueiro',
+    description:
+      'Parede tropical construída com troncos inteiros cilíndricos de Coqueiro enfileirados lado a lado e amarrados com cordas de fibra em continuidade de 16 estados.',
+    purposeSummary:
+      'Parede de Coqueiro (140 HP · Hitbox Sólida): Troncos inteiros de coqueiro enfileirados com conexão automática em 4 direções.',
+    category: ItemCategory.PLACEABLE,
+    rarity: RarityTier.BASIC,
+    maxStack: 99,
+    placeableType: PlaceableType.PALM_WALL,
+  },
   stone_wall: {
     id: 'stone_wall',
     name: 'Parede de Pedra',
@@ -1908,6 +1931,18 @@ export const ITEMS: Record<string, ItemDefinition> = {
     maxStack: 99,
     placeableType: PlaceableType.PINE_FLOOR,
   },
+  palm_floor: {
+    id: 'palm_floor',
+    name: 'Piso de Coqueiro',
+    description:
+      'Piso tropical formado por troncos inteiros cilíndricos de Coqueiro enfileirados lado a lado, com anéis naturais da casca e opção de rotação. Concede +15% de Velocidade de Movimento e aceita construções por cima (Sem Hitbox).',
+    purposeSummary:
+      'Piso de Coqueiro (Sem Hitbox · +15% Velocidade): Troncos inteiros de coqueiro enfileirados que aceitam paredes e móveis por cima.',
+    category: ItemCategory.PLACEABLE,
+    rarity: RarityTier.BASIC,
+    maxStack: 99,
+    placeableType: PlaceableType.PALM_FLOOR,
+  },
   stone_floor: {
     id: 'stone_floor',
     name: 'Calçada de Pedra Real',
@@ -1922,11 +1957,11 @@ export const ITEMS: Record<string, ItemDefinition> = {
   },
   wood_bridge: {
     id: 'wood_bridge',
-    name: 'Ponte Costeira Flutuante',
+    name: 'Plataforma Flutuante',
     description:
-      'Estrutura marítima com guarda-corpos adaptativos que se abrem automaticamente ao conectar pontes vizinhas no Oceano (Sem Hitbox de bloqueio).',
+      'Plataforma estrutural de troncos cilíndricos enfileirados e amarrados juntos. Único piso que pode ser colocado sobre o mar e águas profundas, funcionando também como piso em terra firme e possibilitando construir paredes e estruturas sobre ela (Sem Hitbox).',
     purposeSummary:
-      'Ponte Conectável (Sem Hitbox): Travessia sobre o Oceano com guarda-corpos inteligentes e suporte a construções.',
+      'Plataforma Flutuante (Sem Hitbox · +15% Velocidade): Troncos cilíndricos enfileirados que servem de piso na água ou em terra e permitem construir por cima.',
     category: ItemCategory.PLACEABLE,
     rarity: RarityTier.BASIC,
     maxStack: 99,
@@ -2153,6 +2188,18 @@ export const ITEMS: Record<string, ItemDefinition> = {
     maxStack: 30,
     placeableType: PlaceableType.PINE_DOOR,
   },
+  palm_door: {
+    id: 'palm_door',
+    name: 'Porta de Coqueiro',
+    description:
+      'Porta tropical confeccionada com troncos inteiros cilíndricos de Coqueiro enfileirados e amarrados com travessas de fibra. Alinha-se automaticamente entre paredes, forma porta dupla e abre/fecha ao interagir!',
+    purposeSummary:
+      'Porta de Coqueiro (160 HP · Hitbox Dinâmica): Troncos inteiros de coqueiro enfileirados com abertura interativa.',
+    category: ItemCategory.PLACEABLE,
+    rarity: RarityTier.BASIC,
+    maxStack: 30,
+    placeableType: PlaceableType.PALM_DOOR,
+  },
   iron_gate: {
     id: 'iron_gate',
     name: 'Portão de Ferro de Fortaleza',
@@ -2224,6 +2271,18 @@ export const ITEMS: Record<string, ItemDefinition> = {
     rarity: RarityTier.BASIC,
     maxStack: 60,
     placeableType: PlaceableType.PINE_WINDOW,
+  },
+  palm_window: {
+    id: 'palm_window',
+    name: 'Parede de Coqueiro com Janela',
+    description:
+      'Parede de troncos inteiros cilíndricos de Coqueiro enfileirados com moldura tropical amarrada e janela de vidro translúcido que se conecta continuamente às paredes adjacentes.',
+    purposeSummary:
+      'Parede de Coqueiro c/ Janela (145 HP · Hitbox Sólida): Troncos de coqueiro enfileirados com vidro translúcido.',
+    category: ItemCategory.PLACEABLE,
+    rarity: RarityTier.BASIC,
+    maxStack: 60,
+    placeableType: PlaceableType.PALM_WINDOW,
   },
   stone_window: {
     id: 'stone_window',
@@ -2409,11 +2468,11 @@ export const ITEMS: Record<string, ItemDefinition> = {
   },
   palm_sapling: {
     id: 'palm_sapling',
-    name: 'Muda de Palmeira',
+    name: 'Muda de Coqueiro',
     description:
-      'Brote tropical de Palmeira Costeira. Plante no solo: possui 3 estágios (Muda → Palmeira Pequena → Palmeira Adulta em 5 min, sem hitbox enquanto cresce e aceita Adubo Orgânico). Se quebrada antes de adulta, devolve apenas a muda.',
+      'Brote tropical de Coqueiro. Plante no solo: possui 3 estágios (Muda → Coqueiro Jovem → Coqueiro Adulto em 5 min, sem hitbox enquanto cresce e aceita Adubo Orgânico). Ao crescer, fornece Madeira de Coqueiro, Cocos e novas mudas.',
     purposeSummary:
-      'Reflorestamento (Sem Hitbox · 5 min p/ Crescer · Aceita Adubo): Cresce em 3 estágios até virar uma Palmeira Costeira adulta.',
+      'Reflorestamento (Sem Hitbox · 5 min p/ Crescer · Aceita Adubo): Cresce em 3 estágios até virar um Coqueiro adulto.',
     category: ItemCategory.PLACEABLE,
     rarity: RarityTier.BASIC,
     maxStack: 50,
@@ -2883,6 +2942,23 @@ export const CONSTRUCTION_BLUEPRINTS: Record<PlaceableType, ConstructionBlueprin
     lightRadius: 0,
     speedMultiplier: 1.15,
   },
+  [PlaceableType.PALM_FLOOR]: {
+    type: PlaceableType.PALM_FLOOR,
+    role: 'CHAO',
+    roleLabel: 'Piso de Coqueiro',
+    layer: 'GROUND',
+    layerLabel: 'Camada de Chão (Aceita Estruturas Acima)',
+    hasHitbox: false,
+    hitboxBehavior: 'NONE',
+    hitboxLabel: 'Sem Hitbox (Livre Passagem)',
+    continuityMode: 'FLOOR_BORDER',
+    continuityLabel: 'Troncos Cilíndricos de Coqueiro Enfileirados',
+    connectionGroup: 'wood_floor',
+    connectsToGroups: ['wood_floor'],
+    maxHp: 90,
+    lightRadius: 0,
+    speedMultiplier: 1.15,
+  },
   [PlaceableType.STONE_FLOOR]: {
     type: PlaceableType.STONE_FLOOR,
     role: 'CHAO',
@@ -2937,19 +3013,19 @@ export const CONSTRUCTION_BLUEPRINTS: Record<PlaceableType, ConstructionBlueprin
   [PlaceableType.WOOD_BRIDGE]: {
     type: PlaceableType.WOOD_BRIDGE,
     role: 'PONTE',
-    roleLabel: 'Ponte / Píer Marítimo',
+    roleLabel: 'Plataforma Flutuante',
     layer: 'GROUND',
-    layerLabel: 'Fundação Aquática (Aceita Estruturas Acima)',
+    layerLabel: 'Plataforma / Piso (Água ou Terra · Aceita Estruturas Acima)',
     hasHitbox: false,
     hitboxBehavior: 'NONE',
-    hitboxLabel: 'Sem Hitbox (Travessia Livre sobre Água)',
+    hitboxLabel: 'Sem Hitbox (Piso Flutuante sobre Água ou Terra)',
     continuityMode: 'BRIDGE_AUTO',
-    continuityLabel: 'Guarda-Corpos Adaptativos N/S/L/O',
+    continuityLabel: 'Troncos Cilíndricos Enfileirados & Conectáveis',
     connectionGroup: 'bridge',
     connectsToGroups: ['bridge', 'wood_floor', 'stone_floor', 'brick_floor', 'dirt_path'],
     maxHp: 110,
     lightRadius: 0,
-    speedMultiplier: 1.12,
+    speedMultiplier: 1.15,
   },
 
   // === LAYER 2: WALLS, WINDOWS, DOORS, GATES & FENCES ===
@@ -2996,6 +3072,22 @@ export const CONSTRUCTION_BLUEPRINTS: Record<PlaceableType, ConstructionBlueprin
     hitboxLabel: 'Hitbox Sólida (Bloqueio Total)',
     continuityMode: 'WALL_16',
     continuityLabel: 'Continuidade 16-Estados (Toras de Pinheiro)',
+    connectionGroup: 'wall',
+    connectsToGroups: ['wall', 'fence'],
+    maxHp: 140,
+    lightRadius: 0,
+  },
+  [PlaceableType.PALM_WALL]: {
+    type: PlaceableType.PALM_WALL,
+    role: 'PAREDE',
+    roleLabel: 'Parede de Coqueiro',
+    layer: 'WALL',
+    layerLabel: 'Camada de Parede (Sobre Chão/Terra)',
+    hasHitbox: true,
+    hitboxBehavior: 'SOLID_FULL',
+    hitboxLabel: 'Hitbox Sólida (Bloqueio Total)',
+    continuityMode: 'WALL_16',
+    continuityLabel: 'Continuidade 16-Estados (Troncos Inteiros de Coqueiro)',
     connectionGroup: 'wall',
     connectsToGroups: ['wall', 'fence'],
     maxHp: 140,
@@ -3081,6 +3173,22 @@ export const CONSTRUCTION_BLUEPRINTS: Record<PlaceableType, ConstructionBlueprin
     maxHp: 145,
     lightRadius: 0,
   },
+  [PlaceableType.PALM_WINDOW]: {
+    type: PlaceableType.PALM_WINDOW,
+    role: 'JANELA',
+    roleLabel: 'Parede de Coqueiro com Janela',
+    layer: 'WALL',
+    layerLabel: 'Camada de Parede (Sobre Chão/Terra)',
+    hasHitbox: true,
+    hitboxBehavior: 'SOLID_FULL',
+    hitboxLabel: 'Hitbox Sólida (Passagem de Luz)',
+    continuityMode: 'WALL_16',
+    continuityLabel: 'Continuidade 16-Estados (Troncos de Coqueiro c/ Janela)',
+    connectionGroup: 'wall',
+    connectsToGroups: ['wall', 'fence'],
+    maxHp: 145,
+    lightRadius: 0,
+  },
   [PlaceableType.STONE_WINDOW]: {
     type: PlaceableType.STONE_WINDOW,
     role: 'JANELA',
@@ -3135,6 +3243,23 @@ export const CONSTRUCTION_BLUEPRINTS: Record<PlaceableType, ConstructionBlueprin
     type: PlaceableType.PINE_DOOR,
     role: 'PORTA',
     roleLabel: 'Porta de Pinheiro',
+    layer: 'WALL',
+    layerLabel: 'Camada de Parede / Acesso',
+    hasHitbox: true,
+    hitboxBehavior: 'DYNAMIC_DOOR',
+    hitboxLabel: 'Hitbox Dinâmica (Fechada: Sólida | Aberta: Livre)',
+    continuityMode: 'DOOR_AUTO',
+    continuityLabel: 'Rotação & Encaixe Automático N-S / L-O',
+    connectionGroup: 'wall',
+    connectsToGroups: ['wall', 'fence'],
+    maxHp: 160,
+    lightRadius: 0,
+    isInteractive: true,
+  },
+  [PlaceableType.PALM_DOOR]: {
+    type: PlaceableType.PALM_DOOR,
+    role: 'PORTA',
+    roleLabel: 'Porta de Coqueiro',
     layer: 'WALL',
     layerLabel: 'Camada de Parede / Acesso',
     hasHitbox: true,
@@ -3765,7 +3890,7 @@ export const NATURE_BLUEPRINTS: Record<NatureNodeType, NatureNodeBlueprint> = {
   },
   [NatureNodeType.PALM_TREE]: {
     type: NatureNodeType.PALM_TREE,
-    name: 'Palmeira Costeira',
+    name: 'Coqueiro Costeiro',
     rarity: RarityTier.BASIC,
     maxHp: 70,
     materialKind: 'SOFT_WOOD',
@@ -3775,7 +3900,7 @@ export const NATURE_BLUEPRINTS: Record<NatureNodeType, NatureNodeBlueprint> = {
     hasHitbox: true,
     hitboxRadius: 6,
     drops: [
-      { itemId: 'wood', min: 2, max: 4, chance: 1.0 },
+      { itemId: 'palm_wood', min: 2, max: 4, chance: 1.0 },
       { itemId: 'palm_sapling', min: 1, max: 2, chance: 1.0 },
       { itemId: 'coconut', min: 1, max: 2, chance: 0.75 },
     ],
@@ -3997,6 +4122,7 @@ export const ITEM_BASE_PRICES: Record<string, number> = {
   wood: 1,
   dark_oak_wood: 1,
   pine_wood: 1,
+  palm_wood: 1,
   fiber: 1,
   berry: 1,
   gold_coin: 1,
@@ -4056,20 +4182,24 @@ export const ITEM_BASE_PRICES: Record<string, number> = {
   wood_floor: 1,
   dark_oak_floor: 1,
   pine_floor: 1,
+  palm_floor: 1,
   wood_fence: 1,
   fence_gate: 3,
   wood_wall: 2,
   dark_oak_wall: 2,
   pine_wall: 2,
+  palm_wall: 2,
   wood_bridge: 2,
   torch: 2,
   wood_window: 3,
   dark_oak_window: 3,
   pine_window: 3,
+  palm_window: 3,
   stone_floor: 4,
   wood_door: 5,
   dark_oak_door: 5,
   pine_door: 5,
+  palm_door: 5,
   spike_trap: 7,
   royal_carpet: 7,
   workbench: 12,
@@ -4469,6 +4599,12 @@ export const STRUCTURE_MATERIAL_REQUIREMENTS: Record<
     requiredTier: 0,
     requirementLabel: 'Mão Livre ou Machado (Ideal: Machado)',
   },
+  [PlaceableType.PALM_FLOOR]: {
+    materialKind: 'SOFT_WOOD',
+    requiredTool: ToolType.AXE,
+    requiredTier: 0,
+    requirementLabel: 'Mão Livre ou Machado (Ideal: Machado)',
+  },
   [PlaceableType.WOOD_BRIDGE]: {
     materialKind: 'SOFT_WOOD',
     requiredTool: ToolType.AXE,
@@ -4493,6 +4629,12 @@ export const STRUCTURE_MATERIAL_REQUIREMENTS: Record<
     requiredTier: 0,
     requirementLabel: 'Mão Livre ou Machado (Ideal: Machado)',
   },
+  [PlaceableType.PALM_WALL]: {
+    materialKind: 'SOFT_WOOD',
+    requiredTool: ToolType.AXE,
+    requiredTier: 0,
+    requirementLabel: 'Mão Livre ou Machado (Ideal: Machado)',
+  },
   [PlaceableType.WOOD_WINDOW]: {
     materialKind: 'SOFT_WOOD',
     requiredTool: ToolType.AXE,
@@ -4511,6 +4653,12 @@ export const STRUCTURE_MATERIAL_REQUIREMENTS: Record<
     requiredTier: 0,
     requirementLabel: 'Mão Livre ou Machado (Ideal: Machado)',
   },
+  [PlaceableType.PALM_WINDOW]: {
+    materialKind: 'SOFT_WOOD',
+    requiredTool: ToolType.AXE,
+    requiredTier: 0,
+    requirementLabel: 'Mão Livre ou Machado (Ideal: Machado)',
+  },
   [PlaceableType.WOOD_DOOR]: {
     materialKind: 'SOFT_WOOD',
     requiredTool: ToolType.AXE,
@@ -4524,6 +4672,12 @@ export const STRUCTURE_MATERIAL_REQUIREMENTS: Record<
     requirementLabel: 'Mão Livre ou Machado (Ideal: Machado)',
   },
   [PlaceableType.PINE_DOOR]: {
+    materialKind: 'SOFT_WOOD',
+    requiredTool: ToolType.AXE,
+    requiredTier: 0,
+    requirementLabel: 'Mão Livre ou Machado (Ideal: Machado)',
+  },
+  [PlaceableType.PALM_DOOR]: {
     materialKind: 'SOFT_WOOD',
     requiredTool: ToolType.AXE,
     requiredTier: 0,
@@ -5183,6 +5337,13 @@ export const FUEL_ITEMS: Record<string, FuelDefinition> = {
     efficiencyLabel: 'Lenha Básica (12s)',
     smeltCapacityHint: '1.5x preparos por tora',
   },
+  palm_wood: {
+    itemId: 'palm_wood',
+    name: 'Madeira de Coqueiro',
+    burnTimeSec: 12,
+    efficiencyLabel: 'Lenha Básica (12s)',
+    smeltCapacityHint: '1.5x preparos por tora',
+  },
   hardwood: {
     itemId: 'hardwood',
     name: 'Madeira Nobre',
@@ -5205,6 +5366,7 @@ export const FUEL_ITEM_ORDER: string[] = [
   'wood',
   'dark_oak_wood',
   'pine_wood',
+  'palm_wood',
   'fiber',
 ];
 
@@ -5240,15 +5402,18 @@ export function getPlaceableRotationMode(
     case PlaceableType.WOOD_WALL:
     case PlaceableType.DARK_OAK_WALL:
     case PlaceableType.PINE_WALL:
+    case PlaceableType.PALM_WALL:
     case PlaceableType.STONE_WALL:
     case PlaceableType.BRICK_WALL:
     case PlaceableType.WOOD_WINDOW:
     case PlaceableType.DARK_OAK_WINDOW:
     case PlaceableType.PINE_WINDOW:
+    case PlaceableType.PALM_WINDOW:
     case PlaceableType.STONE_WINDOW:
     case PlaceableType.WOOD_DOOR:
     case PlaceableType.DARK_OAK_DOOR:
     case PlaceableType.PINE_DOOR:
+    case PlaceableType.PALM_DOOR:
     case PlaceableType.IRON_GATE:
     case PlaceableType.WOOD_FENCE:
     case PlaceableType.FENCE_GATE:
@@ -5256,6 +5421,7 @@ export function getPlaceableRotationMode(
     case PlaceableType.WOOD_FLOOR:
     case PlaceableType.DARK_OAK_FLOOR:
     case PlaceableType.PINE_FLOOR:
+    case PlaceableType.PALM_FLOOR:
     case PlaceableType.BRICK_FLOOR:
       return 'axis2';
 

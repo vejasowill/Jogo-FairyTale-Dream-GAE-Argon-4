@@ -2418,35 +2418,74 @@ export class GameRenderer {
     const hasW = (mask & 8) !== 0;
 
     if (st.type === PlaceableType.WOOD_BRIDGE) {
-      // Submerged support shadow & pilings
-      ctx.fillStyle = 'rgba(5, 20, 38, 0.48)';
-      ctx.fillRect(sx + 1, sy + TILE_SIZE - 4, TILE_SIZE - 2, 5);
-      const sprite = spriteAtlas.getStructureSprite(st.type, tileAnimFrame);
-      ctx.drawImage(sprite, sx, sy, TILE_SIZE, TILE_SIZE);
+      const onWater =
+        world.getTileBiomeFast(st.tileX, st.tileY) === BiomeType.OCEAN;
+      if (onWater) {
+        // Buoyant water shadow & subtle ripple rim beneath the floating platform
+        ctx.fillStyle = 'rgba(5, 20, 38, 0.45)';
+        ctx.fillRect(sx + 1, sy + TILE_SIZE - 3, TILE_SIZE - 2, 4);
+      }
 
-      // Adaptive Bridge Handrails along unlinked water edges
-      ctx.fillStyle = '#5c3416';
-      if (!hasN) {
-        ctx.fillRect(sx, sy, TILE_SIZE, 4);
-        ctx.fillStyle = '#eab308';
-        ctx.fillRect(sx + 2, sy + 1, 3, 2);
-        ctx.fillRect(sx + TILE_SIZE - 5, sy + 1, 3, 2);
+      const isRotatedPlatform =
+        st.orientation === 'vertical' || (st.rotation ?? 0) % 2 === 1;
+
+      ctx.save();
+      if (isRotatedPlatform) {
+        ctx.translate(sx + TILE_SIZE / 2, sy + TILE_SIZE / 2);
+        ctx.rotate(Math.PI / 2);
+        ctx.translate(-(sx + TILE_SIZE / 2), -(sy + TILE_SIZE / 2));
       }
-      if (!hasS) {
-        ctx.fillStyle = '#3e200b';
-        ctx.fillRect(sx, sy + TILE_SIZE - 4, TILE_SIZE, 4);
-        ctx.fillStyle = '#eab308';
-        ctx.fillRect(sx + 2, sy + TILE_SIZE - 3, 3, 2);
-        ctx.fillRect(sx + TILE_SIZE - 5, sy + TILE_SIZE - 3, 3, 2);
+
+      // Dark gap base between cylindrical logs
+      ctx.fillStyle = '#231207';
+      ctx.fillRect(sx, sy, TILE_SIZE, TILE_SIZE);
+
+      // 4 whole cylindrical logs lined up side-by-side across the 32px tile
+      const logPositions = [1, 9, 17, 25];
+      for (let i = 0; i < logPositions.length; i++) {
+        const lx = sx + logPositions[i];
+        const lw = 6;
+        // Outer bark cylinder shadow
+        ctx.fillStyle = '#5c3110';
+        ctx.fillRect(lx, sy, lw, TILE_SIZE);
+        // Mid cylindrical wood tone
+        ctx.fillStyle = '#8c4f1e';
+        ctx.fillRect(lx + 1, sy, lw - 2, TILE_SIZE);
+        // Central 3D cylinder crown highlight
+        ctx.fillStyle = '#c27838';
+        ctx.fillRect(lx + 2, sy, 2, TILE_SIZE);
+        ctx.fillStyle = '#d98e48';
+        ctx.fillRect(lx + 2, sy + 2, 1, TILE_SIZE - 4);
+
+        // Exposed rounded cross-section log ends on unconnected top/bottom edges
+        if (!hasN) {
+          ctx.fillStyle = '#e6c28b';
+          ctx.fillRect(lx + 1, sy, lw - 2, 3);
+          ctx.fillStyle = '#a36629';
+          ctx.fillRect(lx + 2, sy + 1, 2, 1);
+        }
+        if (!hasS) {
+          ctx.fillStyle = '#d1a76b';
+          ctx.fillRect(lx + 1, sy + TILE_SIZE - 3, lw - 2, 3);
+          ctx.fillStyle = '#7c4316';
+          ctx.fillRect(lx + 2, sy + TILE_SIZE - 2, 2, 1);
+        }
       }
-      if (!hasW && (hasN || hasS)) {
-        ctx.fillStyle = '#5c3416';
-        ctx.fillRect(sx, sy, 4, TILE_SIZE);
+
+      // Twin transverse lashing beams & braided sisal ropes binding the cylindrical logs together
+      for (const ry of [sy + 6, sy + TILE_SIZE - 9]) {
+        ctx.fillStyle = '#3d1f0a';
+        ctx.fillRect(sx, ry, TILE_SIZE, 3);
+        ctx.fillStyle = '#a16207';
+        ctx.fillRect(sx, ry + 1, TILE_SIZE, 1);
+        ctx.fillStyle = '#fde047';
+        for (const lx of logPositions) {
+          ctx.fillRect(sx + lx + 1, ry, 2, 3);
+          ctx.fillRect(sx + lx + 4, ry + 1, 1, 2);
+        }
       }
-      if (!hasE && (hasN || hasS)) {
-        ctx.fillStyle = '#5c3416';
-        ctx.fillRect(sx + TILE_SIZE - 4, sy, 4, TILE_SIZE);
-      }
+
+      ctx.restore();
       return;
     }
 
@@ -2499,6 +2538,7 @@ export class GameRenderer {
       (st.type === PlaceableType.WOOD_FLOOR ||
         st.type === PlaceableType.DARK_OAK_FLOOR ||
         st.type === PlaceableType.PINE_FLOOR ||
+        st.type === PlaceableType.PALM_FLOOR ||
         st.type === PlaceableType.BRICK_FLOOR) &&
       (st.orientation === 'vertical' || (st.rotation ?? 0) % 2 === 1);
 
@@ -2522,6 +2562,7 @@ export class GameRenderer {
       st.type === PlaceableType.WOOD_FLOOR ||
       st.type === PlaceableType.DARK_OAK_FLOOR ||
       st.type === PlaceableType.PINE_FLOOR ||
+      st.type === PlaceableType.PALM_FLOOR ||
       st.type === PlaceableType.STONE_FLOOR ||
       st.type === PlaceableType.BRICK_FLOOR
     ) {
@@ -2530,6 +2571,8 @@ export class GameRenderer {
           ? '#140904'
           : st.type === PlaceableType.PINE_FLOOR
           ? '#4a2e16'
+          : st.type === PlaceableType.PALM_FLOOR
+          ? '#3b2412'
           : st.type === PlaceableType.WOOD_FLOOR
           ? '#43230d'
           : st.type === PlaceableType.BRICK_FLOOR
@@ -2540,6 +2583,8 @@ export class GameRenderer {
           ? '#6b4226'
           : st.type === PlaceableType.PINE_FLOOR
           ? '#e2be8a'
+          : st.type === PlaceableType.PALM_FLOOR
+          ? '#dfc18d'
           : st.type === PlaceableType.WOOD_FLOOR
           ? '#b87a3d'
           : st.type === PlaceableType.BRICK_FLOOR
@@ -2588,6 +2633,7 @@ export class GameRenderer {
         g.type === PlaceableType.WOOD_FLOOR ||
         g.type === PlaceableType.DARK_OAK_FLOOR ||
         g.type === PlaceableType.PINE_FLOOR ||
+        g.type === PlaceableType.PALM_FLOOR ||
         g.type === PlaceableType.STONE_FLOOR ||
         g.type === PlaceableType.BRICK_FLOOR ||
         g.type === PlaceableType.WOOD_BRIDGE
@@ -4610,11 +4656,12 @@ export class GameRenderer {
     const hasS = (mask & 4) !== 0;
     const hasW = (mask & 8) !== 0;
 
-    // 1. AUTO-ALIGNING DOORS & GATES (WOOD_DOOR, DARK_OAK_DOOR, PINE_DOOR, IRON_GATE — Elevated 40px tall architectural portals + Double Doors!)
+    // 1. AUTO-ALIGNING DOORS & GATES (WOOD_DOOR, DARK_OAK_DOOR, PINE_DOOR, PALM_DOOR, IRON_GATE — Elevated 40px tall architectural portals + Double Doors!)
     if (
       st.type === PlaceableType.WOOD_DOOR ||
       st.type === PlaceableType.DARK_OAK_DOOR ||
       st.type === PlaceableType.PINE_DOOR ||
+      st.type === PlaceableType.PALM_DOOR ||
       st.type === PlaceableType.IRON_GATE
     ) {
       const orient = world.getDoorOrientationAt(
@@ -4630,6 +4677,7 @@ export class GameRenderer {
       const isIron = st.type === PlaceableType.IRON_GATE;
       const isDarkOakDoor = st.type === PlaceableType.DARK_OAK_DOOR;
       const isPineDoor = st.type === PlaceableType.PINE_DOOR;
+      const isPalmDoor = st.type === PlaceableType.PALM_DOOR;
       const isOpen = Boolean(st.isOpen);
 
       const postColor = isIron
@@ -4638,6 +4686,8 @@ export class GameRenderer {
         ? '#1c0d06'
         : isPineDoor
         ? '#5c3a21'
+        : isPalmDoor
+        ? '#4a3019'
         : '#4a250d';
       const postTop = isIron
         ? '#94a3b8'
@@ -4645,6 +4695,8 @@ export class GameRenderer {
         ? '#5c3a21'
         : isPineDoor
         ? '#d6b07a'
+        : isPalmDoor
+        ? '#f3dfb6'
         : '#8c5327';
       const leafColor = isIron
         ? '#475569'
@@ -4652,6 +4704,8 @@ export class GameRenderer {
         ? '#2b170b'
         : isPineDoor
         ? '#b88c56'
+        : isPalmDoor
+        ? '#8a6236'
         : '#78350f';
       const leafHi = isIron
         ? '#cbd5e1'
@@ -4659,6 +4713,8 @@ export class GameRenderer {
         ? '#4a2c16'
         : isPineDoor
         ? '#e2be8a'
+        : isPalmDoor
+        ? '#c29663'
         : '#b45309';
 
       // Threshold floor plate
@@ -4668,6 +4724,8 @@ export class GameRenderer {
         ? 'rgba(28, 13, 6, 0.65)'
         : isPineDoor
         ? 'rgba(92, 58, 33, 0.55)'
+        : isPalmDoor
+        ? 'rgba(74, 48, 25, 0.55)'
         : 'rgba(67, 35, 13, 0.55)';
       if (orient === 'horizontal') {
         ctx.fillRect(wx, wy + 14, TILE_SIZE, 10);
@@ -4761,6 +4819,32 @@ export class GameRenderer {
             ctx.fillRect(handleX, wy + 7, 4, 3);
             ctx.fillStyle = '#fdba74';
             ctx.fillRect(handleX + 1, wy + 7, 2, 1);
+          } else if (isPalmDoor) {
+            // Porta de Coqueiro: Whole vertical coconut-palm trunks lined up side-by-side
+            ctx.fillStyle = '#2b190b';
+            ctx.fillRect(leafX, wy - 9, leafW, 35);
+            for (let tx = leafX; tx < leafRight - 1; tx += 5) {
+              const tw = Math.min(4, leafRight - tx);
+              if (tw <= 1) continue;
+              ctx.fillStyle = leafColor;
+              ctx.fillRect(tx, wy - 9, tw, 35);
+              ctx.fillStyle = leafHi;
+              ctx.fillRect(tx + 1, wy - 9, Math.max(1, tw - 2), 35);
+              // Rounded trunk cross-section top
+              ctx.fillStyle = '#f3dfb6';
+              ctx.fillRect(tx, wy - 9, tw, 2);
+              // Horizontal palm trunk growth rings
+              ctx.fillStyle = '#5c3d1e';
+              for (const ry of [wy - 3, wy + 4, wy + 11, wy + 18]) {
+                ctx.fillRect(tx, ry, tw, 1);
+              }
+            }
+            // Coir rope lashings binding the palm trunks
+            ctx.fillStyle = '#d97706';
+            ctx.fillRect(leafX, wy - 4, leafW, 2);
+            ctx.fillRect(leafX, wy + 17, leafW, 2);
+            ctx.fillStyle = '#fde047';
+            ctx.fillRect(handleX, wy + 7, 3, 4);
           } else {
             ctx.fillStyle = leafColor;
             ctx.fillRect(leafX, wy - 9, leafW, 35);
@@ -4815,6 +4899,12 @@ export class GameRenderer {
           ctx.fillRect(vx + 1, leafTop, vw - 2, leafH);
           ctx.fillStyle = leafHi;
           ctx.fillRect(vx + 2, leafTop, 2, leafH);
+          if (isPalmDoor) {
+            ctx.fillStyle = '#5c3d1e';
+            for (let ry = leafTop + 4; ry < leafBot - 2; ry += 5) {
+              ctx.fillRect(vx + 1, ry, vw - 2, 1);
+            }
+          }
           ctx.fillStyle = isPineDoor
             ? '#ea580c'
             : isDarkOakDoor
@@ -5063,7 +5153,7 @@ export class GameRenderer {
       return;
     }
 
-    // 3. 16-STATE ARCHITECTURAL WALLS & WINDOWS (Oak, Dark Oak, Pine, Stone, Brick)
+    // 3. 16-STATE ARCHITECTURAL WALLS & WINDOWS (Oak, Dark Oak, Pine, Coconut Palm, Stone, Brick)
     const isStone =
       st.type === PlaceableType.STONE_WALL ||
       st.type === PlaceableType.STONE_WINDOW;
@@ -5074,10 +5164,14 @@ export class GameRenderer {
     const isPine =
       st.type === PlaceableType.PINE_WALL ||
       st.type === PlaceableType.PINE_WINDOW;
+    const isPalm =
+      st.type === PlaceableType.PALM_WALL ||
+      st.type === PlaceableType.PALM_WINDOW;
     const isWindow =
       st.type === PlaceableType.WOOD_WINDOW ||
       st.type === PlaceableType.DARK_OAK_WINDOW ||
       st.type === PlaceableType.PINE_WINDOW ||
+      st.type === PlaceableType.PALM_WINDOW ||
       st.type === PlaceableType.STONE_WINDOW;
 
     const topCap = isBrick
@@ -5088,6 +5182,8 @@ export class GameRenderer {
       ? '#6b4226'
       : isPine
       ? '#e2be8a'
+      : isPalm
+      ? '#f3dfb6'
       : '#c28442';
     const topInner = isBrick
       ? '#b45309'
@@ -5097,6 +5193,8 @@ export class GameRenderer {
       ? '#4a2c16'
       : isPine
       ? '#c49a62'
+      : isPalm
+      ? '#c29663'
       : '#9a602d';
     const faceMain = isBrick
       ? '#9a3412'
@@ -5106,6 +5204,8 @@ export class GameRenderer {
       ? '#2b170b'
       : isPine
       ? '#8c6239'
+      : isPalm
+      ? '#8a6236'
       : '#653716';
     const faceDark = isBrick
       ? '#451a03'
@@ -5115,6 +5215,8 @@ export class GameRenderer {
       ? '#140904'
       : isPine
       ? '#4a2e16'
+      : isPalm
+      ? '#3b2412'
       : '#3d1f0a';
 
     // Check if this wall is viewed purely from the side (vertical North-South alignment)
@@ -5156,16 +5258,28 @@ export class GameRenderer {
       ctx.fillStyle = topCap;
       ctx.fillRect(vx + 2, topY + 1, 2, totalH - 9);
 
-      // Masonry / timber joint lines along the side-viewed top cap
-      ctx.fillStyle = isDarkOak ? '#b45309' : faceDark;
-      for (let jy = topY + 8; jy < botY - 8; jy += 8) {
-        ctx.fillRect(vx + 1, jy, vw - 2, 1);
+      // Masonry / timber joint lines along the side-viewed top cap (for Palm, render individual round trunk tops!)
+      if (isPalm) {
+        for (let jy = topY + 2; jy < botY - 8; jy += 6) {
+          ctx.fillStyle = '#3b2412';
+          ctx.fillRect(vx, jy + 5, vw, 1);
+          ctx.fillStyle = '#f3dfb6';
+          ctx.fillRect(vx + 1, jy, vw - 2, 4);
+          ctx.fillStyle = '#a67b4b';
+          ctx.fillRect(vx + 2, jy + 1, 2, 2);
+        }
+      } else {
+        ctx.fillStyle = isDarkOak ? '#b45309' : faceDark;
+        for (let jy = topY + 8; jy < botY - 8; jy += 8) {
+          ctx.fillRect(vx + 1, jy, vw - 2, 1);
+        }
       }
 
       if (isWindow) {
         ctx.restore();
         // Side-viewed window frame (solid) + glass slit with 33% transparency (alpha 0.67)
-        ctx.fillStyle = isDarkOak ? '#b45309' : isPine ? '#5c3a21' : '#0f172a';
+        ctx.fillStyle =
+          isDarkOak || isPalm ? '#d97706' : isPine ? '#5c3a21' : '#0f172a';
         ctx.fillRect(vx + 1, wy - 2, vw - 2, 1);
         ctx.fillRect(vx + 1, wy + 13, vw - 2, 1);
         ctx.fillRect(vx + 1, wy - 1, 1, 14);
@@ -5328,6 +5442,39 @@ export class GameRenderer {
           ctx.fillRect(texRight - 3, ly + 1, 3, 4);
         }
       }
+    } else if (isPalm) {
+      // Parede de Coqueiro: Troncos inteiros de coqueiro enfileirados lado a lado com anéis naturais e amarração de fibra
+      ctx.fillStyle = '#2b190b';
+      ctx.fillRect(faceLeft, wy - 5, faceW, 31);
+      for (let tx = faceLeft; tx < faceRight - 1; tx += 6) {
+        const tw = Math.min(5, faceRight - tx);
+        if (tw <= 1) continue;
+        // Cylindrical trunk base
+        ctx.fillStyle = '#754f2b';
+        ctx.fillRect(tx, wy - 5, tw, 31);
+        // Cylindrical trunk mid highlight
+        ctx.fillStyle = '#a67b4b';
+        ctx.fillRect(tx + 1, wy - 5, Math.max(1, tw - 2), 31);
+        // Center trunk ridge highlight
+        if (tw >= 4) {
+          ctx.fillStyle = '#c99e67';
+          ctx.fillRect(tx + 2, wy - 5, 1, 31);
+        }
+        // Horizontal palm trunk bark rings along each vertical trunk
+        ctx.fillStyle = '#4a3019';
+        for (const ry of [wy - 1, wy + 5, wy + 11, wy + 17, wy + 23]) {
+          ctx.fillRect(tx, ry, tw, 1);
+        }
+      }
+      // Horizontal coir/sisal rope bindings tying the trunks together
+      ctx.fillStyle = '#d97706';
+      ctx.fillRect(spanX, wy + 2, spanW, 2);
+      ctx.fillRect(spanX, wy + 19, spanW, 2);
+      ctx.fillStyle = '#fde047';
+      for (let rx = spanX + 2; rx < spanRight - 2; rx += 6) {
+        ctx.fillRect(rx, wy + 2, 2, 1);
+        ctx.fillRect(rx, wy + 19, 2, 1);
+      }
     } else {
       // Parede de Carvalho: Tábuas horizontais douradas com cintas de ferro forjado
       ctx.fillStyle = '#7c471e';
@@ -5350,7 +5497,7 @@ export class GameRenderer {
       ctx.restore();
       const frameColor = isDarkOak
         ? '#b45309'
-        : isPine
+        : isPine || isPalm
         ? '#5c3a21'
         : '#1e293b';
       // Solid outer frame border around glass opening
@@ -5377,10 +5524,10 @@ export class GameRenderer {
       ctx.fillRect(winLeft + 3, wy + 2, 2, 7);
       ctx.restore();
       // Solid mullion cross-bar & sill
-      ctx.fillStyle = frameColor;
+      ctx.fillStyle = isPalm ? '#d97706' : frameColor;
       ctx.fillRect(winLeft + 1, wy + 8, Math.max(2, winW - 2), 2);
-      if (isDarkOak || isPine) {
-        // Vertical center mullion for 4-pane manor/cabin window
+      if (isDarkOak || isPine || isPalm) {
+        // Vertical center mullion for 4-pane manor/cabin/tropical window
         ctx.fillRect(
           winLeft + Math.floor(winW / 2) - 1,
           wy + 1,
@@ -5395,15 +5542,38 @@ export class GameRenderer {
     // Roof Coping / Top Cap matched to adaptive span
     const capInnerLeft = hasW ? spanX : spanX + 1;
     const capInnerRight = hasE ? spanRight : spanRight - 1;
-    ctx.fillStyle = topCap;
-    ctx.fillRect(capInnerLeft, wy - 14, Math.max(2, capInnerRight - capInnerLeft), 9);
-    ctx.fillStyle = topInner;
-    ctx.fillRect(
-      hasW ? spanX : spanX + 2,
-      wy - 12,
-      Math.max(2, (hasE ? spanRight : spanRight - 2) - (hasW ? spanX : spanX + 2)),
-      6
-    );
+    if (isPalm) {
+      // Scalloped row of whole coconut-palm trunk cross-sections along the top of the wall
+      ctx.fillStyle = '#3b2412';
+      ctx.fillRect(
+        capInnerLeft,
+        wy - 14,
+        Math.max(2, capInnerRight - capInnerLeft),
+        9
+      );
+      for (let tx = capInnerLeft; tx < capInnerRight - 1; tx += 6) {
+        const tw = Math.min(5, capInnerRight - tx);
+        if (tw <= 1) continue;
+        ctx.fillStyle = '#f3dfb6';
+        ctx.fillRect(tx, wy - 13, tw, 7);
+        ctx.fillStyle = '#c29663';
+        ctx.fillRect(tx + 1, wy - 12, Math.max(1, tw - 2), 5);
+        if (tw >= 4) {
+          ctx.fillStyle = '#754f2b';
+          ctx.fillRect(tx + 2, wy - 10, 1, 1);
+        }
+      }
+    } else {
+      ctx.fillStyle = topCap;
+      ctx.fillRect(capInnerLeft, wy - 14, Math.max(2, capInnerRight - capInnerLeft), 9);
+      ctx.fillStyle = topInner;
+      ctx.fillRect(
+        hasW ? spanX : spanX + 2,
+        wy - 12,
+        Math.max(2, (hasE ? spanRight : spanRight - 2) - (hasW ? spanX : spanX + 2)),
+        6
+      );
+    }
 
     // Seamless North Miter into the horizontal Top Cap
     if (hasN) {

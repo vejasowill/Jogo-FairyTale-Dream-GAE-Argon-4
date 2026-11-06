@@ -2670,15 +2670,6 @@ export class WorldManager {
 
     const villageRole = this.getRareVillageRoleForChunk(cx, cy);
     const landmarkRoll = hash2D(cx, cy, this.seed + 9421);
-    // ~24% of chunks are eligible for minor landmarks (or rare village chunk)
-    if (!villageRole.isVillage && landmarkRoll > 0.24) return;
-
-    const neighborHasLandmark =
-      hash2D(cx + 1, cy, this.seed + 9421) <= 0.21 ||
-      hash2D(cx - 1, cy, this.seed + 9421) <= 0.21 ||
-      hash2D(cx, cy + 1, this.seed + 9421) <= 0.21 ||
-      hash2D(cx, cy - 1, this.seed + 9421) <= 0.21;
-    if (!villageRole.isVillage && neighborHasLandmark && landmarkRoll > 0.11) return;
 
     const baseTx = cx * CHUNK_SIZE;
     const baseTy = cy * CHUNK_SIZE;
@@ -2842,7 +2833,8 @@ export class WorldManager {
       clearNodesInBox(1, 1, 14, 14);
 
       const villageId = `village_${cx}_${cy}`;
-      const isDesertVillage = centerBiome === BiomeType.DESERT;
+      const isDesertVillage =
+        centerBiome === BiomeType.DESERT || centerBiome === BiomeType.ISLAND;
       chunk.villageId = villageId;
       chunk.landmarkName = isDesertVillage
         ? villageRole.isNeighborPair
@@ -2850,7 +2842,80 @@ export class WorldManager {
           : 'Vila Mercante do Oásis'
         : villageRole.isNeighborPair
         ? 'Vilarejos Vizinhos da Fronteira'
+        : centerBiome === BiomeType.TAIGA_FOREST
+        ? 'Vilarejo de Pinheiros'
+        : centerBiome === BiomeType.TEMPERATE_FOREST
+        ? 'Vilarejo de Carvalho Escuro'
         : 'Vilarejo de Carvalho';
+
+      // Resolve biome-specific wood materials for village houses
+      const villageWoodFloorType =
+        centerBiome === BiomeType.DESERT || centerBiome === BiomeType.ISLAND
+          ? PlaceableType.PALM_FLOOR
+          : centerBiome === BiomeType.TEMPERATE_FOREST
+          ? PlaceableType.DARK_OAK_FLOOR
+          : centerBiome === BiomeType.TAIGA_FOREST
+          ? PlaceableType.PINE_FLOOR
+          : PlaceableType.WOOD_FLOOR;
+      const villageWoodFloorItemId =
+        centerBiome === BiomeType.DESERT || centerBiome === BiomeType.ISLAND
+          ? 'palm_floor'
+          : centerBiome === BiomeType.TEMPERATE_FOREST
+          ? 'dark_oak_floor'
+          : centerBiome === BiomeType.TAIGA_FOREST
+          ? 'pine_floor'
+          : 'wood_floor';
+
+      const villageWoodWallType =
+        centerBiome === BiomeType.DESERT || centerBiome === BiomeType.ISLAND
+          ? PlaceableType.PALM_WALL
+          : centerBiome === BiomeType.TEMPERATE_FOREST
+          ? PlaceableType.DARK_OAK_WALL
+          : centerBiome === BiomeType.TAIGA_FOREST
+          ? PlaceableType.PINE_WALL
+          : PlaceableType.WOOD_WALL;
+      const villageWoodWallItemId =
+        centerBiome === BiomeType.DESERT || centerBiome === BiomeType.ISLAND
+          ? 'palm_wall'
+          : centerBiome === BiomeType.TEMPERATE_FOREST
+          ? 'dark_oak_wall'
+          : centerBiome === BiomeType.TAIGA_FOREST
+          ? 'pine_wall'
+          : 'wood_wall';
+
+      const villageWoodWindowType =
+        centerBiome === BiomeType.DESERT || centerBiome === BiomeType.ISLAND
+          ? PlaceableType.PALM_WINDOW
+          : centerBiome === BiomeType.TEMPERATE_FOREST
+          ? PlaceableType.DARK_OAK_WINDOW
+          : centerBiome === BiomeType.TAIGA_FOREST
+          ? PlaceableType.PINE_WINDOW
+          : PlaceableType.WOOD_WINDOW;
+      const villageWoodWindowItemId =
+        centerBiome === BiomeType.DESERT || centerBiome === BiomeType.ISLAND
+          ? 'palm_window'
+          : centerBiome === BiomeType.TEMPERATE_FOREST
+          ? 'dark_oak_window'
+          : centerBiome === BiomeType.TAIGA_FOREST
+          ? 'pine_window'
+          : 'wood_window';
+
+      const villageWoodDoorType =
+        centerBiome === BiomeType.DESERT || centerBiome === BiomeType.ISLAND
+          ? PlaceableType.PALM_DOOR
+          : centerBiome === BiomeType.TEMPERATE_FOREST
+          ? PlaceableType.DARK_OAK_DOOR
+          : centerBiome === BiomeType.TAIGA_FOREST
+          ? PlaceableType.PINE_DOOR
+          : PlaceableType.WOOD_DOOR;
+      const villageWoodDoorItemId =
+        centerBiome === BiomeType.DESERT || centerBiome === BiomeType.ISLAND
+          ? 'palm_door'
+          : centerBiome === BiomeType.TEMPERATE_FOREST
+          ? 'dark_oak_door'
+          : centerBiome === BiomeType.TAIGA_FOREST
+          ? 'pine_door'
+          : 'wood_door';
 
       const roleNamePools: Record<NpcRole, string[]> = {
         ferreiro: [
@@ -2887,21 +2952,21 @@ export class WorldManager {
 
       const nameSeed = Math.abs(cx * 7 + cy * 13);
 
-      // 1. Central Village Plaza & Cobblestone Pathways around the Well at (8, 8)
+      // 1. Central Village Plaza & Beaten Earth Pathways around the Well at (8, 8)
       for (let ly = 6; ly <= 9; ly++) {
         for (let lx = 6; lx <= 9; lx++) {
           addStruct(
             lx,
             ly,
-            PlaceableType.STONE_FLOOR,
-            'stone_floor',
+            PlaceableType.DIRT_PATH,
+            'dirt_path',
             undefined,
             undefined,
             villageId
           );
         }
       }
-      // Connecting stone paths from the central plaza to each of the 4 houses
+      // Connecting beaten earth paths (solo batido) from the central plaza to each of the 4 houses
       const plazaPaths: Array<[number, number]> = [
         [3, 5],
         [4, 5],
@@ -2921,8 +2986,8 @@ export class WorldManager {
         addStruct(
           px,
           py,
-          PlaceableType.STONE_FLOOR,
-          'stone_floor',
+          PlaceableType.DIRT_PATH,
+          'dirt_path',
           undefined,
           undefined,
           villageId
@@ -2949,11 +3014,28 @@ export class WorldManager {
         minLy: number;
         maxLx: number;
         maxLy: number;
-        floorType: PlaceableType.WOOD_FLOOR | PlaceableType.STONE_FLOOR | PlaceableType.BRICK_FLOOR;
+        floorType:
+          | PlaceableType.WOOD_FLOOR
+          | PlaceableType.DARK_OAK_FLOOR
+          | PlaceableType.PINE_FLOOR
+          | PlaceableType.PALM_FLOOR
+          | PlaceableType.STONE_FLOOR
+          | PlaceableType.BRICK_FLOOR;
         floorItemId: string;
-        wallType: PlaceableType.WOOD_WALL | PlaceableType.STONE_WALL | PlaceableType.BRICK_WALL;
+        wallType:
+          | PlaceableType.WOOD_WALL
+          | PlaceableType.DARK_OAK_WALL
+          | PlaceableType.PINE_WALL
+          | PlaceableType.PALM_WALL
+          | PlaceableType.STONE_WALL
+          | PlaceableType.BRICK_WALL;
         wallItemId: string;
-        windowType: PlaceableType.WOOD_WINDOW | PlaceableType.STONE_WINDOW;
+        windowType:
+          | PlaceableType.WOOD_WINDOW
+          | PlaceableType.DARK_OAK_WINDOW
+          | PlaceableType.PINE_WINDOW
+          | PlaceableType.PALM_WINDOW
+          | PlaceableType.STONE_WINDOW;
         windowItemId: string;
         doorCoord: [number, number];
         windowCoords: Array<[number, number]>;
@@ -3004,7 +3086,7 @@ export class WorldManager {
           }
         }
 
-        // B. Place Perimeter Walls, Windows, and Door
+        // B. Place Perimeter Walls, Windows, and Biome-Specific Wooden Door
         for (let ly = cfg.minLy; ly <= cfg.maxLy; ly++) {
           for (let lx = cfg.minLx; lx <= cfg.maxLx; lx++) {
             const isBorder =
@@ -3019,8 +3101,8 @@ export class WorldManager {
               borderSt = addStruct(
                 lx,
                 ly,
-                PlaceableType.WOOD_DOOR,
-                'wood_door',
+                villageWoodDoorType,
+                villageWoodDoorItemId,
                 undefined,
                 cfg.houseTitle,
                 villageId,
@@ -3127,12 +3209,12 @@ export class WorldManager {
         minLy: 1,
         maxLx: 14,
         maxLy: 4,
-        floorType: PlaceableType.WOOD_FLOOR,
-        floorItemId: 'wood_floor',
-        wallType: PlaceableType.WOOD_WALL,
-        wallItemId: 'wood_wall',
-        windowType: PlaceableType.WOOD_WINDOW,
-        windowItemId: 'wood_window',
+        floorType: villageWoodFloorType,
+        floorItemId: villageWoodFloorItemId,
+        wallType: villageWoodWallType,
+        wallItemId: villageWoodWallItemId,
+        windowType: villageWoodWindowType,
+        windowItemId: villageWoodWindowItemId,
         doorCoord: [12, 4],
         windowCoords: [
           [13, 1],
@@ -3156,12 +3238,12 @@ export class WorldManager {
         'Baú Restrito do Mercante',
         villageId
       );
-      // Market Stall in front of the Merchant's House at (13, 6)
+      // Market Stall in front of the Merchant's House at (13, 6) over beaten earth paths
       addStruct(
         13,
         5,
-        PlaceableType.WOOD_FLOOR,
-        'wood_floor',
+        PlaceableType.DIRT_PATH,
+        'dirt_path',
         undefined,
         undefined,
         villageId
@@ -3169,8 +3251,8 @@ export class WorldManager {
       addStruct(
         13,
         6,
-        PlaceableType.WOOD_FLOOR,
-        'wood_floor',
+        PlaceableType.DIRT_PATH,
+        'dirt_path',
         undefined,
         undefined,
         villageId
@@ -3197,12 +3279,12 @@ export class WorldManager {
         minLy: 11,
         maxLx: 4,
         maxLy: 14,
-        floorType: PlaceableType.WOOD_FLOOR,
-        floorItemId: 'wood_floor',
-        wallType: PlaceableType.WOOD_WALL,
-        wallItemId: 'wood_wall',
-        windowType: PlaceableType.WOOD_WINDOW,
-        windowItemId: 'wood_window',
+        floorType: villageWoodFloorType,
+        floorItemId: villageWoodFloorItemId,
+        wallType: villageWoodWallType,
+        wallItemId: villageWoodWallItemId,
+        windowType: villageWoodWindowType,
+        windowItemId: villageWoodWindowItemId,
         doorCoord: [3, 11],
         windowCoords: [
           [2, 14],
@@ -3328,10 +3410,22 @@ export class WorldManager {
       return;
     }
 
-    if (villageRole.isVillage && landmarkRoll > 0.21) return;
+    if (villageRole.isVillage) return;
 
-    // 1. COASTAL PIER (Píer dos Navegadores) — If chunk has a horizontal transition from Land to Ocean
-    if (centerBiome !== BiomeType.OCEAN) {
+    // 1. COASTAL PIER (Píer dos Navegadores)
+    // Only generated in the Sea or Large Lakes, and ONLY when there is a Village nearby (within 3 chunks)!
+    let hasNearbyVillage = false;
+    for (let vdy = -3; vdy <= 3 && !hasNearbyVillage; vdy++) {
+      for (let vdx = -3; vdx <= 3; vdx++) {
+        if (vdx === 0 && vdy === 0) continue;
+        if (this.getRareVillageRoleForChunk(cx + vdx, cy + vdy).isVillage) {
+          hasNearbyVillage = true;
+          break;
+        }
+      }
+    }
+
+    if (hasNearbyVillage && centerBiome !== BiomeType.OCEAN && landmarkRoll < 0.35) {
       for (let ly = 5; ly <= 10; ly++) {
         for (let lx = 4; lx <= 9; lx++) {
           const t0 = chunk.tiles[ly * CHUNK_SIZE + lx];
@@ -3344,11 +3438,55 @@ export class WorldManager {
             t2 === BiomeType.OCEAN &&
             t3 === BiomeType.OCEAN
           ) {
+            // Verify that the water body is either the Sea ('ocean') or a Large Lake ('lake' with wide open water expanse, never a river)
+            const h1 = this.getHydrologyAtTile(baseTx + lx + 1, baseTy + ly);
+            const h2 = this.getHydrologyAtTile(baseTx + lx + 2, baseTy + ly);
+            const h3 = this.getHydrologyAtTile(baseTx + lx + 3, baseTy + ly);
+            const isSea =
+              h1.waterKind === 'ocean' ||
+              h2.waterKind === 'ocean' ||
+              h3.waterKind === 'ocean';
+            let isLargeLake =
+              !isSea &&
+              h1.waterKind === 'lake' &&
+              h2.waterKind === 'lake' &&
+              h3.waterKind === 'lake';
+            if (isLargeLake) {
+              // Confirm the lake is genuinely large (extends at least 6 tiles out and 5 tiles vertically)
+              for (let checkDx = 4; checkDx <= 6; checkDx++) {
+                const hk = this.getHydrologyAtTile(
+                  baseTx + lx + checkDx,
+                  baseTy + ly
+                );
+                if (hk.waterKind !== 'lake') {
+                  isLargeLake = false;
+                  break;
+                }
+              }
+              if (isLargeLake) {
+                const hkNorth = this.getHydrologyAtTile(
+                  baseTx + lx + 3,
+                  baseTy + ly - 2
+                );
+                const hkSouth = this.getHydrologyAtTile(
+                  baseTx + lx + 3,
+                  baseTy + ly + 2
+                );
+                if (hkNorth.waterKind !== 'lake' || hkSouth.waterKind !== 'lake') {
+                  isLargeLake = false;
+                }
+              }
+            }
+
+            if (!isSea && !isLargeLake) {
+              continue;
+            }
+
             clearNodesInBox(lx - 1, ly - 1, lx + 4, ly + 1);
             chunk.landmarkName = 'Píer dos Navegadores';
-            addStruct(lx, ly - 1, PlaceableType.WOOD_FLOOR, 'wood_floor');
-            addStruct(lx, ly, PlaceableType.WOOD_FLOOR, 'wood_floor');
-            addStruct(lx, ly + 1, PlaceableType.WOOD_FLOOR, 'wood_floor');
+            addStruct(lx, ly - 1, PlaceableType.WOOD_BRIDGE, 'wood_bridge');
+            addStruct(lx, ly, PlaceableType.WOOD_BRIDGE, 'wood_bridge');
+            addStruct(lx, ly + 1, PlaceableType.WOOD_BRIDGE, 'wood_bridge');
             addStruct(lx, ly - 1, PlaceableType.IRON_LANTERN, 'iron_lantern');
             addStruct(
               lx,
@@ -3384,13 +3522,46 @@ export class WorldManager {
       }
     }
 
+    // =========================================================================
+    // ULTRA-RARE NON-VILLAGE LANDMARK GATE
+    // Only 1 candidate chunk per 7x7 chunk super-region (49 chunks), and only ~22% of those
+    // regions actually spawn a landmark (~1 landmark per ~220 chunks), keeping the world wild and uncrowded.
+    // =========================================================================
+    const LANDMARK_REGION_SIZE = 7;
+    const regX = Math.floor(cx / LANDMARK_REGION_SIZE);
+    const regY = Math.floor(cy / LANDMARK_REGION_SIZE);
+    const regionSpawnRoll = hash2D(regX, regY, this.seed + 19421);
+    if (regionSpawnRoll >= 0.22) return;
+
+    const candCx =
+      regX * LANDMARK_REGION_SIZE +
+      1 +
+      Math.floor(hash2D(regX, regY, this.seed + 19753) * (LANDMARK_REGION_SIZE - 2));
+    const candCy =
+      regY * LANDMARK_REGION_SIZE +
+      1 +
+      Math.floor(hash2D(regX, regY, this.seed + 20117) * (LANDMARK_REGION_SIZE - 2));
+    if (cx !== candCx || cy !== candCy) return;
+
+    // Never place a wilderness landmark right next to a village
+    for (let vdy = -2; vdy <= 2; vdy++) {
+      for (let vdx = -2; vdx <= 2; vdx++) {
+        if (this.getRareVillageRoleForChunk(cx + vdx, cy + vdy).isVillage) {
+          return;
+        }
+      }
+    }
+
     if (!isBoxAllLand(5, 5, 11, 11)) return;
 
-    // 2. PRIMORDIAL GROVE SHRINE (Santuário Primordial) — Distant Ancient Grove in Plains
+    const typeRoll = hash2D(cx, cy, this.seed + 20899);
+
+    // 2. PRIMORDIAL GROVE SHRINE (Santuário Primordial) — Very rare distant Ancient Grove in Plains
     if (
       centerBiome === BiomeType.PLAINS &&
       centerZone === EcologicalZone.ANCIENT_GROVE &&
-      chunkDist >= 2.5
+      chunkDist >= 3.2 &&
+      typeRoll < 0.28
     ) {
       clearNodesInBox(5, 5, 11, 11);
       chunk.landmarkName = 'Santuário Primordial';
@@ -3434,10 +3605,10 @@ export class WorldManager {
 
     // 2B. GOLEM MONOLITH CIRCLE (Círculo Rúnico dos Golens) — Rocky Highlands & Crystal Badlands
     if (
-      chunkDist >= 1.7 &&
+      chunkDist >= 2.5 &&
       (centerZone === EcologicalZone.ROCKY_HIGHLANDS ||
         centerZone === EcologicalZone.CRYSTAL_BADLANDS) &&
-      landmarkRoll < 0.13
+      typeRoll < 0.25
     ) {
       clearNodesInBox(5, 5, 11, 11);
       chunk.landmarkName = 'Círculo Rúnico dos Golens';
@@ -3485,12 +3656,12 @@ export class WorldManager {
 
     // 2C. BANDIT RAIDER STRONGHOLD (Reduto dos Saqueadores) — Fortified wooden palisade camp
     if (
-      chunkDist >= 1.4 &&
+      chunkDist >= 2.2 &&
       (centerZone === EcologicalZone.OVERGROWN_SHRUBLAND ||
         centerZone === EcologicalZone.DENSE_WOODLAND ||
         centerZone === EcologicalZone.CACTUS_SCRUBLAND) &&
-      landmarkRoll > 0.12 &&
-      landmarkRoll < 0.19
+      typeRoll >= 0.25 &&
+      typeRoll < 0.48
     ) {
       clearNodesInBox(5, 5, 11, 11);
       chunk.landmarkName = 'Reduto dos Saqueadores';
@@ -3542,20 +3713,22 @@ export class WorldManager {
       return;
     }
 
-    // 3. WATCHTOWER RUINS (Ruínas da Torre de Vigia) — Plains Highlands / Forests (chunkDist >= 1.8)
+    // 3. WATCHTOWER RUINS (Ruínas da Torre de Vigia) — Plains Highlands / Forests (chunkDist >= 2.4)
     if (
-      centerBiome === BiomeType.PLAINS &&
-      chunkDist >= 1.8 &&
-      (centerZone === EcologicalZone.ROCKY_HIGHLANDS ||
-        centerZone === EcologicalZone.DENSE_WOODLAND ||
-        landmarkRoll < 0.09)
+      (centerBiome === BiomeType.PLAINS ||
+        centerBiome === BiomeType.FOREST ||
+        centerBiome === BiomeType.TEMPERATE_FOREST ||
+        centerBiome === BiomeType.TAIGA_FOREST) &&
+      chunkDist >= 2.4 &&
+      typeRoll >= 0.48 &&
+      typeRoll < 0.72
     ) {
       clearNodesInBox(5, 5, 11, 11);
       chunk.landmarkName = 'Ruínas da Torre de Vigia';
       // Cobblestone & Brick floor courtyard
       for (let ly = 6; ly <= 10; ly++) {
         for (let lx = 6; lx <= 10; lx++) {
-          if (lx >= 7 && lx <= 9 && ly >= 7 && ly <= 9) {
+          if (lx >= 7 && lx <= 9 && ly >= 7 && ly >= 9) {
             addStruct(lx, ly, PlaceableType.BRICK_FLOOR, 'brick_floor');
           } else if ((lx + ly) % 2 === 0 || ly === 10 || ly === 6) {
             addStruct(lx, ly, PlaceableType.STONE_FLOOR, 'stone_floor');
@@ -3600,8 +3773,14 @@ export class WorldManager {
       return;
     }
 
-    // 4. ABANDONED EXPLORER CAMP (Acampamento de Explorador) — Plains Clearings & Shrubland
-    if (centerBiome === BiomeType.PLAINS) {
+    // 4. ABANDONED EXPLORER CAMP (Acampamento de Explorador) — Rare camp in Plains/Forests
+    if (
+      (centerBiome === BiomeType.PLAINS ||
+        centerBiome === BiomeType.FOREST ||
+        centerBiome === BiomeType.TEMPERATE_FOREST ||
+        centerBiome === BiomeType.TAIGA_FOREST) &&
+      typeRoll >= 0.72
+    ) {
       clearNodesInBox(6, 6, 10, 10);
       chunk.landmarkName = 'Acampamento de Explorador';
       for (let ly = 7; ly <= 9; ly++) {
@@ -3632,17 +3811,17 @@ export class WorldManager {
       return;
     }
 
-    // 5. DESERT SUN SHRINE (Santuário Solar Antigo) — Desert Badlands / Deep Desert
+    // 5. DESERT SUN SHRINE (Santuário Solar Antigo) — Rare Desert Badlands / Deep Desert
     if (
       centerBiome === BiomeType.DESERT &&
-      chunkDist >= 2.0 &&
-      (centerZone === EcologicalZone.CRYSTAL_BADLANDS || landmarkRoll < 0.1)
+      chunkDist >= 2.6 &&
+      typeRoll < 0.38
     ) {
       clearNodesInBox(5, 5, 11, 11);
       chunk.landmarkName = 'Santuário Solar Antigo';
       for (let ly = 6; ly <= 10; ly++) {
         for (let lx = 6; lx <= 10; lx++) {
-          if (lx >= 7 && lx <= 9 && ly >= 7 && ly <= 9) {
+          if (lx >= 7 && lx <= 9 && ly >= 7 && ly >= 9) {
             addStruct(lx, ly, PlaceableType.BRICK_FLOOR, 'brick_floor');
           } else {
             addStruct(lx, ly, PlaceableType.STONE_FLOOR, 'stone_floor');
@@ -3676,16 +3855,17 @@ export class WorldManager {
       return;
     }
 
-    // 6. DESERT CARAVAN POST (Posto de Caravana do Deserto — only in true inland desert, not ocean beaches)
+    // 6. DESERT CARAVAN POST (Posto de Caravana do Deserto — rare inland desert outpost)
     if (
       centerBiome === BiomeType.DESERT &&
-      centerZone !== EcologicalZone.COASTAL_TROPICS
+      centerZone !== EcologicalZone.COASTAL_TROPICS &&
+      typeRoll >= 0.65
     ) {
       clearNodesInBox(6, 6, 10, 10);
       chunk.landmarkName = 'Posto da Caravana';
       for (let ly = 7; ly <= 9; ly++) {
         for (let lx = 7; lx <= 9; lx++) {
-          addStruct(lx, ly, PlaceableType.WOOD_FLOOR, 'wood_floor');
+          addStruct(lx, ly, PlaceableType.PALM_FLOOR, 'palm_floor');
         }
       }
       addStruct(9, 8, PlaceableType.ROYAL_CARPET, 'royal_carpet');
@@ -4751,36 +4931,44 @@ export class WorldManager {
       return true;
     }
 
-    // 1. Placing a WOOD_BRIDGE (requires Ocean without an existing bridge)
+    // 1. Placing a WOOD_BRIDGE (Plataforma Flutuante):
+    // - On water (OCEAN), it is the ONLY floor allowed and requires no existing WOOD_BRIDGE on that tile.
+    // - On dry land, it can also be used as a platform/floor (or replace another non-protected ground floor).
     if (placeableType === PlaceableType.WOOD_BRIDGE) {
-      return (
-        biome === BiomeType.OCEAN &&
-        !existingOnTile.some(
+      if (biome === BiomeType.OCEAN) {
+        return !existingOnTile.some(
           (s) => s.isBridge || s.type === PlaceableType.WOOD_BRIDGE
-        )
-      );
+        );
+      }
+      const existingFloor = existingOnTile.find((s) => {
+        const sbp = CONSTRUCTION_BLUEPRINTS[s.type];
+        return sbp?.layer === 'GROUND';
+      });
+      if (!existingFloor) return true;
+      return existingFloor.type !== placeableType && !existingFloor.villageId;
     }
 
-    // 2. Building over Ocean requires an existing WOOD_BRIDGE on that tile
+    // 2. Over water (OCEAN):
+    // - NO floor other than WOOD_BRIDGE (Plataforma Flutuante) can EVER be placed over the sea!
+    // - Upper structures ('WALL' / 'FURNITURE') require an existing WOOD_BRIDGE on that water tile.
     if (biome === BiomeType.OCEAN) {
+      if (bp.layer === 'GROUND') {
+        return false;
+      }
       const hasBridge = existingOnTile.some(
         (s) => s.isBridge || s.type === PlaceableType.WOOD_BRIDGE
       );
       if (!hasBridge) return false;
     }
 
-    // 3. Layer-based coexistence & in-place upgrade rules
+    // 3. Layer-based coexistence & in-place upgrade rules on dry land
     if (bp.layer === 'GROUND') {
       const existingFloor = existingOnTile.find((s) => {
         const sbp = CONSTRUCTION_BLUEPRINTS[s.type];
-        return (
-          sbp?.layer === 'GROUND' &&
-          !s.isBridge &&
-          s.type !== PlaceableType.WOOD_BRIDGE
-        );
+        return sbp?.layer === 'GROUND';
       });
       if (!existingFloor) return true;
-      // Allow replacing/upgrading to a DIFFERENT floor/carpet if not village-protected
+      // Allow replacing/upgrading to a DIFFERENT floor/carpet/platform if not village-protected
       return existingFloor.type !== placeableType && !existingFloor.villageId;
     }
 
@@ -4902,11 +5090,13 @@ export class WorldManager {
       type === PlaceableType.WOOD_WALL ||
       type === PlaceableType.DARK_OAK_WALL ||
       type === PlaceableType.PINE_WALL ||
+      type === PlaceableType.PALM_WALL ||
       type === PlaceableType.STONE_WALL ||
       type === PlaceableType.BRICK_WALL ||
       type === PlaceableType.WOOD_WINDOW ||
       type === PlaceableType.DARK_OAK_WINDOW ||
       type === PlaceableType.PINE_WINDOW ||
+      type === PlaceableType.PALM_WINDOW ||
       type === PlaceableType.STONE_WINDOW
     );
   }
@@ -4919,6 +5109,7 @@ export class WorldManager {
       type === PlaceableType.WOOD_DOOR ||
       type === PlaceableType.DARK_OAK_DOOR ||
       type === PlaceableType.PINE_DOOR ||
+      type === PlaceableType.PALM_DOOR ||
       type === PlaceableType.IRON_GATE ||
       type === PlaceableType.FENCE_GATE
     );
@@ -4980,7 +5171,7 @@ export class WorldManager {
   }
 
   /**
-   * Returns the Ground-layer structure (Floor / Carpet / Bridge) at (tx, ty), if any.
+   * Returns the Ground-layer structure (Floor / Carpet / Floating Platform) at (tx, ty), if any.
    */
   public getGroundStructureAtTile(tx: number, ty: number): PlacedStructure | undefined {
     const { cx, cy } = this.tileToChunk(tx, ty);
@@ -4990,9 +5181,7 @@ export class WorldManager {
       (s) =>
         s.tileX === tx &&
         s.tileY === ty &&
-        CONSTRUCTION_BLUEPRINTS[s.type]?.layer === 'GROUND' &&
-        !s.isBridge &&
-        s.type !== PlaceableType.WOOD_BRIDGE
+        CONSTRUCTION_BLUEPRINTS[s.type]?.layer === 'GROUND'
     );
   }
 
@@ -5060,15 +5249,11 @@ export class WorldManager {
     const isMountingTorchOnWall =
       placeableType === PlaceableType.TORCH && Boolean(wallOnTile);
 
-    if (bp.layer === 'GROUND' && placeableType !== PlaceableType.WOOD_BRIDGE) {
+    if (bp.layer === 'GROUND') {
       const existingFloorIdx = chunk.structures.findIndex((s) => {
         if (s.tileX !== tx || s.tileY !== ty) return false;
         const sbp = CONSTRUCTION_BLUEPRINTS[s.type];
-        return (
-          sbp?.layer === 'GROUND' &&
-          !s.isBridge &&
-          s.type !== PlaceableType.WOOD_BRIDGE
-        );
+        return sbp?.layer === 'GROUND';
       });
       if (existingFloorIdx !== -1) {
         if (

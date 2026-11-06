@@ -743,6 +743,13 @@ export const WorldMapModal: React.FC<WorldMapModalProps> = ({
               ctx.fillStyle = '#e2be8a';
               ctx.fillRect(sx + 1, sy + 1, cellSize - 2, Math.max(1, Math.floor(cellSize * 0.4)));
             }
+          } else if (gst.type === PlaceableType.PALM_FLOOR) {
+            ctx.fillStyle = '#8a6236';
+            ctx.fillRect(sx, sy, cellSize, cellSize);
+            if (cellSize >= 4) {
+              ctx.fillStyle = '#dfc18d';
+              ctx.fillRect(sx + 1, sy + 1, cellSize - 2, Math.max(1, Math.floor(cellSize * 0.4)));
+            }
           } else if (gst.type === PlaceableType.STONE_FLOOR) {
             ctx.fillStyle = '#64748b';
             ctx.fillRect(sx, sy, cellSize, cellSize);
@@ -1041,6 +1048,21 @@ export const WorldMapModal: React.FC<WorldMapModalProps> = ({
                 '#3d2410',
                 st.isOpen ? '#4ade80' : '#b88c56',
                 '#ea580c'
+              );
+              break;
+
+            case PlaceableType.PALM_WALL:
+              drawMiniWallSegment(st, '#4a3019', '#f3dfb6');
+              break;
+            case PlaceableType.PALM_WINDOW:
+              drawMiniWallSegment(st, '#4a3019', '#f3dfb6', '#38bdf8');
+              break;
+            case PlaceableType.PALM_DOOR:
+              drawMiniWallSegment(
+                st,
+                '#3b2412',
+                st.isOpen ? '#4ade80' : '#c29663',
+                '#fde047'
               );
               break;
 

@@ -1284,6 +1284,30 @@ class SpriteAtlasManager {
       { b: '#4a2e1b', l: '#73482b', d: '#e6c896' }
     );
 
+    // Palm Wood (Madeira de Coqueiro — Ringed tropical coconut trunk log)
+    registerItem(
+      'palm_wood',
+      [
+        '................',
+        '..........bbbb..',
+        '........bbrrbb..',
+        '.......bbllbb...',
+        '......bbrrbb....',
+        '.....bbllbb.....',
+        '....bbrrbb......',
+        '...bbllbb.......',
+        '..bbrrbb........',
+        '.bbddbb.........',
+        '.bddbb..........',
+        '..bbb...........',
+        '................',
+        '................',
+        '................',
+        '................',
+      ],
+      { b: '#52361e', l: '#a67b4b', r: '#754f2b', d: '#f3dfb6' }
+    );
+
     // Hardwood
     registerItem(
       'hardwood',
@@ -2475,6 +2499,37 @@ class SpriteAtlasManager {
       { d: '#3d2410', e: '#f3d9a4', l: '#e2be8a', m: '#b88c56', c: '#6b4226' }
     );
 
+    // Parede de Coqueiro (Whole vertical coconut-palm trunks lined up side-by-side)
+    registerItem(
+      'palm_wall',
+      [
+        '..dd..dd..dd..dd',
+        '.dccddccddccddcc',
+        '.dlmdlmmdlmmdlmd',
+        '.drrdrrmdrrmdrrd',
+        '.dlmdlmmdlmmdlmd',
+        '.dttdtttdtttdttd',
+        '.dlmdlmmdlmmdlmd',
+        '.drrdrrmdrrmdrrd',
+        '.dlmdlmmdlmmdlmd',
+        '.drrdrrmdrrmdrrd',
+        '.dddddddddddddd.',
+        '................',
+        '................',
+        '................',
+        '................',
+        '................',
+      ],
+      {
+        d: '#3b2412',
+        c: '#f5e3be',
+        l: '#b88b58',
+        m: '#966b3d',
+        r: '#6b4928',
+        t: '#d97706',
+      }
+    );
+
     registerItem(
       'stone_wall',
       [
@@ -2567,18 +2622,19 @@ class SpriteAtlasManager {
       { c: '#6b4226', l: '#c49a62', e: '#f3d9a4' }
     );
 
+    // Piso de Coqueiro (Whole coconut-palm trunks lined up side-by-side)
     registerItem(
-      'wood_bridge',
+      'palm_floor',
       [
         '................',
-        '.cccccccccccccc.',
-        '.bbbbbbbbbbbbbb.',
-        '.bllbbllbbllbbl.',
-        '.bbbbbbbbbbbbbb.',
-        '.cccccccccccccc.',
-        '................',
-        '................',
-        '................',
+        '..dd.dd.dd.dd...',
+        '.dcldlmdlmdlcd..',
+        '.dcrdrrmrrmrcd..',
+        '.dcldlmdlmdlcd..',
+        '.dcrdrrmrrmrcd..',
+        '.dcldlmdlmdlcd..',
+        '.dcrdrrmrrmrcd..',
+        '..dd.dd.dd.dd...',
         '................',
         '................',
         '................',
@@ -2587,7 +2643,39 @@ class SpriteAtlasManager {
         '................',
         '................',
       ],
-      { b: '#78350f', l: '#d97706', c: '#38bdf8' }
+      { d: '#3b2412', c: '#f3dfb6', l: '#c29663', m: '#9c7143', r: '#6e4c29' }
+    );
+
+    // Plataforma Flutuante (Cylindrical logs lined up side-by-side and lashed together)
+    registerItem(
+      'wood_bridge',
+      [
+        '................',
+        '..dd.dd.dd.dd...',
+        '.dcldlldlidlcd..',
+        '.dbbdbbdbbdbbd..',
+        '.dttrittitttrd..',
+        '.dcldlldlidlcd..',
+        '.dbbdbbdbbdbbd..',
+        '.dttrittitttrd..',
+        '.dcldlldlidlcd..',
+        '..dd.dd.dd.dd...',
+        '................',
+        '................',
+        '................',
+        '................',
+        '................',
+        '................',
+      ],
+      {
+        d: '#2e1909',
+        c: '#eab676',
+        l: '#b46927',
+        i: '#c97d36',
+        b: '#7c4316',
+        t: '#fde047',
+        r: '#a16207',
+      }
     );
 
     registerItem(
@@ -3310,6 +3398,38 @@ class SpriteAtlasManager {
       { d: '#3d2410', m: '#8c6239', l: '#e2be8a', z: '#5c3a21', c: '#ea580c' }
     );
 
+    // Porta de Coqueiro Icon (Door made of whole vertical coconut-palm trunks lined up & bound with rope)
+    registerItem(
+      'palm_door',
+      [
+        '...dd..dd..dd...',
+        '..dccddccddccd..',
+        '..dlmdlmmdlmmd..',
+        '..dttttttttttd..',
+        '..drrdrrmdrrmd..',
+        '..dlmdlmmdlmmd..',
+        '..drrdrrmdggmd..',
+        '..dlmdlmmdggmd..',
+        '..dttttttttttd..',
+        '..drrdrrmdrrmd..',
+        '..dlmdlmmdlmmd..',
+        '..dddddddddddd..',
+        '................',
+        '................',
+        '................',
+        '................',
+      ],
+      {
+        d: '#3b2412',
+        c: '#f5e3be',
+        l: '#c29663',
+        m: '#966b3d',
+        r: '#6b4928',
+        t: '#d97706',
+        g: '#fde047',
+      }
+    );
+
     // Iron Gate Icon
     registerItem(
       'iron_gate',
@@ -3452,6 +3572,38 @@ class SpriteAtlasManager {
         '................',
       ],
       { d: '#3d2410', l: '#e2be8a', m: '#b88c56', s: '#5c3a21', c: '#38bdf8', e: '#e0f2fe' }
+    );
+
+    // Parede de Coqueiro com Janela Icon (Lined-up coconut palm trunks framing a tropical window)
+    registerItem(
+      'palm_window',
+      [
+        '..dd..dd..dd..dd',
+        '.dccddccddccddcc',
+        '.dlmdttttttttmld',
+        '.drrdtcceecctrrd',
+        '.dlmdtcceecctmld',
+        '.drrdttttttttrrd',
+        '.dlmdtcceecctmld',
+        '.drrdttttttttrrd',
+        '.dlmdlmmdlmmdlmd',
+        '.drrdrrmdrrmdrrd',
+        '.dddddddddddddd.',
+        '................',
+        '................',
+        '................',
+        '................',
+        '................',
+      ],
+      {
+        d: '#3b2412',
+        c: '#38bdf8',
+        e: '#e0f2fe',
+        l: '#c29663',
+        m: '#966b3d',
+        r: '#6b4928',
+        t: '#d97706',
+      }
     );
 
     // Stone Window Icon
@@ -3862,30 +4014,161 @@ class SpriteAtlasManager {
       { r: '#b91c1c', o: '#ea580c', y: '#fde047', w: '#ffffff', g: '#15803d' }
     );
 
-    // Seeds Packets
-    const seedDrawer = (accentColor: string) => [
-      '................',
-      '.....bbbbbb.....',
-      '....bwwwwwwb....',
-      '...bwwwwwwwwb...',
-      '..bwwwwwwwwwwb..',
-      '..bwwwwaawwwb..',
-      '..bwwwaaaawwwb..',
-      '..bwwwwaawwwb..',
-      '..bwwwwwwwwwwb..',
-      '..bwwwwwwwwwwb..',
-      '...bbbbbbbbbb...',
-      '................',
-      '................',
-      '................',
-      '................',
-      '................',
-    ];
-    registerItem('wheat_seeds', seedDrawer('#ca8a04'), { b: '#3d2510', w: '#fef3c7', a: '#eab308' });
-    registerItem('carrot_seeds', seedDrawer('#ea580c'), { b: '#3d2510', w: '#fef3c7', a: '#f97316' });
-    registerItem('herb_seeds', seedDrawer('#0d9488'), { b: '#3d2510', w: '#fef3c7', a: '#14b8a6' });
-    registerItem('solar_seeds', seedDrawer('#d97706'), { b: '#3d2510', w: '#fef3c7', a: '#f59e0b' });
-    registerItem('berry_seeds', seedDrawer('#be123c'), { b: '#3d2510', w: '#fef3c7', a: '#f43f5e' });
+    // Distinct Custom Seed Icons (each seed has its own unique botanical silhouette & colors)
+    // 1. Sementes de Trigo: Golden wheat grains with an awned wheat ear sprig
+    registerItem(
+      'wheat_seeds',
+      [
+        '..........aa....',
+        '........aayya...',
+        '.......ayyya....',
+        '......ayyya.....',
+        '.....gggg.......',
+        '....gddddg.ddd..',
+        '...dbyyybdbyybd.',
+        '...dywywbdbwybd.',
+        '...dbyyybdbyybd.',
+        '....dddd..dddd..',
+        '.....dddd.......',
+        '....dbyyybd.....',
+        '....dywywbd.....',
+        '....dbyyybd.....',
+        '.....ddddd......',
+        '................',
+      ],
+      {
+        d: '#451a03',
+        b: '#ca8a04',
+        y: '#facc15',
+        w: '#fef08a',
+        a: '#eab308',
+        g: '#65a30d',
+      }
+    );
+
+    // 2. Sementes de Cenoura: Feathery green carrot-top frond & cluster of ridged orange-amber seeds
+    registerItem(
+      'carrot_seeds',
+      [
+        '.....gg..gg.....',
+        '....gllggllg....',
+        '.....ggllgg.....',
+        '......gggg......',
+        '....dddddddd....',
+        '...doooooooob...',
+        '..dooyyyyyyoob..',
+        '..doyyddddyyob..',
+        '..dooydooodyob..',
+        '...doodffdoob...',
+        '...dbodffdobd...',
+        '....dbddddbd....',
+        '..dd..dddd..dd..',
+        '.doob......doob.',
+        '..dd........dd..',
+        '................',
+      ],
+      {
+        d: '#431407',
+        b: '#9a3412',
+        o: '#ea580c',
+        y: '#fb923c',
+        f: '#fed7aa',
+        g: '#15803d',
+        l: '#4ade80',
+      }
+    );
+
+    // 3. Sementes de Erva: Aromatic emerald-teal botanical pods with glowing mint leaf sprout
+    registerItem(
+      'herb_seeds',
+      [
+        '.......lll......',
+        '......llcll.....',
+        '......lclll.....',
+        '.......ttt......',
+        '....ddd...ddd...',
+        '...dtttd.dtttd..',
+        '..dtccctdtccctd.',
+        '..dtcwctdtcwctd.',
+        '...dtttd.dtttd..',
+        '....ddd...ddd...',
+        '......ddddd.....',
+        '.....dtccctd....',
+        '....dtccwcctd...',
+        '.....dtccctd....',
+        '......ddddd.....',
+        '................',
+      ],
+      {
+        d: '#064e3b',
+        t: '#0d9488',
+        c: '#2dd4bf',
+        w: '#ccfbf1',
+        l: '#4ade80',
+      }
+    );
+
+    // 4. Sementes de Flor Solar: Radiant striped sunflower-like teardrop seeds in a sun-star pattern
+    registerItem(
+      'solar_seeds',
+      [
+        '.......dd.......',
+        '......dyyd......',
+        '.....dywwyd.....',
+        '..dd.dyssyd.dd..',
+        '.dyyd.dddd.dyyd.',
+        'dywwyddoooodywwyd',
+        '.dyssyokkkoyssyd.',
+        '..ddddokwkodddd..',
+        '.dyssyokkkoyssyd.',
+        'dywwyddoooodywwyd',
+        '.dyyd.dddd.dyyd.',
+        '..dd.dyssyd.dd..',
+        '.....dywwyd.....',
+        '......dyyd......',
+        '.......dd.......',
+        '................',
+      ],
+      {
+        d: '#451a03',
+        k: '#78350f',
+        o: '#d97706',
+        s: '#f59e0b',
+        y: '#facc15',
+        w: '#fef08a',
+      }
+    );
+
+    // 5. Sementes de Frutas Vermelhas: Ruby-crimson berry pips & split wild-berry cluster on green calyx
+    registerItem(
+      'berry_seeds',
+      [
+        '....gg....gg....',
+        '...gllg..gllg...',
+        '....gggggggg....',
+        '...dddddddddd...',
+        '..drrrrddrrrrd..',
+        '.drrpprddrrpprd.',
+        '.drpwwrddrpwwrd.',
+        '..drrrrddrrrrd..',
+        '...ddddddddddd..',
+        '....drrrrrrrd...',
+        '...drrpprpprrd..',
+        '...drpwwrpwwrd..',
+        '....drrrrrrrd...',
+        '.....ddddddd....',
+        '................',
+        '................',
+      ],
+      {
+        d: '#4c0519',
+        r: '#be123c',
+        p: '#f43f5e',
+        w: '#ffe4e6',
+        g: '#15803d',
+        l: '#4ade80',
+      }
+    );
 
     // Fresh Bread Icon
     registerItem(
@@ -5903,6 +6186,36 @@ class SpriteAtlasManager {
       })
     );
 
+    // PALM WALL (Parede de Coqueiro — Whole vertical coconut-palm trunks lined up side-by-side)
+    this.structureSprites.set(
+      PlaceableType.PALM_WALL,
+      createFrames(24, 24, (ctx) => {
+        ctx.fillStyle = '#2b190b';
+        ctx.fillRect(0, 1, 24, 22);
+        for (const tx of [1, 7, 13, 19]) {
+          // Cylindrical trunk body
+          ctx.fillStyle = '#8a6236';
+          ctx.fillRect(tx, 3, 4, 19);
+          ctx.fillStyle = '#c29663';
+          ctx.fillRect(tx + 1, 3, 2, 19);
+          // Round trunk cross-section top cap
+          ctx.fillStyle = '#f3dfb6';
+          ctx.fillRect(tx, 2, 4, 3);
+          ctx.fillStyle = '#a67b4b';
+          ctx.fillRect(tx + 1, 3, 2, 1);
+          // Coconut bark growth rings
+          ctx.fillStyle = '#5c3d1e';
+          for (const ry of [7, 11, 15, 19]) {
+            ctx.fillRect(tx, ry, 4, 1);
+          }
+        }
+        // Horizontal sisal/coir rope lashing binding the trunks together
+        ctx.fillStyle = '#d97706';
+        ctx.fillRect(0, 8, 24, 2);
+        ctx.fillRect(0, 17, 24, 2);
+      })
+    );
+
     // STONE WALL — Bevelled medieval castle ashlar masonry wall with top coping ledge
     this.structureSprites.set(
       PlaceableType.STONE_WALL,
@@ -6005,6 +6318,32 @@ class SpriteAtlasManager {
       })
     );
 
+    // PALM FLOOR (Piso de Coqueiro — Whole cylindrical coconut-palm trunks lined up side-by-side)
+    this.structureSprites.set(
+      PlaceableType.PALM_FLOOR,
+      createFrames(24, 24, (ctx) => {
+        ctx.fillStyle = '#2b190b';
+        ctx.fillRect(0, 0, 24, 24);
+        for (const ry of [1, 7, 13, 19]) {
+          ctx.fillStyle = '#8a6236';
+          ctx.fillRect(1, ry, 22, 5);
+          ctx.fillStyle = '#c29663';
+          ctx.fillRect(2, ry + 1, 20, 3);
+          ctx.fillStyle = '#dfc18d';
+          ctx.fillRect(2, ry + 1, 20, 1);
+          // Rounded log ends
+          ctx.fillStyle = '#f3dfb6';
+          ctx.fillRect(1, ry + 1, 2, 3);
+          ctx.fillRect(21, ry + 1, 2, 3);
+          // Characteristic palm trunk ring marks
+          ctx.fillStyle = '#5c3d1e';
+          for (const rx of [6, 11, 16]) {
+            ctx.fillRect(rx, ry, 1, 5);
+          }
+        }
+      })
+    );
+
     // STONE FLOOR
     this.structureSprites.set(
       PlaceableType.STONE_FLOOR,
@@ -6031,23 +6370,33 @@ class SpriteAtlasManager {
       })
     );
 
-    // WOOD BRIDGE
+    // WOOD BRIDGE (Plataforma Flutuante — Cylindrical logs lined up together and lashed with rope)
     this.structureSprites.set(
       PlaceableType.WOOD_BRIDGE,
       createFrames(24, 24, (ctx) => {
-        ctx.fillStyle = '#1e293b';
-        ctx.fillRect(0, 1, 24, 22);
-        ctx.fillStyle = '#451a03';
-        ctx.fillRect(0, 1, 24, 3);
-        ctx.fillRect(0, 20, 24, 3);
-        ctx.fillStyle = '#d97706';
-        ctx.fillRect(0, 2, 24, 1);
-        ctx.fillRect(0, 21, 24, 1);
-        for (let x = 1; x < 23; x += 4) {
-          ctx.fillStyle = '#92400e';
-          ctx.fillRect(x, 4, 3, 16);
-          ctx.fillStyle = '#b45309';
-          ctx.fillRect(x, 4, 2, 16);
+        ctx.fillStyle = '#231207';
+        ctx.fillRect(0, 0, 24, 24);
+        for (const lx of [1, 7, 13, 19]) {
+          // Cylindrical log body
+          ctx.fillStyle = '#7c4316';
+          ctx.fillRect(lx, 1, 4, 22);
+          ctx.fillStyle = '#b46927';
+          ctx.fillRect(lx + 1, 1, 2, 22);
+          ctx.fillStyle = '#d98a3c';
+          ctx.fillRect(lx + 1, 2, 1, 20);
+          // Rounded log ends at top & bottom
+          ctx.fillStyle = '#f3d9a4';
+          ctx.fillRect(lx, 1, 4, 2);
+          ctx.fillRect(lx, 21, 4, 2);
+        }
+        // Horizontal rope lashings tying the cylindrical logs together
+        ctx.fillStyle = '#a16207';
+        ctx.fillRect(0, 5, 24, 2);
+        ctx.fillRect(0, 17, 24, 2);
+        ctx.fillStyle = '#fde047';
+        for (const lx of [2, 8, 14, 20]) {
+          ctx.fillRect(lx, 5, 2, 1);
+          ctx.fillRect(lx, 17, 2, 1);
         }
       })
     );
@@ -6517,6 +6866,32 @@ class SpriteAtlasManager {
       })
     );
 
+    // PALM DOOR (Porta de Coqueiro — Whole vertical coconut-palm trunks lined up and lashed)
+    this.structureSprites.set(
+      PlaceableType.PALM_DOOR,
+      createFrames(24, 24, (ctx) => {
+        ctx.fillStyle = '#2b190b';
+        ctx.fillRect(0, 3, 24, 18);
+        for (const tx of [1, 6, 11, 16, 20]) {
+          const w = tx === 20 ? 3 : 4;
+          ctx.fillStyle = '#8a6236';
+          ctx.fillRect(tx, 4, w, 16);
+          ctx.fillStyle = '#c29663';
+          ctx.fillRect(tx + 1, 4, Math.max(1, w - 2), 16);
+          ctx.fillStyle = '#f3dfb6';
+          ctx.fillRect(tx, 4, w, 2);
+          ctx.fillStyle = '#5c3d1e';
+          ctx.fillRect(tx, 9, w, 1);
+          ctx.fillRect(tx, 14, w, 1);
+        }
+        ctx.fillStyle = '#d97706';
+        ctx.fillRect(3, 7, 18, 2);
+        ctx.fillRect(3, 15, 18, 2);
+        ctx.fillStyle = '#fde047';
+        ctx.fillRect(15, 11, 3, 3);
+      })
+    );
+
     // IRON GATE (Default closed preview sprite)
     this.structureSprites.set(
       PlaceableType.IRON_GATE,
@@ -6636,6 +7011,30 @@ class SpriteAtlasManager {
         ctx.fillStyle = f % 2 === 0 ? '#38bdf8' : '#bae6fd';
         ctx.fillRect(6, 7, 12, 9);
         ctx.fillStyle = '#6b4226';
+        ctx.fillRect(11, 7, 2, 9);
+        ctx.fillRect(6, 11, 12, 2);
+      })
+    );
+
+    // PALM WINDOW (Parede de Coqueiro com Janela — Lined-up coconut palm trunks with window opening)
+    this.structureSprites.set(
+      PlaceableType.PALM_WINDOW,
+      createFrames(24, 24, (ctx, f) => {
+        ctx.fillStyle = '#2b190b';
+        ctx.fillRect(0, 1, 24, 22);
+        for (const tx of [1, 7, 13, 19]) {
+          ctx.fillStyle = '#8a6236';
+          ctx.fillRect(tx, 3, 4, 19);
+          ctx.fillStyle = '#c29663';
+          ctx.fillRect(tx + 1, 3, 2, 19);
+          ctx.fillStyle = '#f3dfb6';
+          ctx.fillRect(tx, 2, 4, 3);
+        }
+        ctx.fillStyle = '#5c3d1e';
+        ctx.fillRect(5, 6, 14, 11);
+        ctx.fillStyle = f % 2 === 0 ? '#38bdf8' : '#bae6fd';
+        ctx.fillRect(6, 7, 12, 9);
+        ctx.fillStyle = '#d97706';
         ctx.fillRect(11, 7, 2, 9);
         ctx.fillRect(6, 11, 12, 2);
       })

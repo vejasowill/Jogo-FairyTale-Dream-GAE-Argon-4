@@ -3478,8 +3478,8 @@ export class GameEngine {
           if (!chunk) continue;
           const doorSt = chunk.structures.find(
             (s) =>
-              (s.type === PlaceableType.WOOD_DOOR ||
-                s.type === PlaceableType.IRON_GATE) &&
+              WorldManager.isDoorOrGateStructure(s.type) &&
+              s.type !== PlaceableType.FENCE_GATE &&
               building.footprintSet.has(`${s.tileX},${s.tileY}`)
           );
           if (doorSt) {
@@ -3535,8 +3535,8 @@ export class GameEngine {
     const sy = houseSt.tileY * TILE_SIZE + TILE_SIZE / 2;
 
     if (
-      houseSt.type === PlaceableType.WOOD_DOOR ||
-      houseSt.type === PlaceableType.IRON_GATE
+      WorldManager.isDoorOrGateStructure(houseSt.type) &&
+      houseSt.type !== PlaceableType.FENCE_GATE
     ) {
       houseSt.isOpen = true;
     }
@@ -4838,10 +4838,7 @@ export class GameEngine {
         ) {
           hasBridge = true;
         }
-        if (
-          st.type === PlaceableType.WOOD_DOOR ||
-          st.type === PlaceableType.IRON_GATE
-        ) {
+        if (WorldManager.isDoorOrGateStructure(st.type)) {
           continue; // Humanoids can open doors!
         }
         if (WorldManager.isStructureCurrentlySolid(st, isHumanEntity)) {
@@ -4892,11 +4889,7 @@ export class GameEngine {
         if (allowClosedDoors) {
           const tile = this.world.worldToTile(px, py);
           const st = this.world.getStructureAtTile(tile.tx, tile.ty);
-          if (
-            st &&
-            (st.type === PlaceableType.WOOD_DOOR ||
-              st.type === PlaceableType.IRON_GATE)
-          ) {
+          if (st && WorldManager.isDoorOrGateStructure(st.type)) {
             continue;
           }
         }
@@ -5253,8 +5246,7 @@ export class GameEngine {
         (s) =>
           s.tileX === doorTile.tx &&
           s.tileY === doorTile.ty &&
-          (s.type === PlaceableType.WOOD_DOOR ||
-            s.type === PlaceableType.IRON_GATE) &&
+          WorldManager.isDoorOrGateStructure(s.type) &&
           !s.isOpen
       );
       if (doorSt) {
