@@ -19,6 +19,7 @@ import {
   NpcRole,
   PlaceableType,
   PlacedStructure,
+  RainPuddle,
 } from '../core/types';
 
 export const TILE_SIZE = 32;
@@ -231,13 +232,14 @@ export class WorldManager {
     if (!chunk) return;
     const key = WorldManager.chunkKey(chunk.cx, chunk.cy);
     const hasAgri =
-      Array.isArray(chunk.structures) &&
-      chunk.structures.some(
-        (s) =>
-          s &&
-          (s.type === PlaceableType.TILLED_SOIL ||
-            WorldManager.isSaplingStructure(s.type))
-      );
+      (Array.isArray(chunk.structures) &&
+        chunk.structures.some(
+          (s) =>
+            s &&
+            (s.type === PlaceableType.TILLED_SOIL ||
+              WorldManager.isSaplingStructure(s.type))
+        )) ||
+      (Array.isArray(chunk.puddles) && chunk.puddles.length > 0);
     if (hasAgri) {
       this.activeAgricultureChunkKeys.add(key);
     } else {
@@ -4903,6 +4905,11 @@ export class WorldManager {
     const bp = CONSTRUCTION_BLUEPRINTS[placeableType];
     if (!bp) return false;
 
+    // Rain puddles on empty soil make the soil unusable until the puddle evaporates
+    if (this.hasRainPuddleAtTile(tx, ty)) {
+      return false;
+    }
+
     // Cannot build on top of an unharvested Nature Node (except passable Berry Bushes, Sand Dunes, and Flowers can be cleared automatically when building!)
     const hasBlockingNode = chunk.nodes.some(
       (n) =>
@@ -5449,11 +5456,112 @@ export class WorldManager {
   }
 
   /**
+   * Returns true if the given biome can receive rain (Deserts never receive rain).
+   */
+  public canBiomeReceiveRain(biome: BiomeType): boolean {
+    return biome !== BiomeType.DESERT;
+  }
+
+  /**
+   * Returns true if rain is valid at tile `(tx, ty)` (not in the Desert biome).
+   */
+  public isRainValidAtTile(tx: number, ty: number): boolean {
+    const biome = this.getTileBiomeFast(tx, ty);
+    return this.canBiomeReceiveRain(biome);
+  }
+
+  /**
+   * Returns the active RainPuddle at `(tx, ty)`, if one exists.
+   */
+  public getRainPuddleAtTile(tx: number, ty: number): RainPuddle | undefined {
+    const { cx, cy } = this.tileToChunk(tx, ty);
+    const chunk = this.chunks[WorldManager.chunkKey(cx, cy)];
+    if (!chunk || !Array.isArray(chunk.puddles) || chunk.puddles.length === 0) {
+      return undefined;
+    }
+    return chunk.puddles.find((p) => p.tileX === tx && p.tileY === ty && p.decayTimer > 0);
+  }
+
+  /**
+   * Returns true if there is an active rain puddle on `(tx, ty)`.
+   */
+  public hasRainPuddleAtTile(tx: number, ty: number): boolean {
+    return Boolean(this.getRainPuddleAtTile(tx, ty));
+  }
+
+  /**
+   * Checks whether a rain puddle can form on empty soil at `(tx, ty)` during a long rain.
+   */
+  public canSpawnRainPuddleAtTile(tx: number, ty: number): boolean {
+    if (!this.isRainValidAtTile(tx, ty)) return false;
+    const biome = this.getTileBiomeFast(tx, ty);
+    if (biome === BiomeType.OCEAN || this.isTileSwimmableWater(tx, ty)) {
+      return false;
+    }
+    if (this.hasRainPuddleAtTile(tx, ty)) {
+      return false;
+    }
+
+    const { cx, cy } = this.tileToChunk(tx, ty);
+    const chunk = this.chunks[WorldManager.chunkKey(cx, cy)];
+    if (!chunk) return false;
+
+    // Must be empty soil: no structures (floors, paths, tilled soil, walls, furniture)
+    if (
+      Array.isArray(chunk.structures) &&
+      chunk.structures.some((s) => s.tileX === tx && s.tileY === ty && s.hp > 0)
+    ) {
+      return false;
+    }
+
+    // Must not have any nature node on that tile
+    if (
+      Array.isArray(chunk.nodes) &&
+      chunk.nodes.some((n) => n.tileX === tx && n.tileY === ty && n.hp > 0)
+    ) {
+      return false;
+    }
+
+    return true;
+  }
+
+  /**
+   * Spawns a temporary rain puddle on empty soil at `(tx, ty)` with a determined evaporation timer.
+   */
+  public spawnRainPuddleAtTile(
+    tx: number,
+    ty: number,
+    decaySeconds = 85
+  ): RainPuddle | null {
+    if (!this.canSpawnRainPuddleAtTile(tx, ty)) return null;
+    const { cx, cy } = this.tileToChunk(tx, ty);
+    const chunk = this.getOrCreateChunk(cx, cy);
+    if (!Array.isArray(chunk.puddles)) {
+      chunk.puddles = [];
+    }
+    const variant = Math.abs((tx * 37 + ty * 73) % 4);
+    const puddle: RainPuddle = {
+      tileX: tx,
+      tileY: ty,
+      decayTimer: decaySeconds,
+      maxDecayTimer: decaySeconds,
+      variant,
+    };
+    chunk.puddles.push(puddle);
+    chunk.dirtyRev = (chunk.dirtyRev || 0) + 1;
+    this.activeAgricultureChunkKeys.add(WorldManager.chunkKey(cx, cy));
+    return puddle;
+  }
+
+  /**
    * Checks whether a tile can be tilled into arable farmland using a Hoe.
    */
   public canTillTileAt(tx: number, ty: number): boolean {
-    // Water tiles cannot be tilled
-    if (this.getTileBiomeFast(tx, ty) === BiomeType.OCEAN) {
+    // Water tiles or tiles covered by a rain puddle cannot be tilled
+    if (
+      this.getTileBiomeFast(tx, ty) === BiomeType.OCEAN ||
+      this.hasRainPuddleAtTile(tx, ty)
+    ) {
       return false;
     }
 
@@ -5489,7 +5597,7 @@ export class WorldManager {
   /**
    * Tills the soil at (tx, ty), creating a TILLED_SOIL ground structure.
    */
-  public tillSoilAt(tx: number, ty: number): PlacedStructure | null {
+  public tillSoilAt(tx: number, ty: number, isRainingNow = false): PlacedStructure | null {
     if (!this.canTillTileAt(tx, ty)) {
       return null;
     }
@@ -5508,7 +5616,8 @@ export class WorldManager {
       chunk.nodes.splice(bushIdx, 1);
     }
 
-    const hydrated = this.isTileNearWater(tx, ty, 3);
+    const rainHydrated = isRainingNow && this.isRainValidAtTile(tx, ty);
+    const hydrated = rainHydrated || this.isTileNearWater(tx, ty, 3);
     const structure: PlacedStructure = {
       id: `tilled_${tx}_${ty}_${Date.now()}_${Math.floor(Math.random() * 999)}`,
       type: PlaceableType.TILLED_SOIL,
@@ -5544,7 +5653,10 @@ export class WorldManager {
    * Checks whether a tile can be compacted into a Beaten Earth Path (PlaceableType.DIRT_PATH) using a Shovel.
    */
   public canMakeDirtPathAt(tx: number, ty: number): boolean {
-    if (this.getTileBiomeFast(tx, ty) === BiomeType.OCEAN) {
+    if (
+      this.getTileBiomeFast(tx, ty) === BiomeType.OCEAN ||
+      this.hasRainPuddleAtTile(tx, ty)
+    ) {
       return false;
     }
 
@@ -5626,10 +5738,12 @@ export class WorldManager {
 
   /**
    * Returns true if the given tile has fertile natural soil suitable for ground fertilization
-   * (not water, ocean, desert sand, coastal beach sand, or occupied by a floor/structure).
+   * (not water, ocean, desert sand, coastal beach sand, rain puddle, or occupied by a floor/structure).
    */
   public isTileFertileSoilForGroundFertilizer(tx: number, ty: number): boolean {
-    if (this.isTileSwimmableWater(tx, ty)) return false;
+    if (this.isTileSwimmableWater(tx, ty) || this.hasRainPuddleAtTile(tx, ty)) {
+      return false;
+    }
     const biome = this.getTileBiomeFast(tx, ty);
     if (biome === BiomeType.OCEAN || biome === BiomeType.DESERT) return false;
     // Exclude sandy beach strips on islands and mainland coast
@@ -5863,7 +5977,7 @@ export class WorldManager {
   }
 
   /**
-   * Updates agriculture state (moisture evaporation, crop growth, and tree sapling 3-stage growth).
+   * Updates agriculture state (moisture evaporation, crop growth, tree sapling 3-stage growth, and rain puddle evaporation).
    * Iterates ONLY over `activeAgricultureChunkKeys` so marathon exploration (3,000+ chunks) has O(1) cost.
    */
   public updateAgriculture(dt: number, isRaining = false): void {
@@ -5879,6 +5993,35 @@ export class WorldManager {
 
       let hasAnyAgriInChunk = false;
       let chunkModified = false;
+
+      // Update temporary Rain Puddles in this chunk:
+      // While it is raining on valid biome tiles, puddles remain full; once rain passes, they count down and evaporate.
+      if (Array.isArray(chunk.puddles) && chunk.puddles.length > 0) {
+        for (let pi = chunk.puddles.length - 1; pi >= 0; pi--) {
+          const puddle = chunk.puddles[pi];
+          if (!puddle) {
+            chunk.puddles.splice(pi, 1);
+            continue;
+          }
+          const rainingOnPuddle =
+            isRaining && this.isRainValidAtTile(puddle.tileX, puddle.tileY);
+          if (rainingOnPuddle) {
+            puddle.decayTimer = Math.min(
+              puddle.maxDecayTimer || 85,
+              puddle.decayTimer + dt * 0.6
+            );
+            hasAnyAgriInChunk = true;
+          } else {
+            puddle.decayTimer -= dt;
+            chunkModified = true;
+            if (puddle.decayTimer <= 0) {
+              chunk.puddles.splice(pi, 1);
+            } else {
+              hasAnyAgriInChunk = true;
+            }
+          }
+        }
+      }
 
       for (let i = chunk.structures.length - 1; i >= 0; i--) {
         const st = chunk.structures[i];
@@ -5911,9 +6054,11 @@ export class WorldManager {
         if (st.type !== PlaceableType.TILLED_SOIL) continue;
         hasAnyAgriInChunk = true;
 
-        // 1. Water & Hydration logic
+        // 1. Water & Hydration logic (Rain naturally waters all tilled soil where rain is valid, i.e., outside the Desert)
         const nearWater = this.isTileNearWater(st.tileX, st.tileY, 3);
-        if (isRaining || nearWater) {
+        const rainedOnTile =
+          isRaining && this.isRainValidAtTile(st.tileX, st.tileY);
+        if (rainedOnTile || nearWater) {
           if (!st.isWatered || st.waterLevel !== 100) {
             st.isWatered = true;
             st.waterLevel = 100;

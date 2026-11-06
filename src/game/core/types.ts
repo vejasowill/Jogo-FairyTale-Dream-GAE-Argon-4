@@ -368,6 +368,14 @@ export interface PlacedStructure {
   wellExcludedResidentIds?: string[];
 }
 
+export interface RainPuddle {
+  tileX: number;
+  tileY: number;
+  decayTimer: number; // Seconds remaining before puddle evaporates after rain ends
+  maxDecayTimer: number; // Initial evaporation duration (e.g. 75..110s)
+  variant: number; // 0..3 organic puddle silhouette
+}
+
 export interface ChunkData {
   cx: number;
   cy: number;
@@ -376,10 +384,12 @@ export interface ChunkData {
   explored: number[]; // 256 flags (0 = unexplored, 1 = explored by player)
   nodes: NatureNode[];
   structures: PlacedStructure[];
+  puddles?: RainPuddle[]; // Temporary rain puddles on empty soil created by long rains
   ecologicalZones?: EcologicalZone[]; // 16 x 16 = 256 (v2+ worldGen)
   landmarkName?: string;
   villageId?: string;
   mobsPopulated?: boolean;
+  villagePopulatedV2?: boolean;
   islandMobsPopulated?: boolean;
   // Saved-World Chunk Preservation & Versioning (Explored chunks are frozen; only new unexplored chunks use newer worldGen)
   genVersion?: number; // World generator version used when this chunk was originally generated
@@ -526,6 +536,13 @@ export interface CreatureEntity {
   peaceDebtCoins?: number;
   // Village Elder permission state for Wanderer seeking a village rest point
   elderApprovedHouseId?: string;
+  // Wanderer waiting at a Player-led Village Well (up to 60s with '!' overhead)
+  wellWaitStructureId?: string | null;
+  wellWaitTimer?: number;
+  wellWaitCooldown?: number;
+  // Active NPC interaction lock (1 player at a time in multiplayer, NPC stops and faces player)
+  interactingPlayerId?: string | null;
+  interactingPlayerName?: string | null;
   // Human NPC appearance, clothing/armor & held weapon (shared with Player rendering & customization)
   appearance?: PlayerAppearance;
   equippedBySlot?: PlayerEquipment;
@@ -900,7 +917,7 @@ export interface OnlineActivationStep {
 }
 
 // REGRA PERMANENTE: A cada nova atualização do jogo, incremente a versão para o número seguinte da beta (ex: 0.4.4-beta -> 0.4.5-beta).
-export const GAME_VERSION = '0.7.5-beta';
+export const GAME_VERSION = '0.7.7-beta';
 export const CURRENT_WORLD_GEN_VERSION = 5;
 
 export interface OnlineSessionInfo {
@@ -926,6 +943,8 @@ export interface OnlineSessionInfo {
   isReconnecting?: boolean;
 }
 
+export type WeatherState = 'clear' | 'cloudy' | 'rain';
+
 export interface WorldMetadata {
   id: string;
   name: string;
@@ -942,6 +961,10 @@ export interface WorldMetadata {
   createdWorldGenVersion?: number; // Original generator version when the world save was created
   gameVersion?: string; // Current beta version last saved
   createdGameVersion?: string; // Original beta version when the world save was created
+  weatherState?: WeatherState; // Current global weather pattern ('clear' | 'cloudy' | 'rain')
+  weatherTimer?: number; // Remaining seconds in the current weather phase
+  rainIntensity?: number; // 0..1 smooth rain intensity factor
+  rainDurationElapsed?: number; // Seconds of continuous active rain in the current storm
 }
 
 export interface WorldSaveData {
@@ -980,6 +1003,7 @@ export interface GameSettings {
   accountAppearance?: PlayerAppearance;
   soundEnabled: boolean;
   soundVolume: number;
+  ambientVolume: number;
   musicVolume: number;
   autoSaveIntervalSec: number;
   serverSyncEnabled: boolean;

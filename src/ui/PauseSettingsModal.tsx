@@ -249,7 +249,7 @@ export const PauseSettingsModal: React.FC<PauseSettingsModalProps> = ({
                 </div>
               </div>
 
-              {/* Audio & Ambient Music */}
+              {/* Audio: Separate Music, Ambient & Sound Effects Controls */}
               <div className="medieval-inset p-2.5 space-y-2">
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-1.5">
@@ -258,52 +258,32 @@ export const PauseSettingsModal: React.FC<PauseSettingsModalProps> = ({
                     ) : (
                       <VolumeX className="w-3.5 h-3.5 text-[#8c6d46]" />
                     )}
-                    <span className="text-[11px] font-bold text-white">
-                      Efeitos Sonoros
+                    <span className="text-[11px] font-bold text-amber-300">
+                      Áudio do Jogo
                     </span>
                   </div>
-                  <div className="flex items-center gap-2">
-                    <span className="font-mono-tabular text-[11px] font-bold text-amber-300">
-                      {Math.round(settings.soundVolume * 100)}%
-                    </span>
-                    <button
-                      onClick={() =>
-                        onUpdateSettings({
-                          ...settings,
-                          soundEnabled: !settings.soundEnabled,
-                        })
-                      }
-                      className={`px-2 py-0.5 text-[10px] font-bold ${
-                        settings.soundEnabled
-                          ? 'medieval-btn-gold'
-                          : 'medieval-btn-wood'
-                      }`}
-                    >
-                      {settings.soundEnabled ? 'ON' : 'OFF'}
-                    </button>
-                  </div>
+                  <button
+                    onClick={() =>
+                      onUpdateSettings({
+                        ...settings,
+                        soundEnabled: !settings.soundEnabled,
+                      })
+                    }
+                    className={`px-2 py-0.5 text-[10px] font-bold ${
+                      settings.soundEnabled
+                        ? 'medieval-btn-gold'
+                        : 'medieval-btn-wood'
+                    }`}
+                  >
+                    {settings.soundEnabled ? 'SOM: ON' : 'SOM: OFF'}
+                  </button>
                 </div>
-                <input
-                  type="range"
-                  min={0.05}
-                  max={0.8}
-                  step={0.05}
-                  disabled={!settings.soundEnabled}
-                  value={settings.soundVolume}
-                  onChange={(e) =>
-                    onUpdateSettings({
-                      ...settings,
-                      soundVolume: Number(e.target.value),
-                    })
-                  }
-                  className="w-full accent-amber-500 h-4"
-                />
 
-                {/* Ambient Music Volume (Day & Night — Default 20%) */}
-                <div className="pt-1.5 border-t border-[#3d281a] space-y-1">
+                {/* 1. Volume da Música */}
+                <div className="space-y-1 pt-1 border-t border-[#3d281a]">
                   <div className="flex items-center justify-between">
                     <span className="text-[11px] font-bold text-white">
-                      Volume da Música (Dia / Noite)
+                      Volume da Música
                     </span>
                     <span className="font-mono-tabular text-[11px] font-bold text-amber-300">
                       {Math.round((settings.musicVolume ?? 0.2) * 100)}%
@@ -314,11 +294,66 @@ export const PauseSettingsModal: React.FC<PauseSettingsModalProps> = ({
                     min={0}
                     max={1}
                     step={0.05}
+                    disabled={!settings.soundEnabled}
                     value={settings.musicVolume ?? 0.2}
                     onChange={(e) =>
                       onUpdateSettings({
                         ...settings,
                         musicVolume: Number(e.target.value),
+                      })
+                    }
+                    className="w-full accent-amber-500 h-4"
+                  />
+                </div>
+
+                {/* 2. Volume de Ambiente (Chuva & Clima) */}
+                <div className="space-y-1 pt-1 border-t border-[#3d281a]">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[11px] font-bold text-white">
+                      Volume de Ambiente
+                    </span>
+                    <span className="font-mono-tabular text-[11px] font-bold text-sky-300">
+                      {Math.round((settings.ambientVolume ?? 0.45) * 100)}%
+                    </span>
+                  </div>
+                  <input
+                    type="range"
+                    min={0}
+                    max={1}
+                    step={0.05}
+                    disabled={!settings.soundEnabled}
+                    value={settings.ambientVolume ?? 0.45}
+                    onChange={(e) =>
+                      onUpdateSettings({
+                        ...settings,
+                        ambientVolume: Number(e.target.value),
+                      })
+                    }
+                    className="w-full accent-sky-400 h-4"
+                  />
+                </div>
+
+                {/* 3. Volume de Efeitos Sonoros */}
+                <div className="space-y-1 pt-1 border-t border-[#3d281a]">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[11px] font-bold text-white">
+                      Volume de Efeitos Sonoros
+                    </span>
+                    <span className="font-mono-tabular text-[11px] font-bold text-amber-300">
+                      {Math.round(settings.soundVolume * 100)}%
+                    </span>
+                  </div>
+                  <input
+                    type="range"
+                    min={0}
+                    max={1}
+                    step={0.05}
+                    disabled={!settings.soundEnabled}
+                    value={settings.soundVolume}
+                    onChange={(e) =>
+                      onUpdateSettings({
+                        ...settings,
+                        soundVolume: Number(e.target.value),
                       })
                     }
                     className="w-full accent-amber-500 h-4"

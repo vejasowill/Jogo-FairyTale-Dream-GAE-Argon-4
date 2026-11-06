@@ -512,6 +512,9 @@ export default function App() {
       if (activeChestId && engineRef.current) {
         engineRef.current.closeChest(activeChestId);
       }
+      if (activeNpcId && engineRef.current) {
+        engineRef.current.endNpcInteraction(activeNpcId);
+      }
       if (engineRef.current) {
         // Freeze game loop and commit guaranteed save FIRST before disconnecting so Guest / Host roles and online states are intact!
         await engineRef.current.saveAndPrepareForExit();
@@ -622,10 +625,14 @@ export default function App() {
     if (activeChestId && engineRef.current) {
       engineRef.current.closeChest(activeChestId);
     }
+    if (activeNpcId && engineRef.current) {
+      engineRef.current.endNpcInteraction(activeNpcId);
+    }
     setActiveModal('NONE');
     setStationContext(null);
     setActiveChestId(null);
     setActiveStallId(null);
+    setActiveNpcId(null);
     if (engineRef.current) {
       engineRef.current.setUiPauseRequested(isEditingHud || isMountSaddlebagOpen);
     }
@@ -969,6 +976,12 @@ export default function App() {
                 player={snapshot.player}
                 onSelectStallId={(newId) => setActiveStallId(newId)}
                 onOpenNpcTrade={(npcId) => {
+                  if (
+                    engineRef.current &&
+                    !engineRef.current.tryOpenNpcInteraction(npcId)
+                  ) {
+                    return;
+                  }
                   setActiveNpcId(npcId);
                   setActiveModal('NPC_TRADE');
                 }}

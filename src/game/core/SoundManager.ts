@@ -1,5 +1,6 @@
 const DAY_MUSIC_URL = '/assets/aistudio/MusicaAmbienteDiaCerta_465ee93d.mp3';
 const NIGHT_MUSIC_URL = '/assets/aistudio/MusicaAmbienteNoite_7c38e5a2.mp3';
+const RAIN_AUDIO_URL = '/assets/aistudio/rain_at_grass__1-1793984360380_bfddafa6.mp3';
 
 type MusicTrack = 'day' | 'night';
 
@@ -7,12 +8,23 @@ class SoundManager {
   private ctx: AudioContext | null = null;
   public enabled = true;
   public volume = 0.35;
+  public ambientVolume = 0.45;
   public musicVolume = 0.2;
 
   private desiredTrack: MusicTrack | 'none' = 'none';
   private activeTrack: MusicTrack | 'none' = 'none';
   private isPausedByGame = false;
   private isMuffledByUi = false;
+
+  // Rain ambience audio loop state
+  private rawRainBytes: ArrayBuffer | null = null;
+  private decodedRainBuffer: AudioBuffer | null = null;
+  private loadingRainPromise: Promise<AudioBuffer | null> | null = null;
+  private rainSource: AudioBufferSourceNode | null = null;
+  private rainGain: GainNode | null = null;
+  private rainFilter: BiquadFilterNode | null = null;
+  private currentRainIntensity = 0;
+  private isRainInsideStructure = false;
 
   // Lightweight cached compressed bytes (~515KB each) and single active decoded AudioBuffer
   private rawTrackBytes: Record<MusicTrack, ArrayBuffer | null> = {
@@ -71,9 +83,15 @@ class SoundManager {
       if (this.ctx && this.ctx.state === 'suspended') {
         this.ctx.resume().then(() => {
           this.syncMusicPlayback();
+          this.syncRainPlayback();
         }).catch(() => {});
-      } else if (this.desiredTrack !== 'none' && !this.isPausedByGame && !this.musicSource) {
-        this.syncMusicPlayback();
+      } else {
+        if (this.desiredTrack !== 'none' && !this.isPausedByGame && !this.musicSource) {
+          this.syncMusicPlayback();
+        }
+        if (this.currentRainIntensity > 0.01 && !this.isPausedByGame && !this.rainSource) {
+          this.syncRainPlayback();
+        }
       }
     };
 
@@ -83,6 +101,7 @@ class SoundManager {
     if (typeof document !== 'undefined') {
       document.addEventListener('visibilitychange', () => {
         this.syncMusicPlayback();
+        this.syncRainPlayback();
       });
     }
   }
@@ -284,11 +303,244 @@ class SoundManager {
     this.syncMusicPlayback();
   }
 
+  public setAmbientVolume(vol: number): void {
+    this.ambientVolume = Math.max(0, Math.min(1, Number.isFinite(vol) ? vol : 0.45));
+    if (this.rainGain && this.ctx) {
+      const now = this.ctx.currentTime;
+      this.rainGain.gain.cancelScheduledValues(now);
+      this.rainGain.gain.setValueAtTime(this.rainGain.gain.value, now);
+      this.rainGain.gain.linearRampToValueAtTime(this.getTargetRainGain(), now + 0.2);
+    }
+    this.syncRainPlayback();
+  }
+
+  private getTargetRainGain(): number {
+    if (!this.enabled || this.isPausedByGame) return 0;
+    const base = Math.max(0, Math.min(1, this.ambientVolume));
+    const intensity = Math.max(0, Math.min(1, this.currentRainIntensity));
+    const uiFactor = this.isMuffledByUi ? 0.55 : 1.0;
+    const indoorFactor = this.isRainInsideStructure ? 0.68 : 1.0;
+    return base * uiFactor * indoorFactor * intensity;
+  }
+
+  private getTargetRainCutoffHz(): number {
+    if (this.isRainInsideStructure) {
+      return this.isMuffledByUi ? 310 : 390;
+    }
+    return this.isMuffledByUi ? 1150 : 8400;
+  }
+
+  private getTargetRainFilterQ(): number {
+    return this.isRainInsideStructure ? 1.35 : 0.7;
+  }
+
+  private async loadAndDecodeRainBuffer(): Promise<AudioBuffer | null> {
+    if (this.decodedRainBuffer) {
+      return this.decodedRainBuffer;
+    }
+    if (this.loadingRainPromise) {
+      return this.loadingRainPromise;
+    }
+
+    const promise = (async (): Promise<AudioBuffer | null> => {
+      try {
+        const ctx = this.getAudioContext(true);
+        if (!ctx) return null;
+
+        if (!this.rawRainBytes) {
+          const res = await fetch(RAIN_AUDIO_URL);
+          if (!res.ok) return null;
+          this.rawRainBytes = await res.arrayBuffer();
+        }
+        if (!this.rawRainBytes) return null;
+
+        const copy = this.rawRainBytes.slice(0);
+        const decoded = await ctx.decodeAudioData(copy);
+        this.decodedRainBuffer = decoded;
+        return decoded;
+      } catch {
+        return null;
+      } finally {
+        this.loadingRainPromise = null;
+      }
+    })();
+
+    this.loadingRainPromise = promise;
+    return promise;
+  }
+
+  private stopRainSourceImmediate(): void {
+    if (!this.rainSource) return;
+    const src = this.rainSource;
+    this.rainSource = null;
+    try {
+      src.onended = null;
+      src.stop();
+    } catch {
+      // ignore
+    }
+    try {
+      src.disconnect();
+    } catch {
+      // ignore
+    }
+  }
+
+  public updateRainAmbience(
+    rainIntensity: number,
+    isInsideStructure = false
+  ): void {
+    const clamped = Math.max(
+      0,
+      Math.min(1, Number.isFinite(rainIntensity) ? rainIntensity : 0)
+    );
+    const prev = this.currentRainIntensity;
+    const prevIndoor = this.isRainInsideStructure;
+    this.currentRainIntensity = clamped;
+    this.isRainInsideStructure = Boolean(isInsideStructure);
+
+    if (this.rainGain && this.ctx && this.rainSource) {
+      const now = this.ctx.currentTime;
+      const target = this.getTargetRainGain();
+      try {
+        this.rainGain.gain.cancelScheduledValues(now);
+        this.rainGain.gain.setValueAtTime(this.rainGain.gain.value, now);
+        this.rainGain.gain.linearRampToValueAtTime(target, now + 0.18);
+        if (this.rainFilter && prevIndoor !== this.isRainInsideStructure) {
+          this.rainFilter.frequency.cancelScheduledValues(now);
+          this.rainFilter.frequency.setValueAtTime(
+            this.rainFilter.frequency.value,
+            now
+          );
+          this.rainFilter.frequency.linearRampToValueAtTime(
+            this.getTargetRainCutoffHz(),
+            now + 0.28
+          );
+          this.rainFilter.Q.cancelScheduledValues(now);
+          this.rainFilter.Q.setValueAtTime(this.rainFilter.Q.value, now);
+          this.rainFilter.Q.linearRampToValueAtTime(
+            this.getTargetRainFilterQ(),
+            now + 0.28
+          );
+        }
+      } catch {
+        // ignore
+      }
+    }
+
+    if (
+      (clamped > 0.008 && !this.rainSource) ||
+      (clamped <= 0.004 && this.rainSource) ||
+      Math.abs(clamped - prev) > 0.05 ||
+      prevIndoor !== this.isRainInsideStructure
+    ) {
+      this.syncRainPlayback();
+    }
+  }
+
+  private syncRainPlayback(): void {
+    this.bindLifecycleListeners();
+    const isDocumentHidden =
+      typeof document !== 'undefined' && Boolean(document.hidden);
+    const targetGain = this.getTargetRainGain();
+    const targetCutoff = this.getTargetRainCutoffHz();
+    const targetQ = this.getTargetRainFilterQ();
+
+    if (
+      !this.enabled ||
+      this.isPausedByGame ||
+      isDocumentHidden ||
+      this.ambientVolume <= 0.001 ||
+      this.currentRainIntensity <= 0.004
+    ) {
+      this.stopRainSourceImmediate();
+      return;
+    }
+
+    if (this.rainSource && this.rainGain && this.ctx) {
+      const now = this.ctx.currentTime;
+      try {
+        this.rainGain.gain.cancelScheduledValues(now);
+        this.rainGain.gain.setValueAtTime(this.rainGain.gain.value, now);
+        this.rainGain.gain.linearRampToValueAtTime(targetGain, now + 0.2);
+        if (this.rainFilter) {
+          this.rainFilter.frequency.cancelScheduledValues(now);
+          this.rainFilter.frequency.setValueAtTime(
+            this.rainFilter.frequency.value,
+            now
+          );
+          this.rainFilter.frequency.linearRampToValueAtTime(
+            targetCutoff,
+            now + 0.25
+          );
+          this.rainFilter.Q.cancelScheduledValues(now);
+          this.rainFilter.Q.setValueAtTime(this.rainFilter.Q.value, now);
+          this.rainFilter.Q.linearRampToValueAtTime(targetQ, now + 0.25);
+        }
+      } catch {
+        // ignore
+      }
+      return;
+    }
+
+    const ctx = this.getAudioContext(true);
+    if (!ctx) return;
+
+    const buffer = this.decodedRainBuffer;
+    if (!buffer) {
+      void this.loadAndDecodeRainBuffer().then((decoded) => {
+        if (decoded && this.currentRainIntensity > 0.004 && !this.isPausedByGame) {
+          this.syncRainPlayback();
+        }
+      });
+      return;
+    }
+
+    if (ctx.state === 'suspended') {
+      ctx.resume().catch(() => {});
+      if (ctx.state === 'suspended') return;
+    }
+
+    try {
+      this.stopRainSourceImmediate();
+      const now = ctx.currentTime;
+
+      if (!this.rainGain) {
+        this.rainGain = ctx.createGain();
+        this.rainGain.connect(ctx.destination);
+      }
+      if (!this.rainFilter) {
+        this.rainFilter = ctx.createBiquadFilter();
+        this.rainFilter.type = 'lowpass';
+        this.rainFilter.frequency.setValueAtTime(targetCutoff, now);
+        this.rainFilter.Q.setValueAtTime(targetQ, now);
+        this.rainFilter.connect(this.rainGain);
+      } else {
+        this.rainFilter.frequency.setValueAtTime(targetCutoff, now);
+        this.rainFilter.Q.setValueAtTime(targetQ, now);
+      }
+
+      this.rainGain.gain.cancelScheduledValues(now);
+      this.rainGain.gain.setValueAtTime(0.0001, now);
+      this.rainGain.gain.linearRampToValueAtTime(targetGain, now + 0.65);
+
+      const src = ctx.createBufferSource();
+      src.buffer = buffer;
+      src.loop = true;
+      src.connect(this.rainFilter);
+      src.start(0);
+      this.rainSource = src;
+    } catch {
+      // ignore autoplay restriction until user interaction
+    }
+  }
+
   public setMusicPaused(paused: boolean): void {
     const nextPaused = Boolean(paused);
     if (this.isPausedByGame === nextPaused) return;
     this.isPausedByGame = nextPaused;
     this.syncMusicPlayback();
+    this.syncRainPlayback();
   }
 
   public setMusicMuffled(muffled: boolean): void {
@@ -319,6 +571,7 @@ class SoundManager {
         // ignore
       }
     }
+    this.syncRainPlayback();
   }
 
   public updateAmbientMusic(isNight: boolean): void {
@@ -339,6 +592,8 @@ class SoundManager {
 
   public stopAmbientMusic(): void {
     this.stopCurrentSourceNodeImmediate(false);
+    this.stopRainSourceImmediate();
+    this.currentRainIntensity = 0;
     this.desiredTrack = 'none';
     this.activeTrack = 'none';
     this.isPausedByGame = false;

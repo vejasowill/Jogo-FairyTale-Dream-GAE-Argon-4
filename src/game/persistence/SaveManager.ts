@@ -466,6 +466,7 @@ export class SaveManager {
     return {
       soundEnabled: true,
       soundVolume: 0.35,
+      ambientVolume: 0.45,
       musicVolume: 0.2,
       autoSaveIntervalSec: 20,
       serverSyncEnabled: true,
@@ -517,9 +518,14 @@ export class SaveManager {
           // ignore
         }
       }
+      const resolvedAmbientVolume =
+        typeof parsed.ambientVolume === 'number' && Number.isFinite(parsed.ambientVolume)
+          ? Math.max(0, Math.min(1, parsed.ambientVolume))
+          : defaults.ambientVolume;
       return {
         ...defaults,
         ...parsed,
+        ambientVolume: resolvedAmbientVolume,
         musicVolume: resolvedMusicVolume,
         cameraZoom: Math.max(0.55, Math.min(2.5, resolvedZoom)),
         controlLayout: {
@@ -1068,6 +1074,7 @@ export class SaveManager {
           ...(chunk.landmarkName ? { landmarkName: chunk.landmarkName } : {}),
           ...(chunk.villageId ? { villageId: chunk.villageId } : {}),
           ...(chunk.mobsPopulated ? { mobsPopulated: true } : {}),
+          ...(chunk.villagePopulatedV2 ? { villagePopulatedV2: true } : {}),
           ...(chunk.islandMobsPopulated ? { islandMobsPopulated: true } : {}),
           genVersion:
             typeof chunk.genVersion === 'number'
@@ -1095,6 +1102,9 @@ export class SaveManager {
           structures: Array.isArray(chunk.structures)
             ? JSON.parse(JSON.stringify(chunk.structures))
             : [],
+          ...(Array.isArray(chunk.puddles) && chunk.puddles.length > 0
+            ? { puddles: JSON.parse(JSON.stringify(chunk.puddles)) }
+            : {}),
         };
 
         compactChunks[key] = compactedChunk;
@@ -1143,6 +1153,8 @@ export class SaveManager {
         aiTimer: Math.round((cr.aiTimer || 0) * 10) / 10,
         animTimer: 0,
         hitFlashTimer: 0,
+        interactingPlayerId: undefined,
+        interactingPlayerName: undefined,
       }));
 
     return {

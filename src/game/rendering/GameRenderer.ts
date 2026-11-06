@@ -14,7 +14,9 @@ import {
   PlaceableType,
   PlacedStructure,
   PlayerState,
+  RainPuddle,
   RemotePlayerState,
+  WeatherState,
   getTransportSeatOffset,
 } from '../core/types';
 import {
@@ -64,6 +66,9 @@ export interface BuildRenderOptions {
   orientation?: 'auto' | 'horizontal' | 'vertical';
   rotation?: 0 | 1 | 2 | 3;
   showHitboxPreview?: boolean;
+  weatherState?: WeatherState;
+  rainIntensity?: number;
+  localRainIntensity?: number;
 }
 
 export type BurstPreset =
@@ -124,6 +129,7 @@ interface LightningBolt {
 
 export class GameRenderer {
   private lightCanvas: HTMLCanvasElement | null = null;
+  private cloudShadowStamps: HTMLCanvasElement[] | null = null;
   private particles: VisualParticle[] = [];
   private footprints: FootprintDecal[] = [];
   private ripples: GroundRipple[] = [];
@@ -543,6 +549,30 @@ export class GameRenderer {
 
           if (isFloorOrBridge) {
             this.drawGroundStructure(ctx, world, st, tileAnimFrame);
+          }
+        }
+
+        // Pass 1A-Puddles: Temporary Rain Puddles on empty soil
+        if (chunk.puddles && chunk.puddles.length > 0) {
+          const globalRain = buildOptions?.rainIntensity ?? 0;
+          for (const puddle of chunk.puddles) {
+            const pWx = puddle.tileX * TILE_SIZE;
+            const pWy = puddle.tileY * TILE_SIZE;
+            if (
+              pWx + TILE_SIZE < camera.x - halfW ||
+              pWx > camera.x + halfW ||
+              pWy + TILE_SIZE < camera.y - halfH ||
+              pWy > camera.y + halfH
+            ) {
+              continue;
+            }
+            this.drawRainPuddle(
+              ctx,
+              puddle,
+              globalTime,
+              globalRain > 0.25 &&
+                world.isRainValidAtTile(puddle.tileX, puddle.tileY)
+            );
           }
         }
 
@@ -1182,6 +1212,31 @@ export class GameRenderer {
       lightSources
     );
 
+    // 6A-Weather: Passing Cloud Shadows (only shadow visible, varied sizes, constant wind direction)
+    this.drawCloudShadows(
+      ctx,
+      camera,
+      world,
+      globalTime,
+      halfW,
+      halfH,
+      buildOptions?.weatherState || 'clear',
+      buildOptions?.rainIntensity ?? 0
+    );
+
+    // 6A-Rain: Realistic Biome-Aware Falling Rain & Ground/Water Splashes
+    if ((buildOptions?.rainIntensity ?? 0) > 0.01) {
+      this.drawWeatherRain(
+        ctx,
+        camera,
+        world,
+        globalTime,
+        halfW,
+        halfH,
+        buildOptions?.rainIntensity ?? 0
+      );
+    }
+
     // 6B. Top-Layer Aimed Target Selector Pointer Arrow & Action Tag (Shows exactly what Interação will act on)
     if (aimedTarget) {
       const bounce = Math.sin(globalTime * 7) * 2.2;
@@ -1337,7 +1392,8 @@ export class GameRenderer {
       timeOfDay,
       globalTime,
       lightSources,
-      player.hp / Math.max(1, player.maxHp)
+      player.hp / Math.max(1, player.maxHp),
+      buildOptions?.localRainIntensity ?? 0
     );
   }
 
@@ -6328,6 +6384,15 @@ export class GameRenderer {
       const isWanderer = cr.kind === 'WANDERER';
       const isFightingMonster = cr.aiState === 'chase' && !cr.isHostile;
       const isSunsetOrNight = timeOfDay >= 17.5 || timeOfDay < 5.5;
+      const isWaitingAtWell =
+        isWanderer &&
+        !cr.isHostile &&
+        !isFightingMonster &&
+        Boolean(cr.wellWaitTimer && cr.wellWaitTimer > 0);
+      const isInteractingWithPlayer =
+        !cr.isHostile &&
+        !isFightingMonster &&
+        Boolean(cr.interactingPlayerId);
       const isAnsweringDoor =
         !isWanderer &&
         !cr.isHostile &&
@@ -6340,20 +6405,47 @@ export class GameRenderer {
         isSunsetOrNight &&
         cr.homeX !== undefined &&
         cr.homeY !== undefined &&
-        !isAnsweringDoor;
+        !isAnsweringDoor &&
+        !isInteractingWithPlayer;
 
       ctx.save();
       ctx.textAlign = 'center';
 
+      // Exclamation mark (!) above Wanderer waiting at a Player-Led Village Well (up to 60s)
+      if (isWaitingAtWell) {
+        const bounceY = Math.sin(globalTime * 5.2) * 2.2;
+        const badgeCenterY = headTopY - 34 + bounceY;
+        ctx.fillStyle = 'rgba(250, 204, 21, 0.25)';
+        ctx.beginPath();
+        ctx.arc(cr.x, badgeCenterY, 9.5, 0, Math.PI * 2);
+        ctx.fill();
+
+        ctx.fillStyle = '#fef08a';
+        ctx.strokeStyle = '#854d0e';
+        ctx.lineWidth = 1.4;
+        ctx.beginPath();
+        ctx.arc(cr.x, badgeCenterY, 7, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.stroke();
+
+        ctx.font = '900 10px "Plus Jakarta Sans", sans-serif';
+        ctx.fillStyle = '#713f12';
+        ctx.fillText('!', cr.x, badgeCenterY + 3.5);
+      }
+
       // Profession & Name Tag
       ctx.font = 'bold 7px "Plus Jakarta Sans", sans-serif';
       ctx.fillStyle = 'rgba(10, 14, 23, 0.85)';
-      ctx.fillRect(cr.x - 46, headTopY - 16, 92, 13);
+      ctx.fillRect(cr.x - 48, headTopY - 16, 96, 13);
 
       ctx.fillStyle = cr.isHostile
         ? '#f87171'
         : isFightingMonster
         ? '#fbbf24'
+        : isInteractingWithPlayer
+        ? '#fde047'
+        : isWaitingAtWell
+        ? '#fde047'
         : isAnsweringDoor
         ? '#fde047'
         : isHeadingHome
@@ -6369,6 +6461,10 @@ export class GameRenderer {
         ? `⚔ ${cr.name} [HOSTIL]`
         : isFightingMonster
         ? `⚔ ${cr.name} [Vs Monstro]`
+        : isInteractingWithPlayer
+        ? `💬 ${cr.name} [${cr.interactingPlayerName || 'Em conversa'}]`
+        : isWaitingAtWell
+        ? `❗ ${cr.name} [${Math.ceil(cr.wellWaitTimer || 0)}s]`
         : isAnsweringDoor
         ? `🚪 ${cr.name} [${Math.ceil(cr.outsideNightTimer || 0)}s]`
         : isHeadingHome
@@ -6380,7 +6476,11 @@ export class GameRenderer {
 
       if (cr.npcProfessionLabel && !cr.isHostile) {
         ctx.font = '6px "Plus Jakarta Sans", sans-serif';
-        ctx.fillStyle = isWanderer ? '#7dd3fc' : '#cbd5e1';
+        ctx.fillStyle = isWaitingAtWell
+          ? '#fef08a'
+          : isWanderer
+          ? '#7dd3fc'
+          : '#cbd5e1';
         ctx.fillText(cr.npcProfessionLabel, cr.x, headTopY - 19);
       }
       ctx.restore();
@@ -7915,6 +8015,353 @@ export class GameRenderer {
     }
   }
 
+  private ensureCloudShadowStamps(): HTMLCanvasElement[] {
+    if (this.cloudShadowStamps) return this.cloudShadowStamps;
+    const stamps: HTMLCanvasElement[] = [];
+    // 5 simple, organic multi-lobed cloud shadow silhouettes (only shadow is ever drawn; no white cloud)
+    const lobePresets: { dx: number; dy: number; rx: number; ry: number }[][] = [
+      [
+        { dx: 0, dy: 2, rx: 46, ry: 24 },
+        { dx: -26, dy: 6, rx: 30, ry: 18 },
+        { dx: 28, dy: 5, rx: 32, ry: 19 },
+        { dx: -8, dy: -9, rx: 32, ry: 18 },
+        { dx: 16, dy: -7, rx: 26, ry: 16 },
+      ],
+      [
+        { dx: 0, dy: 0, rx: 52, ry: 22 },
+        { dx: -34, dy: 5, rx: 28, ry: 16 },
+        { dx: 34, dy: 4, rx: 30, ry: 17 },
+        { dx: 6, dy: -10, rx: 34, ry: 17 },
+      ],
+      [
+        { dx: -6, dy: 3, rx: 40, ry: 25 },
+        { dx: 22, dy: 2, rx: 36, ry: 22 },
+        { dx: -28, dy: 7, rx: 26, ry: 16 },
+        { dx: 2, dy: -10, rx: 30, ry: 18 },
+      ],
+      [
+        { dx: 0, dy: 4, rx: 48, ry: 23 },
+        { dx: -30, dy: 2, rx: 32, ry: 19 },
+        { dx: 28, dy: 6, rx: 28, ry: 17 },
+        { dx: -12, dy: -10, rx: 28, ry: 17 },
+        { dx: 18, dy: -8, rx: 24, ry: 15 },
+      ],
+      [
+        { dx: 0, dy: 2, rx: 42, ry: 24 },
+        { dx: -24, dy: 5, rx: 28, ry: 18 },
+        { dx: 24, dy: 4, rx: 28, ry: 18 },
+        { dx: 0, dy: -9, rx: 32, ry: 18 },
+      ],
+    ];
+
+    for (let i = 0; i < lobePresets.length; i++) {
+      const c = document.createElement('canvas');
+      c.width = 180;
+      c.height = 110;
+      const g = c.getContext('2d')!;
+      const cx = 90;
+      const cy = 58;
+      const lobes = lobePresets[i];
+
+      // Outer soft shadow feather
+      g.fillStyle = 'rgba(14, 28, 56, 0.38)';
+      g.beginPath();
+      for (const l of lobes) {
+        g.moveTo(cx + l.dx + l.rx * 1.14, cy + l.dy);
+        g.ellipse(
+          cx + l.dx,
+          cy + l.dy,
+          l.rx * 1.14,
+          l.ry * 1.14,
+          0,
+          0,
+          Math.PI * 2
+        );
+      }
+      g.fill();
+
+      // Core organic cloud shadow silhouette
+      g.fillStyle = 'rgba(14, 28, 56, 0.62)';
+      g.beginPath();
+      for (const l of lobes) {
+        g.moveTo(cx + l.dx + l.rx, cy + l.dy);
+        g.ellipse(cx + l.dx, cy + l.dy, l.rx, l.ry, 0, 0, Math.PI * 2);
+      }
+      g.fill();
+
+      stamps.push(c);
+    }
+
+    this.cloudShadowStamps = stamps;
+    return stamps;
+  }
+
+  private drawRainPuddle(
+    ctx: CanvasRenderingContext2D,
+    puddle: RainPuddle,
+    globalTime: number,
+    isRainingAtTile: boolean
+  ): void {
+    const cx = puddle.tileX * TILE_SIZE + 16;
+    const cy = puddle.tileY * TILE_SIZE + 16;
+    // Smoothly shrink during the last 14 seconds of drying after rain stops
+    const dryScale = Math.max(0.22, Math.min(1.0, puddle.decayTimer / 14));
+    const v = (puddle.variant ?? 0) % 4;
+
+    ctx.save();
+    ctx.translate(cx, cy);
+    ctx.scale(dryScale, dryScale);
+
+    // Damp darkened soil edge around puddle
+    ctx.fillStyle = 'rgba(28, 42, 58, 0.38)';
+    ctx.beginPath();
+    if (v === 0) {
+      ctx.ellipse(-1, 1, 12.5, 8.5, 0.12, 0, Math.PI * 2);
+      ctx.ellipse(5, -2, 8.5, 6.2, -0.2, 0, Math.PI * 2);
+    } else if (v === 1) {
+      ctx.ellipse(1, 0, 12, 8.2, -0.15, 0, Math.PI * 2);
+      ctx.ellipse(-5, 3, 8.2, 5.8, 0.25, 0, Math.PI * 2);
+    } else if (v === 2) {
+      ctx.ellipse(0, 1, 11.5, 9, 0.05, 0, Math.PI * 2);
+      ctx.ellipse(4, 3, 8, 6, 0.3, 0, Math.PI * 2);
+    } else {
+      ctx.ellipse(-1, 0, 12.5, 8, -0.08, 0, Math.PI * 2);
+      ctx.ellipse(-4, -3, 8.5, 5.8, -0.22, 0, Math.PI * 2);
+    }
+    ctx.fill();
+
+    // Main reflective water puddle body
+    ctx.fillStyle = 'rgba(34, 88, 136, 0.72)';
+    ctx.beginPath();
+    if (v === 0) {
+      ctx.ellipse(-1, 1, 10.5, 7, 0.12, 0, Math.PI * 2);
+      ctx.ellipse(5, -2, 7, 5, -0.2, 0, Math.PI * 2);
+    } else if (v === 1) {
+      ctx.ellipse(1, 0, 10.2, 6.8, -0.15, 0, Math.PI * 2);
+      ctx.ellipse(-5, 3, 6.8, 4.6, 0.25, 0, Math.PI * 2);
+    } else if (v === 2) {
+      ctx.ellipse(0, 1, 9.8, 7.4, 0.05, 0, Math.PI * 2);
+      ctx.ellipse(4, 3, 6.6, 4.8, 0.3, 0, Math.PI * 2);
+    } else {
+      ctx.ellipse(-1, 0, 10.6, 6.6, -0.08, 0, Math.PI * 2);
+      ctx.ellipse(-4, -3, 7, 4.6, -0.22, 0, Math.PI * 2);
+    }
+    ctx.fill();
+
+    // Subtle sky sheen inside puddle
+    ctx.fillStyle = 'rgba(125, 211, 252, 0.26)';
+    ctx.beginPath();
+    ctx.ellipse(-2, -1, 5.2, 2.6, -0.1, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Animated raindrop ripple inside the puddle while rain is falling
+    if (isRainingAtTile) {
+      const phase =
+        (globalTime * 2.4 +
+          ((puddle.tileX * 19 + puddle.tileY * 37) & 0xff) * 0.07) %
+        1;
+      const r = 1.5 + phase * 6.5;
+      ctx.strokeStyle = `rgba(186, 230, 253, ${(1 - phase) * 0.65})`;
+      ctx.lineWidth = 0.9;
+      ctx.beginPath();
+      ctx.ellipse(
+        (v % 2 === 0 ? 1 : -1) * 1.5,
+        0.5,
+        r,
+        r * 0.62,
+        0,
+        0,
+        Math.PI * 2
+      );
+      ctx.stroke();
+    }
+
+    ctx.restore();
+  }
+
+  /**
+   * Renders passing cloud shadows across the world.
+   * Only the shadow is visible (no white cloud), moving continuously in a single wind direction,
+   * with varied sizes and simple organic cloud shapes, tied to the weather system.
+   */
+  private drawCloudShadows(
+    ctx: CanvasRenderingContext2D,
+    camera: Camera,
+    world: WorldManager,
+    globalTime: number,
+    halfW: number,
+    halfH: number,
+    weatherState: WeatherState,
+    rainIntensity: number
+  ): void {
+    const stamps = this.ensureCloudShadowStamps();
+    // Constant wind direction (moving steadily from WNW to ESE)
+    const windVx = 24;
+    const windVy = 9.5;
+    const driftX = globalTime * windVx;
+    const driftY = globalTime * windVy;
+
+    const cellSize = 420;
+    const pad = 280;
+    const minWorldX = camera.x - halfW - pad;
+    const maxWorldX = camera.x + halfW + pad;
+    const minWorldY = camera.y - halfH - pad;
+    const maxWorldY = camera.y + halfH + pad;
+
+    const minGx = Math.floor((minWorldX - driftX) / cellSize);
+    const maxGx = Math.floor((maxWorldX - driftX) / cellSize);
+    const minGy = Math.floor((minWorldY - driftY) / cellSize);
+    const maxGy = Math.floor((maxWorldY - driftY) / cellSize);
+
+    // Cloud coverage threshold by weather state
+    const spawnThreshold =
+      weatherState === 'rain' || rainIntensity > 0.4
+        ? 0.82
+        : weatherState === 'cloudy'
+        ? 0.66
+        : 0.38;
+
+    // Base shadow opacity (during heavy rain, the whole daytime sky already has the cloud shadow tint, so individual shadows stay subtle)
+    const baseShadowAlpha =
+      0.24 * (1 - rainIntensity * 0.42);
+
+    ctx.save();
+    for (let gy = minGy; gy <= maxGy; gy++) {
+      for (let gx = minGx; gx <= maxGx; gx++) {
+        // Fast deterministic hash for cell (gx, gy)
+        const h1 =
+          Math.abs(
+            Math.imul(gx ^ 0x9e3779b9, 73856093) ^
+              Math.imul(gy ^ 0x85ebca6b, 19349663)
+          ) >>> 0;
+        const presenceRoll = (h1 & 0xffff) / 0x10000;
+        if (presenceRoll > spawnThreshold) continue;
+
+        const jitterX = (((h1 >>> 16) & 0xff) / 255 - 0.5) * (cellSize * 0.58);
+        const jitterY = (((h1 >>> 24) & 0xff) / 255 - 0.5) * (cellSize * 0.58);
+
+        const wx = (gx + 0.5) * cellSize + jitterX + driftX;
+        const wy = (gy + 0.5) * cellSize + jitterY + driftY;
+
+        // Varied sizes from small (0.68x) to large (2.35x)
+        const sizeHash = ((h1 * 1664525 + 1013904223) >>> 16) & 0xff;
+        const scale = 0.68 + (sizeHash / 255) * 1.67;
+
+        const stampIdx = h1 % stamps.length;
+        const stamp = stamps[stampIdx];
+        const drawW = stamp.width * scale;
+        const drawH = stamp.height * scale;
+
+        if (
+          wx + drawW * 0.5 < camera.x - halfW ||
+          wx - drawW * 0.5 > camera.x + halfW ||
+          wy + drawH * 0.5 < camera.y - halfH ||
+          wy - drawH * 0.5 > camera.y + halfH
+        ) {
+          continue;
+        }
+
+        // Check local biome under the cloud shadow so Desert stays sunny/arid during rain/cloudy transitions
+        const biome = world.getBiomeAtWorld(wx, wy);
+        const biomeFactor = biome === BiomeType.DESERT ? 0.18 : 1.0;
+
+        ctx.globalAlpha = baseShadowAlpha * biomeFactor;
+        ctx.drawImage(
+          stamp,
+          Math.round(wx - drawW * 0.5),
+          Math.round(wy - drawH * 0.5),
+          Math.round(drawW),
+          Math.round(drawH)
+        );
+      }
+    }
+    ctx.restore();
+  }
+
+  /**
+   * Renders realistic falling rain streaks and ground/water splashes only on tiles where rain is valid
+   * (never raining in the Desert biome).
+   */
+  private drawWeatherRain(
+    ctx: CanvasRenderingContext2D,
+    camera: Camera,
+    world: WorldManager,
+    globalTime: number,
+    halfW: number,
+    halfH: number,
+    rainIntensity: number
+  ): void {
+    const cellSize = 48;
+    const minGx = Math.floor((camera.x - halfW) / cellSize) - 1;
+    const maxGx = Math.floor((camera.x + halfW) / cellSize) + 1;
+    const minGy = Math.floor((camera.y - halfH) / cellSize) - 1;
+    const maxGy = Math.floor((camera.y + halfH) / cellSize) + 1;
+
+    ctx.save();
+    ctx.lineCap = 'round';
+
+    for (let gy = minGy; gy <= maxGy; gy++) {
+      for (let gx = minGx; gx <= maxGx; gx++) {
+        const h =
+          Math.abs(
+            Math.imul(gx ^ 0x27d4eb2d, 2246822519) ^
+              Math.imul(gy ^ 0x165667b1, 3266489917)
+          ) >>> 0;
+        // Skip some cells when rain is ramping in/out
+        if (((h & 0xff) / 255) > rainIntensity) continue;
+
+        const baseX = gx * cellSize + ((h >>> 8) % cellSize);
+        const baseY = gy * cellSize + ((h >>> 16) % cellSize);
+
+        const tile = world.worldToTile(baseX, baseY);
+        // Never rain in Desert or invalid rain biomes
+        if (!world.isRainValidAtTile(tile.tx, tile.ty)) continue;
+
+        // 1. Falling slanted raindrop streak
+        const fallSpeed = 340 + ((h >>> 24) & 0x3f);
+        const phase =
+          (globalTime * (fallSpeed / 80) + ((h & 0xfff) / 4096)) % 1;
+        const dropX = baseX + (phase - 0.5) * 18;
+        const dropY = baseY + (phase - 0.5) * 44;
+        const len = 10 + (h % 6);
+        const dx = 3.2;
+        const dy = len;
+
+        ctx.strokeStyle = `rgba(186, 230, 253, ${(0.34 + (h % 3) * 0.08) * rainIntensity})`;
+        ctx.lineWidth = 1.1;
+        ctx.beginPath();
+        ctx.moveTo(dropX, dropY);
+        ctx.lineTo(dropX + dx, dropY + dy);
+        ctx.stroke();
+
+        // 2. Ground / water splash ring at the end of the drop cycle (outside roofed buildings)
+        if (
+          phase > 0.78 &&
+          !this.roofSystem.getBuildingAtTile(world, tile.tx, tile.ty)
+        ) {
+          const splashT = (phase - 0.78) / 0.22;
+          const splashR = 1.2 + splashT * 3.4;
+          const splashAlpha = (1 - splashT) * 0.52 * rainIntensity;
+          ctx.strokeStyle = `rgba(224, 242, 254, ${splashAlpha.toFixed(3)})`;
+          ctx.lineWidth = 0.85;
+          ctx.beginPath();
+          ctx.ellipse(
+            baseX + 1.6,
+            baseY + 6,
+            splashR,
+            splashR * 0.55,
+            0,
+            0,
+            Math.PI * 2
+          );
+          ctx.stroke();
+        }
+      }
+    }
+
+    ctx.restore();
+  }
+
   private renderDayNightOverlay(
     ctx: CanvasRenderingContext2D,
     camera: Camera,
@@ -7928,7 +8375,8 @@ export class GameRenderer {
       strength?: number;
       yellowTint?: boolean;
     }[],
-    playerHpRatio = 1.0
+    playerHpRatio = 1.0,
+    localRainIntensity = 0
   ): void {
     const w = ctx.canvas.width;
     const h = ctx.canvas.height;
@@ -7951,6 +8399,24 @@ export class GameRenderer {
     } else if (timeOfDay >= 5 && timeOfDay < 7.5) {
       const t = 1 - (timeOfDay - 5) / 2.5;
       darkness = t * 0.78;
+    }
+
+    // De dia: a chuva deixa o dia mais azulado e ligeiramente mais escuro,
+    // exatamente como se o efeito da sombra da nuvem (rgba(14, 28, 56)) fosse aplicado em tudo.
+    const dayRatio = Math.max(0, 1 - darkness / 0.78);
+    if (localRainIntensity > 0.01 && dayRatio > 0.01) {
+      const rainDayAlpha = localRainIntensity * dayRatio * 0.24;
+      ctx.fillStyle = `rgba(14, 28, 56, ${rainDayAlpha.toFixed(3)})`;
+      ctx.fillRect(0, 0, w, h);
+    }
+
+    // De noite: a chuva também deixa a noite ligeiramente mais escura um pouquinho
+    if (localRainIntensity > 0.01 && darkness > 0.01) {
+      const nightRatio = Math.min(1, darkness / 0.78);
+      darkness = Math.min(
+        0.86,
+        darkness + localRainIntensity * nightRatio * 0.065
+      );
     }
 
     if (darkness > 0.01) {

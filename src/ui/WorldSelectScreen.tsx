@@ -971,12 +971,12 @@ export const WorldSelectScreen: React.FC<WorldSelectScreenProps> = ({
               {/* Server Sync & Audio */}
               <div className="medieval-inset p-3 space-y-2.5">
                 <div className="font-pixel text-[10px] text-amber-400 font-bold">
-                  ÁUDIO & MÚSICA AMBIENTE
+                  ÁUDIO (MÚSICA, AMBIENTE & EFEITOS)
                 </div>
                 <div className="space-y-1">
                   <div className="flex items-center justify-between text-xs">
                     <span className="text-[#e5d5b5] font-bold">
-                      Volume da Música (Dia / Noite)
+                      Volume da Música
                     </span>
                     <span className="font-mono-tabular text-amber-300 font-bold">
                       {Math.round((settings.musicVolume ?? 0.2) * 100)}%
@@ -992,6 +992,56 @@ export const WorldSelectScreen: React.FC<WorldSelectScreenProps> = ({
                       onUpdateSettings({
                         ...settings,
                         musicVolume: Number(e.target.value),
+                      })
+                    }
+                    className="w-full accent-amber-500"
+                  />
+                </div>
+
+                <div className="space-y-1">
+                  <div className="flex items-center justify-between text-xs">
+                    <span className="text-[#e5d5b5] font-bold">
+                      Volume de Ambiente
+                    </span>
+                    <span className="font-mono-tabular text-sky-300 font-bold">
+                      {Math.round((settings.ambientVolume ?? 0.45) * 100)}%
+                    </span>
+                  </div>
+                  <input
+                    type="range"
+                    min={0}
+                    max={1}
+                    step={0.05}
+                    value={settings.ambientVolume ?? 0.45}
+                    onChange={(e) =>
+                      onUpdateSettings({
+                        ...settings,
+                        ambientVolume: Number(e.target.value),
+                      })
+                    }
+                    className="w-full accent-sky-400"
+                  />
+                </div>
+
+                <div className="space-y-1">
+                  <div className="flex items-center justify-between text-xs">
+                    <span className="text-[#e5d5b5] font-bold">
+                      Volume de Efeitos Sonoros
+                    </span>
+                    <span className="font-mono-tabular text-amber-300 font-bold">
+                      {Math.round((settings.soundVolume ?? 0.35) * 100)}%
+                    </span>
+                  </div>
+                  <input
+                    type="range"
+                    min={0}
+                    max={1}
+                    step={0.05}
+                    value={settings.soundVolume ?? 0.35}
+                    onChange={(e) =>
+                      onUpdateSettings({
+                        ...settings,
+                        soundVolume: Number(e.target.value),
                       })
                     }
                     className="w-full accent-amber-500"

@@ -593,12 +593,13 @@ export class EntityManager {
       villageId?: string;
       nameIndex?: number;
       ignoreNaturalChunkCap?: boolean;
+      forceWalkable?: boolean;
     }
   ): CreatureEntity | null {
     const { tx, ty } = world.worldToTile(wx, wy);
     if (kind === CreatureKind.BOAT) {
       if (!world.isTileSwimmableWater(tx, ty)) return null;
-    } else {
+    } else if (!options?.forceWalkable) {
       if (!world.isTileWalkable(tx, ty, false)) return null;
     }
 
@@ -1282,10 +1283,33 @@ export class EntityManager {
   }
 
   /**
+   * Returns true if the given chunk is a procedural Village landmark chunk
+   * (covers all 6 village variants: Vilarejo de Carvalho, Vilarejo de Carvalho Escuro,
+   * Vilarejo de Pinheiros, Vilarejos Vizinhos da Fronteira, Vila Mercante do Oásis, Vilas Gêmeas do Oásis).
+   */
+  public static isVillageLandmarkChunk(chunk: ChunkData): boolean {
+    if (!chunk) return false;
+    if (chunk.villageId) return true;
+    if (
+      chunk.landmarkName &&
+      (chunk.landmarkName.includes('Vilarejo') ||
+        chunk.landmarkName.includes('Vila'))
+    ) {
+      return true;
+    }
+    return chunk.structures.some(
+      (s) =>
+        s.type === PlaceableType.VILLAGE_WELL &&
+        s.id.startsWith('world_struct_')
+    );
+  }
+
+  /**
    * Populates newly discovered chunks that contain procedural World Landmarks (Villages, Ruins, Shrines, Strongholds, Oases)
    * with appropriate NPCs, guardians, or wildlife herds once per chunk.
+   * Also repairs any previously discovered village chunk that was left empty prior to v0.7.7-beta.
    */
-  private populateNearbyLandmarkChunks(
+  public populateNearbyLandmarkChunks(
     world: WorldManager,
     playerX: number,
     playerY: number
@@ -1294,15 +1318,43 @@ export class EntityManager {
     const pTile = world.worldToTile(playerX, playerY);
     const pChunk = world.tileToChunk(pTile.tx, pTile.ty);
 
-    for (let dy = -1; dy <= 1; dy++) {
-      for (let dx = -1; dx <= 1; dx++) {
-        const chunk = world.chunks[WorldManager.chunkKey(pChunk.cx + dx, pChunk.cy + dy)];
-        if (!chunk || chunk.mobsPopulated) continue;
+    for (let dy = -3; dy <= 3; dy++) {
+      for (let dx = -3; dx <= 3; dx++) {
+        const chunk =
+          world.chunks[WorldManager.chunkKey(pChunk.cx + dx, pChunk.cy + dy)];
+        if (!chunk) continue;
         if (!chunk.explored.some((e) => e === 1)) continue;
 
-        chunk.mobsPopulated = true;
-        chunk.dirtyRev = (chunk.dirtyRev || 0) + 1;
-        this.spawnChunkLandmarkMobs(world, chunk);
+        const isVillage = EntityManager.isVillageLandmarkChunk(chunk);
+        if (!chunk.mobsPopulated) {
+          chunk.mobsPopulated = true;
+          if (isVillage) {
+            chunk.villagePopulatedV2 = true;
+          }
+          chunk.dirtyRev = (chunk.dirtyRev || 0) + 1;
+          this.spawnChunkLandmarkMobs(world, chunk);
+        } else if (isVillage && !chunk.villagePopulatedV2) {
+          const villageId =
+            chunk.villageId || `village_${chunk.cx}_${chunk.cy}`;
+          const centerWx = (chunk.cx * CHUNK_SIZE + 8) * TILE_SIZE + 16;
+          const centerWy = (chunk.cy * CHUNK_SIZE + 8) * TILE_SIZE + 16;
+          const hasExistingVillagers = this.creatures.some(
+            (c) =>
+              c.kind === CreatureKind.VILLAGER &&
+              c.hp > 0 &&
+              (c.villageId === villageId ||
+                Math.hypot(c.x - centerWx, c.y - centerWy) <= 420)
+          );
+          const wellClaimedByPlayer = chunk.structures.some(
+            (s) =>
+              s.type === PlaceableType.VILLAGE_WELL && s.ownerType === 'PLAYER'
+          );
+          chunk.villagePopulatedV2 = true;
+          chunk.dirtyRev = (chunk.dirtyRev || 0) + 1;
+          if (!hasExistingVillagers && !wellClaimedByPlayer) {
+            this.spawnChunkLandmarkMobs(world, chunk);
+          }
+        }
       }
     }
   }
@@ -1313,47 +1365,84 @@ export class EntityManager {
     const nameSeed = Math.abs(chunk.cx * 31 + chunk.cy * 17);
 
     // 0. VILLAGE LANDMARKS — Populate with Villagers bound to their owned Beds inside the 4 Village Houses (or legacy Village Houses)
-    if (
-      chunk.landmarkName === 'Vilarejo de Carvalho' ||
-      chunk.landmarkName === 'Vila Mercante do Oásis'
-    ) {
+    if (EntityManager.isVillageLandmarkChunk(chunk)) {
       const villageId = chunk.villageId || `village_${chunk.cx}_${chunk.cy}`;
+      chunk.villageId = villageId;
+      chunk.villagePopulatedV2 = true;
+
+      const defaultRoles: NpcRole[] = [
+        'ferreiro',
+        'mercador',
+        'anciao',
+        'guardiao',
+      ];
       const villageBeds = chunk.structures.filter(
-        (s) => s.type === PlaceableType.BED && s.ownerType === 'VILLAGER'
+        (s) =>
+          s.type === PlaceableType.BED &&
+          s.ownerType !== 'PLAYER' &&
+          (s.ownerType === 'VILLAGER' ||
+            Boolean(s.npcRole) ||
+            s.id.startsWith('world_struct_'))
       );
 
       if (villageBeds.length > 0) {
         for (let i = 0; i < villageBeds.length; i++) {
           const bed = villageBeds[i];
-          const role: NpcRole = bed.npcRole || 'mercador';
+          const role: NpcRole =
+            bed.npcRole || defaultRoles[i % defaultRoles.length];
+          bed.npcRole = role;
           const hx = bed.tileX * TILE_SIZE + TILE_SIZE / 2;
           const hy = bed.tileY * TILE_SIZE + TILE_SIZE / 2;
+
+          // Skip if this bed already has a living resident in the world
+          const existingResident = this.creatures.find(
+            (c) =>
+              c.kind === CreatureKind.VILLAGER &&
+              c.hp > 0 &&
+              (c.homeHouseId === bed.id ||
+                (bed.ownerId && c.id === bed.ownerId))
+          );
+          if (existingResident) {
+            bed.ownerType = 'VILLAGER';
+            bed.ownerId = existingResident.id;
+            bed.ownerName = existingResident.name;
+            bed.villageId = villageId;
+            bed.structureOwnerClearedAfterLoss = false;
+            continue;
+          }
 
           // Candidate walkable plaza/path offsets around the central well and house doors
           const candidateWorldPositions: Array<[number, number]> = [
             [
-              (chunk.cx * CHUNK_SIZE + (role === 'ferreiro' || role === 'anciao' ? 4 : 11)) *
+              (chunk.cx * CHUNK_SIZE +
+                (role === 'ferreiro' || role === 'anciao' ? 4 : 11)) *
                 TILE_SIZE +
                 16,
-              (chunk.cy * CHUNK_SIZE + (role === 'ferreiro' || role === 'mercador' ? 5 : 10)) *
+              (chunk.cy * CHUNK_SIZE +
+                (role === 'ferreiro' || role === 'mercador' ? 5 : 10)) *
                 TILE_SIZE +
                 16,
             ],
             [
-              (chunk.cx * CHUNK_SIZE + (role === 'ferreiro' || role === 'anciao' ? 6 : 9)) *
+              (chunk.cx * CHUNK_SIZE +
+                (role === 'ferreiro' || role === 'anciao' ? 6 : 9)) *
                 TILE_SIZE +
                 16,
-              (chunk.cy * CHUNK_SIZE + (role === 'ferreiro' || role === 'mercador' ? 7 : 8)) *
+              (chunk.cy * CHUNK_SIZE +
+                (role === 'ferreiro' || role === 'mercador' ? 7 : 8)) *
                 TILE_SIZE +
                 16,
             ],
-            [centerWx + (i % 2 === 0 ? -32 : 32), centerWy + (i < 4 ? -32 : 32)],
+            [centerWx + (i % 2 === 0 ? -32 : 32), centerWy + (i < 2 ? -32 : 32)],
             [centerWx - 48, centerWy],
             [centerWx + 48, centerWy],
+            [centerWx, centerWy - 48],
+            [centerWx, centerWy + 48],
           ];
 
+          let spawned: CreatureEntity | null = null;
           for (const [candWx, candWy] of candidateWorldPositions) {
-            const spawned = this.trySpawnCreatureAt(
+            spawned = this.trySpawnCreatureAt(
               world,
               CreatureKind.VILLAGER,
               candWx,
@@ -1367,12 +1456,54 @@ export class EntityManager {
                 homeX: hx,
                 homeY: hy,
                 homeHouseId: bed.id,
+                ignoreNaturalChunkCap: true,
               }
             );
-            if (spawned) {
-              bed.ownerId = spawned.id;
-              bed.ownerName = spawned.name;
-              break;
+            if (spawned) break;
+          }
+
+          // Guaranteed fallback so no village bed ever fails to spawn its Villager
+          if (!spawned) {
+            spawned = this.trySpawnCreatureAt(
+              world,
+              CreatureKind.VILLAGER,
+              centerWx + (i % 2 === 0 ? -28 : 28),
+              centerWy + (i < 2 ? -28 : 28),
+              {
+                customId: bed.ownerId,
+                customName: bed.ownerName,
+                npcRole: role,
+                villageId,
+                nameIndex: nameSeed + i,
+                homeX: hx,
+                homeY: hy,
+                homeHouseId: bed.id,
+                ignoreNaturalChunkCap: true,
+                forceWalkable: true,
+              }
+            );
+          }
+
+          if (spawned) {
+            bed.ownerType = 'VILLAGER';
+            bed.ownerId = spawned.id;
+            bed.ownerName = spawned.name;
+            bed.villageId = villageId;
+            bed.structureOwnerClearedAfterLoss = false;
+            if (role === 'anciao') {
+              const well = chunk.structures.find(
+                (s) =>
+                  s.type === PlaceableType.VILLAGE_WELL &&
+                  s.ownerType !== 'PLAYER'
+              );
+              if (well) {
+                well.ownerType = 'VILLAGER';
+                well.ownerId = spawned.id;
+                well.ownerName = spawned.name;
+                well.npcRole = 'anciao';
+                well.villageId = villageId;
+                well.structureOwnerClearedAfterLoss = false;
+              }
             }
           }
         }

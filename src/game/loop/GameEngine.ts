@@ -56,6 +56,7 @@ import {
   StatusEffectId,
   TOTAL_INVENTORY_SIZE,
   ToolType,
+  WeatherState,
   WorldMetadata,
   WorldSaveData,
 } from '../core/types';
@@ -173,6 +174,7 @@ export class GameEngine {
   private pendingContainerWithdraws = new Set<string>();
   private stallCustomerSpawnTimer = 3.5;
   public isSavingOrExiting = false;
+  public activeInteractingNpcId: string | null = null;
 
   public isAuthoritativeLocalWorld(): boolean {
     return !this.isGuestWorldSession && this.multiplayer.role !== 'GUEST';
@@ -240,6 +242,29 @@ export class GameEngine {
   ) {
     const saveData = migrateSaveData(rawSaveData);
     this.metadata = { ...saveData.metadata };
+    if (!this.metadata.weatherState) {
+      this.metadata.weatherState = 'clear';
+    }
+    if (
+      typeof this.metadata.weatherTimer !== 'number' ||
+      !Number.isFinite(this.metadata.weatherTimer) ||
+      this.metadata.weatherTimer <= 0
+    ) {
+      this.metadata.weatherTimer = 48;
+    }
+    if (
+      typeof this.metadata.rainIntensity !== 'number' ||
+      !Number.isFinite(this.metadata.rainIntensity)
+    ) {
+      this.metadata.rainIntensity =
+        this.metadata.weatherState === 'rain' ? 1 : 0;
+    }
+    if (
+      typeof this.metadata.rainDurationElapsed !== 'number' ||
+      !Number.isFinite(this.metadata.rainDurationElapsed)
+    ) {
+      this.metadata.rainDurationElapsed = 0;
+    }
     this.guestPlayers = saveData.guestPlayers
       ? JSON.parse(JSON.stringify(saveData.guestPlayers))
       : {};
@@ -379,6 +404,7 @@ export class GameEngine {
 
     soundManager.enabled = settings.soundEnabled;
     soundManager.volume = settings.soundVolume;
+    soundManager.setAmbientVolume(settings.ambientVolume ?? 0.45);
     soundManager.setMusicVolume(settings.musicVolume ?? 0.2);
     soundManager.setMusicPaused(this.isPauseMenuOpen || this.isGameOver);
     soundManager.setMusicMuffled(
@@ -387,6 +413,7 @@ export class GameEngine {
     soundManager.updateAmbientMusic(
       this.metadata.timeOfDay >= 19.5 || this.metadata.timeOfDay < 5.5
     );
+    soundManager.updateRainAmbience(0);
 
     const initialReveal = Math.max(
       10,
@@ -398,7 +425,16 @@ export class GameEngine {
       initialReveal
     );
     if (!isGuestSession) {
+      for (const c of this.entities.creatures) {
+        c.interactingPlayerId = null;
+        c.interactingPlayerName = null;
+      }
       this.entities.spawnInitialAroundPlayer(
+        this.world,
+        this.player.x,
+        this.player.y
+      );
+      this.entities.populateNearbyLandmarkChunks(
         this.world,
         this.player.x,
         this.player.y
@@ -651,6 +687,7 @@ export class GameEngine {
     const isNightMusic =
       this.metadata.timeOfDay >= 18 || this.metadata.timeOfDay < 6;
     soundManager.updateAmbientMusic(isNightMusic);
+    this.updateWeatherSystem(dt);
 
     // Hotbar number keys 1..8
     if (this.input.hotbarKeyPressed !== null) {
@@ -766,10 +803,125 @@ export class GameEngine {
         orientation: this.buildOrientation,
         rotation: this.buildRotation,
         showHitboxPreview: this.showHitboxPreview,
+        weatherState: this.metadata.weatherState || 'clear',
+        rainIntensity: this.metadata.rainIntensity || 0,
+        localRainIntensity: this.getLocalRainIntensityAtWorld(
+          this.camera.x,
+          this.camera.y
+        ),
       },
       this.remotePlayersList,
       this.deathBags
     );
+  }
+
+  public isRainingNow(): boolean {
+    return (this.metadata.rainIntensity ?? 0) > 0.25;
+  }
+
+  /**
+   * Computes the local rain intensity [0..1] at a world coordinate.
+   * Biomes like Desert (`BiomeType.DESERT`) never receive rain.
+   */
+  public getLocalRainIntensityAtWorld(wx: number, wy: number): number {
+    const globalRain = this.metadata.rainIntensity ?? 0;
+    if (globalRain <= 0.005) return 0;
+
+    const centerTile = this.world.worldToTile(wx, wy);
+    if (!this.world.isRainValidAtTile(centerTile.tx, centerTile.ty)) {
+      return 0;
+    }
+
+    let validSamples = 0;
+    const totalSamples = 9;
+    for (let dy = -1; dy <= 1; dy++) {
+      for (let dx = -1; dx <= 1; dx++) {
+        if (
+          this.world.isRainValidAtTile(
+            centerTile.tx + dx * 2,
+            centerTile.ty + dy * 2
+          )
+        ) {
+          validSamples++;
+        }
+      }
+    }
+    return globalRain * (validSamples / totalSamples);
+  }
+
+  private updateWeatherSystem(dt: number): void {
+    if (!this.metadata.weatherState) {
+      this.metadata.weatherState = 'clear';
+    }
+    this.metadata.weatherTimer = (this.metadata.weatherTimer ?? 55) - dt;
+
+    if (this.metadata.weatherTimer <= 0) {
+      const current: WeatherState = this.metadata.weatherState;
+      const roll = Math.random();
+      if (current === 'clear') {
+        if (roll < 0.55) {
+          this.metadata.weatherState = 'cloudy';
+          this.metadata.weatherTimer = 38 + Math.random() * 36;
+        } else {
+          this.metadata.weatherState = 'rain';
+          // Rain duration ranges from 55s to 135s so long rains naturally occur and create puddles
+          this.metadata.weatherTimer = 55 + Math.random() * 80;
+          this.metadata.rainDurationElapsed = 0;
+        }
+      } else if (current === 'cloudy') {
+        if (roll < 0.65) {
+          this.metadata.weatherState = 'rain';
+          this.metadata.weatherTimer = 60 + Math.random() * 85;
+          this.metadata.rainDurationElapsed = 0;
+        } else {
+          this.metadata.weatherState = 'clear';
+          this.metadata.weatherTimer = 65 + Math.random() * 55;
+        }
+      } else {
+        if (roll < 0.6) {
+          this.metadata.weatherState = 'cloudy';
+          this.metadata.weatherTimer = 35 + Math.random() * 35;
+        } else {
+          this.metadata.weatherState = 'clear';
+          this.metadata.weatherTimer = 70 + Math.random() * 65;
+        }
+      }
+    }
+
+    const targetRain = this.metadata.weatherState === 'rain' ? 1.0 : 0.0;
+    const prevRain = this.metadata.rainIntensity ?? 0;
+    const rampSpeed = targetRain > prevRain ? 0.2 : 0.16;
+    if (Math.abs(targetRain - prevRain) <= dt * rampSpeed) {
+      this.metadata.rainIntensity = targetRain;
+    } else {
+      this.metadata.rainIntensity =
+        prevRain + Math.sign(targetRain - prevRain) * dt * rampSpeed;
+    }
+
+    if (
+      this.metadata.weatherState === 'rain' &&
+      (this.metadata.rainIntensity ?? 0) > 0.35
+    ) {
+      this.metadata.rainDurationElapsed =
+        (this.metadata.rainDurationElapsed ?? 0) + dt;
+    } else if ((this.metadata.rainIntensity ?? 0) < 0.18) {
+      this.metadata.rainDurationElapsed = 0;
+    }
+
+    const pTile = this.world.worldToTile(this.player.x, this.player.y);
+    const building = this.renderer.getBuildingAtTile(
+      this.world,
+      pTile.tx,
+      pTile.ty
+    );
+    const insideStructure = Boolean(
+      building && building.interiorSet.has(`${pTile.tx},${pTile.ty}`)
+    );
+    const localPlayerRain = this.getLocalRainIntensityAtWorld(
+      this.player.x,
+      this.player.y
+    );
+    soundManager.updateRainAmbience(localPlayerRain, insideStructure);
   }
 
   public applyPlayerStatusEffect(
@@ -1401,21 +1553,23 @@ export class GameEngine {
       wy,
       radiusTiles
     );
-    if (
-      newlyDiscoveredIslandChunks.length > 0 &&
-      (!this.multiplayer?.isOnline || this.multiplayer.role !== 'GUEST')
-    ) {
-      const isNight =
-        this.metadata.timeOfDay >= 20 || this.metadata.timeOfDay < 5.5;
-      for (const islandChunk of newlyDiscoveredIslandChunks) {
-        this.entities.spawnIslandDiscoveryCreatures(
-          this.world,
-          islandChunk,
-          isNight
-        );
+    if (!this.multiplayer?.isOnline || this.multiplayer.role !== 'GUEST') {
+      if (this.entities) {
+        this.entities.populateNearbyLandmarkChunks(this.world, wx, wy);
       }
-      if (this.multiplayer?.isOnline && this.multiplayer.role === 'HOST') {
-        this.multiplayer.sendCreaturesSync(this.entities.creatures);
+      if (newlyDiscoveredIslandChunks.length > 0) {
+        const isNight =
+          this.metadata.timeOfDay >= 20 || this.metadata.timeOfDay < 5.5;
+        for (const islandChunk of newlyDiscoveredIslandChunks) {
+          this.entities.spawnIslandDiscoveryCreatures(
+            this.world,
+            islandChunk,
+            isNight
+          );
+        }
+        if (this.multiplayer?.isOnline && this.multiplayer.role === 'HOST') {
+          this.multiplayer.sendCreaturesSync(this.entities.creatures);
+        }
       }
     }
   }
@@ -2022,6 +2176,13 @@ export class GameEngine {
    * Scans only the active 7x7 chunk neighborhood around the player to avoid global O(chunks) lag spikes.
    */
   private syncVillageHouseAssignments(): void {
+    if (!this.multiplayer?.isOnline || this.multiplayer.role !== 'GUEST') {
+      this.entities.populateNearbyLandmarkChunks(
+        this.world,
+        this.player.x,
+        this.player.y
+      );
+    }
     const validNpcHouseIds = new Set<string>();
     const npcHouses: PlacedStructure[] = [];
     const activeWells: PlacedStructure[] = [];
@@ -2190,7 +2351,11 @@ export class GameEngine {
       if (h.ownerType === 'PLAYER') continue;
       const { cx, cy } = this.world.tileToChunk(h.tileX, h.tileY);
       const chunk = this.world.chunks[WorldManager.chunkKey(cx, cy)];
-      if (chunk && !chunk.mobsPopulated && h.villageId) {
+      if (
+        chunk &&
+        (!chunk.mobsPopulated || !chunk.villagePopulatedV2) &&
+        h.villageId
+      ) {
         continue;
       }
       const residents = this.getHouseResidents(h.id);
@@ -2476,7 +2641,11 @@ export class GameEngine {
     // If the village chunk hasn't spawned its landmark mobs yet, treat the village merchant as alive
     const { cx, cy } = this.world.tileToChunk(stall.tileX, stall.tileY);
     const chunk = this.world.chunks[WorldManager.chunkKey(cx, cy)];
-    if (chunk && !chunk.mobsPopulated && stall.villageId) {
+    if (
+      chunk &&
+      (!chunk.mobsPopulated || !chunk.villagePopulatedV2) &&
+      stall.villageId
+    ) {
       return true;
     }
     return false;
@@ -2644,7 +2813,11 @@ export class GameEngine {
     }
     const { cx, cy } = this.world.tileToChunk(well.tileX, well.tileY);
     const chunk = this.world.chunks[WorldManager.chunkKey(cx, cy)];
-    if (chunk && !chunk.mobsPopulated && well.villageId) {
+    if (
+      chunk &&
+      (!chunk.mobsPopulated || !chunk.villagePopulatedV2) &&
+      well.villageId
+    ) {
       return true;
     }
     return false;
@@ -3272,6 +3445,226 @@ export class GameEngine {
   }
 
   /**
+   * Finds the nearest Village Well (`PlaceableType.VILLAGE_WELL`) within `maxRadius`
+   * where the Player is the Leader (`ownerType === 'PLAYER'`).
+   * Used by passing Wanderers so they walk to the center of the player-led village (the well)
+   * and wait up to 1 minute with an exclamation mark (`!`) for the player to delegate a rest point.
+   */
+  public findNearbyPlayerLedVillageWell(
+    wx: number,
+    wy: number,
+    maxRadius = GameEngine.WELL_VILLAGE_RADIUS
+  ): {
+    well: PlacedStructure;
+    wx: number;
+    wy: number;
+    dist: number;
+  } | null {
+    const centerTile = this.world.worldToTile(wx, wy);
+    const centerChunk = this.world.tileToChunk(centerTile.tx, centerTile.ty);
+    let best: {
+      well: PlacedStructure;
+      wx: number;
+      wy: number;
+      dist: number;
+    } | null = null;
+
+    for (let dy = -2; dy <= 2; dy++) {
+      for (let dx = -2; dx <= 2; dx++) {
+        const chunk =
+          this.world.chunks[
+            WorldManager.chunkKey(centerChunk.cx + dx, centerChunk.cy + dy)
+          ];
+        if (!chunk) continue;
+
+        for (const st of chunk.structures) {
+          if (
+            st.type !== PlaceableType.VILLAGE_WELL ||
+            st.ownerType !== 'PLAYER'
+          ) {
+            continue;
+          }
+          const wellWx = st.tileX * TILE_SIZE + TILE_SIZE / 2;
+          const wellWy = st.tileY * TILE_SIZE + TILE_SIZE / 2;
+          const dist = Math.hypot(wx - wellWx, wy - wellWy);
+          if (dist <= maxRadius && (!best || dist < best.dist)) {
+            best = { well: st, wx: wellWx, wy: wellWy, dist };
+          }
+        }
+      }
+    }
+
+    return best;
+  }
+
+  /**
+   * Returns the local player's identifier used for exclusive 1-player-at-a-time NPC interaction locks.
+   */
+  public getLocalInteractionPlayerId(): string {
+    return (
+      this.multiplayer?.peerId ||
+      this.player.persistentPlayerId ||
+      'LOCAL_PLAYER'
+    );
+  }
+
+  /**
+   * Returns true if the given NPC (`VILLAGER` or `WANDERER`) is currently engaged in conversation
+   * with a different connected player. Auto-clears stale locks if that player disconnected, died, or walked away.
+   */
+  public isNpcBusyWithAnotherPlayer(npc: CreatureEntity): boolean {
+    if (!npc.interactingPlayerId) return false;
+    const myId = this.getLocalInteractionPlayerId();
+    if (
+      npc.interactingPlayerId === myId ||
+      this.isIdMatchingLocalPlayer(npc.interactingPlayerId)
+    ) {
+      return false;
+    }
+    const rp = this.remotePlayersList.find(
+      (p) =>
+        (p.peerId === npc.interactingPlayerId ||
+          p.persistentPlayerId === npc.interactingPlayerId) &&
+        p.hp > 0 &&
+        !p.isSleeping &&
+        Math.hypot(p.x - npc.x, p.y - npc.y) <= 165
+    );
+    if (!rp) {
+      npc.interactingPlayerId = null;
+      npc.interactingPlayerName = null;
+      return false;
+    }
+    return true;
+  }
+
+  /**
+   * Attempts to start an exclusive 1-on-1 interaction with a `VILLAGER` or `WANDERER` NPC.
+   * - If another player is already interacting with this NPC, shows a notice and returns `false`.
+   * - Otherwise locks the NPC to the local player, stops the NPC's movement, turns the NPC to face the player,
+   *   and broadcasts the lock across multiplayer.
+   */
+  public tryOpenNpcInteraction(npcOrId: CreatureEntity | string): boolean {
+    const npc =
+      typeof npcOrId === 'string'
+        ? this.entities.creatures.find(
+            (c) => c.id === npcOrId && c.hp > 0 && !c.isInsideHouse
+          )
+        : npcOrId;
+    if (!npc || npc.hp <= 0 || npc.isInsideHouse) return false;
+
+    if (this.isNpcBusyWithAnotherPlayer(npc)) {
+      soundManager.playHitWood(npc.x, npc.y);
+      this.renderer.spawnRipple(npc.x, npc.y, '#fbbf24', 24, 0.4);
+      this.addFloatingText(
+        `💬 ${npc.name} já está conversando com ${
+          npc.interactingPlayerName || 'outro jogador'
+        }!`,
+        npc.x,
+        npc.y - 26,
+        '#fbbf24'
+      );
+      return false;
+    }
+
+    if (
+      this.activeInteractingNpcId &&
+      this.activeInteractingNpcId !== npc.id
+    ) {
+      this.endNpcInteraction(this.activeInteractingNpcId);
+    }
+
+    const myId = this.getLocalInteractionPlayerId();
+    const myName =
+      this.multiplayer?.localPlayerName ||
+      this.settings.playerName ||
+      'Aventureiro';
+
+    this.activeInteractingNpcId = npc.id;
+    npc.interactingPlayerId = myId;
+    npc.interactingPlayerName = myName;
+    npc.vx = 0;
+    npc.vy = 0;
+    npc.animFrame = 0;
+    npc.aiState = 'idle';
+    npc.direction = EntityManager.vectorToDirection(
+      this.player.x - npc.x,
+      this.player.y - npc.y,
+      npc.direction
+    );
+    if (npc.outsideNightTimer && npc.outsideNightTimer > 0) {
+      npc.outsideNightTimer = Math.max(npc.outsideNightTimer, 20);
+    }
+    if (npc.wellWaitTimer && npc.wellWaitTimer > 0) {
+      npc.wellWaitTimer = Math.max(npc.wellWaitTimer, 25);
+    }
+
+    if (this.multiplayer?.isOnline) {
+      if (this.multiplayer.role === 'GUEST') {
+        this.multiplayer.sendWorldInteractRequest({
+          action: 'npc_interact_lock',
+          npcId: npc.id,
+          locked: true,
+          playerId: myId,
+          playerName: myName,
+        });
+      } else if (this.multiplayer.role === 'HOST') {
+        this.multiplayer.sendWorldInteractResolved({
+          action: 'npc_interact_lock_resolved',
+          npcId: npc.id,
+          interactingPlayerId: myId,
+          interactingPlayerName: myName,
+        });
+        this.multiplayer.sendCreaturesSync(this.entities.creatures);
+      }
+    }
+
+    this.emitUiSnapshot();
+    return true;
+  }
+
+  /**
+   * Releases the local player's interaction lock on an NPC when the NPC modal closes or the player walks away.
+   */
+  public endNpcInteraction(npcId?: string | null): void {
+    const targetId = npcId || this.activeInteractingNpcId;
+    if (!targetId) return;
+    if (!npcId || this.activeInteractingNpcId === npcId) {
+      this.activeInteractingNpcId = null;
+    }
+
+    const npc = this.entities.creatures.find((c) => c.id === targetId);
+    const myId = this.getLocalInteractionPlayerId();
+    if (
+      npc &&
+      (!npc.interactingPlayerId ||
+        npc.interactingPlayerId === myId ||
+        this.isIdMatchingLocalPlayer(npc.interactingPlayerId))
+    ) {
+      npc.interactingPlayerId = null;
+      npc.interactingPlayerName = null;
+      if (this.multiplayer?.isOnline) {
+        if (this.multiplayer.role === 'GUEST') {
+          this.multiplayer.sendWorldInteractRequest({
+            action: 'npc_interact_lock',
+            npcId: npc.id,
+            locked: false,
+            playerId: myId,
+          });
+        } else if (this.multiplayer.role === 'HOST') {
+          this.multiplayer.sendWorldInteractResolved({
+            action: 'npc_interact_lock_resolved',
+            npcId: npc.id,
+            interactingPlayerId: null,
+            interactingPlayerName: null,
+          });
+          this.multiplayer.sendCreaturesSync(this.entities.creatures);
+        }
+      }
+    }
+    this.emitUiSnapshot();
+  }
+
+  /**
    * Player Invite Rule:
    * Finds any unoccupied rest point (`!st.ownerType` and `0` residents) within `maxRadius` (e.g., 420px)
    * so the player can invite a Wanderer to occupy it — whether it's an independent house or a village rest point!
@@ -3598,6 +3991,9 @@ export class GameEngine {
       house.villageId
     );
     wanderer.elderApprovedHouseId = undefined;
+    wanderer.wellWaitStructureId = null;
+    wanderer.wellWaitTimer = 0;
+    wanderer.wellWaitCooldown = 0;
     house.ownerType = 'VILLAGER';
     house.ownerId = wanderer.id;
     house.ownerName = wanderer.name;
@@ -4220,6 +4616,52 @@ export class GameEngine {
         cr.kind === CreatureKind.VILLAGER ||
         cr.kind === CreatureKind.WANDERER
       ) {
+        if (cr.wellWaitCooldown && cr.wellWaitCooldown > 0) {
+          cr.wellWaitCooldown = Math.max(0, cr.wellWaitCooldown - dt);
+        }
+
+        // Validate & maintain 1-player-at-a-time NPC interaction lock (NPC stands still and pays attention to the player)
+        let interactingPlayerTarget: { x: number; y: number } | null = null;
+        if (cr.interactingPlayerId) {
+          const myId = this.getLocalInteractionPlayerId();
+          if (
+            cr.interactingPlayerId === myId ||
+            this.isIdMatchingLocalPlayer(cr.interactingPlayerId)
+          ) {
+            if (
+              this.activeInteractingNpcId === cr.id &&
+              this.player.hp > 0 &&
+              !this.player.isSleeping &&
+              !cr.isHostile &&
+              Math.hypot(this.player.x - cr.x, this.player.y - cr.y) <= 165
+            ) {
+              interactingPlayerTarget = { x: this.player.x, y: this.player.y };
+            } else {
+              cr.interactingPlayerId = null;
+              cr.interactingPlayerName = null;
+              if (this.activeInteractingNpcId === cr.id) {
+                this.activeInteractingNpcId = null;
+              }
+            }
+          } else {
+            const rp = this.remotePlayersList.find(
+              (p) =>
+                (p.peerId === cr.interactingPlayerId ||
+                  p.persistentPlayerId === cr.interactingPlayerId) &&
+                p.hp > 0 &&
+                !p.isSleeping &&
+                !cr.isHostile &&
+                Math.hypot(p.x - cr.x, p.y - cr.y) <= 165
+            );
+            if (rp) {
+              interactingPlayerTarget = { x: rp.x, y: rp.y };
+            } else {
+              cr.interactingPlayerId = null;
+              cr.interactingPlayerName = null;
+            }
+          }
+        }
+
         // PRIORITY 1: Always scan for nearby MONSTERS and prioritize attacking them!
         let monsterTarget: CreatureEntity | null = null;
         let bestMonsterDist =
@@ -4332,73 +4774,166 @@ export class GameEngine {
               }
             }
           }
+        } else if (interactingPlayerTarget) {
+          // PRIORITY 2.5: When a player is actively interacting with this NPC, the NPC stands still and faces that player!
+          cr.vx = 0;
+          cr.vy = 0;
+          cr.animFrame = 0;
+          cr.aiState = 'idle';
+          cr.direction = EntityManager.vectorToDirection(
+            interactingPlayerTarget.x - cr.x,
+            interactingPlayerTarget.y - cr.y,
+            cr.direction
+          );
+          if (cr.outsideNightTimer && cr.outsideNightTimer > 0) {
+            cr.outsideNightTimer = Math.max(cr.outsideNightTimer, 18);
+          }
+          if (cr.wellWaitTimer && cr.wellWaitTimer > 0) {
+            cr.wellWaitTimer = Math.max(cr.wellWaitTimer, 20);
+          }
         } else if (cr.kind === CreatureKind.WANDERER) {
           // PRIORITY 3 (Wanderer): If attracted to or passing near an open Player Market Stall during the day, visit & inspect the stall first!
           if (!isSunsetOrNight && this.updateNpcMarketStallShopping(cr, dt)) {
             // Wanderer is currently inspecting or walking to a Player Market Stall
           } else {
-            // A Wanderer can only spontaneously claim a village rest point if the village has a spare rest point
-            // AND they first walk up to the living Village Elder (`anciao`) to ask permission!
-            let villageTarget: ReturnType<
-              typeof this.findAvailableVillageHouseWithElderNear
-            > = null;
-            if ((cr.specialCooldown ?? 0) <= 0) {
-              villageTarget = this.findAvailableVillageHouseWithElderNear(
-                cr.x,
-                cr.y,
-                280
-              );
-              if (!villageTarget) {
-                cr.specialCooldown = 2.0 + Math.random() * 1.0;
-              }
-            }
-            if (villageTarget) {
-              if (cr.elderApprovedHouseId !== villageTarget.house.id) {
-                const distToElder = Math.hypot(
-                  villageTarget.elder.x - cr.x,
-                  villageTarget.elder.y - cr.y
-                );
-                if (distToElder <= 46) {
-                  cr.elderApprovedHouseId = villageTarget.house.id;
-                  this.renderer.spawnRipple(
-                    villageTarget.elder.x,
-                    villageTarget.elder.y,
-                    '#fde047',
-                    22,
-                    0.4
-                  );
-                  this.addFloatingText(
-                    `📜 ${cr.name} pediu permissão a ${villageTarget.elder.name}!`,
+            // PRIORITY 3B (Wanderer in Player-Led Village):
+            // When passing near a Village Well where the Player is Leader (`ownerType === 'PLAYER'`),
+            // the Wanderer goes to the center of the village (the well) and waits for up to 1 minute (60s)
+            // with an exclamation mark (`!`) overhead to see if the player delegates a rest point!
+            const playerLedWell =
+              (cr.wellWaitCooldown ?? 0) <= 0
+                ? this.findNearbyPlayerLedVillageWell(
                     cr.x,
-                    cr.y - 24,
-                    '#38bdf8'
+                    cr.y,
+                    GameEngine.WELL_VILLAGE_RADIUS
+                  )
+                : null;
+
+            if (playerLedWell) {
+              cr.wellWaitStructureId = playerLedWell.well.id;
+              const arrivedAtWell =
+                playerLedWell.dist <= 44 ||
+                Boolean(
+                  cr.wellWaitTimer &&
+                    cr.wellWaitTimer > 0 &&
+                    playerLedWell.dist <= 68
+                );
+
+              if (arrivedAtWell) {
+                if (!cr.wellWaitTimer || cr.wellWaitTimer <= 0) {
+                  cr.wellWaitTimer = 60;
+                  this.renderer.spawnRipple(cr.x, cr.y, '#fde047', 24, 0.45);
+                  this.addFloatingText(
+                    `❗ ${cr.name} aguarda no poço da vila (60s)`,
+                    cr.x,
+                    cr.y - 26,
+                    '#fde047'
                   );
                 } else {
-                  this.steerCreatureToward(
-                    cr,
-                    villageTarget.elder.x,
-                    villageTarget.elder.y,
-                    cr.moveSpeed * 0.95,
-                    dt,
-                    true
-                  );
+                  cr.wellWaitTimer = Math.max(0, cr.wellWaitTimer - dt);
+                  if (cr.wellWaitTimer <= 0) {
+                    cr.wellWaitTimer = 0;
+                    cr.wellWaitStructureId = null;
+                    cr.wellWaitCooldown = 120;
+                    this.addFloatingText(
+                      `🧭 ${cr.name} seguiu viagem`,
+                      cr.x,
+                      cr.y - 22,
+                      '#94a3b8'
+                    );
+                  }
+                }
+
+                if (cr.wellWaitTimer && cr.wellWaitTimer > 0) {
+                  cr.vx = 0;
+                  cr.vy = 0;
+                  cr.animFrame = 0;
+                  cr.aiState = 'idle';
+                  if (distToPlayer <= 150) {
+                    cr.direction = EntityManager.vectorToDirection(
+                      this.player.x - cr.x,
+                      this.player.y - cr.y,
+                      cr.direction
+                    );
+                  }
                 }
               } else {
-                if (villageTarget.dist <= 52) {
-                  this.settleWandererIntoHouse(cr, villageTarget.house);
-                } else {
-                  this.steerCreatureToward(
-                    cr,
-                    villageTarget.wx,
-                    villageTarget.wy,
-                    cr.moveSpeed * 0.95,
-                    dt,
-                    true
-                  );
-                }
+                this.steerCreatureToward(
+                  cr,
+                  playerLedWell.wx,
+                  playerLedWell.wy,
+                  cr.moveSpeed * 0.96,
+                  dt,
+                  true
+                );
               }
             } else {
-              this.updateDirectionalWandererAi(cr, dt);
+              cr.wellWaitTimer = 0;
+              cr.wellWaitStructureId = null;
+
+              // A Wanderer can only spontaneously claim a village rest point if the village has a spare rest point
+              // AND they first walk up to the living Village Elder (`anciao`) to ask permission!
+              let villageTarget: ReturnType<
+                typeof this.findAvailableVillageHouseWithElderNear
+              > = null;
+              if ((cr.specialCooldown ?? 0) <= 0) {
+                villageTarget = this.findAvailableVillageHouseWithElderNear(
+                  cr.x,
+                  cr.y,
+                  280
+                );
+                if (!villageTarget) {
+                  cr.specialCooldown = 2.0 + Math.random() * 1.0;
+                }
+              }
+              if (villageTarget) {
+                if (cr.elderApprovedHouseId !== villageTarget.house.id) {
+                  const distToElder = Math.hypot(
+                    villageTarget.elder.x - cr.x,
+                    villageTarget.elder.y - cr.y
+                  );
+                  if (distToElder <= 46) {
+                    cr.elderApprovedHouseId = villageTarget.house.id;
+                    this.renderer.spawnRipple(
+                      villageTarget.elder.x,
+                      villageTarget.elder.y,
+                      '#fde047',
+                      22,
+                      0.4
+                    );
+                    this.addFloatingText(
+                      `📜 ${cr.name} pediu permissão a ${villageTarget.elder.name}!`,
+                      cr.x,
+                      cr.y - 24,
+                      '#38bdf8'
+                    );
+                  } else {
+                    this.steerCreatureToward(
+                      cr,
+                      villageTarget.elder.x,
+                      villageTarget.elder.y,
+                      cr.moveSpeed * 0.95,
+                      dt,
+                      true
+                    );
+                  }
+                } else {
+                  if (villageTarget.dist <= 52) {
+                    this.settleWandererIntoHouse(cr, villageTarget.house);
+                  } else {
+                    this.steerCreatureToward(
+                      cr,
+                      villageTarget.wx,
+                      villageTarget.wy,
+                      cr.moveSpeed * 0.95,
+                      dt,
+                      true
+                    );
+                  }
+                }
+              } else {
+                this.updateDirectionalWandererAi(cr, dt);
+              }
             }
           }
         } else {
@@ -6419,14 +6954,50 @@ export class GameEngine {
   }
 
   private agricultureUpdateTimer = 0;
+  private puddleSpawnTimer = 0;
 
   private updateWorldObjects(dt: number): void {
-    // Advance moisture evaporation and crop growth stages on a 0.5s tick instead of scanning all chunks every frame
+    const rainingNow = this.isRainingNow();
+    // Advance moisture evaporation, natural rain watering, and crop growth stages on a 0.5s tick
     this.agricultureUpdateTimer += dt;
     if (this.agricultureUpdateTimer >= 0.5) {
       const stepDt = this.agricultureUpdateTimer;
       this.agricultureUpdateTimer = 0;
-      this.world.updateAgriculture(stepDt, false);
+      this.world.updateAgriculture(stepDt, rainingNow);
+    }
+
+    // Long rains (24s+ of continuous rain) form temporary puddles on empty valid soil
+    if (
+      rainingNow &&
+      (this.metadata.rainDurationElapsed ?? 0) >= 24 &&
+      (this.metadata.rainIntensity ?? 0) > 0.55 &&
+      this.multiplayer.role !== 'GUEST'
+    ) {
+      this.puddleSpawnTimer += dt;
+      if (this.puddleSpawnTimer >= 1.5) {
+        this.puddleSpawnTimer = 0;
+        const pTile = this.world.worldToTile(this.player.x, this.player.y);
+        for (let attempt = 0; attempt < 4; attempt++) {
+          const offsetX = Math.floor((Math.random() - 0.5) * 26);
+          const offsetY = Math.floor((Math.random() - 0.5) * 20);
+          const candTx = pTile.tx + offsetX;
+          const candTy = pTile.ty + offsetY;
+          if (!this.world.canSpawnRainPuddleAtTile(candTx, candTy)) continue;
+          // Do not spawn rain puddles inside roofed buildings
+          if (this.renderer.getBuildingAtTile(this.world, candTx, candTy)) {
+            continue;
+          }
+          const { cx, cy } = this.world.tileToChunk(candTx, candTy);
+          const chunk = this.world.chunks[WorldManager.chunkKey(cx, cy)];
+          if (chunk && (chunk.puddles?.length ?? 0) < 7) {
+            const decaySec = 45 + Math.random() * 45;
+            if (this.world.spawnRainPuddleAtTile(candTx, candTy, decaySec)) {
+              this.syncChunkAtTile(candTx, candTy);
+              break;
+            }
+          }
+        }
+      }
     }
     // Advance active Campfire & Furnace smelting/cooking queues
     this.updateThermalStations(dt);
@@ -6898,8 +7469,24 @@ export class GameEngine {
           this.emitUiSnapshot();
           return;
         }
+      } else if (
+        !isHoldRepeat &&
+        this.world.hasRainPuddleAtTile(tile.tx, tile.ty)
+      ) {
+        triggerSwing();
+        this.addFloatingText(
+          '💧 Poça de chuva! Aguarde secar para usar o solo',
+          tile.tx * TILE_SIZE + 16,
+          tile.ty * TILE_SIZE,
+          '#38bdf8'
+        );
+        return;
       } else if (!isHoldRepeat && this.world.canTillTileAt(tile.tx, tile.ty)) {
-        const soil = this.world.tillSoilAt(tile.tx, tile.ty);
+        const soil = this.world.tillSoilAt(
+          tile.tx,
+          tile.ty,
+          this.isRainingNow()
+        );
         if (soil) {
           triggerSwing();
           soundManager.playHitWood();
@@ -6970,6 +7557,18 @@ export class GameEngine {
           this.emitUiSnapshot();
           return;
         }
+      } else if (
+        !isHoldRepeat &&
+        this.world.hasRainPuddleAtTile(tile.tx, tile.ty)
+      ) {
+        triggerSwing();
+        this.addFloatingText(
+          '💧 Poça de chuva! Aguarde secar para usar o solo',
+          tile.tx * TILE_SIZE + 16,
+          tile.ty * TILE_SIZE,
+          '#38bdf8'
+        );
+        return;
       } else if (!isHoldRepeat && this.world.canMakeDirtPathAt(tile.tx, tile.ty)) {
         const pathSt = this.world.makeDirtPathAt(tile.tx, tile.ty);
         if (pathSt) {
@@ -7639,9 +8238,8 @@ export class GameEngine {
         return;
       }
 
-      // Refresh night door-knock timer so the villager stays outside while talking with the player
-      if (npc.outsideNightTimer && npc.outsideNightTimer > 0) {
-        npc.outsideNightTimer = 20;
+      if (!this.tryOpenNpcInteraction(npc)) {
+        return;
       }
       soundManager.playPickup();
       if (this.onNpcInteract) {
@@ -8774,6 +9372,13 @@ export class GameEngine {
             target.tx * TILE_SIZE + 16,
             target.ty * TILE_SIZE - 12,
             '#fb923c'
+          );
+        } else if (this.world.hasRainPuddleAtTile(target.tx, target.ty)) {
+          this.addFloatingText(
+            '💧 Solo com poça de chuva! Aguarde secar para construir',
+            target.tx * TILE_SIZE + 16,
+            target.ty * TILE_SIZE - 12,
+            '#38bdf8'
           );
         } else {
           this.addFloatingText(
@@ -11556,6 +12161,9 @@ export class GameEngine {
           Math.hypot(c.x - this.player.x, c.y - this.player.y) <= 115
       );
       if (hostileNpc) {
+        if (!this.tryOpenNpcInteraction(hostileNpc)) {
+          return;
+        }
         soundManager.playPickup();
         if (this.onNpcInteract) {
           this.onNpcInteract(hostileNpc);
@@ -16978,6 +17586,11 @@ export class GameEngine {
         cr.passengerPlayerId = null;
         changedAny = true;
       }
+      if (cr.interactingPlayerId === peerId) {
+        cr.interactingPlayerId = null;
+        cr.interactingPlayerName = null;
+        changedAny = true;
+      }
     }
     if (
       changedAny &&
@@ -18560,6 +19173,79 @@ export class GameEngine {
         }
         break;
       }
+
+      case 'npc_interact_lock': {
+        const npcId = String(request.npcId || '');
+        const locked = Boolean(request.locked);
+        const reqPlayerId = String(request.playerId || peerId);
+        const reqPlayerName = String(request.playerName || 'Convidado');
+        const npc = this.entities.creatures.find(
+          (c) => c.id === npcId && c.hp > 0 && !c.isInsideHouse
+        );
+        if (!npc) break;
+
+        if (locked) {
+          // Check if already locked by someone else (Host or another Guest)
+          const busyWithHost =
+            npc.interactingPlayerId &&
+            (npc.interactingPlayerId === this.getLocalInteractionPlayerId() ||
+              this.isIdMatchingLocalPlayer(npc.interactingPlayerId)) &&
+            this.activeInteractingNpcId === npc.id;
+          const busyWithOtherGuest =
+            npc.interactingPlayerId &&
+            npc.interactingPlayerId !== reqPlayerId &&
+            npc.interactingPlayerId !== peerId &&
+            this.remotePlayersList.some(
+              (p) =>
+                (p.peerId === npc.interactingPlayerId ||
+                  p.persistentPlayerId === npc.interactingPlayerId) &&
+                p.hp > 0 &&
+                Math.hypot(p.x - npc.x, p.y - npc.y) <= 165
+            );
+          if (busyWithHost || busyWithOtherGuest) {
+            this.multiplayer.sendWorldInteractResolved({
+              action: 'npc_interact_lock_resolved',
+              npcId: npc.id,
+              interactingPlayerId: npc.interactingPlayerId,
+              interactingPlayerName: npc.interactingPlayerName,
+              rejectedPeerId: peerId,
+            });
+            break;
+          }
+          npc.interactingPlayerId = peerId;
+          npc.interactingPlayerName = reqPlayerName;
+          npc.vx = 0;
+          npc.vy = 0;
+          npc.animFrame = 0;
+          npc.aiState = 'idle';
+          const guestRp = this.multiplayer.remotePlayers.get(peerId);
+          if (guestRp) {
+            npc.direction = EntityManager.vectorToDirection(
+              guestRp.x - npc.x,
+              guestRp.y - npc.y,
+              npc.direction
+            );
+          }
+        } else {
+          if (
+            npc.interactingPlayerId === peerId ||
+            npc.interactingPlayerId === reqPlayerId
+          ) {
+            npc.interactingPlayerId = null;
+            npc.interactingPlayerName = null;
+          }
+        }
+
+        this.multiplayer.sendWorldInteractResolved({
+          action: 'npc_interact_lock_resolved',
+          npcId: npc.id,
+          interactingPlayerId: npc.interactingPlayerId || null,
+          interactingPlayerName: npc.interactingPlayerName || null,
+        });
+        this.multiplayer.sendCreaturesSync(this.entities.creatures);
+        this.emitUiSnapshot();
+        break;
+      }
     }
   }
 
@@ -18776,6 +19462,39 @@ export class GameEngine {
         if (this.player.isSleeping) {
           this.completeSleepLocal(false);
         }
+        break;
+      }
+
+      case 'npc_interact_lock_resolved': {
+        const npcId = String(result.npcId || '');
+        const npc = this.entities.creatures.find((c) => c.id === npcId);
+        if (npc) {
+          npc.interactingPlayerId = result.interactingPlayerId || null;
+          npc.interactingPlayerName = result.interactingPlayerName || null;
+          if (npc.interactingPlayerId) {
+            npc.vx = 0;
+            npc.vy = 0;
+            npc.animFrame = 0;
+          }
+        }
+        if (
+          result.rejectedPeerId === myPeerId &&
+          this.activeInteractingNpcId === npcId
+        ) {
+          this.activeInteractingNpcId = null;
+          if (npc) {
+            soundManager.playHitWood(npc.x, npc.y);
+            this.addFloatingText(
+              `💬 ${npc.name} já está conversando com ${
+                result.interactingPlayerName || 'outro jogador'
+              }!`,
+              npc.x,
+              npc.y - 26,
+              '#fbbf24'
+            );
+          }
+        }
+        this.emitUiSnapshot();
         break;
       }
     }
@@ -19312,21 +20031,55 @@ export class GameEngine {
         cr.attackCooldown = Math.max(0, cr.attackCooldown - dt);
       }
 
-      const speed = Math.hypot(cr.vx, cr.vy);
-      if (speed > 2) {
-        const nx = cr.x + cr.vx * dt;
-        const ny = cr.y + cr.vy * dt;
-        if (this.canEntityOccupy(nx, ny)) {
-          cr.x = nx;
-          cr.y = ny;
+      if (
+        (cr.kind === CreatureKind.VILLAGER ||
+          cr.kind === CreatureKind.WANDERER) &&
+        cr.interactingPlayerId
+      ) {
+        const myId = this.getLocalInteractionPlayerId();
+        let targetPos: { x: number; y: number } | null = null;
+        if (
+          cr.interactingPlayerId === myId ||
+          this.isIdMatchingLocalPlayer(cr.interactingPlayerId)
+        ) {
+          targetPos = { x: this.player.x, y: this.player.y };
+        } else {
+          const rp = this.remotePlayersList.find(
+            (p) =>
+              p.peerId === cr.interactingPlayerId ||
+              p.persistentPlayerId === cr.interactingPlayerId
+          );
+          if (rp) {
+            targetPos = { x: rp.x, y: rp.y };
+          }
         }
-        cr.animTimer += dt;
-        if (cr.animTimer >= 0.16) {
-          cr.animTimer = 0;
-          cr.animFrame = (cr.animFrame + 1) % 4;
+        cr.vx = 0;
+        cr.vy = 0;
+        cr.animFrame = 0;
+        if (targetPos) {
+          cr.direction = EntityManager.vectorToDirection(
+            targetPos.x - cr.x,
+            targetPos.y - cr.y,
+            cr.direction
+          );
         }
       } else {
-        cr.animFrame = 0;
+        const speed = Math.hypot(cr.vx, cr.vy);
+        if (speed > 2) {
+          const nx = cr.x + cr.vx * dt;
+          const ny = cr.y + cr.vy * dt;
+          if (this.canEntityOccupy(nx, ny)) {
+            cr.x = nx;
+            cr.y = ny;
+          }
+          cr.animTimer += dt;
+          if (cr.animTimer >= 0.16) {
+            cr.animTimer = 0;
+            cr.animFrame = (cr.animFrame + 1) % 4;
+          }
+        } else {
+          cr.animFrame = 0;
+        }
       }
       cr.isSwimming = this.world.isWorldPosInWater(cr.x, cr.y);
 
@@ -19542,6 +20295,7 @@ export class GameEngine {
     this.settings = { ...newSettings };
     soundManager.enabled = newSettings.soundEnabled;
     soundManager.volume = newSettings.soundVolume;
+    soundManager.setAmbientVolume(newSettings.ambientVolume ?? 0.45);
     soundManager.setMusicVolume(newSettings.musicVolume ?? 0.2);
     this.camera.zoom = newSettings.cameraZoom;
     if (
