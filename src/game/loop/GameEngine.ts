@@ -165,13 +165,16 @@ export class GameEngine {
   private customTargetTile: { tx: number; ty: number } | null = null;
   // Multiplayer anti-duplication state locks
   private claimedDropIds = new Set<string>();
+  private deadCreatureLootClaimedIds = new Set<string>();
   private pendingDropClaimTimers = new Map<string, number>();
   private localDropCreatedAt = new Map<string, number>();
   private lastLocalChestEditAt = new Map<string, number>();
+  private lastLocalThermalEditAt = new Map<string, number>();
+  private recentlyRemovedWorldObjectIds = new Map<string, number>();
   private claimedDeathBagIds = new Set<string>();
   private pendingDeathBagClaims = new Set<string>();
   private claimedWorldActionKeys = new Map<string, number>();
-  private pendingContainerWithdraws = new Set<string>();
+  private pendingContainerWithdraws = new Map<string, number>();
   private stallCustomerSpawnTimer = 3.5;
   public isSavingOrExiting = false;
   public activeInteractingNpcId: string | null = null;
@@ -849,41 +852,61 @@ export class GameEngine {
     return globalRain * (validSamples / totalSamples);
   }
 
+  private getTotalInGameHours(): number {
+    return Math.max(
+      0,
+      (this.metadata.dayCount - 1) * 24 + this.metadata.timeOfDay
+    );
+  }
+
   private updateWeatherSystem(dt: number): void {
     if (!this.metadata.weatherState) {
       this.metadata.weatherState = 'clear';
     }
-    this.metadata.weatherTimer = (this.metadata.weatherTimer ?? 55) - dt;
+    this.metadata.weatherTimer = (this.metadata.weatherTimer ?? 75) - dt;
 
     if (this.metadata.weatherTimer <= 0) {
       const current: WeatherState = this.metadata.weatherState;
       const roll = Math.random();
+      const totalHoursNow = this.getTotalInGameHours();
+      // Rain can only happen at least 24 in-game hours after the previous rain ended
+      const canRainByCooldown =
+        this.metadata.lastRainEndAbsHours === undefined ||
+        totalHoursNow - this.metadata.lastRainEndAbsHours >= 24;
+
       if (current === 'clear') {
-        if (roll < 0.55) {
+        if (canRainByCooldown && roll < 0.16) {
+          this.metadata.weatherState = 'rain';
+          this.metadata.weatherTimer = 50 + Math.random() * 65;
+          this.metadata.rainDurationElapsed = 0;
+        } else if (roll < 0.52) {
+          this.metadata.weatherState = 'cloudy';
+          this.metadata.weatherTimer = 42 + Math.random() * 40;
+        } else {
+          this.metadata.weatherState = 'clear';
+          this.metadata.weatherTimer = 85 + Math.random() * 75;
+        }
+      } else if (current === 'cloudy') {
+        if (canRainByCooldown && roll < 0.28) {
+          this.metadata.weatherState = 'rain';
+          this.metadata.weatherTimer = 55 + Math.random() * 70;
+          this.metadata.rainDurationElapsed = 0;
+        } else if (roll < 0.55) {
           this.metadata.weatherState = 'cloudy';
           this.metadata.weatherTimer = 38 + Math.random() * 36;
         } else {
-          this.metadata.weatherState = 'rain';
-          // Rain duration ranges from 55s to 135s so long rains naturally occur and create puddles
-          this.metadata.weatherTimer = 55 + Math.random() * 80;
-          this.metadata.rainDurationElapsed = 0;
-        }
-      } else if (current === 'cloudy') {
-        if (roll < 0.65) {
-          this.metadata.weatherState = 'rain';
-          this.metadata.weatherTimer = 60 + Math.random() * 85;
-          this.metadata.rainDurationElapsed = 0;
-        } else {
           this.metadata.weatherState = 'clear';
-          this.metadata.weatherTimer = 65 + Math.random() * 55;
+          this.metadata.weatherTimer = 85 + Math.random() * 75;
         }
       } else {
-        if (roll < 0.6) {
+        // Rain ended: start 24 in-game hours cooldown before another rain can occur
+        this.metadata.lastRainEndAbsHours = totalHoursNow;
+        if (roll < 0.55) {
           this.metadata.weatherState = 'cloudy';
-          this.metadata.weatherTimer = 35 + Math.random() * 35;
+          this.metadata.weatherTimer = 38 + Math.random() * 35;
         } else {
           this.metadata.weatherState = 'clear';
-          this.metadata.weatherTimer = 70 + Math.random() * 65;
+          this.metadata.weatherTimer = 90 + Math.random() * 80;
         }
       }
     }
@@ -6852,6 +6875,16 @@ export class GameEngine {
         this.claimedWorldActionKeys.delete(actionKey);
       }
     }
+    for (const [withdrawKey, expiresAt] of this.pendingContainerWithdraws.entries()) {
+      if (nowMs >= expiresAt) {
+        this.pendingContainerWithdraws.delete(withdrawKey);
+      }
+    }
+    for (const [objId, removedAt] of this.recentlyRemovedWorldObjectIds.entries()) {
+      if (nowMs - removedAt > 12000) {
+        this.recentlyRemovedWorldObjectIds.delete(objId);
+      }
+    }
 
     for (let i = this.droppedItems.length - 1; i >= 0; i--) {
       const drop = this.droppedItems[i];
@@ -6895,6 +6928,9 @@ export class GameEngine {
               dropId: drop.id,
               itemId: drop.itemId,
               count: drop.count,
+              flowerColor: drop.flowerColor,
+              x: drop.x,
+              y: drop.y,
             });
           }
           continue;
@@ -6966,34 +7002,36 @@ export class GameEngine {
       this.world.updateAgriculture(stepDt, rainingNow);
     }
 
-    // Long rains (24s+ of continuous rain) form temporary puddles on empty valid soil
+    // Long rains (38s+ of continuous rain) form occasional puddles on empty valid soil
     if (
       rainingNow &&
-      (this.metadata.rainDurationElapsed ?? 0) >= 24 &&
-      (this.metadata.rainIntensity ?? 0) > 0.55 &&
+      (this.metadata.rainDurationElapsed ?? 0) >= 38 &&
+      (this.metadata.rainIntensity ?? 0) > 0.6 &&
       this.multiplayer.role !== 'GUEST'
     ) {
       this.puddleSpawnTimer += dt;
-      if (this.puddleSpawnTimer >= 1.5) {
+      if (this.puddleSpawnTimer >= 6.0) {
         this.puddleSpawnTimer = 0;
-        const pTile = this.world.worldToTile(this.player.x, this.player.y);
-        for (let attempt = 0; attempt < 4; attempt++) {
-          const offsetX = Math.floor((Math.random() - 0.5) * 26);
-          const offsetY = Math.floor((Math.random() - 0.5) * 20);
-          const candTx = pTile.tx + offsetX;
-          const candTy = pTile.ty + offsetY;
-          if (!this.world.canSpawnRainPuddleAtTile(candTx, candTy)) continue;
-          // Do not spawn rain puddles inside roofed buildings
-          if (this.renderer.getBuildingAtTile(this.world, candTx, candTy)) {
-            continue;
-          }
-          const { cx, cy } = this.world.tileToChunk(candTx, candTy);
-          const chunk = this.world.chunks[WorldManager.chunkKey(cx, cy)];
-          if (chunk && (chunk.puddles?.length ?? 0) < 7) {
-            const decaySec = 45 + Math.random() * 45;
-            if (this.world.spawnRainPuddleAtTile(candTx, candTy, decaySec)) {
-              this.syncChunkAtTile(candTx, candTy);
-              break;
+        if (Math.random() < 0.45) {
+          const pTile = this.world.worldToTile(this.player.x, this.player.y);
+          for (let attempt = 0; attempt < 2; attempt++) {
+            const offsetX = Math.floor((Math.random() - 0.5) * 26);
+            const offsetY = Math.floor((Math.random() - 0.5) * 20);
+            const candTx = pTile.tx + offsetX;
+            const candTy = pTile.ty + offsetY;
+            if (!this.world.canSpawnRainPuddleAtTile(candTx, candTy)) continue;
+            // Do not spawn rain puddles inside roofed buildings
+            if (this.renderer.getBuildingAtTile(this.world, candTx, candTy)) {
+              continue;
+            }
+            const { cx, cy } = this.world.tileToChunk(candTx, candTy);
+            const chunk = this.world.chunks[WorldManager.chunkKey(cx, cy)];
+            if (chunk && (chunk.puddles?.length ?? 0) < 2) {
+              const decaySec = 40 + Math.random() * 35;
+              if (this.world.spawnRainPuddleAtTile(candTx, candTy, decaySec)) {
+                this.syncChunkAtTile(candTx, candTy);
+                break;
+              }
             }
           }
         }
@@ -7052,8 +7090,9 @@ export class GameEngine {
             ) {
               node.breakIdleTimer = Math.max(
                 node.breakIdleTimer ?? 0,
-                this.getPlayerAttackCooldownSec() + 0.55
+                this.getPlayerAttackCooldownSec() + 0.85
               );
+              node.breakUpdatedAt = Date.now();
             } else {
               node.breakIdleTimer = (node.breakIdleTimer ?? 0) - dt;
             }
@@ -7081,8 +7120,9 @@ export class GameEngine {
             ) {
               st.breakIdleTimer = Math.max(
                 st.breakIdleTimer ?? 0,
-                this.getPlayerAttackCooldownSec() + 0.55
+                this.getPlayerAttackCooldownSec() + 0.85
               );
+              st.breakUpdatedAt = Date.now();
             } else {
               st.breakIdleTimer = (st.breakIdleTimer ?? 0) - dt;
             }
@@ -7263,7 +7303,7 @@ export class GameEngine {
     const equippedTier = heldItem?.toolTier || 0;
     const knockbackMult = heldItem?.knockbackMult || 1.0;
 
-    let blockedPeacefulNpc: CreatureEntity | null = null;
+    let blockedPeacefulNpc: { x: number; y: number } | null = null;
 
     // Combat attacks ONLY happen on initial click (!isHoldRepeat), never while holding the button down,
     // and never when holding the Shovel (Pá causes 0 damage).
@@ -7276,15 +7316,17 @@ export class GameEngine {
           (c) =>
             c.id === this.preferredTargetCreatureId &&
             c.hp > 0 &&
-            !c.tamed &&
+            c.kind !== CreatureKind.BOAT &&
+            (!c.tamed || this.innocentFireEnabled) &&
             !c.isInsideHouse
         );
         this.preferredTargetCreatureId = null;
         if (pref && Math.hypot(pref.x - this.player.x, pref.y - this.player.y) <= reach * 1.35) {
-          const isPeacefulNpc =
-            (pref.kind === CreatureKind.VILLAGER || pref.kind === CreatureKind.WANDERER) &&
-            !pref.isHostile;
-          if (!isPeacefulNpc || this.innocentFireEnabled) {
+          const isPeacefulOrAlly =
+            pref.tamed ||
+            ((pref.kind === CreatureKind.VILLAGER || pref.kind === CreatureKind.WANDERER) &&
+              !pref.isHostile);
+          if (!isPeacefulOrAlly || this.innocentFireEnabled) {
             priorityLockTarget = pref;
           }
         }
@@ -7341,31 +7383,54 @@ export class GameEngine {
       // A. Categorize Creatures in hit arc by strict Combat Priority:
       //    Tier 1: Hostile Enemies & Monsters (ALWAYS hit first; never hit allies alongside them!)
       //    Tier 2: Wild Neutral Fauna (Sheep, Boar, Camel)
-      //    Tier 3: Peaceful NPCs (Villager, Wanderer) — ONLY hit if no enemies/fauna in arc AND innocentFireEnabled is ON!
+      //    Tier 3: Allies (Own Pets, Other Players' Pets, Peaceful NPCs, and Remote Players) — ONLY hit if no enemies/fauna in arc AND innocentFireEnabled is ON!
       const hostileTargetsInArc: CreatureEntity[] = [];
       const neutralFaunaInArc: CreatureEntity[] = [];
       const peacefulNpcsInArc: CreatureEntity[] = [];
 
       for (let i = this.entities.creatures.length - 1; i >= 0; i--) {
         const cr = this.entities.creatures[i];
-        if (cr.hp <= 0 || cr.tamed || cr.isInsideHouse) continue;
+        if (cr.hp <= 0 || cr.isInsideHouse || cr.kind === CreatureKind.BOAT) continue;
+        // Skip mounts currently being ridden by any player
+        if (
+          cr.id === this.player.mountedEntityId ||
+          Boolean(cr.riderPlayerId) ||
+          this.remotePlayersList.some((rp) => rp.mountedEntityId === cr.id)
+        ) {
+          continue;
+        }
         const dist = Math.hypot(cr.x - hitCenterX, cr.y - hitCenterY);
         const isLockTarget = priorityLockTarget && cr.id === priorityLockTarget.id;
         if (dist <= reach * 0.85 || isLockTarget) {
-          const isHostileEnemy = EntityManager.isMonsterKind(cr.kind) || cr.isHostile;
-          const isPeacefulNpc =
-            (cr.kind === CreatureKind.VILLAGER || cr.kind === CreatureKind.WANDERER) &&
-            !cr.isHostile;
+          const isHostileEnemy =
+            !cr.tamed && (EntityManager.isMonsterKind(cr.kind) || cr.isHostile);
+          const isPeacefulOrAlly =
+            cr.tamed ||
+            ((cr.kind === CreatureKind.VILLAGER || cr.kind === CreatureKind.WANDERER) &&
+              !cr.isHostile);
 
           if (isHostileEnemy) {
             hostileTargetsInArc.push(cr);
-          } else if (isPeacefulNpc) {
+          } else if (isPeacefulOrAlly) {
             peacefulNpcsInArc.push(cr);
           } else {
             neutralFaunaInArc.push(cr);
           }
         }
       }
+
+      // Check Remote Players in melee arc
+      const remotePlayersInArc = this.remotePlayersList
+        .filter((rp) => {
+          if (rp.hp <= 0 || rp.isSleeping) return false;
+          const distHit = Math.hypot(rp.x - hitCenterX, rp.y - hitCenterY);
+          return distHit <= reach * 0.85;
+        })
+        .sort(
+          (a, b) =>
+            Math.hypot(a.x - hitCenterX, a.y - hitCenterY) -
+            Math.hypot(b.x - hitCenterX, b.y - hitCenterY)
+        );
 
       const sortByLockAndDistance = (a: CreatureEntity, b: CreatureEntity): number => {
         if (priorityLockTarget) {
@@ -7398,7 +7463,19 @@ export class GameEngine {
         ? rawTargetsToHit
         : rawTargetsToHit.slice(0, 1);
 
-      if (targetsToHit.length > 0) {
+      const canHitRemotePlayers =
+        this.innocentFireEnabled &&
+        hostileTargetsInArc.length === 0 &&
+        neutralFaunaInArc.length === 0 &&
+        remotePlayersInArc.length > 0 &&
+        (isAreaAttack || targetsToHit.length === 0);
+      const remotePlayerTargetsToHit = canHitRemotePlayers
+        ? isAreaAttack
+          ? remotePlayersInArc
+          : remotePlayersInArc.slice(0, 1)
+        : [];
+
+      if (targetsToHit.length > 0 || remotePlayerTargetsToHit.length > 0) {
         this.resetInterruptedBreakingTargets(null);
         for (const cr of targetsToHit) {
           this.damageCreature(
@@ -7408,6 +7485,21 @@ export class GameEngine {
             this.player.y,
             knockbackMult
           );
+        }
+        for (const rp of remotePlayerTargetsToHit) {
+          const dmg = Math.max(1, Math.round(baseAttack));
+          this.multiplayer.sendPlayerHit(
+            rp.peerId,
+            dmg,
+            this.player.x,
+            this.player.y,
+            knockbackMult,
+            this.multiplayer.localPlayerName || this.settings.playerName || 'Jogador'
+          );
+          soundManager.playPlayerHurt();
+          this.renderer.spawnBurst(rp.x, rp.y, 'BLOOD', 8);
+          this.renderer.spawnRipple(rp.x, rp.y, '#f87171', 18, 0.32);
+          this.addFloatingText(`-${dmg}`, rp.x, rp.y - 20, '#f87171');
         }
         if (heldItem?.lifesteal && heldItem.lifesteal > 0) {
           this.player.hp = Math.min(
@@ -7424,12 +7516,21 @@ export class GameEngine {
         return;
       }
 
-      // If the player swung directly at a peaceful NPC while "Fogo Inocente" is OFF and no enemies were around,
+      // If the player swung directly at an ally (pet, other player, or peaceful NPC) while Friendly Fire is OFF and no enemies were around,
       // show a protective safety hint if no resource/structure is harvested below.
-      blockedPeacefulNpc =
-        !this.innocentFireEnabled && peacefulNpcsInArc.length > 0
-          ? peacefulNpcsInArc[0]
-          : null;
+      if (!this.innocentFireEnabled) {
+        if (peacefulNpcsInArc.length > 0) {
+          blockedPeacefulNpc = {
+            x: peacefulNpcsInArc[0].x,
+            y: peacefulNpcsInArc[0].y,
+          };
+        } else if (remotePlayersInArc.length > 0) {
+          blockedPeacefulNpc = {
+            x: remotePlayersInArc[0].x,
+            y: remotePlayersInArc[0].y,
+          };
+        }
+      }
     }
 
     const forwardHitX = this.player.x + dirVec.x * (reach * 0.65);
@@ -7451,6 +7552,7 @@ export class GameEngine {
         const sIdx = chunk!.structures.indexOf(existingSoil);
         if (sIdx !== -1) {
           triggerSwing();
+          this.recentlyRemovedWorldObjectIds.set(existingSoil.id, Date.now());
           chunk!.structures.splice(sIdx, 1);
           soundManager.playHitWood();
           this.renderer.spawnBurst(
@@ -7488,6 +7590,7 @@ export class GameEngine {
           this.isRainingNow()
         );
         if (soil) {
+          soil.placedAt = Date.now();
           triggerSwing();
           soundManager.playHitWood();
           this.gainXp(5);
@@ -7539,6 +7642,7 @@ export class GameEngine {
         const sIdx = chunk!.structures.indexOf(existingPath);
         if (sIdx !== -1) {
           triggerSwing();
+          this.recentlyRemovedWorldObjectIds.set(existingPath.id, Date.now());
           chunk!.structures.splice(sIdx, 1);
           soundManager.playHitWood();
           this.renderer.spawnBurst(
@@ -7572,6 +7676,7 @@ export class GameEngine {
       } else if (!isHoldRepeat && this.world.canMakeDirtPathAt(tile.tx, tile.ty)) {
         const pathSt = this.world.makeDirtPathAt(tile.tx, tile.ty);
         if (pathSt) {
+          pathSt.placedAt = Date.now();
           triggerSwing();
           soundManager.playHitWood();
           this.gainXp(3);
@@ -7610,19 +7715,113 @@ export class GameEngine {
       // Do not consume watering can charges or refill on the Attack/Break button
     }
 
-    // B2. Check Nature Nodes & Dismantling Structures strictly at the visually selected target or forward look tile
+    // B2. Check Nature Nodes & Dismantling Structures strictly at the active breaking target, direct forward tile, or aimed target
+    const directForwardTile = this.world.worldToTile(
+      this.player.x + dirVec.x * 28,
+      this.player.y + dirVec.y * 28
+    );
     const aimedForBreak = this.getAimedTarget();
     const isBreakableAimedTarget =
       aimedForBreak &&
       (aimedForBreak.kind === 'node' ||
         aimedForBreak.kind === 'station' ||
         aimedForBreak.kind === 'crop');
-    const forwardLookTile = isBreakableAimedTarget
-      ? this.world.worldToTile(aimedForBreak.worldX, aimedForBreak.worldY)
-      : this.world.worldToTile(
-          this.player.x + dirVec.x * 28,
-          this.player.y + dirVec.y * 28
+
+    let forwardLookTile = directForwardTile;
+    let lockedBreakTargetId: string | null = null;
+
+    // 1. If the player is already mid-break on `this.activeBreakingTargetId` and it's still within reach in front of them, keep target locked!
+    if (this.activeBreakingTargetId) {
+      const pTileNow = this.world.worldToTile(this.player.x, this.player.y);
+      const pChunkNow = this.world.tileToChunk(pTileNow.tx, pTileNow.ty);
+      for (let dy = -1; dy <= 1 && !lockedBreakTargetId; dy++) {
+        for (let dx = -1; dx <= 1 && !lockedBreakTargetId; dx++) {
+          const ch =
+            this.world.chunks[
+              WorldManager.chunkKey(pChunkNow.cx + dx, pChunkNow.cy + dy)
+            ];
+          if (!ch) continue;
+          const activeNode = ch.nodes.find(
+            (n) => n.id === this.activeBreakingTargetId
+          );
+          if (activeNode) {
+            const wx = activeNode.tileX * TILE_SIZE + TILE_SIZE / 2;
+            const wy = activeNode.tileY * TILE_SIZE + TILE_SIZE / 2;
+            const dist = Math.hypot(wx - this.player.x, wy - this.player.y);
+            const dot =
+              dist > 0.001
+                ? ((wx - this.player.x) / dist) * dirVec.x +
+                  ((wy - this.player.y) / dist) * dirVec.y
+                : 1;
+            if (dist <= TILE_SIZE * 2.1 && dot >= -0.15) {
+              forwardLookTile = { tx: activeNode.tileX, ty: activeNode.tileY };
+              lockedBreakTargetId = activeNode.id;
+            }
+          }
+          const activeSt = ch.structures.find(
+            (s) => s.id === this.activeBreakingTargetId
+          );
+          if (activeSt && !lockedBreakTargetId) {
+            const wx = activeSt.tileX * TILE_SIZE + TILE_SIZE / 2;
+            const wy = activeSt.tileY * TILE_SIZE + TILE_SIZE / 2;
+            const dist = Math.hypot(wx - this.player.x, wy - this.player.y);
+            const dot =
+              dist > 0.001
+                ? ((wx - this.player.x) / dist) * dirVec.x +
+                  ((wy - this.player.y) / dist) * dirVec.y
+                : 1;
+            if (dist <= TILE_SIZE * 2.1 && dot >= -0.15) {
+              forwardLookTile = { tx: activeSt.tileX, ty: activeSt.tileY };
+              lockedBreakTargetId = activeSt.id;
+            }
+          }
+        }
+      }
+    }
+
+    // 2. If not locked onto an active target, check if directForwardTile has any node or breakable structure; if not, fall back to aimedForBreak
+    if (!lockedBreakTargetId) {
+      const dfChunkCoords = this.world.tileToChunk(
+        directForwardTile.tx,
+        directForwardTile.ty
+      );
+      const dfChunk = this.world.getOrCreateChunk(
+        dfChunkCoords.cx,
+        dfChunkCoords.cy
+      );
+      const hasDirectNode = dfChunk.nodes.some(
+        (n) =>
+          n.tileX === directForwardTile.tx && n.tileY === directForwardTile.ty
+      );
+      const hasDirectBreakableStruct = dfChunk.structures.some((s) => {
+        if (
+          s.tileX !== directForwardTile.tx ||
+          s.tileY !== directForwardTile.ty
+        ) {
+          return false;
+        }
+        if (
+          s.type === PlaceableType.TILLED_SOIL &&
+          equippedTool !== ToolType.HOE
+        ) {
+          return false;
+        }
+        if (
+          s.type === PlaceableType.DIRT_PATH &&
+          equippedTool !== ToolType.SHOVEL
+        ) {
+          return false;
+        }
+        return true;
+      });
+      if (!hasDirectNode && !hasDirectBreakableStruct && isBreakableAimedTarget) {
+        forwardLookTile = this.world.worldToTile(
+          aimedForBreak.worldX,
+          aimedForBreak.worldY
         );
+      }
+    }
+
     const pChunk = this.world.tileToChunk(
       forwardLookTile.tx,
       forwardLookTile.ty
@@ -7638,8 +7837,10 @@ export class GameEngine {
         for (let ni = chunk.nodes.length - 1; ni >= 0; ni--) {
           const node = chunk.nodes[ni];
           if (
-            node.tileX === forwardLookTile.tx &&
-            node.tileY === forwardLookTile.ty
+            (lockedBreakTargetId && node.id === lockedBreakTargetId) ||
+            (!lockedBreakTargetId &&
+              node.tileX === forwardLookTile.tx &&
+              node.tileY === forwardLookTile.ty)
           ) {
             triggerSwing();
             this.harvestNatureNode(
@@ -7654,14 +7855,46 @@ export class GameEngine {
           }
         }
 
+        // Collect all candidate structures on `forwardLookTile` and sort by priority so ground soil/paths never block breaking walls/furniture/floors
+        const candidateStructIndices: number[] = [];
         for (let si = chunk.structures.length - 1; si >= 0; si--) {
           const st = chunk.structures[si];
-          const matchesAimedStruct =
-            isBreakableAimedTarget && aimedForBreak?.structureId
-              ? st.id === aimedForBreak.structureId
-              : st.tileX === forwardLookTile.tx &&
-                st.tileY === forwardLookTile.ty;
-          if (matchesAimedStruct) {
+          if (lockedBreakTargetId) {
+            if (st.id === lockedBreakTargetId) {
+              candidateStructIndices.push(si);
+            }
+          } else if (
+            st.tileX === forwardLookTile.tx &&
+            st.tileY === forwardLookTile.ty
+          ) {
+            candidateStructIndices.push(si);
+          }
+        }
+
+        const getStructBreakPriority = (st: PlacedStructure): number => {
+          if (st.id === this.activeBreakingTargetId) return 100;
+          if (st.type === PlaceableType.TORCH) return 90;
+          if (
+            st.type === PlaceableType.TILLED_SOIL ||
+            st.type === PlaceableType.DIRT_PATH
+          ) {
+            return 10;
+          }
+          const layer = WorldManager.getStructureLayerCategory(st.type);
+          if (layer === 'WALL' || layer === 'FURNITURE') return 80;
+          return 50; // GROUND floors / platforms
+        };
+
+        candidateStructIndices.sort(
+          (a, b) =>
+            getStructBreakPriority(chunk.structures[b]) -
+            getStructBreakPriority(chunk.structures[a])
+        );
+
+        for (const si of candidateStructIndices) {
+          const st = chunk.structures[si];
+          if (!st) continue;
+          {
             // Tilled soil can ONLY be broken with the Hoe, and Dirt Path can ONLY be undone with the Shovel; neither is treated as an item
             if (
               (st.type === PlaceableType.TILLED_SOIL &&
@@ -7726,9 +7959,10 @@ export class GameEngine {
             st.hp -= structDmg;
             st.hitFlashTimer = 0.15;
             st.breakIdleTimer = Math.max(
-              1.25,
-              this.player.swingDuration + 0.55
+              1.65,
+              this.player.swingDuration + 0.85
             );
+            st.breakUpdatedAt = Date.now();
             if (req.requiredTool === ToolType.PICKAXE) {
               soundManager.playHitStone();
               this.renderer.spawnBurst(sx, sy, 'STONE', st.hp <= 0 ? 14 : 7);
@@ -7742,6 +7976,7 @@ export class GameEngine {
 
             if (st.hp <= 0) {
               this.activeBreakingTargetId = null;
+              this.recentlyRemovedWorldObjectIds.set(st.id, Date.now());
               const structBreakKey = `break_struct:${st.id}:${st.tileX},${st.tileY}`;
               if (!this.tryClaimWorldAction(structBreakKey)) {
                 chunk.structures.splice(si, 1);
@@ -7832,7 +8067,15 @@ export class GameEngine {
               }
               if (st.type === PlaceableType.TILLED_SOIL) {
                 if (st.cropType && st.growthStage === 3) {
-                  this.spawnDrop(st.cropType, 2, sx, sy);
+                  this.spawnDrop(
+                    st.cropType,
+                    2,
+                    sx,
+                    sy,
+                    0.25,
+                    undefined,
+                    `drop_struct_${st.id}_crop`
+                  );
                 }
                 this.addFloatingText(
                   'Solo Aplanado',
@@ -7867,7 +8110,8 @@ export class GameEngine {
                   sx,
                   sy,
                   0.25,
-                  st.flowerColor
+                  st.flowerColor,
+                  `drop_struct_${st.id}_main`
                 );
               }
               chunk.structures.splice(si, 1);
@@ -7881,13 +8125,24 @@ export class GameEngine {
                     other.tileY === st.tileY &&
                     other.type === PlaceableType.TORCH
                   ) {
-                    this.spawnDrop(other.itemId || 'torch', 1, sx, sy);
+                    this.recentlyRemovedWorldObjectIds.set(other.id, Date.now());
+                    this.spawnDrop(
+                      other.itemId || 'torch',
+                      1,
+                      sx,
+                      sy,
+                      0.25,
+                      undefined,
+                      `drop_struct_${other.id}_torch`
+                    );
                     chunk.structures.splice(ti, 1);
                   }
                 }
               }
+              this.syncChunkAtTile(st.tileX, st.tileY);
+            } else {
+              this.world.markChunkDirty(chunk);
             }
-            this.syncChunkAtTile(st.tileX, st.tileY);
             this.emitUiSnapshot();
             return;
           }
@@ -9300,6 +9555,8 @@ export class GameEngine {
         const placedSt = this.world.getStructureAtTile(target.tx, target.ty);
         this.invalidateBuildingOwnerCache();
         if (placedSt) {
+          placedSt.placedAt = Date.now();
+          this.recentlyRemovedWorldObjectIds.delete(placedSt.id);
           // Quando o jogador coloca um ponto de descanso, tenda de vendas ou poço, ele NÃO se torna dono automaticamente!
           // Ele só se torna dono ao interagir. Se não interagir, fica sem dono.
           placedSt.ownerType = undefined;
@@ -10155,8 +10412,10 @@ export class GameEngine {
                 resolvedOwnerText = 'Sem Dono';
               }
             } else if (st.type === PlaceableType.MARKET_STALL) {
-              if (st.ownerType === 'PLAYER') {
-                resolvedOwnerText = st.ownerName || 'Você';
+              if (this.isMarketStallOwnedByLocalPlayer(st)) {
+                resolvedOwnerText = 'Você';
+              } else if (st.ownerType === 'PLAYER') {
+                resolvedOwnerText = st.ownerName || 'Jogador';
               } else if (this.isVillagerStallOwnerAlive(st)) {
                 resolvedOwnerText = st.ownerName || 'Mercador';
               } else {
@@ -10229,12 +10488,16 @@ export class GameEngine {
                   ? 'Ver Vila no Poço (Água já usada hoje) 💧'
                   : 'Beber Água / Ver Vila 💧'
                 : st.type === PlaceableType.MARKET_STALL
-                ? st.ownerType === 'PLAYER'
+                ? this.isMarketStallOwnedByLocalPlayer(st)
                   ? `Gerenciar Tenda${
                       (st.stallUnclaimedGold || 0) > 0
                         ? ` (+${st.stallUnclaimedGold}g na Caixinha!)`
                         : ''
                     } 🏪`
+                  : st.ownerType === 'PLAYER'
+                  ? st.stallOpen === false
+                    ? `Tenda Fechada (${st.ownerName || 'Jogador'}) 🏪`
+                    : `Negociar na Tenda (${st.ownerName || 'Jogador'}) 🏪`
                   : this.isVillagerStallOwnerAlive(st)
                   ? this.isVillagerStallOwnerSleeping(st)
                     ? `Tenda Fechada (🌙 Dormindo)`
@@ -10655,7 +10918,8 @@ export class GameEngine {
     const power = evalBreak.force;
     node.hp -= power;
     node.hitFlashTimer = 0.16;
-    node.breakIdleTimer = Math.max(1.25, this.player.swingDuration + 0.55);
+    node.breakIdleTimer = Math.max(1.65, this.player.swingDuration + 0.85);
+    node.breakUpdatedAt = Date.now();
 
     const isGrassNode =
       node.type === NatureNodeType.SHORT_GRASS ||
@@ -10685,12 +10949,14 @@ export class GameEngine {
 
     if (node.hp <= 0) {
       this.activeBreakingTargetId = null;
+      this.recentlyRemovedWorldObjectIds.set(node.id, Date.now());
       const nodeBreakKey = `break_node:${node.id}:${node.tileX},${node.tileY}`;
       if (!this.tryClaimWorldAction(nodeBreakKey)) {
         chunk.nodes.splice(nodeIndex, 1);
         this.emitUiSnapshot();
         return;
       }
+      let nodeDropSeq = 0;
       const survivalBonusChance =
         Math.max(0, this.player.attributes.survival || 0) * 0.1;
       for (const drop of bp.drops) {
@@ -10704,7 +10970,8 @@ export class GameEngine {
             nx + (Math.random() - 0.5) * 14,
             ny + (Math.random() - 0.5) * 14,
             0.25,
-            node.flowerColor
+            node.flowerColor,
+            `drop_node_${node.id}_${nodeDropSeq++}`
           );
         }
       }
@@ -10717,7 +10984,10 @@ export class GameEngine {
           'fiber',
           1,
           nx + (node.offsetX || 0),
-          ny + (node.offsetY || 0)
+          ny + (node.offsetY || 0),
+          0.25,
+          undefined,
+          `drop_node_${node.id}_shears`
         );
       }
       // Grama Baixa & Grama Alta: 0.5% (0.005) chance to drop 1 seed of any type
@@ -10735,7 +11005,10 @@ export class GameEngine {
           randomSeedId,
           1,
           nx + (node.offsetX || 0),
-          ny + (node.offsetY || 0)
+          ny + (node.offsetY || 0),
+          0.25,
+          undefined,
+          `drop_node_${node.id}_seed`
         );
       }
       // Arbusto de Frutas: 50% de chance de 1 a 2 sementes aleatórias (trigo, cenoura, erva, solar, amora)
@@ -10755,15 +11028,18 @@ export class GameEngine {
           randomSeedId,
           seedCount,
           nx + (Math.random() - 0.5) * 14,
-          ny + (Math.random() - 0.5) * 14
+          ny + (Math.random() - 0.5) * 14,
+          0.25,
+          undefined,
+          `drop_node_${node.id}_berryseed`
         );
       }
       if (bp.xpReward > 0) {
         this.gainXp(bp.xpReward);
       }
       chunk.nodes.splice(nodeIndex, 1);
+      this.syncChunkAtTile(node.tileX, node.tileY);
     }
-    this.syncChunkAtTile(node.tileX, node.tileY);
     this.emitUiSnapshot();
   }
 
@@ -10788,13 +11064,17 @@ export class GameEngine {
       return;
     }
 
-    // Safety protection: Player attacks can never harm tamed allies, nor peaceful NPCs when "Fogo Inocente" is OFF
+    // Boats cannot be damaged via creature combat
+    if (cr.kind === CreatureKind.BOAT) return;
+
+    // Safety protection: Player attacks can never harm tamed allies or peaceful NPCs when Friendly Fire ("Fogo Inocente") is OFF
     if (!attackerCreature) {
-      if (cr.tamed) return;
+      if (cr.tamed && !this.innocentFireEnabled && !fromNetwork) return;
       if (
         (cr.kind === CreatureKind.VILLAGER || cr.kind === CreatureKind.WANDERER) &&
         !cr.isHostile &&
-        !this.innocentFireEnabled
+        !this.innocentFireEnabled &&
+        !fromNetwork
       ) {
         return;
       }
@@ -10968,8 +11248,52 @@ export class GameEngine {
     this.addFloatingText(`-${amount}`, cr.x, cr.y - 16, '#f87171');
 
     if (cr.hp <= 0) {
+      const alreadyClaimedLoot = this.deadCreatureLootClaimedIds.has(cr.id);
+      this.deadCreatureLootClaimedIds.add(cr.id);
+      // Only spawn loot once per creature death; Guests receiving a remote `creature_hit` never spawn duplicate local drops
+      const shouldSpawnLoot =
+        !alreadyClaimedLoot &&
+        !(
+          fromNetwork &&
+          this.multiplayer.isOnline &&
+          this.multiplayer.role === 'GUEST'
+        );
+
+      // Deterministic PRNG and deterministic drop IDs based on `cr.id` so even simultaneous Host+Guest final blows deduplicate 100%
+      let lootHash = 2166136261;
+      for (let i = 0; i < cr.id.length; i++) {
+        lootHash ^= cr.id.charCodeAt(i);
+        lootHash = Math.imul(lootHash, 16777619);
+      }
+      const nextLootRand = (): number => {
+        lootHash += 0x6d2b79f5;
+        let t = lootHash;
+        t = Math.imul(t ^ (t >>> 15), t | 1);
+        t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+        return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+      };
+      let mobDropSeq = 0;
+      const spawnMobLoot = (
+        itemId: string,
+        count: number,
+        lx: number,
+        ly: number
+      ) => {
+        if (!shouldSpawnLoot || count <= 0) return;
+        this.spawnDrop(
+          itemId,
+          count,
+          lx,
+          ly,
+          0.25,
+          undefined,
+          `drop_mob_${cr.id}_${mobDropSeq++}`
+        );
+      };
+
       const eliteMult = cr.isElite ? 1.6 : 1.0;
       const grantPlayerXp = (xp: number) => {
+        if (alreadyClaimedLoot) return;
         if (
           !attackerCreature ||
           attackerCreature.tamed ||
@@ -10982,18 +11306,18 @@ export class GameEngine {
       if (cr.kind === CreatureKind.ZOMBIE) {
         if (cr.isElite) {
           // Zumbi Ancião — elite (2 a 3 essências sombrias; 1 minérios de ferro)
-          this.spawnDrop(
+          spawnMobLoot(
             'dark_essence',
-            2 + Math.floor(Math.random() * 2),
+            2 + Math.floor(nextLootRand() * 2),
             cr.x,
             cr.y
           );
-          this.spawnDrop('iron_ore', 1, cr.x - 6, cr.y);
+          spawnMobLoot('iron_ore', 1, cr.x - 6, cr.y);
         } else {
           // Zumbi Errante (1 a 2 essências sombrias)
-          this.spawnDrop(
+          spawnMobLoot(
             'dark_essence',
-            1 + Math.floor(Math.random() * 2),
+            1 + Math.floor(nextLootRand() * 2),
             cr.x,
             cr.y
           );
@@ -11002,43 +11326,43 @@ export class GameEngine {
       } else if (cr.kind === CreatureKind.OGRE) {
         if (cr.isElite) {
           // Ogro Brutal Alfa — elite (2 a 3 peles de ogro; 2 a 4 minérios de ferro)
-          this.spawnDrop(
+          spawnMobLoot(
             'ogre_hide',
-            2 + Math.floor(Math.random() * 2),
+            2 + Math.floor(nextLootRand() * 2),
             cr.x,
             cr.y
           );
-          this.spawnDrop(
+          spawnMobLoot(
             'iron_ore',
-            2 + Math.floor(Math.random() * 3),
+            2 + Math.floor(nextLootRand() * 3),
             cr.x + 8,
             cr.y
           );
         } else {
           // Ogro Brutamontes (1 a 2 peles de ogro; 2 minérios de ferro)
-          this.spawnDrop(
+          spawnMobLoot(
             'ogre_hide',
-            1 + Math.floor(Math.random() * 2),
+            1 + Math.floor(nextLootRand() * 2),
             cr.x,
             cr.y
           );
-          this.spawnDrop('iron_ore', 2, cr.x + 8, cr.y);
+          spawnMobLoot('iron_ore', 2, cr.x + 8, cr.y);
         }
         grantPlayerXp(Math.round(95 * eliteMult));
       } else if (cr.kind === CreatureKind.FOREST_STALKER) {
         if (cr.isElite) {
           // Aranha Rainha Sombria — elite (2 a 3 sedas de aranha)
-          this.spawnDrop(
+          spawnMobLoot(
             'spider_silk',
-            2 + Math.floor(Math.random() * 2),
+            2 + Math.floor(nextLootRand() * 2),
             cr.x,
             cr.y
           );
         } else {
           // Aranha Tecelã da Mata (1 a 2 sedas de aranha)
-          this.spawnDrop(
+          spawnMobLoot(
             'spider_silk',
-            1 + Math.floor(Math.random() * 2),
+            1 + Math.floor(nextLootRand() * 2),
             cr.x,
             cr.y
           );
@@ -11047,46 +11371,46 @@ export class GameEngine {
       } else if (cr.kind === CreatureKind.DESERT_SCORPION) {
         if (cr.isElite) {
           // Escorpião Imperador Dourado — elite (2 ferrões de escorpião; 1 cristal solar)
-          this.spawnDrop('scorpion_stinger', 2, cr.x, cr.y);
-          this.spawnDrop('solar_crystal', 1, cr.x + 6, cr.y);
+          spawnMobLoot('scorpion_stinger', 2, cr.x, cr.y);
+          spawnMobLoot('solar_crystal', 1, cr.x + 6, cr.y);
         } else {
           // Escorpião Rei da Areia (1 ferrão de escorpião; 20% de chance de 1 cristal solar)
-          this.spawnDrop('scorpion_stinger', 1, cr.x, cr.y);
-          if (Math.random() < 0.2) {
-            this.spawnDrop('solar_crystal', 1, cr.x + 6, cr.y);
+          spawnMobLoot('scorpion_stinger', 1, cr.x, cr.y);
+          if (nextLootRand() < 0.2) {
+            spawnMobLoot('solar_crystal', 1, cr.x + 6, cr.y);
           }
         }
         grantPlayerXp(Math.round(62 * eliteMult));
       } else if (cr.kind === CreatureKind.STONE_GOLEM) {
         if (cr.isElite) {
           // Colosso Rúnico Ancestral — elite (1 núcleo de golem; 4 minérios de ferro)
-          this.spawnDrop('golem_core', 1, cr.x, cr.y);
-          this.spawnDrop('iron_ore', 4, cr.x + 8, cr.y);
+          spawnMobLoot('golem_core', 1, cr.x, cr.y);
+          spawnMobLoot('iron_ore', 4, cr.x + 8, cr.y);
         } else {
           // Colosso Rúnico de Pedra (1 núcleo de golem; 3 pedras brutas)
-          this.spawnDrop('golem_core', 1, cr.x, cr.y);
-          this.spawnDrop('stone', 3, cr.x - 8, cr.y);
+          spawnMobLoot('golem_core', 1, cr.x, cr.y);
+          spawnMobLoot('stone', 3, cr.x - 8, cr.y);
         }
         grantPlayerXp(Math.round(115 * eliteMult));
       } else if (cr.kind === CreatureKind.BANDIT) {
         if (cr.isElite) {
           // Líder Saqueador Corvo — elite (20 a 40 moedas de ouro)
-          this.spawnDrop(
+          spawnMobLoot(
             'gold_coin',
-            20 + Math.floor(Math.random() * 21),
+            20 + Math.floor(nextLootRand() * 21),
             cr.x,
             cr.y
           );
         } else {
           // Saqueador Renegado (5 a 20 moedas de ouro; 30% de chance de 1 bandagem de lã)
-          this.spawnDrop(
+          spawnMobLoot(
             'gold_coin',
-            5 + Math.floor(Math.random() * 16),
+            5 + Math.floor(nextLootRand() * 16),
             cr.x,
             cr.y
           );
-          if (Math.random() < 0.3) {
-            this.spawnDrop('wool_bandage', 1, cr.x + 6, cr.y);
+          if (nextLootRand() < 0.3) {
+            spawnMobLoot('wool_bandage', 1, cr.x + 6, cr.y);
           }
         }
         grantPlayerXp(Math.round(58 * eliteMult));
@@ -11106,12 +11430,12 @@ export class GameEngine {
           npcName === 'Caminhante Tomas' ||
           npcName === 'Exploradora Vesper'
         ) {
-          const coins = Math.floor(Math.random() * 11); // 0 a 10 moedas
+          const coins = Math.floor(nextLootRand() * 11); // 0 a 10 moedas
           if (coins > 0) {
-            this.spawnDrop('gold_coin', coins, cr.x, cr.y);
+            spawnMobLoot('gold_coin', coins, cr.x, cr.y);
           }
-          if (Math.random() < 0.3) {
-            this.spawnDrop('cooked_fish', 1, cr.x + 6, cr.y);
+          if (nextLootRand() < 0.3) {
+            spawnMobLoot('cooked_fish', 1, cr.x + 6, cr.y);
           }
         }
         // Ferreiros
@@ -11119,9 +11443,9 @@ export class GameEngine {
           npcName === 'Mestre Borin' ||
           npcName === 'Ferreiro Kaelen'
         ) {
-          this.spawnDrop(
+          spawnMobLoot(
             'charcoal',
-            1 + Math.floor(Math.random() * 3),
+            1 + Math.floor(nextLootRand() * 3),
             cr.x,
             cr.y
           );
@@ -11130,9 +11454,9 @@ export class GameEngine {
           npcName === 'Thrain Martelo-Forte' ||
           cr.npcRole === 'ferreiro'
         ) {
-          const ironCount = Math.floor(Math.random() * 4); // 0 a 3 ferros
+          const ironCount = Math.floor(nextLootRand() * 4); // 0 a 3 ferros
           if (ironCount > 0) {
-            this.spawnDrop('iron_bar', ironCount, cr.x, cr.y);
+            spawnMobLoot('iron_bar', ironCount, cr.x, cr.y);
           }
         }
         // Mercadores e boticários
@@ -11140,9 +11464,9 @@ export class GameEngine {
           npcName === 'Mercadora Lyra' ||
           npcName === 'Mercador Vaen'
         ) {
-          this.spawnDrop(
+          spawnMobLoot(
             'gold_coin',
-            1 + Math.floor(Math.random() * 5),
+            1 + Math.floor(nextLootRand() * 5),
             cr.x,
             cr.y
           );
@@ -11151,7 +11475,7 @@ export class GameEngine {
           npcName === 'Boticária Elara' ||
           cr.npcRole === 'mercador'
         ) {
-          this.spawnDrop('herbal_poultice', 1, cr.x, cr.y);
+          spawnMobLoot('herbal_poultice', 1, cr.x, cr.y);
         }
         // Guardiões
         else if (
@@ -11161,23 +11485,23 @@ export class GameEngine {
           npcName === 'Comandante Roland' ||
           cr.npcRole === 'guardiao'
         ) {
-          if (Math.random() < 0.3) {
-            this.spawnDrop('wood_sword', 1, cr.x, cr.y);
+          if (nextLootRand() < 0.3) {
+            spawnMobLoot('wood_sword', 1, cr.x, cr.y);
           }
         }
         // Anciãos
         else if (npcName === 'Ancião Aldric') {
-          this.spawnDrop('cooked_fish', 1, cr.x, cr.y);
+          spawnMobLoot('cooked_fish', 1, cr.x, cr.y);
         } else if (
           npcName === 'Sábio Vaelen' ||
           npcName === 'Matriarca Aurelia'
         ) {
-          if (Math.random() < 0.5) {
-            this.spawnDrop('herbal_poultice', 1, cr.x, cr.y);
+          if (nextLootRand() < 0.5) {
+            spawnMobLoot('herbal_poultice', 1, cr.x, cr.y);
           }
         } else if (npcName === 'Oráculo Orion' || cr.npcRole === 'anciao') {
-          if (Math.random() < 0.3) {
-            this.spawnDrop('shadow_elixir', 1, cr.x, cr.y);
+          if (nextLootRand() < 0.3) {
+            spawnMobLoot('shadow_elixir', 1, cr.x, cr.y);
           }
         }
         grantPlayerXp(40);
@@ -11216,34 +11540,34 @@ export class GameEngine {
       } else if (cr.kind === CreatureKind.SHEEP) {
         // Ovelha (1 a 2 lãs se não estiver tosqueada e for adulta; 1 carne de cordeiro)
         if (!cr.isSheared && !cr.isBaby) {
-          this.spawnDrop('wool', 1 + Math.floor(Math.random() * 2), cr.x, cr.y);
+          spawnMobLoot('wool', 1 + Math.floor(nextLootRand() * 2), cr.x, cr.y);
         }
         if (!cr.isBaby) {
-          this.spawnDrop('raw_lamb', 1, cr.x + 6, cr.y);
+          spawnMobLoot('raw_lamb', 1, cr.x + 6, cr.y);
         }
         grantPlayerXp(15);
       } else if (cr.kind === CreatureKind.BOAR) {
         // Javali (1 a 2 carnes suínas + 50% de chance de dropar 1 couro)
-        this.spawnDrop(
+        spawnMobLoot(
           'raw_pork',
-          1 + Math.floor(Math.random() * 2),
+          1 + Math.floor(nextLootRand() * 2),
           cr.x,
           cr.y
         );
-        if (Math.random() < 0.5) {
-          this.spawnDrop('leather', 1, cr.x + 6, cr.y);
+        if (nextLootRand() < 0.5) {
+          spawnMobLoot('leather', 1, cr.x + 6, cr.y);
         }
         grantPlayerXp(20);
       } else if (cr.kind === CreatureKind.COW) {
         // Vaca (1 a 2 carnes bovinas + 80% de chance de dropar 1 couro)
-        this.spawnDrop(
+        spawnMobLoot(
           'raw_beef',
-          1 + Math.floor(Math.random() * 2),
+          1 + Math.floor(nextLootRand() * 2),
           cr.x,
           cr.y
         );
-        if (Math.random() < 0.8) {
-          this.spawnDrop('leather', 1, cr.x + 6, cr.y);
+        if (nextLootRand() < 0.8) {
+          spawnMobLoot('leather', 1, cr.x + 6, cr.y);
         }
         grantPlayerXp(18);
       } else if (cr.kind === CreatureKind.CAMEL) {
@@ -11576,7 +11900,8 @@ export class GameEngine {
     rawAmount: number,
     sourceX: number,
     sourceY: number,
-    attackerCreature?: CreatureEntity
+    attackerCreature?: CreatureEntity,
+    knockbackMult = 1.0
   ): void {
     // Enquanto o jogador estiver deitado na cama (dormindo / aguardando outro jogador), ele não recebe dano de ninguém!
     if (this.player.isSleeping) return;
@@ -11627,8 +11952,9 @@ export class GameEngine {
     const dx = this.player.x - sourceX;
     const dy = this.player.y - sourceY;
     const dist = Math.max(1, Math.hypot(dx, dy));
-    const kx = this.player.x + (dx / dist) * 12;
-    const ky = this.player.y + (dy / dist) * 12;
+    const kbDist = 12 * Math.max(0.5, knockbackMult);
+    const kx = this.player.x + (dx / dist) * kbDist;
+    const ky = this.player.y + (dy / dist) * kbDist;
     if (this.canEntityOccupy(kx, ky)) {
       this.player.x = kx;
       this.player.y = ky;
@@ -12859,6 +13185,21 @@ export class GameEngine {
 
     if (
       st.type === PlaceableType.MARKET_STALL &&
+      st.ownerType === 'PLAYER' &&
+      !this.isMarketStallOwnedByLocalPlayer(st)
+    ) {
+      soundManager.playHitWood();
+      this.addFloatingText(
+        `🔒 Tenda de ${st.ownerName || 'outro jogador'}! Apenas o dono pode recolher.`,
+        tx * TILE_SIZE + 16,
+        ty * TILE_SIZE,
+        '#f43f5e'
+      );
+      return false;
+    }
+
+    if (
+      st.type === PlaceableType.MARKET_STALL &&
       st.ownerType === 'VILLAGER' &&
       this.isVillagerStallOwnerAlive(st)
     ) {
@@ -12946,6 +13287,7 @@ export class GameEngine {
       this.clearEnclosedBuildingOwnershipOnLoss(tx, ty, st.id);
     }
 
+    this.recentlyRemovedWorldObjectIds.set(st.id, Date.now());
     chunk.structures.splice(targetIdx, 1);
     this.world.markChunkDirty(chunk);
     this.world.syncChunkAgricultureIndex(chunk);
@@ -12959,6 +13301,7 @@ export class GameEngine {
           other.tileY === ty &&
           other.type === PlaceableType.TORCH
         ) {
+          this.recentlyRemovedWorldObjectIds.set(other.id, Date.now());
           const torchAdded = this.addItemToInventory(other.itemId || 'torch', 1);
           if (!torchAdded) {
             this.spawnDrop(other.itemId || 'torch', 1, tx * TILE_SIZE + 16, ty * TILE_SIZE + 16);
@@ -13173,48 +13516,205 @@ export class GameEngine {
   }
 
   /**
-   * Protects local chest storage from being overwritten by an older or self-echoed chunk packet.
+   * Atomically stamps revision on a thermal/weaving station (`CAMPFIRE`, `FURNACE`, `WEAVING_TABLE`),
+   * broadcasts a dedicated `thermal_station_sync` packet so interactions never suffer chunk overwrite races,
+   * syncs the chunk, and triggers a background save.
+   */
+  private commitThermalStationMutation(st: PlacedStructure): void {
+    const now = Date.now();
+    st.thermalRevision = (st.thermalRevision || 0) + 1;
+    st.thermalUpdatedAt = now;
+    this.lastLocalThermalEditAt.set(st.id, now);
+    this.markLocalChunkModified(st.tileX, st.tileY);
+
+    if (this.multiplayer.isOnline && !this.isApplyingNetworkEvent) {
+      const syncPayload = {
+        action: 'thermal_station_sync',
+        structureId: st.id,
+        tileX: st.tileX,
+        tileY: st.tileY,
+        thermalRevision: st.thermalRevision,
+        thermalUpdatedAt: st.thermalUpdatedAt,
+        fuelItemId: st.fuelItemId ?? null,
+        fuelCount: st.fuelCount ?? 0,
+        fuelBurnRemaining: st.fuelBurnRemaining ?? 0,
+        fuelBurnMax: st.fuelBurnMax ?? 0,
+        cookingRecipeId: st.cookingRecipeId ?? null,
+        cookingMaterialOptionId: st.cookingMaterialOptionId ?? null,
+        cookingInputCount: st.cookingInputCount ?? 0,
+        cookingProgress: st.cookingProgress ?? 0,
+        cookingDuration: st.cookingDuration ?? 6,
+        weavingTargetItemId: st.weavingTargetItemId ?? null,
+        weavingDyeItemId: st.weavingDyeItemId ?? null,
+        outputItemId: st.outputItemId ?? null,
+        outputCount: st.outputCount ?? 0,
+      };
+      if (this.multiplayer.role === 'GUEST') {
+        this.multiplayer.sendWorldInteractRequest(syncPayload);
+      } else if (this.multiplayer.role === 'HOST') {
+        this.multiplayer.sendWorldInteractResolved(syncPayload);
+      }
+      this.syncChunkAtTile(st.tileX, st.tileY);
+    }
+
+    void this.saveGame(true);
+  }
+
+  /**
+   * Reconciles incoming chunk state with local authoritative state:
+   * - Filters out nodes/structures recently broken or dismantled by the local player (`recentlyRemovedWorldObjectIds`).
+   * - Preserves active local breaking progress (`activeBreakingTargetId` / `breakUpdatedAt`).
+   * - Preserves structures just placed by the local player (`placedAt` < 10s).
+   * - Protects local chest storage (`storageRevision`) and thermal/weaving stations (`thermalRevision`) from stale packets.
    */
   private preserveNewerChestStorageInChunk(
     prevChunk: ChunkData | undefined,
     incomingChunk: ChunkData
   ): void {
+    const now = Date.now();
+
+    // 1. Filter out recently broken/dismantled nodes & structures so stale in-flight packets never resurrect them
+    if (Array.isArray(incomingChunk.nodes)) {
+      incomingChunk.nodes = incomingChunk.nodes.filter((n) => {
+        if (!n) return false;
+        const removedAt = this.recentlyRemovedWorldObjectIds.get(n.id);
+        return !(removedAt && now - removedAt < 12000);
+      });
+    }
+    if (Array.isArray(incomingChunk.structures)) {
+      incomingChunk.structures = incomingChunk.structures.filter((s) => {
+        if (!s) return false;
+        const removedAt = this.recentlyRemovedWorldObjectIds.get(s.id);
+        return !(removedAt && now - removedAt < 12000);
+      });
+    }
+
+    if (!prevChunk) return;
+
+    // 2. Preserve local in-progress node breaking HP so another player's chunk_sync never resets our breaking bar
+    if (Array.isArray(prevChunk.nodes) && Array.isArray(incomingChunk.nodes)) {
+      for (const incNode of incomingChunk.nodes) {
+        if (!incNode) continue;
+        const prevNode = prevChunk.nodes.find(
+          (n) =>
+            n.id === incNode.id ||
+            (n.tileX === incNode.tileX && n.tileY === incNode.tileY)
+        );
+        if (
+          prevNode &&
+          prevNode.hp < prevNode.maxHp &&
+          (this.activeBreakingTargetId === prevNode.id ||
+            now - (prevNode.breakUpdatedAt || 0) < 2200)
+        ) {
+          incNode.hp = Math.min(incNode.hp, prevNode.hp);
+          incNode.breakIdleTimer = prevNode.breakIdleTimer;
+          incNode.breakUpdatedAt = prevNode.breakUpdatedAt;
+        }
+      }
+    }
+
     if (
-      !prevChunk ||
       !Array.isArray(prevChunk.structures) ||
       !Array.isArray(incomingChunk.structures)
     ) {
       return;
     }
-    const now = Date.now();
+
+    // 3. Reconcile existing structures (breaking HP, Chest storageRevision, and Thermal Station thermalRevision)
     for (const incSt of incomingChunk.structures) {
-      if (!incSt || incSt.type !== PlaceableType.CHEST) continue;
+      if (!incSt) continue;
       const prevSt = prevChunk.structures.find(
         (s) =>
-          s.type === PlaceableType.CHEST &&
-          (s.id === incSt.id ||
-            (s.tileX === incSt.tileX && s.tileY === incSt.tileY))
+          s.id === incSt.id ||
+          (s.type === incSt.type &&
+            s.tileX === incSt.tileX &&
+            s.tileY === incSt.tileY)
       );
       if (!prevSt) continue;
 
-      const prevRev = prevSt.storageRevision || 0;
-      const incRev = incSt.storageRevision || 0;
-      const lastLocalEdit = this.lastLocalChestEditAt.get(prevSt.id) || 0;
-      const editedRecently = now - lastLocalEdit < 5000;
-
       if (
-        prevRev > incRev ||
-        (editedRecently && incRev <= prevRev) ||
-        (prevRev === incRev &&
-          (prevSt.storageUpdatedAt || 0) > (incSt.storageUpdatedAt || 0))
+        prevSt.hp < prevSt.maxHp &&
+        (this.activeBreakingTargetId === prevSt.id ||
+          now - (prevSt.breakUpdatedAt || 0) < 2200)
       ) {
-        incSt.storageSlots = prevSt.storageSlots
-          ? JSON.parse(JSON.stringify(prevSt.storageSlots))
-          : prevSt.storageSlots;
-        incSt.storageRevision = prevSt.storageRevision;
-        incSt.storageUpdatedAt = prevSt.storageUpdatedAt;
-        incSt.customName = prevSt.customName;
-        incSt.lootItems = prevSt.lootItems;
+        incSt.hp = Math.min(incSt.hp, prevSt.hp);
+        incSt.breakIdleTimer = prevSt.breakIdleTimer;
+        incSt.breakUpdatedAt = prevSt.breakUpdatedAt;
+      }
+
+      if (incSt.type === PlaceableType.CHEST) {
+        const prevRev = prevSt.storageRevision || 0;
+        const incRev = incSt.storageRevision || 0;
+        const lastLocalEdit = this.lastLocalChestEditAt.get(prevSt.id) || 0;
+        const editedRecently = now - lastLocalEdit < 6000;
+
+        if (
+          prevRev > incRev ||
+          (editedRecently && incRev <= prevRev) ||
+          (prevRev === incRev &&
+            (prevSt.storageUpdatedAt || 0) > (incSt.storageUpdatedAt || 0))
+        ) {
+          incSt.storageSlots = prevSt.storageSlots
+            ? JSON.parse(JSON.stringify(prevSt.storageSlots))
+            : prevSt.storageSlots;
+          incSt.storageRevision = prevSt.storageRevision;
+          incSt.storageUpdatedAt = prevSt.storageUpdatedAt;
+          incSt.customName = prevSt.customName;
+          incSt.lootItems = prevSt.lootItems;
+        }
+      } else if (
+        incSt.type === PlaceableType.CAMPFIRE ||
+        incSt.type === PlaceableType.FURNACE ||
+        incSt.type === PlaceableType.WEAVING_TABLE
+      ) {
+        const prevRev = prevSt.thermalRevision || 0;
+        const incRev = incSt.thermalRevision || 0;
+        const lastLocalEdit = this.lastLocalThermalEditAt.get(prevSt.id) || 0;
+        const editedRecently = now - lastLocalEdit < 6000;
+
+        if (
+          prevRev > incRev ||
+          (editedRecently && incRev <= prevRev) ||
+          (prevRev === incRev &&
+            (prevSt.thermalUpdatedAt || 0) > (incSt.thermalUpdatedAt || 0))
+        ) {
+          incSt.fuelItemId = prevSt.fuelItemId;
+          incSt.fuelCount = prevSt.fuelCount;
+          incSt.fuelBurnRemaining = prevSt.fuelBurnRemaining;
+          incSt.fuelBurnMax = prevSt.fuelBurnMax;
+          incSt.cookingRecipeId = prevSt.cookingRecipeId;
+          incSt.cookingMaterialOptionId = prevSt.cookingMaterialOptionId;
+          incSt.cookingInputCount = prevSt.cookingInputCount;
+          incSt.cookingProgress = prevSt.cookingProgress;
+          incSt.cookingDuration = prevSt.cookingDuration;
+          incSt.weavingTargetItemId = prevSt.weavingTargetItemId;
+          incSt.weavingDyeItemId = prevSt.weavingDyeItemId;
+          incSt.outputItemId = prevSt.outputItemId;
+          incSt.outputCount = prevSt.outputCount;
+          incSt.thermalRevision = prevSt.thermalRevision;
+          incSt.thermalUpdatedAt = prevSt.thermalUpdatedAt;
+        }
+      }
+    }
+
+    // 4. Preserve any structure placed locally within the last 10 seconds if missing from the incoming chunk packet
+    for (const prevSt of prevChunk.structures) {
+      if (!prevSt || !prevSt.placedAt || now - prevSt.placedAt >= 10000) {
+        continue;
+      }
+      if (this.recentlyRemovedWorldObjectIds.has(prevSt.id)) {
+        continue;
+      }
+      const prevLayer = WorldManager.getStructureLayerCategory(prevSt.type);
+      const alreadyPresent = incomingChunk.structures.some(
+        (s) =>
+          s.id === prevSt.id ||
+          (s.tileX === prevSt.tileX &&
+            s.tileY === prevSt.tileY &&
+            WorldManager.getStructureLayerCategory(s.type) === prevLayer)
+      );
+      if (!alreadyPresent) {
+        incomingChunk.structures.push(prevSt);
       }
     }
   }
@@ -14161,9 +14661,20 @@ export class GameEngine {
     return result;
   }
 
+  public isMarketStallOwnedByLocalPlayer(
+    stall: PlacedStructure | null | undefined
+  ): boolean {
+    if (!stall || stall.ownerType !== 'PLAYER') return false;
+    if (!stall.ownerId || stall.ownerId === 'player') {
+      // Legacy offline stalls without a specific ownerId belong only to the offline/Host player
+      return !this.multiplayer.isOnline || this.multiplayer.role === 'HOST';
+    }
+    return this.isIdMatchingLocalPlayer(stall.ownerId);
+  }
+
   public renameMarketStall(stallId: string, newName: string): void {
     const stall = this.getMarketStallById(stallId);
-    if (!stall) return;
+    if (!stall || !this.isMarketStallOwnedByLocalPlayer(stall)) return;
     const clean = newName.trim().slice(0, 28);
     stall.customName = clean || undefined;
     soundManager.playPickup();
@@ -14173,7 +14684,7 @@ export class GameEngine {
 
   public toggleMarketStallOpen(stallId: string): void {
     const stall = this.getMarketStallById(stallId);
-    if (!stall) return;
+    if (!stall || !this.isMarketStallOwnedByLocalPlayer(stall)) return;
     stall.stallOpen = stall.stallOpen === false ? true : false;
     if (!stall.stallOpen) {
       stall.pendingCustomerOffer = null;
@@ -14186,6 +14697,12 @@ export class GameEngine {
   public rotateMarketStall(stallId: string): void {
     const stall = this.getMarketStallById(stallId);
     if (!stall) return;
+    if (
+      stall.ownerType === 'PLAYER' &&
+      !this.isMarketStallOwnedByLocalPlayer(stall)
+    ) {
+      return;
+    }
     stall.orientation =
       stall.orientation === 'vertical' ? 'horizontal' : 'vertical';
     soundManager.playPickup();
@@ -14203,6 +14720,16 @@ export class GameEngine {
 
     if (ownerType === 'PLAYER') {
       if (
+        stall.ownerType === 'PLAYER' &&
+        !this.isMarketStallOwnedByLocalPlayer(stall)
+      ) {
+        soundManager.playHitWood();
+        return {
+          ok: false,
+          message: `Esta tenda já pertence a ${stall.ownerName || 'outro jogador'}!`,
+        };
+      }
+      if (
         stall.ownerType === 'VILLAGER' &&
         this.isVillagerStallOwnerAlive(stall)
       ) {
@@ -14214,9 +14741,13 @@ export class GameEngine {
         };
       }
 
+      const localName =
+        this.multiplayer.localPlayerName ||
+        this.settings.playerName ||
+        'Aventureiro';
       stall.ownerType = 'PLAYER';
-      stall.ownerId = 'player';
-      stall.ownerName = 'Você (Mercador)';
+      stall.ownerId = this.getLocalOwnerId();
+      stall.ownerName = localName;
       stall.villageId = undefined;
       stall.ownerSleeping = false;
       stall.stallSlots = new Array(MARKET_STALL_SIZE).fill(null);
@@ -14230,8 +14761,16 @@ export class GameEngine {
       };
     }
 
-    // Rule: To transfer ownership of a Player's Market Stall to a Villager, the stall MUST be completely empty!
+    // Rule: To transfer ownership of a Player's Market Stall to a Villager, only that specific owner can do it and the stall MUST be completely empty!
     if (stall.ownerType === 'PLAYER') {
+      if (!this.isMarketStallOwnedByLocalPlayer(stall)) {
+        soundManager.playHitWood();
+        return {
+          ok: false,
+          message:
+            'Apenas o jogador dono desta tenda pode transferir a posse dela!',
+        };
+      }
       const slots = this.ensureMarketStallInitialized(stall);
       const hasItemsOnCounter = slots.some((s) => s !== null && s.count > 0);
       const hasUnclaimedGold = (stall.stallUnclaimedGold || 0) > 0;
@@ -14275,28 +14814,43 @@ export class GameEngine {
   }
 
   /**
-   * Allows the player to purchase 1 unit of an item displayed on a Villager-owned Market Stall (`stall.ownerType === 'VILLAGER'`).
-   * Since villager stalls always keep merchandise on display (except when sleeping), the stock replenishes automatically.
+   * Allows the player to purchase 1 unit of an item displayed on a Villager-owned Market Stall (`stall.ownerType === 'VILLAGER'`)
+   * OR on another player's Market Stall in multiplayer (`stall.ownerType === 'PLAYER' && !this.isMarketStallOwnedByLocalPlayer(stall)`).
    */
   public buyFromVillagerStall(
     stallId: string,
     stallSlotIdx: number
   ): { ok: boolean; message: string } {
     const stall = this.getMarketStallById(stallId);
-    if (!stall || stall.ownerType !== 'VILLAGER') {
-      return { ok: false, message: 'Tenda de aldeão não encontrada.' };
+    if (!stall) {
+      return { ok: false, message: 'Tenda não encontrada.' };
     }
-    if (this.isVillagerStallOwnerSleeping(stall)) {
+    const isOtherPlayerStall =
+      stall.ownerType === 'PLAYER' && !this.isMarketStallOwnedByLocalPlayer(stall);
+    if (stall.ownerType !== 'VILLAGER' && !isOtherPlayerStall) {
+      return { ok: false, message: 'Tenda não disponível para compra.' };
+    }
+    if (
+      stall.ownerType === 'VILLAGER' &&
+      this.isVillagerStallOwnerSleeping(stall)
+    ) {
       soundManager.playHitWood();
       return {
         ok: false,
         message: 'O aldeão proprietário está dormindo no momento!',
       };
     }
+    if (isOtherPlayerStall && stall.stallOpen === false) {
+      soundManager.playHitWood();
+      return {
+        ok: false,
+        message: 'Esta tenda está fechada pelo proprietário no momento!',
+      };
+    }
 
     const slots = this.ensureMarketStallInitialized(stall);
     const slot = slots[stallSlotIdx];
-    if (!slot || slot.count <= 0) {
+    if (!slot || slot.count <= 0 || (isOtherPlayerStall && slot.enabled === false)) {
       return { ok: false, message: 'Item indisponível neste slot.' };
     }
 
@@ -14313,9 +14867,19 @@ export class GameEngine {
     this.removeItemFromInventory('gold_coin', price);
     this.addItemOrDropOnGround(slot.itemId, 1);
 
-    const ownerNpc = this.getVillagerStallOwnerEntity(stall);
-    if (ownerNpc) {
-      ownerNpc.affinity = Math.min(100, (ownerNpc.affinity ?? 55) + 4);
+    if (isOtherPlayerStall) {
+      slot.count -= 1;
+      if (slot.count <= 0) {
+        slots[stallSlotIdx] = null;
+      }
+      stall.stallSalesCount = (stall.stallSalesCount || 0) + 1;
+      stall.stallTotalGoldEarned = (stall.stallTotalGoldEarned || 0) + price;
+      stall.stallUnclaimedGold = (stall.stallUnclaimedGold || 0) + price;
+    } else {
+      const ownerNpc = this.getVillagerStallOwnerEntity(stall);
+      if (ownerNpc) {
+        ownerNpc.affinity = Math.min(100, (ownerNpc.affinity ?? 55) + 4);
+      }
     }
 
     const itemName = ITEMS[slot.itemId]?.name || slot.itemId;
@@ -14343,7 +14907,7 @@ export class GameEngine {
     targetStallSlotIdx?: number
   ): boolean {
     const stall = this.getMarketStallById(stallId);
-    if (!stall || stall.ownerType !== 'PLAYER') return false;
+    if (!stall || !this.isMarketStallOwnedByLocalPlayer(stall)) return false;
     const pSlot = this.player.inventory[playerSlotIdx];
     if (!pSlot || pSlot.count <= 0) return false;
     if (pSlot.itemId === 'gold_coin') {
@@ -14448,7 +15012,7 @@ export class GameEngine {
     count?: number
   ): boolean {
     const stall = this.getMarketStallById(stallId);
-    if (!stall) return false;
+    if (!stall || !this.isMarketStallOwnedByLocalPlayer(stall)) return false;
     const slots = this.ensureMarketStallInitialized(stall);
     const sSlot = slots[stallSlotIdx];
     if (!sSlot || sSlot.count <= 0) return false;
@@ -14461,7 +15025,7 @@ export class GameEngine {
     if (this.multiplayer.isOnline && this.multiplayer.role === 'GUEST') {
       const withdrawKey = `stall:${stallId}:${stallSlotIdx}`;
       if (this.pendingContainerWithdraws.has(withdrawKey)) return false;
-      this.pendingContainerWithdraws.add(withdrawKey);
+      this.pendingContainerWithdraws.set(withdrawKey, Date.now() + 2000);
       this.multiplayer.sendWorldInteractRequest({
         action: 'container_withdraw',
         containerKind: 'stall',
@@ -14505,7 +15069,7 @@ export class GameEngine {
     newUnitPrice: number
   ): void {
     const stall = this.getMarketStallById(stallId);
-    if (!stall) return;
+    if (!stall || !this.isMarketStallOwnedByLocalPlayer(stall)) return;
     const slots = this.ensureMarketStallInitialized(stall);
     const sl = slots[stallSlotIdx];
     if (!sl) return;
@@ -14528,7 +15092,7 @@ export class GameEngine {
 
   public setAllStallPricesToPreset(stallId: string, multiplier: number): void {
     const stall = this.getMarketStallById(stallId);
-    if (!stall) return;
+    if (!stall || !this.isMarketStallOwnedByLocalPlayer(stall)) return;
     const slots = this.ensureMarketStallInitialized(stall);
     for (const sl of slots) {
       if (!sl) continue;
@@ -14542,7 +15106,7 @@ export class GameEngine {
 
   public toggleStallSlotEnabled(stallId: string, stallSlotIdx: number): void {
     const stall = this.getMarketStallById(stallId);
-    if (!stall) return;
+    if (!stall || !this.isMarketStallOwnedByLocalPlayer(stall)) return;
     const slots = this.ensureMarketStallInitialized(stall);
     const sl = slots[stallSlotIdx];
     if (!sl) return;
@@ -14564,7 +15128,11 @@ export class GameEngine {
     message: string;
   } {
     const stall = this.getMarketStallById(stallId);
-    if (!stall || !stall.pendingCustomerOffer) {
+    if (
+      !stall ||
+      !this.isMarketStallOwnedByLocalPlayer(stall) ||
+      !stall.pendingCustomerOffer
+    ) {
       return { ok: false, message: 'Nenhuma proposta ativa no momento.' };
     }
 
@@ -14638,7 +15206,7 @@ export class GameEngine {
     message: string;
   } {
     const stall = this.getMarketStallById(stallId);
-    if (!stall || stall.ownerType !== 'PLAYER') {
+    if (!stall || !this.isMarketStallOwnedByLocalPlayer(stall)) {
       return { ok: false, amount: 0, message: 'Apenas o dono pode resgatar.' };
     }
     const unclaimed = Math.max(0, Math.floor(stall.stallUnclaimedGold || 0));
@@ -14676,7 +15244,11 @@ export class GameEngine {
     message: string;
   } {
     const stall = this.getMarketStallById(stallId);
-    if (!stall || !stall.pendingCustomerOffer) {
+    if (
+      !stall ||
+      !this.isMarketStallOwnedByLocalPlayer(stall) ||
+      !stall.pendingCustomerOffer
+    ) {
       return { ok: false, message: 'Nenhuma proposta ativa.' };
     }
     const offer = stall.pendingCustomerOffer;
@@ -14701,6 +15273,14 @@ export class GameEngine {
   }
 
   public pickupMarketStallStructure(stallId: string): boolean {
+    const stall = this.getMarketStallById(stallId);
+    if (
+      stall &&
+      stall.ownerType === 'PLAYER' &&
+      !this.isMarketStallOwnedByLocalPlayer(stall)
+    ) {
+      return false;
+    }
     for (const chunk of Object.values(this.world.chunks)) {
       if (!chunk || !Array.isArray(chunk.structures)) continue;
       const idx = chunk.structures.findIndex(
@@ -15485,7 +16065,7 @@ export class GameEngine {
     st.fuelItemId = fuelItemId;
     st.fuelCount = currentCount + toAdd;
     soundManager.playPickup();
-    this.syncChunkAtTile(st.tileX, st.tileY);
+    this.commitThermalStationMutation(st);
     this.emitUiSnapshot();
     return true;
   }
@@ -15499,7 +16079,7 @@ export class GameEngine {
     if (this.multiplayer.isOnline && this.multiplayer.role === 'GUEST') {
       const withdrawKey = `thermal_fuel:${st.id}`;
       if (this.pendingContainerWithdraws.has(withdrawKey)) return false;
-      this.pendingContainerWithdraws.add(withdrawKey);
+      this.pendingContainerWithdraws.set(withdrawKey, Date.now() + 2000);
       this.multiplayer.sendWorldInteractRequest({
         action: 'container_withdraw',
         containerKind: 'thermal_fuel',
@@ -15518,7 +16098,7 @@ export class GameEngine {
       this.spawnDrop(itemId, count, this.player.x, this.player.y);
     }
     soundManager.playPickup();
-    this.syncChunkAtTile(st.tileX, st.tileY);
+    this.commitThermalStationMutation(st);
     this.emitUiSnapshot();
     return true;
   }
@@ -15538,16 +16118,25 @@ export class GameEngine {
 
     const st = this.getActiveThermalStation(stationType);
 
-    // If the output slot holds a DIFFERENT finished item, auto-collect it to the player first
+    // If the output slot holds a DIFFERENT finished item, auto-collect it synchronously so it isn't overwritten by the new queue mutation!
     if (
       st.outputItemId &&
       st.outputItemId !== recipe.resultItemId &&
       (st.outputCount || 0) > 0
     ) {
-      this.collectThermalStationOutput(stationType);
+      const prevOutId = st.outputItemId;
+      const prevOutCount = st.outputCount || 0;
+      st.outputItemId = null;
+      st.outputCount = 0;
+      this.addItemOrDropOnGround(
+        prevOutId,
+        prevOutCount,
+        this.player.x,
+        this.player.y + 10
+      );
     }
 
-    // If a different recipe or material option was previously queued in the input slot, refund its remaining batches first
+    // If a different recipe or material option was previously queued in the input slot, refund its remaining batches synchronously!
     if (
       st.cookingRecipeId &&
       (st.cookingRecipeId !== recipe.id ||
@@ -15556,7 +16145,28 @@ export class GameEngine {
           st.cookingMaterialOptionId !== materialOptionId)) &&
       (st.cookingInputCount || 0) > 0
     ) {
-      this.cancelThermalStationQueue(stationType);
+      const prevRecipe = RECIPES.find((r) => r.id === st.cookingRecipeId);
+      const prevBatches = st.cookingInputCount || 0;
+      const prevMatOptId = st.cookingMaterialOptionId || undefined;
+      st.cookingRecipeId = null;
+      st.cookingMaterialOptionId = null;
+      st.cookingInputCount = 0;
+      st.cookingProgress = 0;
+      if (prevRecipe) {
+        const prevIngredients = this.getRecipeActiveIngredients(
+          prevRecipe,
+          prevMatOptId
+        );
+        for (const ing of prevIngredients) {
+          const refundCount = ing.count * prevBatches;
+          this.addItemOrDropOnGround(
+            ing.itemId,
+            refundCount,
+            this.player.x,
+            this.player.y
+          );
+        }
+      }
     }
 
     const activeIngredients = this.getRecipeActiveIngredients(
@@ -15582,14 +16192,16 @@ export class GameEngine {
     ) {
       for (const fuelId of FUEL_ITEM_ORDER) {
         if (this.getItemCount(fuelId) > 0) {
-          this.addFuelToThermalStation(stationType, fuelId, 1);
+          this.removeItemFromInventory(fuelId, 1);
+          st.fuelItemId = fuelId;
+          st.fuelCount = 1;
           break;
         }
       }
     }
 
     soundManager.playPickup();
-    this.syncChunkAtTile(st.tileX, st.tileY);
+    this.commitThermalStationMutation(st);
     this.emitUiSnapshot();
     return true;
   }
@@ -15609,7 +16221,7 @@ export class GameEngine {
     if (this.multiplayer.isOnline && this.multiplayer.role === 'GUEST') {
       const withdrawKey = `thermal_queue:${st.id}`;
       if (this.pendingContainerWithdraws.has(withdrawKey)) return false;
-      this.pendingContainerWithdraws.add(withdrawKey);
+      this.pendingContainerWithdraws.set(withdrawKey, Date.now() + 2000);
       this.multiplayer.sendWorldInteractRequest({
         action: 'container_withdraw',
         containerKind: 'thermal_queue',
@@ -15641,7 +16253,7 @@ export class GameEngine {
     }
 
     soundManager.playPickup();
-    this.syncChunkAtTile(st.tileX, st.tileY);
+    this.commitThermalStationMutation(st);
     this.emitUiSnapshot();
     return true;
   }
@@ -15657,7 +16269,7 @@ export class GameEngine {
     if (this.multiplayer.isOnline && this.multiplayer.role === 'GUEST') {
       const withdrawKey = `thermal_output:${st.id}`;
       if (this.pendingContainerWithdraws.has(withdrawKey)) return false;
-      this.pendingContainerWithdraws.add(withdrawKey);
+      this.pendingContainerWithdraws.set(withdrawKey, Date.now() + 2000);
       this.multiplayer.sendWorldInteractRequest({
         action: 'container_withdraw',
         containerKind: 'thermal_output',
@@ -15687,7 +16299,7 @@ export class GameEngine {
       this.player.y - 20,
       '#4ade80'
     );
-    this.syncChunkAtTile(st.tileX, st.tileY);
+    this.commitThermalStationMutation(st);
     this.emitUiSnapshot();
     return true;
   }
@@ -15890,7 +16502,7 @@ export class GameEngine {
     st.cookingProgress = 0;
 
     soundManager.playCraft();
-    this.syncChunkAtTile(st.tileX, st.tileY);
+    this.commitThermalStationMutation(st);
     this.emitUiSnapshot();
     const outName = ITEMS[targetItemId]?.name || baseItem?.name || targetItemId;
     return {
@@ -15929,7 +16541,7 @@ export class GameEngine {
     }
 
     soundManager.playPickup();
-    this.syncChunkAtTile(st.tileX, st.tileY);
+    this.commitThermalStationMutation(st);
     this.emitUiSnapshot();
     return true;
   }
@@ -15960,7 +16572,7 @@ export class GameEngine {
       this.player.y - 20,
       '#4ade80'
     );
-    this.syncChunkAtTile(st.tileX, st.tileY);
+    this.commitThermalStationMutation(st);
     this.emitUiSnapshot();
     return true;
   }
@@ -16507,15 +17119,22 @@ export class GameEngine {
     x: number,
     y: number,
     pickupDelay = 0.25,
-    flowerColor?: ClothingColorId
+    flowerColor?: ClothingColorId,
+    deterministicId?: string
   ): void {
     if (itemId === 'tilled_soil' || itemId === 'dirt_path') return;
     const def = ITEMS[itemId];
     const resolvedFlowerColor: ClothingColorId | undefined = def?.isFlower
       ? flowerColor || def.allowedFlowerColors?.[0] || 'branco'
       : undefined;
+    const dropId =
+      deterministicId ||
+      `drop_${Date.now()}_${Math.floor(Math.random() * 100000)}`;
+    if (this.claimedDropIds.has(dropId) || this.droppedItems.some((d) => d.id === dropId)) {
+      return;
+    }
     const drop: DroppedItem = {
-      id: `drop_${Date.now()}_${Math.floor(Math.random() * 100000)}`,
+      id: dropId,
       itemId,
       count,
       flowerColor: resolvedFlowerColor,
@@ -18780,13 +19399,41 @@ export class GameEngine {
       case 'pickup_drop_claim': {
         const dropId = String(request.dropId || '');
         if (!dropId) return;
-        const idx = this.droppedItems.findIndex((d) => d.id === dropId);
-        if (idx === -1 || this.claimedDropIds.has(dropId)) {
+        if (this.claimedDropIds.has(dropId)) {
           this.multiplayer.sendWorldInteractResolved({
             action: 'pickup_drop_resolved',
             dropId,
             winnerPeerId: null,
             targetPeerId: peerId,
+          });
+          return;
+        }
+        const idx = this.droppedItems.findIndex((d) => d.id === dropId);
+        // If `idx === -1`, the Guest may have just broken a block at point-blank range and their `pickup_drop_claim`
+        // arrived a few ms before `spawn_drop`. Honor the claim atomically using the request's item metadata!
+        if (idx === -1) {
+          const reqItemId = String(request.itemId || '');
+          const reqCount = Math.max(1, Math.min(99, Number(request.count) || 1));
+          if (!reqItemId || !ITEMS[reqItemId]) {
+            this.multiplayer.sendWorldInteractResolved({
+              action: 'pickup_drop_resolved',
+              dropId,
+              winnerPeerId: null,
+              targetPeerId: peerId,
+            });
+            return;
+          }
+          this.claimedDropIds.add(dropId);
+          this.multiplayer.sendPickupDrop(dropId);
+          this.multiplayer.sendWorldInteractResolved({
+            action: 'pickup_drop_resolved',
+            dropId,
+            winnerPeerId: peerId,
+            itemId: reqItemId,
+            count: reqCount,
+            flowerColor: request.flowerColor,
+            x: request.x,
+            y: request.y,
           });
           return;
         }
@@ -18919,7 +19566,7 @@ export class GameEngine {
           if (slot.count <= 0) {
             slots[slotIndex] = null;
           }
-          this.syncChunkAtTile(chest.tileX, chest.tileY);
+          this.commitChestStorageMutation(chest);
           this.multiplayer.sendWorldInteractResolved({
             action: 'container_withdraw_resolved',
             containerKind,
@@ -19018,7 +19665,7 @@ export class GameEngine {
             const count = foundSt.fuelCount || 0;
             foundSt.fuelItemId = null;
             foundSt.fuelCount = 0;
-            this.syncChunkAtTile(foundSt.tileX, foundSt.tileY);
+            this.commitThermalStationMutation(foundSt);
             this.multiplayer.sendWorldInteractResolved({
               action: 'container_withdraw_resolved',
               containerKind,
@@ -19028,6 +19675,35 @@ export class GameEngine {
             });
             this.emitUiSnapshot();
           } else if (containerKind === 'thermal_output') {
+            // If Guest's local timer finished slightly before Host's timer (network latency skew),
+            // complete the nearly-finished batch on Host so the Guest's output withdraw is never rejected!
+            if (
+              (!foundSt.outputItemId || (foundSt.outputCount || 0) <= 0) &&
+              foundSt.cookingRecipeId &&
+              (foundSt.cookingInputCount || 0) > 0
+            ) {
+              const activeRec = RECIPES.find(
+                (r) => r.id === foundSt!.cookingRecipeId
+              );
+              if (activeRec) {
+                const targetOutId =
+                  foundSt.weavingTargetItemId || activeRec.resultItemId;
+                foundSt.cookingInputCount = Math.max(
+                  0,
+                  (foundSt.cookingInputCount || 1) - 1
+                );
+                foundSt.cookingProgress = 0;
+                if (foundSt.cookingInputCount <= 0) {
+                  foundSt.cookingRecipeId = null;
+                  foundSt.cookingMaterialOptionId = null;
+                  foundSt.weavingTargetItemId = null;
+                  foundSt.weavingDyeItemId = null;
+                }
+                foundSt.outputItemId = targetOutId;
+                foundSt.outputCount =
+                  (foundSt.outputCount || 0) + (activeRec.resultCount || 1);
+              }
+            }
             if (!foundSt.outputItemId || (foundSt.outputCount || 0) <= 0) {
               this.multiplayer.sendWorldInteractResolved({
                 action: 'container_withdraw_resolved',
@@ -19042,7 +19718,7 @@ export class GameEngine {
             const count = foundSt.outputCount || 0;
             foundSt.outputItemId = null;
             foundSt.outputCount = 0;
-            this.syncChunkAtTile(foundSt.tileX, foundSt.tileY);
+            this.commitThermalStationMutation(foundSt);
             this.multiplayer.sendWorldInteractResolved({
               action: 'container_withdraw_resolved',
               containerKind,
@@ -19069,19 +19745,25 @@ export class GameEngine {
               (r) => r.id === foundSt!.cookingRecipeId
             );
             const batches = foundSt.cookingInputCount || 0;
+            const savedMatOptId = foundSt.cookingMaterialOptionId || undefined;
             foundSt.cookingRecipeId = null;
+            foundSt.cookingMaterialOptionId = null;
             foundSt.cookingInputCount = 0;
             foundSt.cookingProgress = 0;
             const refundedItems: { itemId: string; count: number }[] = [];
             if (recipe) {
-              for (const ing of recipe.ingredients) {
+              const activeIngredients = this.getRecipeActiveIngredients(
+                recipe,
+                savedMatOptId
+              );
+              for (const ing of activeIngredients) {
                 refundedItems.push({
                   itemId: ing.itemId,
                   count: ing.count * batches,
                 });
               }
             }
-            this.syncChunkAtTile(foundSt.tileX, foundSt.tileY);
+            this.commitThermalStationMutation(foundSt);
             this.multiplayer.sendWorldInteractResolved({
               action: 'container_withdraw_resolved',
               containerKind,
@@ -19167,6 +19849,75 @@ export class GameEngine {
             storageUpdatedAt: chest.storageUpdatedAt,
             customName: chest.customName,
             storageSlots: chest.storageSlots,
+          });
+          void this.saveGame(true);
+          this.emitUiSnapshot();
+        }
+        break;
+      }
+
+      case 'thermal_station_sync': {
+        const structureId = String(request.structureId || '');
+        let st: PlacedStructure | null = null;
+        for (const ch of Object.values(this.world.chunks)) {
+          if (!ch || !Array.isArray(ch.structures)) continue;
+          const found = ch.structures.find(
+            (s) =>
+              s.id === structureId ||
+              (typeof request.tileX === 'number' &&
+                typeof request.tileY === 'number' &&
+                s.tileX === request.tileX &&
+                s.tileY === request.tileY &&
+                (s.type === PlaceableType.CAMPFIRE ||
+                  s.type === PlaceableType.FURNACE ||
+                  s.type === PlaceableType.WEAVING_TABLE))
+          );
+          if (found) {
+            st = found;
+            break;
+          }
+        }
+        if (st) {
+          const nextRev = Math.max(
+            (st.thermalRevision || 0) + 1,
+            Number(request.thermalRevision || 0)
+          );
+          st.fuelItemId = request.fuelItemId ?? null;
+          st.fuelCount = Number(request.fuelCount ?? 0);
+          st.fuelBurnRemaining = Number(request.fuelBurnRemaining ?? 0);
+          st.fuelBurnMax = Number(request.fuelBurnMax ?? 0);
+          st.cookingRecipeId = request.cookingRecipeId ?? null;
+          st.cookingMaterialOptionId = request.cookingMaterialOptionId ?? null;
+          st.cookingInputCount = Number(request.cookingInputCount ?? 0);
+          st.cookingProgress = Number(request.cookingProgress ?? 0);
+          st.cookingDuration = Number(request.cookingDuration ?? 6);
+          st.weavingTargetItemId = request.weavingTargetItemId ?? null;
+          st.weavingDyeItemId = request.weavingDyeItemId ?? null;
+          st.outputItemId = request.outputItemId ?? null;
+          st.outputCount = Number(request.outputCount ?? 0);
+          st.thermalRevision = nextRev;
+          st.thermalUpdatedAt = Date.now();
+          this.markLocalChunkModified(st.tileX, st.tileY);
+          this.multiplayer.sendWorldInteractResolved({
+            action: 'thermal_station_sync',
+            structureId: st.id,
+            tileX: st.tileX,
+            tileY: st.tileY,
+            thermalRevision: st.thermalRevision,
+            thermalUpdatedAt: st.thermalUpdatedAt,
+            fuelItemId: st.fuelItemId,
+            fuelCount: st.fuelCount,
+            fuelBurnRemaining: st.fuelBurnRemaining,
+            fuelBurnMax: st.fuelBurnMax,
+            cookingRecipeId: st.cookingRecipeId,
+            cookingMaterialOptionId: st.cookingMaterialOptionId,
+            cookingInputCount: st.cookingInputCount,
+            cookingProgress: st.cookingProgress,
+            cookingDuration: st.cookingDuration,
+            weavingTargetItemId: st.weavingTargetItemId,
+            weavingDyeItemId: st.weavingDyeItemId,
+            outputItemId: st.outputItemId,
+            outputCount: st.outputCount,
           });
           void this.saveGame(true);
           this.emitUiSnapshot();
@@ -19452,6 +20203,57 @@ export class GameEngine {
         break;
       }
 
+      case 'thermal_station_sync': {
+        const structureId = String(result.structureId || '');
+        let st: PlacedStructure | null = null;
+        for (const ch of Object.values(this.world.chunks)) {
+          if (!ch || !Array.isArray(ch.structures)) continue;
+          const found = ch.structures.find(
+            (s) =>
+              s.id === structureId ||
+              (typeof result.tileX === 'number' &&
+                typeof result.tileY === 'number' &&
+                s.tileX === result.tileX &&
+                s.tileY === result.tileY &&
+                (s.type === PlaceableType.CAMPFIRE ||
+                  s.type === PlaceableType.FURNACE ||
+                  s.type === PlaceableType.WEAVING_TABLE))
+          );
+          if (found) {
+            st = found;
+            break;
+          }
+        }
+        if (st) {
+          const incomingRev = Number(result.thermalRevision || 0);
+          const currentRev = st.thermalRevision || 0;
+          const lastLocalEdit = this.lastLocalThermalEditAt.get(st.id) || 0;
+          if (
+            incomingRev >= currentRev ||
+            Date.now() - lastLocalEdit > 2500
+          ) {
+            st.fuelItemId = result.fuelItemId ?? null;
+            st.fuelCount = Number(result.fuelCount ?? 0);
+            st.fuelBurnRemaining = Number(result.fuelBurnRemaining ?? 0);
+            st.fuelBurnMax = Number(result.fuelBurnMax ?? 0);
+            st.cookingRecipeId = result.cookingRecipeId ?? null;
+            st.cookingMaterialOptionId = result.cookingMaterialOptionId ?? null;
+            st.cookingInputCount = Number(result.cookingInputCount ?? 0);
+            st.cookingProgress = Number(result.cookingProgress ?? 0);
+            st.cookingDuration = Number(result.cookingDuration ?? 6);
+            st.weavingTargetItemId = result.weavingTargetItemId ?? null;
+            st.weavingDyeItemId = result.weavingDyeItemId ?? null;
+            st.outputItemId = result.outputItemId ?? null;
+            st.outputCount = Number(result.outputCount ?? 0);
+            st.thermalRevision = Math.max(currentRev, incomingRev);
+            st.thermalUpdatedAt =
+              Number(result.thermalUpdatedAt) || Date.now();
+            this.emitUiSnapshot();
+          }
+        }
+        break;
+      }
+
       case 'sleep_completed': {
         if (typeof result.timeOfDay === 'number') {
           this.metadata.timeOfDay = result.timeOfDay;
@@ -19547,7 +20349,12 @@ export class GameEngine {
         }
       },
       onRequestHostSnapshot: () => {
-        return this.buildSaveData();
+        return SaveManager.compactSaveDataForStorage(
+          this.buildSaveData(),
+          false,
+          18,
+          false
+        );
       },
       onWorldSnapshotReceived: (snapshot) => {
         if (!snapshot) return;
@@ -19556,16 +20363,10 @@ export class GameEngine {
           this.metadata.dayCount = snapshot.metadata.dayCount;
         }
         if (snapshot.chunks) {
-          const now = Date.now();
           for (const [key, ch] of Object.entries(snapshot.chunks)) {
             if (ch) {
               const prevChunk = this.world.chunks[key];
               const prevExplored = prevChunk?.explored;
-              const lastLocalEdit = this.lastLocalChunkEditAt.get(key) || 0;
-              // Do not overwrite a chunk that the local player just modified within the last 3.5 seconds
-              if (prevChunk && now - lastLocalEdit < 3500) {
-                continue;
-              }
               const hydrated = this.world.hydrateChunk(ch);
               this.preserveNewerChestStorageInChunk(prevChunk, hydrated);
               // Preserve local player's Fog-of-War (`explored`) if they have already explored tiles in this chunk
@@ -19800,6 +20601,22 @@ export class GameEngine {
           true
         );
       },
+      onPlayerHitReceived: (
+        targetPeerId,
+        damage,
+        sourceX,
+        sourceY,
+        knockbackMult
+      ) => {
+        if (!this.isIdMatchingLocalPlayer(targetPeerId)) return;
+        this.damagePlayer(
+          damage,
+          sourceX,
+          sourceY,
+          undefined,
+          knockbackMult
+        );
+      },
       onTimeSyncReceived: (timeOfDay, dayCount) => {
         if (typeof timeOfDay === 'number') {
           this.metadata.timeOfDay = timeOfDay;
@@ -19836,7 +20653,12 @@ export class GameEngine {
     if (this.multiplayer.activationState === 'ACTIVATING') return;
     this.emitUiSnapshot();
     const ok = await this.multiplayer.hostWorld(
-      this.buildSaveData(),
+      SaveManager.compactSaveDataForStorage(
+        this.buildSaveData(),
+        false,
+        18,
+        false
+      ),
       this.player,
       preferredCode
     );
@@ -19907,6 +20729,7 @@ export class GameEngine {
   public syncChunkAtTile(tx: number, ty: number): void {
     const { cx, cy } = this.world.tileToChunk(tx, ty);
     const key = WorldManager.chunkKey(cx, cy);
+    this.lastLocalChunkEditAt.set(key, Date.now());
     const chunk = this.world.chunks[key];
     if (chunk) {
       this.world.markChunkDirty(chunk);

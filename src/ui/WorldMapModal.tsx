@@ -640,7 +640,12 @@ export const WorldMapModal: React.FC<WorldMapModalProps> = ({
           const sub = world.getTileSubZone(tx, ty, biome);
 
           let tileColor = '#174e75';
-          if (biome === BiomeType.TAIGA_FOREST) {
+          if (
+            biome !== BiomeType.OCEAN &&
+            zone === EcologicalZone.COASTAL_TROPICS
+          ) {
+            tileColor = '#e8cc7d';
+          } else if (biome === BiomeType.TAIGA_FOREST) {
             tileColor =
               sub === 0 ? '#19423a' : sub === 2 ? '#275c51' : '#204e45';
           } else if (biome === BiomeType.TEMPERATE_FOREST) {

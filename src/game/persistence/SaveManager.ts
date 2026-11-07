@@ -927,7 +927,59 @@ export class SaveManager {
    *   so previously explored natural areas are NEVER lost or altered by future world updates.
    * - Skips only untouched, completely unexplored chunks so newly explored areas generate with the latest world generation version.
    */
-  private static compactSaveDataForStorage(
+  public static compactChunkForNetwork(chunk: ChunkData): ChunkData {
+    const compactTiles =
+      chunk.compactTiles && chunk.compactTiles.length === 256
+        ? chunk.compactTiles
+        : WorldManager.encodeCompactTiles(chunk.tiles);
+    const compactZones =
+      chunk.compactZones && chunk.compactZones.length === 256
+        ? chunk.compactZones
+        : WorldManager.encodeCompactZones(chunk.ecologicalZones);
+    const compactVariants =
+      chunk.compactVariants && chunk.compactVariants.length === 256
+        ? chunk.compactVariants
+        : WorldManager.encodeCompactVariants(chunk.tileVariants);
+    const compactNodesStr =
+      Array.isArray(chunk.nodes) && chunk.nodes.length > 0
+        ? WorldManager.encodeCompactNodes(chunk.nodes, chunk.cx, chunk.cy)
+        : typeof chunk.compactNodes === 'string'
+        ? chunk.compactNodes
+        : '';
+
+    return {
+      cx: chunk.cx,
+      cy: chunk.cy,
+      ...(chunk.landmarkName ? { landmarkName: chunk.landmarkName } : {}),
+      ...(chunk.villageId ? { villageId: chunk.villageId } : {}),
+      ...(chunk.mobsPopulated ? { mobsPopulated: true } : {}),
+      ...(chunk.villagePopulatedV2 ? { villagePopulatedV2: true } : {}),
+      ...(chunk.islandMobsPopulated ? { islandMobsPopulated: true } : {}),
+      genVersion:
+        typeof chunk.genVersion === 'number'
+          ? chunk.genVersion
+          : CURRENT_WORLD_GEN_VERSION,
+      generatedGameVersion: chunk.generatedGameVersion || GAME_VERSION,
+      preserved: true,
+      dirtyRev: chunk.dirtyRev || 1,
+      ...(compactTiles ? { compactTiles } : {}),
+      ...(compactZones ? { compactZones } : {}),
+      ...(compactVariants ? { compactVariants } : {}),
+      ...(typeof compactNodesStr === 'string'
+        ? { compactNodes: compactNodesStr }
+        : {}),
+      tiles: [] as unknown as BiomeType[],
+      tileVariants: [],
+      explored: [],
+      nodes: [],
+      structures: Array.isArray(chunk.structures) ? chunk.structures : [],
+      ...(Array.isArray(chunk.puddles) && chunk.puddles.length > 0
+        ? { puddles: chunk.puddles }
+        : {}),
+    };
+  }
+
+  public static compactSaveDataForStorage(
     saveData: WorldSaveData,
     strictNodePrune = false,
     maxFullNodeRadius = 18,
@@ -974,12 +1026,17 @@ export class SaveManager {
           chunk.structures.some(
             (s) =>
               s.ownerType === 'PLAYER' ||
+              Boolean(s.placedAt) ||
               Boolean(s.cropType) ||
               s.type === PlaceableType.TILLED_SOIL ||
               s.type === PlaceableType.CHEST ||
+              s.type === PlaceableType.CAMPFIRE ||
+              s.type === PlaceableType.FURNACE ||
+              s.type === PlaceableType.WEAVING_TABLE ||
               (Array.isArray(s.storageSlots) && s.storageSlots.some(Boolean)) ||
               (Array.isArray(s.stallSlots) && s.stallSlots.some(Boolean)) ||
-              (typeof s.storageRevision === 'number' && s.storageRevision > 0)
+              (typeof s.storageRevision === 'number' && s.storageRevision > 0) ||
+              (typeof s.thermalRevision === 'number' && s.thermalRevision > 0)
           );
 
         if (!hasExplored && !hasPlayerOrCustomStruct) {

@@ -153,7 +153,7 @@ export default function App() {
     setStatusBannerVisible(true);
     const timer = window.setTimeout(() => {
       setStatusBannerVisible(false);
-    }, 5000);
+    }, 2000);
     return () => window.clearTimeout(timer);
   }, [isOverlayOpen, snapshot?.isPaused]);
 
@@ -868,9 +868,9 @@ export default function App() {
             className="block w-full h-full pixelated cursor-crosshair touch-none"
           />
 
-          {/* Real Pause / Active Multiplayer Indicator Pill (auto-disappears after 5s so it never obstructs UI) */}
+          {/* Real Pause / Active Multiplayer Indicator Pill (auto-disappears after 2s with 33% opacity so it never obstructs UI) */}
           {snapshot && isOverlayOpen && statusBannerVisible && (
-            <div className="fixed top-2 left-1/2 -translate-x-1/2 z-[55] pointer-events-none">
+            <div className="fixed top-2 left-1/2 -translate-x-1/2 z-[55] pointer-events-none opacity-[0.33]">
               <div
                 className={`medieval-panel px-3 py-1 flex items-center gap-2 text-[10px] font-pixel font-bold shadow-lg ${
                   snapshot.isPaused

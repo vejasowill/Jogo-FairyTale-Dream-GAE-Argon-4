@@ -518,9 +518,15 @@ export class GameRenderer {
             const idx = ly * CHUNK_SIZE + lx;
             const biome = chunk.tiles[idx];
             const variant = chunk.tileVariants[idx];
-            const subZone = world.getTileSubZone(tx, ty, biome);
+            const zone = world.getEcologicalZoneAtTile(tx, ty);
+            const isCoastalBeach =
+              biome !== BiomeType.OCEAN &&
+              zone === EcologicalZone.COASTAL_TROPICS;
+            const subZone = isCoastalBeach
+              ? 1
+              : world.getTileSubZone(tx, ty, biome);
             const sprite = spriteAtlas.getTileSprite(
-              biome,
+              isCoastalBeach ? BiomeType.ISLAND : biome,
               variant,
               tileAnimFrame,
               subZone
@@ -1538,8 +1544,19 @@ export class GameRenderer {
     biome: BiomeType,
     subZone?: number
   ): { solid: string; mid: string; soft: string } {
-    const z = subZone !== undefined ? subZone : world.getTileSubZone(tx, ty, biome);
-    if (biome === BiomeType.DESERT || (biome === BiomeType.ISLAND && z === 1)) {
+    const isCoastalBeach =
+      biome !== BiomeType.OCEAN &&
+      world.getEcologicalZoneAtTile(tx, ty) === EcologicalZone.COASTAL_TROPICS;
+    const z = isCoastalBeach
+      ? 1
+      : subZone !== undefined
+      ? subZone
+      : world.getTileSubZone(tx, ty, biome);
+    if (
+      isCoastalBeach ||
+      biome === BiomeType.DESERT ||
+      (biome === BiomeType.ISLAND && z === 1)
+    ) {
       if (z === 0) {
         return {
           solid: '#cfa95e',
@@ -1888,12 +1905,22 @@ export class GameRenderer {
     // =========================================================================
     // B. TERRESTRIAL CELL-TO-CELL ORGANIC BLENDING (Biomes & Sub-Zones)
     // =========================================================================
-    const mySub = world.getTileSubZone(tx, ty, biome);
+    const myIsBeach =
+      world.getEcologicalZoneAtTile(tx, ty) === EcologicalZone.COASTAL_TROPICS;
+    const mySub = myIsBeach ? 1 : world.getTileSubZone(tx, ty, biome);
 
-    // Priority order so lush vegetation/forests/grass naturally overlap onto drier/flatter ground
-    const getVisualBlendRank = (b: BiomeType, sub: number): number => {
+    // Priority order so lush vegetation/forests/grass naturally overlap onto drier/flatter ground and beach sand
+    const getVisualBlendRank = (
+      b: BiomeType,
+      sub: number,
+      isBeach: boolean
+    ): number => {
       if (b === BiomeType.OCEAN) return 0;
-      if (b === BiomeType.DESERT || (b === BiomeType.ISLAND && sub === 1)) {
+      if (
+        isBeach ||
+        b === BiomeType.DESERT ||
+        (b === BiomeType.ISLAND && sub === 1)
+      ) {
         return 10 + sub;
       }
       if (b === BiomeType.PLAINS || b === BiomeType.ISLAND) {
@@ -1905,7 +1932,7 @@ export class GameRenderer {
       return 20;
     };
 
-    const myRank = getVisualBlendRank(biome, mySub);
+    const myRank = getVisualBlendRank(biome, mySub, myIsBeach);
 
     const checkNeighborBlend = (
       nx: number,
@@ -1913,12 +1940,14 @@ export class GameRenderer {
       nb: BiomeType
     ): { solid: string; mid: string; soft: string; isBiomeChange: boolean } | null => {
       if (nb === BiomeType.OCEAN) return null;
-      const nSub = world.getTileSubZone(nx, ny, nb);
-      if (nb === biome && nSub === mySub) return null;
-      const nRank = getVisualBlendRank(nb, nSub);
+      const nIsBeach =
+        world.getEcologicalZoneAtTile(nx, ny) === EcologicalZone.COASTAL_TROPICS;
+      const nSub = nIsBeach ? 1 : world.getTileSubZone(nx, ny, nb);
+      if (nb === biome && nSub === mySub && nIsBeach === myIsBeach) return null;
+      const nRank = getVisualBlendRank(nb, nSub, nIsBeach);
       if (nRank <= myRank) return null;
       const cols = this.getTileOrganicBlendColors(world, nx, ny, nb, nSub);
-      return { ...cols, isBiomeChange: nb !== biome };
+      return { ...cols, isBiomeChange: nb !== biome || nIsBeach !== myIsBeach };
     };
 
     const nBlend = checkNeighborBlend(tx, ty - 1, n);

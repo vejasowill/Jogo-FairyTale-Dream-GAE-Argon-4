@@ -112,30 +112,129 @@ function getRoomRemoteStates(room: OnlineWorldRoom, excludePeerId?: string) {
   return states;
 }
 
+function mergeServerChunkData(prevChunk: any, incomingChunk: any): any {
+  if (!prevChunk || !Array.isArray(prevChunk.structures) || !Array.isArray(incomingChunk.structures)) {
+    return incomingChunk;
+  }
+  const now = Date.now();
+  const removedIds = new Set<string>(
+    Array.isArray(incomingChunk.removedObjectIds) ? incomingChunk.removedObjectIds : []
+  );
+
+  for (const incSt of incomingChunk.structures) {
+    if (!incSt) continue;
+    const prevSt = prevChunk.structures.find(
+      (s: any) =>
+        s &&
+        (s.id === incSt.id ||
+          (s.type === incSt.type && s.tileX === incSt.tileX && s.tileY === incSt.tileY))
+    );
+    if (!prevSt) continue;
+
+    // 1. Preserve newer Chest storage
+    if (incSt.type === 'CHEST') {
+      const prevRev = prevSt.storageRevision || 0;
+      const incRev = incSt.storageRevision || 0;
+      if (
+        prevRev > incRev ||
+        (prevRev === incRev && (prevSt.storageUpdatedAt || 0) > (incSt.storageUpdatedAt || 0))
+      ) {
+        incSt.storageSlots = prevSt.storageSlots;
+        incSt.storageRevision = prevSt.storageRevision;
+        incSt.storageUpdatedAt = prevSt.storageUpdatedAt;
+        incSt.customName = prevSt.customName;
+        incSt.lootItems = prevSt.lootItems;
+      }
+    }
+
+    // 2. Preserve newer Thermal / Weaving Station state (Campfire, Furnace, Weaving Table)
+    if (
+      incSt.type === 'CAMPFIRE' ||
+      incSt.type === 'FURNACE' ||
+      incSt.type === 'WEAVING_TABLE'
+    ) {
+      const prevRev = prevSt.thermalRevision || 0;
+      const incRev = incSt.thermalRevision || 0;
+      if (
+        prevRev > incRev ||
+        (prevRev === incRev && (prevSt.thermalUpdatedAt || 0) > (incSt.thermalUpdatedAt || 0))
+      ) {
+        incSt.fuelItemId = prevSt.fuelItemId;
+        incSt.fuelCount = prevSt.fuelCount;
+        incSt.fuelBurnRemaining = prevSt.fuelBurnRemaining;
+        incSt.fuelBurnMax = prevSt.fuelBurnMax;
+        incSt.cookingRecipeId = prevSt.cookingRecipeId;
+        incSt.cookingMaterialOptionId = prevSt.cookingMaterialOptionId;
+        incSt.cookingInputCount = prevSt.cookingInputCount;
+        incSt.cookingProgress = prevSt.cookingProgress;
+        incSt.cookingDuration = prevSt.cookingDuration;
+        incSt.outputItemId = prevSt.outputItemId;
+        incSt.outputCount = prevSt.outputCount;
+        incSt.weavingTargetItemId = prevSt.weavingTargetItemId;
+        incSt.weavingDyeItemId = prevSt.weavingDyeItemId;
+        incSt.thermalRevision = prevSt.thermalRevision;
+        incSt.thermalUpdatedAt = prevSt.thermalUpdatedAt;
+      }
+    }
+  }
+
+  // 3. Preserve recently placed structures (< 10s old) from concurrent players in the same chunk
+  for (const prevSt of prevChunk.structures) {
+    if (!prevSt || !prevSt.id || removedIds.has(prevSt.id)) continue;
+    const placedAge = now - (prevSt.placedAt || 0);
+    if (placedAge >= 0 && placedAge < 10000) {
+      const existsInInc = incomingChunk.structures.some(
+        (s: any) =>
+          s &&
+          (s.id === prevSt.id ||
+            (s.tileX === prevSt.tileX &&
+              s.tileY === prevSt.tileY &&
+              s.type === prevSt.type))
+      );
+      if (!existsInInc) {
+        incomingChunk.structures.push(prevSt);
+      }
+    }
+  }
+
+  return incomingChunk;
+}
+
 function pushEventToPeer(
   room: OnlineWorldRoom,
   peer: ConnectedPeer,
   payload: any
 ) {
-  const isHighFreqEphemeral = payload.type === 'remote_player_state';
-  const enriched = isHighFreqEphemeral
-    ? payload
-    : {
-        ...payload,
-        _eventId: payload._eventId || ++room.nextEventId,
-      };
+  const isHighFreqEphemeral =
+    payload.type === 'remote_player_state' ||
+    payload.type === 'creatures_sync' ||
+    payload.type === 'drops_sync' ||
+    payload.type === 'time_sync';
+  const enriched =
+    payload.type === 'remote_player_state'
+      ? payload
+      : {
+          ...payload,
+          _eventId: payload._eventId || ++room.nextEventId,
+        };
 
+  let wsSent = false;
   if (peer.ws && peer.ws.readyState === WebSocket.OPEN) {
     try {
       peer.ws.send(JSON.stringify(enriched));
+      wsSent = true;
     } catch {
-      // ignore ws send error; HTTP sync queue below guarantees delivery
+      wsSent = false;
     }
   }
 
-  // Always queue state/world events for HTTP sync (deduplicated by type/chunkKey)
-  // so even if WebSocket is stalled/half-open, HTTP sync delivers 100% of world interactions!
-  if (!isHighFreqEphemeral) {
+  // If WebSocket is open and delivered an ephemeral broadcast, do NOT duplicate it into the HTTP queue
+  if (wsSent && isHighFreqEphemeral) {
+    return;
+  }
+
+  // Queue critical world events for HTTP sync (deduplicated by type/chunkKey)
+  if (payload.type !== 'remote_player_state') {
     if (enriched.type === 'chunk_sync' && enriched.chunkKey) {
       const idx = peer.pendingEvents.findIndex(
         (e) => e.type === 'chunk_sync' && e.chunkKey === enriched.chunkKey
@@ -159,7 +258,7 @@ function pushEventToPeer(
     }
 
     peer.pendingEvents.push(enriched);
-    if (peer.pendingEvents.length > 160) {
+    if (peer.pendingEvents.length > 220) {
       peer.pendingEvents.shift();
     }
   }
@@ -255,7 +354,11 @@ function applyRoomEvent(
       if (!room.worldSnapshot.chunks) {
         room.worldSnapshot.chunks = {};
       }
-      room.worldSnapshot.chunks[chunkKey] = chunkData;
+      const mergedChunk = mergeServerChunkData(
+        room.worldSnapshot.chunks[chunkKey],
+        chunkData
+      );
+      room.worldSnapshot.chunks[chunkKey] = mergedChunk;
       room.worldRevision = (room.worldRevision || 1) + 1;
       broadcastToRoom(
         room,
@@ -263,7 +366,7 @@ function applyRoomEvent(
           type: 'chunk_sync',
           peerId,
           chunkKey,
-          chunkData,
+          chunkData: mergedChunk,
           worldRevision: room.worldRevision,
         },
         peerId
@@ -402,6 +505,24 @@ function applyRoomEvent(
         sourceX: msg.sourceX,
         sourceY: msg.sourceY,
         knockbackMult: msg.knockbackMult,
+      },
+      peerId
+    );
+    return;
+  }
+
+  if (msg.type === 'player_hit') {
+    broadcastToRoom(
+      room,
+      {
+        type: 'player_hit',
+        peerId,
+        targetPeerId: msg.targetPeerId,
+        damage: msg.damage,
+        sourceX: msg.sourceX,
+        sourceY: msg.sourceY,
+        knockbackMult: msg.knockbackMult,
+        attackerName: msg.attackerName || senderPeer.name,
       },
       peerId
     );
@@ -815,6 +936,7 @@ async function startServer() {
         playerState,
         events,
         requestFullSnapshot,
+        wsActive,
       } = req.body || {};
       const code = String(rawCode || '')
         .toUpperCase()
@@ -899,6 +1021,11 @@ async function startServer() {
         0,
         peer.pendingEvents.length
       );
+      const isWsHealthy = Boolean(
+        wsActive || (peer.ws && peer.ws.readyState === WebSocket.OPEN)
+      );
+      const sendFullEntityLists =
+        !peer.isHost && (!isWsHealthy || autoRejoined || requestFullSnapshot);
 
       res.json({
         ok: true,
@@ -907,8 +1034,10 @@ async function startServer() {
         peers: getRoomPeersSummary(room),
         remoteStates: getRoomRemoteStates(room, peer.peerId),
         events: drainedEvents,
-        creatures: !peer.isHost ? room.worldSnapshot?.creatures : undefined,
-        droppedItems: !peer.isHost
+        creatures: sendFullEntityLists
+          ? room.worldSnapshot?.creatures
+          : undefined,
+        droppedItems: sendFullEntityLists
           ? room.worldSnapshot?.droppedItems
           : undefined,
         worldSnapshot:

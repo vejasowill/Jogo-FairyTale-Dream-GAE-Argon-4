@@ -62,11 +62,13 @@ export const MarketStallModal: React.FC<MarketStallModalProps> = ({
   if (!stall) return null;
 
   const stallSlots = engine.ensureMarketStallInitialized(stall);
-  const isPlayerOwner = stall.ownerType === 'PLAYER';
+  const isPlayerOwner = engine.isMarketStallOwnedByLocalPlayer(stall);
+  const isOtherPlayerOwner = stall.ownerType === 'PLAYER' && !isPlayerOwner;
   const isVillagerOwner = stall.ownerType === 'VILLAGER';
   const isVillagerOwnerAlive =
     isVillagerOwner && engine.isVillagerStallOwnerAlive(stall);
-  const isUnowned = !isPlayerOwner && !isVillagerOwnerAlive;
+  const isUnowned =
+    !isPlayerOwner && !isOtherPlayerOwner && !isVillagerOwnerAlive;
   const isVillagerSleeping =
     isVillagerOwnerAlive && engine.isVillagerStallOwnerSleeping(stall);
   const visibleStallSlots = isVillagerSleeping
@@ -75,7 +77,7 @@ export const MarketStallModal: React.FC<MarketStallModalProps> = ({
   const isOpen = isVillagerOwnerAlive
     ? !isVillagerSleeping
     : stall.stallOpen !== false;
-  const offer = stall.pendingCustomerOffer || null;
+  const offer = isPlayerOwner ? stall.pendingCustomerOffer || null : null;
   const goldCoinsInBag = engine.getItemCount('gold_coin');
   const unclaimedGold = Math.max(0, Math.floor(stall.stallUnclaimedGold || 0));
 
@@ -826,28 +828,32 @@ export const MarketStallModal: React.FC<MarketStallModalProps> = ({
                   <input
                     type="text"
                     maxLength={28}
+                    disabled={!isPlayerOwner}
                     value={nameDraft}
                     onChange={(e) => setNameDraft(e.target.value)}
                     placeholder="Nome da Tenda..."
-                    className="flex-1 px-2.5 py-1.5 bg-[#120b07] border border-[#5c3d28] text-xs text-white"
+                    className="flex-1 px-2.5 py-1.5 bg-[#120b07] border border-[#5c3d28] text-xs text-white disabled:opacity-50"
                   />
-                  <button
-                    type="button"
-                    onClick={() => {
-                      engine.renameMarketStall(stall.id, nameDraft);
-                      setFeedback('Salvo!');
-                    }}
-                    className="px-3 min-h-[32px] medieval-btn-gold font-pixel text-[10px] font-bold"
-                  >
-                    Salvar
-                  </button>
+                  {isPlayerOwner && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        engine.renameMarketStall(stall.id, nameDraft);
+                        setFeedback('Salvo!');
+                      }}
+                      className="px-3 min-h-[32px] medieval-btn-gold font-pixel text-[10px] font-bold"
+                    >
+                      Salvar
+                    </button>
+                  )}
                 </div>
 
                 <div className="flex items-center gap-2 pt-1">
                   <button
                     type="button"
+                    disabled={isOtherPlayerOwner}
                     onClick={() => engine.rotateMarketStall(stall.id)}
-                    className="flex-1 min-h-[34px] medieval-btn-wood font-pixel text-[10px] font-bold flex items-center justify-center gap-1.5"
+                    className="flex-1 min-h-[34px] medieval-btn-wood font-pixel text-[10px] font-bold flex items-center justify-center gap-1.5 disabled:opacity-45"
                   >
                     <RotateCw className="w-3.5 h-3.5 text-amber-300" />
                     <span>Girar</span>
@@ -877,6 +883,7 @@ export const MarketStallModal: React.FC<MarketStallModalProps> = ({
 
                 <button
                   type="button"
+                  disabled={isOtherPlayerOwner}
                   onClick={() => {
                     const res = engine.setMarketStallOwner(stall.id, 'PLAYER');
                     setFeedback(res.message);
@@ -884,12 +891,22 @@ export const MarketStallModal: React.FC<MarketStallModalProps> = ({
                   className={`w-full p-2 border text-left flex items-center justify-between ${
                     isPlayerOwner
                       ? 'bg-emerald-950/50 border-emerald-500 text-emerald-200'
-                      : 'bg-[#140c07] border-[#4a301e] text-[#e5d5b5]'
+                      : isOtherPlayerOwner
+                        ? 'bg-sky-950/40 border-sky-500/60 text-sky-200 opacity-80 cursor-not-allowed'
+                        : 'bg-[#140c07] border-[#4a301e] text-[#e5d5b5]'
                   }`}
                 >
-                  <span className="text-xs font-bold">Você (Mercador)</span>
+                  <span className="text-xs font-bold">
+                    {isOtherPlayerOwner
+                      ? `${stall.ownerName || 'Outro Jogador'} (Mercador)`
+                      : 'Você (Mercador)'}
+                  </span>
                   <span className="text-[10px] font-pixel font-bold text-amber-300">
-                    {isPlayerOwner ? 'DONO' : 'Assumir'}
+                    {isPlayerOwner
+                      ? 'DONO'
+                      : isOtherPlayerOwner
+                        ? 'PERTENCE A OUTRO JOGADOR'
+                        : 'Assumir'}
                   </span>
                 </button>
 

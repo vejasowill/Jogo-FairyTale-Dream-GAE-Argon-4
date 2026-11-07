@@ -290,6 +290,7 @@ export interface NatureNode {
   requiredTier: number;
   hitFlashTimer: number;
   breakIdleTimer?: number;
+  breakUpdatedAt?: number;
   animOffset: number;
   flowerColor?: ClothingColorId;
   variant?: number; // 0 = tall pine / standard, 1 = small pine
@@ -314,6 +315,8 @@ export interface PlacedStructure {
   lightRadius?: number;
   hitFlashTimer: number;
   breakIdleTimer?: number;
+  breakUpdatedAt?: number;
+  placedAt?: number; // Timestamp when structure was placed/modified by a player
   lootItems?: { itemId: string; count: number }[];
   storageSlots?: (InventorySlot | null)[]; // 24-slot persistent interactive storage for CHEST
   storageRevision?: number; // Monotonic revision counter for atomic chest storage synchronization
@@ -359,6 +362,8 @@ export interface PlacedStructure {
   outputCount?: number;
   weavingTargetItemId?: string | null;
   weavingDyeItemId?: string | null;
+  thermalRevision?: number; // Monotonic revision counter for atomic thermal/weaving station synchronization
+  thermalUpdatedAt?: number; // Timestamp of last thermal/weaving station modification
   // Wall-mounted attachment (exclusively for PlaceableType.TORCH)
   attachedToWall?: boolean;
   // Flower color variant when placed on the ground
@@ -917,7 +922,7 @@ export interface OnlineActivationStep {
 }
 
 // REGRA PERMANENTE: A cada nova atualização do jogo, incremente a versão para o número seguinte da beta (ex: 0.4.4-beta -> 0.4.5-beta).
-export const GAME_VERSION = '0.7.7-beta';
+export const GAME_VERSION = '0.7.8-beta';
 export const CURRENT_WORLD_GEN_VERSION = 5;
 
 export interface OnlineSessionInfo {
@@ -965,6 +970,7 @@ export interface WorldMetadata {
   weatherTimer?: number; // Remaining seconds in the current weather phase
   rainIntensity?: number; // 0..1 smooth rain intensity factor
   rainDurationElapsed?: number; // Seconds of continuous active rain in the current storm
+  lastRainEndAbsHours?: number; // Total in-game hours ((dayCount - 1) * 24 + timeOfDay) when the last rain ended
 }
 
 export interface WorldSaveData {

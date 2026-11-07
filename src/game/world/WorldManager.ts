@@ -1199,12 +1199,25 @@ export class WorldManager {
 
       if (preservedBiome) {
         const isIsland = preservedBiome === BiomeType.ISLAND;
-        const isOceanBeach =
+        const OCEAN_LEVEL = 0.312;
+        let isOceanBeach =
           preservedZone === EcologicalZone.COASTAL_TROPICS ||
-          this.getTileBiomeFast(tx + 1, ty) === BiomeType.OCEAN ||
-          this.getTileBiomeFast(tx - 1, ty) === BiomeType.OCEAN ||
-          this.getTileBiomeFast(tx, ty + 1) === BiomeType.OCEAN ||
-          this.getTileBiomeFast(tx, ty - 1) === BiomeType.OCEAN;
+          (!isIsland && raw.continentalElev < OCEAN_LEVEL + 0.028);
+        if (!isOceanBeach && (isIsland || raw.continentalElev < OCEAN_LEVEL + 0.056)) {
+          for (let dy = -3; dy <= 3 && !isOceanBeach; dy++) {
+            for (let dx = -3; dx <= 3; dx++) {
+              if (dx === 0 && dy === 0) continue;
+              if (dx * dx + dy * dy > 11) continue;
+              if (
+                this.getRawWaterAtTile(tx + dx, ty + dy, effectiveVer).waterKind ===
+                'ocean'
+              ) {
+                isOceanBeach = true;
+                break;
+              }
+            }
+          }
+        }
         return {
           waterKind: 'none',
           isOceanBeach,
@@ -1231,7 +1244,7 @@ export class WorldManager {
     const OCEAN_LEVEL = 0.312;
 
     // Fast O(1) early-out for inland continent tiles far from any ocean
-    if (!isIsland && raw.continentalElev >= OCEAN_LEVEL + 0.048) {
+    if (!isIsland && raw.continentalElev >= OCEAN_LEVEL + 0.056) {
       return {
         waterKind: 'none',
         isOceanBeach: false,
@@ -1242,8 +1255,8 @@ export class WorldManager {
       };
     }
 
-    // Smooth coastal beach belt along the ocean coast
-    if (!isIsland && raw.continentalElev < OCEAN_LEVEL + 0.022) {
+    // Smooth coastal beach belt along the entire ocean coast
+    if (!isIsland && raw.continentalElev < OCEAN_LEVEL + 0.028) {
       return {
         waterKind: 'none',
         isOceanBeach: true,
@@ -1254,37 +1267,24 @@ export class WorldManager {
       };
     }
 
-    // Check up to 3 tiles around (tx, ty) for island shores and ocean beaches
-    const beachProbeOffsets: [number, number][] = [
-      [1, 0],
-      [-1, 0],
-      [0, 1],
-      [0, -1],
-      [2, 0],
-      [-2, 0],
-      [0, 2],
-      [0, -2],
-      [2, 2],
-      [-2, 2],
-      [2, -2],
-      [-2, -2],
-      [3, 0],
-      [-3, 0],
-      [0, 3],
-      [0, -3],
-    ];
-
-    for (let i = 0; i < beachProbeOffsets.length; i++) {
-      const [dx, dy] = beachProbeOffsets[i];
-      if (this.getRawWaterAtTile(tx + dx, ty + dy, effectiveVer).waterKind === 'ocean') {
-        return {
-          waterKind: 'none',
-          isOceanBeach: true,
-          isIslandLand: isIsland,
-          continentalElev: raw.continentalElev,
-          riverMeander: raw.riverMeander,
-          climate: raw.climate,
-        };
+    // Check up to 3 tiles around (tx, ty) (including diagonals) for island shores and ocean beaches
+    for (let dy = -3; dy <= 3; dy++) {
+      for (let dx = -3; dx <= 3; dx++) {
+        if (dx === 0 && dy === 0) continue;
+        if (dx * dx + dy * dy > 11) continue;
+        if (
+          this.getRawWaterAtTile(tx + dx, ty + dy, effectiveVer).waterKind ===
+          'ocean'
+        ) {
+          return {
+            waterKind: 'none',
+            isOceanBeach: true,
+            isIslandLand: isIsland,
+            continentalElev: raw.continentalElev,
+            riverMeander: raw.riverMeander,
+            climate: raw.climate,
+          };
+        }
       }
     }
 
@@ -1577,11 +1577,8 @@ export class WorldManager {
       return EcologicalZone.MEADOW_CLEARING;
     }
 
-    // Wide sandy Ocean Beach on Islands and Desert coasts -> Costa de Coqueiros
-    if (
-      hydro.isOceanBeach &&
-      (b === BiomeType.ISLAND || b === BiomeType.DESERT)
-    ) {
+    // Regra: Toda costa do bioma mar/oceano deve possuir praia (COASTAL_TROPICS), independentemente do bioma terrestre adjacente!
+    if (hydro.isOceanBeach) {
       return EcologicalZone.COASTAL_TROPICS;
     }
 
@@ -1600,6 +1597,11 @@ export class WorldManager {
       s === BiomeType.OCEAN ||
       e === BiomeType.OCEAN ||
       w === BiomeType.OCEAN;
+
+    // If immediately adjacent to a blended ocean tile at coastal elevation, ensure it is also beach
+    if (nearWater && (b === BiomeType.ISLAND || hydro.continentalElev < 0.365)) {
+      return EcologicalZone.COASTAL_TROPICS;
+    }
 
     if (
       b === BiomeType.FOREST ||
@@ -1653,7 +1655,17 @@ export class WorldManager {
     if (chunk && chunk.ecologicalZones) {
       const lx = ((tx % CHUNK_SIZE) + CHUNK_SIZE) % CHUNK_SIZE;
       const ly = ((ty % CHUNK_SIZE) + CHUNK_SIZE) % CHUNK_SIZE;
-      return chunk.ecologicalZones[ly * CHUNK_SIZE + lx];
+      const idx = ly * CHUNK_SIZE + lx;
+      const existingZone = chunk.ecologicalZones[idx];
+      if (
+        existingZone !== EcologicalZone.COASTAL_TROPICS &&
+        chunk.tiles[idx] !== BiomeType.OCEAN &&
+        this.getHydrologyAtTile(tx, ty).isOceanBeach
+      ) {
+        chunk.ecologicalZones[idx] = EcologicalZone.COASTAL_TROPICS;
+        return EcologicalZone.COASTAL_TROPICS;
+      }
+      return existingZone;
     }
     const biome = chunk
       ? chunk.tiles[
@@ -2197,9 +2209,10 @@ export class WorldManager {
         let nodeVariant: number | undefined;
 
         if (
-          biome === BiomeType.FOREST ||
-          biome === BiomeType.TEMPERATE_FOREST ||
-          biome === BiomeType.TAIGA_FOREST
+          zone !== EcologicalZone.COASTAL_TROPICS &&
+          (biome === BiomeType.FOREST ||
+            biome === BiomeType.TEMPERATE_FOREST ||
+            biome === BiomeType.TAIGA_FOREST)
         ) {
           // Florestas densas: alta densidade de árvores próprias de cada floresta, sem novos ecossistemas
           const forestDensity = clusterNoise > 0.42 ? 0.42 : 0.28;
@@ -2426,8 +2439,7 @@ export class WorldManager {
         if (
           !nodeType &&
           (biome === BiomeType.DESERT ||
-            (biome === BiomeType.ISLAND &&
-              zone === EcologicalZone.COASTAL_TROPICS))
+            zone === EcologicalZone.COASTAL_TROPICS)
         ) {
           const rawDuneRoll = hash2D(tx, ty, this.seed + 6173);
           const duneRoll =
@@ -4297,11 +4309,188 @@ export class WorldManager {
     return this.isTileSwimmableWater(tx, ty);
   }
 
+  private riverFlowCache = new Map<
+    string,
+    { connectedToOcean: boolean; dirX: number; dirY: number }
+  >();
+
+  /**
+   * Verifies whether a river tile `(tx, ty)` is continuously connected along its channel
+   * to a sea/ocean (`waterKind === 'ocean'`) and returns the exact unit flow vector
+   * following the river's path toward the sea.
+   */
+  private getConnectedRiverFlowAtTile(
+    tx: number,
+    ty: number
+  ): { connectedToOcean: boolean; dirX: number; dirY: number } {
+    const key = `${tx},${ty}`;
+    const cached = this.riverFlowCache.get(key);
+    if (cached) return cached;
+
+    if (this.riverFlowCache.size > 6000) {
+      this.riverFlowCache.clear();
+    }
+
+    const r0 = this.getRawWaterAtTile(tx, ty);
+    if (r0.waterKind !== 'river') {
+      const res = { connectedToOcean: false, dirX: 0, dirY: 0 };
+      this.riverFlowCache.set(key, res);
+      return res;
+    }
+
+    const sampleChannelTangent = (px: number, py: number) => {
+      const ix = Math.round(px);
+      const iy = Math.round(py);
+      const rE = this.getRawWaterAtTile(ix + 3, iy);
+      const rW = this.getRawWaterAtTile(ix - 3, iy);
+      const rS = this.getRawWaterAtTile(ix, iy + 3);
+      const rN = this.getRawWaterAtTile(ix, iy - 3);
+      const gMx = (rE.riverMeander - rW.riverMeander) / 6;
+      const gMy = (rS.riverMeander - rN.riverMeander) / 6;
+      const gMag = Math.hypot(gMx, gMy);
+      if (gMag < 1e-6) {
+        return { tx: 0, ty: 0, gMx: 0, gMy: 0, gMag: 0 };
+      }
+      return {
+        tx: -gMy / gMag,
+        ty: gMx / gMag,
+        gMx,
+        gMy,
+        gMag,
+      };
+    };
+
+    const initTan = sampleChannelTangent(tx, ty);
+    if (initTan.gMag < 1e-6) {
+      const res = { connectedToOcean: false, dirX: 0, dirY: 0 };
+      this.riverFlowCache.set(key, res);
+      return res;
+    }
+
+    // Trace a branch (+1 or -1 along the river channel tangent) to see if it continuously reaches the Ocean
+    const traceBranchToOcean = (
+      sign: 1 | -1
+    ): {
+      reachesOcean: boolean;
+      steps: number;
+      firstDx: number;
+      firstDy: number;
+    } => {
+      let px = tx;
+      let py = ty;
+      let prevDirX = initTan.tx * sign;
+      let prevDirY = initTan.ty * sign;
+      let firstDx = prevDirX;
+      let firstDy = prevDirY;
+      const stepDist = 3.0;
+      const maxSteps = 55;
+
+      for (let step = 1; step <= maxSteps; step++) {
+        px += prevDirX * stepDist;
+        py += prevDirY * stepDist;
+
+        const r = this.getRawWaterAtTile(Math.round(px), Math.round(py));
+        if (r.waterKind === 'ocean') {
+          return { reachesOcean: true, steps: step, firstDx, firstDy };
+        }
+
+        const tan = sampleChannelTangent(px, py);
+        if (tan.gMag > 1e-6) {
+          // Gently recenter onto the river thalweg (riverMeander = 0) so the trace never drifts off a curved bank
+          const pull = Math.max(-2.2, Math.min(2.2, -r.riverMeander / tan.gMag));
+          px += (tan.gMx / tan.gMag) * pull;
+          py += (tan.gMy / tan.gMag) * pull;
+        }
+
+        const rCentered = this.getRawWaterAtTile(Math.round(px), Math.round(py));
+        if (rCentered.waterKind === 'ocean') {
+          return { reachesOcean: true, steps: step, firstDx, firstDy };
+        }
+        if (rCentered.waterKind !== 'river') {
+          // Channel pinched off on dry land or hit an inland lake without reaching the ocean
+          return { reachesOcean: false, steps: step, firstDx, firstDy };
+        }
+
+        if (step === 2) {
+          const d1x = px - tx;
+          const d1y = py - ty;
+          const d1Mag = Math.hypot(d1x, d1y);
+          if (d1Mag > 0.1) {
+            firstDx = d1x / d1Mag;
+            firstDy = d1y / d1Mag;
+          }
+        }
+
+        if (tan.gMag > 1e-6) {
+          // Keep consistent forward orientation along the winding curve
+          if (tan.tx * prevDirX + tan.ty * prevDirY >= 0) {
+            prevDirX = tan.tx;
+            prevDirY = tan.ty;
+          } else {
+            prevDirX = -tan.tx;
+            prevDirY = -tan.ty;
+          }
+        }
+      }
+
+      return { reachesOcean: false, steps: maxSteps, firstDx, firstDy };
+    };
+
+    // Prefer checking the branch that goes toward lower macro continental elevation first
+    const rMacroE = this.getRawWaterAtTile(tx + 8, ty);
+    const rMacroW = this.getRawWaterAtTile(tx - 8, ty);
+    const rMacroS = this.getRawWaterAtTile(tx, ty + 8);
+    const rMacroN = this.getRawWaterAtTile(tx, ty - 8);
+    const macroDownX = rMacroW.continentalElev - rMacroE.continentalElev;
+    const macroDownY = rMacroN.continentalElev - rMacroS.continentalElev;
+
+    const primarySign: 1 | -1 =
+      initTan.tx * macroDownX + initTan.ty * macroDownY >= 0 ? 1 : -1;
+    const secondarySign: 1 | -1 = primarySign === 1 ? -1 : 1;
+
+    const branchA = traceBranchToOcean(primarySign);
+    const branchB = traceBranchToOcean(secondarySign);
+
+    let chosen: {
+      reachesOcean: boolean;
+      steps: number;
+      firstDx: number;
+      firstDy: number;
+    } | null = null;
+    if (branchA.reachesOcean && branchB.reachesOcean) {
+      chosen = branchA.steps <= branchB.steps ? branchA : branchB;
+    } else if (branchA.reachesOcean) {
+      chosen = branchA;
+    } else if (branchB.reachesOcean) {
+      chosen = branchB;
+    }
+
+    if (!chosen) {
+      const res = { connectedToOcean: false, dirX: 0, dirY: 0 };
+      this.riverFlowCache.set(key, res);
+      return res;
+    }
+
+    const centerPull = Math.max(-0.35, Math.min(0.35, -r0.riverMeander * 22));
+    const bankNx = initTan.gMx / initTan.gMag;
+    const bankNy = initTan.gMy / initTan.gMag;
+    const fx = chosen.firstDx + bankNx * centerPull * 0.22;
+    const fy = chosen.firstDy + bankNy * centerPull * 0.22;
+    const fMag = Math.hypot(fx, fy);
+
+    const res =
+      fMag > 0.001
+        ? { connectedToOcean: true, dirX: fx / fMag, dirY: fy / fMag }
+        : { connectedToOcean: false, dirX: 0, dirY: 0 };
+    this.riverFlowCache.set(key, res);
+    return res;
+  }
+
   /**
    * Computes the active water current vector `(vx, vy)` at tile `(tx, ty)`:
-   * - `river`: River current that follows the winding river channel downstream toward the Ocean mouth.
-   * - `ocean_shore`: Coastal surf waves along the Ocean edge that push swimmers toward the sandy Beach (`o mar empurra para a areia`).
-   * - `none`: Calm inland lakes or deep open ocean far from shore.
+   * - `river`: River current ONLY for rivers that genuinely connect to the Sea/Ocean, flowing strictly along the river's path toward the Sea.
+   * - `ocean_shore`: Coastal surf waves along the Ocean edge that push swimmers toward the adjacent Beach.
+   * - `none`: Calm inland lakes, disconnected water bodies, or deep open ocean far from shore.
    */
   public getWaterCurrentAtTile(
     tx: number,
@@ -4314,50 +4503,21 @@ export class WorldManager {
 
     const raw = this.getRawWaterAtTile(tx, ty);
 
-    // 1. River Current: flows along the meandering channel downstream into the Ocean
+    // 1. River Current: ONLY rivers connected to the Ocean have a current, flowing along the river's path to the sea
     if (raw.waterKind === 'river') {
-      const rE = this.getRawWaterAtTile(tx + 2, ty);
-      const rW = this.getRawWaterAtTile(tx - 2, ty);
-      const rS = this.getRawWaterAtTile(tx, ty + 2);
-      const rN = this.getRawWaterAtTile(tx, ty - 2);
-
-      const dMx = rE.riverMeander - rW.riverMeander;
-      const dMy = rS.riverMeander - rN.riverMeander;
-      const dEx = rE.continentalElev - rW.continentalElev;
-      const dEy = rS.continentalElev - rN.continentalElev;
-
-      let txVec = -dMy;
-      let tyVec = dMx;
-      // Orient tangent downstream toward decreasing continentalElev (toward the Ocean)
-      if (txVec * -dEx + tyVec * -dEy < 0) {
-        txVec = -txVec;
-        tyVec = -tyVec;
+      const flow = this.getConnectedRiverFlowAtTile(tx, ty);
+      if (!flow.connectedToOcean) {
+        return { vx: 0, vy: 0, kind: 'none' };
       }
-
-      const tMag = Math.hypot(txVec, tyVec);
-      if (tMag > 0.00001) {
-        txVec /= tMag;
-        tyVec /= tMag;
-      }
-
-      const eMag = Math.hypot(dEx, dEy);
-      const downX = eMag > 0.00001 ? -dEx / eMag : 0;
-      const downY = eMag > 0.00001 ? -dEy / eMag : 0;
-
-      const fx = txVec * 0.76 + downX * 0.24;
-      const fy = tyVec * 0.76 + downY * 0.24;
-      const fMag = Math.hypot(fx, fy);
-      if (fMag > 0.001) {
-        const riverSpeed = 28;
-        return {
-          vx: (fx / fMag) * riverSpeed,
-          vy: (fy / fMag) * riverSpeed,
-          kind: 'river',
-        };
-      }
+      const riverSpeed = 28;
+      return {
+        vx: flow.dirX * riverSpeed,
+        vy: flow.dirY * riverSpeed,
+        kind: 'river',
+      };
     }
 
-    // 2. Ocean Coast Current: the sea pushes swimmers toward the sandy beach
+    // 2. Ocean Coast Current: the sea pushes swimmers toward the adjacent sandy beach
     if (raw.waterKind === 'ocean') {
       let pushX = 0;
       let pushY = 0;
@@ -5122,6 +5282,12 @@ export class WorldManager {
     );
   }
 
+  public static getStructureLayerCategory(
+    type: PlaceableType
+  ): 'GROUND' | 'WALL' | 'FURNITURE' {
+    return CONSTRUCTION_BLUEPRINTS[type]?.layer || 'FURNITURE';
+  }
+
   /**
    * Returns the wall-mountable structure at (tx, ty), if any.
    */
@@ -5498,6 +5664,9 @@ export class WorldManager {
     if (biome === BiomeType.OCEAN || this.isTileSwimmableWater(tx, ty)) {
       return false;
     }
+    if (this.getEcologicalZoneAtTile(tx, ty) === EcologicalZone.COASTAL_TROPICS) {
+      return false;
+    }
     if (this.hasRainPuddleAtTile(tx, ty)) {
       return false;
     }
@@ -5505,6 +5674,16 @@ export class WorldManager {
     const { cx, cy } = this.tileToChunk(tx, ty);
     const chunk = this.chunks[WorldManager.chunkKey(cx, cy)];
     if (!chunk) return false;
+
+    // Enforce spacing between puddles so they remain sparse and natural
+    if (
+      Array.isArray(chunk.puddles) &&
+      chunk.puddles.some(
+        (p) => p.decayTimer > 0 && Math.hypot(p.tileX - tx, p.tileY - ty) < 5
+      )
+    ) {
+      return false;
+    }
 
     // Must be empty soil: no structures (floors, paths, tilled soil, walls, furniture)
     if (
@@ -5746,7 +5925,10 @@ export class WorldManager {
     }
     const biome = this.getTileBiomeFast(tx, ty);
     if (biome === BiomeType.OCEAN || biome === BiomeType.DESERT) return false;
-    // Exclude sandy beach strips on islands and mainland coast
+    // Exclude sandy beach strips on islands and all ocean coastlines
+    if (this.getEcologicalZoneAtTile(tx, ty) === EcologicalZone.COASTAL_TROPICS) {
+      return false;
+    }
     const subZone = this.getTileSubZone(tx, ty, biome);
     if (biome === BiomeType.ISLAND && subZone === 1) return false;
 

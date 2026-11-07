@@ -13,6 +13,7 @@ import {
   WorldSaveData,
 } from '../core/types';
 import { soundManager } from '../core/SoundManager';
+import { SaveManager } from '../persistence/SaveManager';
 
 export interface MultiplayerCallbacks {
   onSessionChanged?: (session: OnlineSessionInfo) => void;
@@ -30,6 +31,14 @@ export interface MultiplayerCallbacks {
     sourceX: number,
     sourceY: number,
     knockbackMult?: number
+  ) => void;
+  onPlayerHitReceived?: (
+    targetPeerId: string,
+    damage: number,
+    sourceX: number,
+    sourceY: number,
+    knockbackMult?: number,
+    attackerName?: string
   ) => void;
   onTimeSyncReceived?: (timeOfDay: number, dayCount: number) => void;
   onPlayerEventNotification?: (text: string, color?: string) => void;
@@ -90,6 +99,7 @@ export class MultiplayerManager {
   private outgoingHttpEvents: any[] = [];
   private pendingFullSnapshotRequest = false;
   private consecutiveHttpFailures = 0;
+  private lastHttpSyncTickAt = 0;
   private boundOnlineHandler: (() => void) | null = null;
   private boundOfflineHandler: (() => void) | null = null;
   private boundHandleOffline = () => {
@@ -304,7 +314,7 @@ export class MultiplayerManager {
     }
     this.processedEventIds.add(key);
     this.processedEventOrder.push(key);
-    if (this.processedEventOrder.length > 450) {
+    if (this.processedEventOrder.length > 4000) {
       const oldest = this.processedEventOrder.shift();
       if (oldest) {
         this.processedEventIds.delete(oldest);
@@ -925,7 +935,13 @@ export class MultiplayerManager {
       this.callbacks.onRequestHostSnapshot?.() || this.initialHostSnapshot;
     if (!freshSnapshot) return;
 
-    const serializedSnapshot = JSON.stringify(freshSnapshot);
+    const compactedSnapshot = SaveManager.compactSaveDataForStorage(
+      freshSnapshot,
+      false,
+      18,
+      false
+    );
+    const serializedSnapshot = JSON.stringify(compactedSnapshot);
     const totalChunks = Math.max(
       1,
       Math.ceil(serializedSnapshot.length / SNAPSHOT_CHUNK_SIZE)
@@ -1358,6 +1374,12 @@ export class MultiplayerManager {
         break;
       }
 
+      case 'player_hit': {
+        this.handleServerMessage(msg);
+        this.broadcastToP2PGuests(msg, guestPeerId, true);
+        break;
+      }
+
       case 'guest_mount_event': {
         this.handleServerMessage({
           ...msg,
@@ -1627,17 +1649,17 @@ export class MultiplayerManager {
         );
 
         let anyGuestHealthy = false;
-        // Check for zombie guest DataChannels that haven't responded in > 18s
+        // Check for zombie guest DataChannels that haven't responded in > 30s
         for (const [guestId, conn] of Array.from(
           this.p2pGuestConnections.entries()
         )) {
           const lastSeen = this.peerLastPacketAt.get(guestId) || now;
           const silence = now - lastSeen;
-          if (silence <= 4200 && this.isConnOpenAndHealthy(conn, true)) {
+          if (silence <= 10000 && this.isConnOpenAndHealthy(conn, true)) {
             anyGuestHealthy = true;
           }
           if (
-            silence > 18000 ||
+            silence > 30000 ||
             !this.isConnOpenAndHealthy(conn, true)
           ) {
             try {
@@ -1658,7 +1680,7 @@ export class MultiplayerManager {
         }
       } else if (
         this.transportMode !== 'P2P_WEBRTC' &&
-        this.consecutiveHttpFailures >= 3
+        this.consecutiveHttpFailures >= 5
       ) {
         this.setConnectionUnstable(
           true,
@@ -1689,10 +1711,10 @@ export class MultiplayerManager {
 
       const silenceMs = now - this.lastPacketReceivedAt;
 
-      // If P2P Guest hasn't received any packet for > 3.5s or DataChannel closed, pause game & trigger automatic P2P reconnection & resync!
+      // If P2P Guest hasn't received any packet for > 8.5s or DataChannel closed, pause game & trigger automatic P2P reconnection & resync!
       if (
         this.transportMode === 'P2P_WEBRTC' &&
-        (silenceMs > 3500 || !this.isConnOpenAndHealthy(this.p2pHostConn, true))
+        (silenceMs > 8500 || !this.isConnOpenAndHealthy(this.p2pHostConn, true))
       ) {
         this.setConnectionUnstable(
           true,
@@ -1703,20 +1725,21 @@ export class MultiplayerManager {
         }
       } else if (
         this.transportMode !== 'P2P_WEBRTC' &&
-        (silenceMs > 4000 || this.consecutiveHttpFailures >= 3)
+        (silenceMs > 9500 || this.consecutiveHttpFailures >= 5)
       ) {
         this.setConnectionUnstable(
           true,
           'Conexão instável com o servidor da sala. Tentando ressincronizar...'
         );
-        // On HTTP/WS server mode, request a full world snapshot on the next HTTP sync tick
-        this.pendingFullSnapshotRequest = true;
+        if (silenceMs > 12000) {
+          this.pendingFullSnapshotRequest = true;
+        }
         if (this.syncStatus !== 'RESYNCING') {
           this.syncStatus = 'RESYNCING';
           this.statusMessage = 'Ressincronizando estado do mundo...';
           this.emitSessionChange();
         }
-      } else if (silenceMs <= 2500) {
+      } else if (silenceMs <= 4500) {
         if (this.connectionUnstable) {
           this.setConnectionUnstable(false);
         }
@@ -2164,11 +2187,10 @@ export class MultiplayerManager {
             }
             if (msg.type === 'ws_pong') {
               if (
-                this.role === 'GUEST' &&
                 typeof msg.worldRevision === 'number' &&
                 msg.worldRevision > this.worldRevision
               ) {
-                this.pendingFullSnapshotRequest = true;
+                this.worldRevision = msg.worldRevision;
               }
               return;
             }
@@ -2623,6 +2645,19 @@ export class MultiplayerManager {
     ) {
       return;
     }
+
+    const isWsOpen = Boolean(this.ws && this.ws.readyState === WebSocket.OPEN);
+    const now = Date.now();
+    // When WebSocket is open and streaming real-time events, throttle HTTP sync fallback to 1.2s unless outgoing HTTP events or snapshot are queued
+    if (
+      isWsOpen &&
+      this.outgoingHttpEvents.length === 0 &&
+      !this.pendingFullSnapshotRequest &&
+      now - this.lastHttpSyncTickAt < 1200
+    ) {
+      return;
+    }
+    this.lastHttpSyncTickAt = now;
     this.isHttpSyncInFlight = true;
 
     const baseUrl = MultiplayerManager.resolveHttpBaseUrl(this.customServerUrl);
@@ -2634,7 +2669,7 @@ export class MultiplayerManager {
     this.pendingFullSnapshotRequest = false;
 
     const controller = new AbortController();
-    const timeoutId = window.setTimeout(() => controller.abort(), 3000);
+    const timeoutId = window.setTimeout(() => controller.abort(), 7000);
 
     try {
       const res = await fetch(`${baseUrl}/api/mp/sync`, {
@@ -2647,6 +2682,7 @@ export class MultiplayerManager {
           playerState: this.latestLocalPlayerState,
           events: eventsToSend,
           requestFullSnapshot,
+          wsActive: isWsOpen,
         }),
         signal: controller.signal,
       });
@@ -3262,6 +3298,20 @@ export class MultiplayerManager {
         break;
       }
 
+      case 'player_hit': {
+        if (msg.targetPeerId && typeof msg.damage === 'number') {
+          this.callbacks.onPlayerHitReceived?.(
+            String(msg.targetPeerId),
+            msg.damage,
+            msg.sourceX ?? 0,
+            msg.sourceY ?? 0,
+            msg.knockbackMult,
+            msg.attackerName
+          );
+        }
+        break;
+      }
+
       case 'guest_mount_event': {
         if (msg.peerId && msg.event) {
           this.callbacks.onGuestMountEventReceived?.(msg.peerId, msg.event);
@@ -3509,11 +3559,8 @@ export class MultiplayerManager {
   public sendChunkSync(chunkKey: string, chunkData: ChunkData): void {
     if (!this.isOnline) return;
     this.worldRevision += 1;
-    // Strip per-player local `explored` fog-of-war array so remote chunk syncs never overwrite another player's fog of war
-    const networkChunk: ChunkData = {
-      ...chunkData,
-      explored: [],
-    };
+    // Compact tiles/heights/explored and strip per-player local fog-of-war so chunk_sync payloads are ~2 KB instead of ~25 KB
+    const networkChunk: ChunkData = SaveManager.compactChunkForNetwork(chunkData);
     this.queueOrSendEvent(
       {
         type: 'chunk_sync',
@@ -3590,6 +3637,26 @@ export class MultiplayerManager {
       sourceX,
       sourceY,
       knockbackMult,
+    });
+  }
+
+  public sendPlayerHit(
+    targetPeerId: string,
+    damage: number,
+    sourceX: number,
+    sourceY: number,
+    knockbackMult?: number,
+    attackerName?: string
+  ): void {
+    if (!this.isOnline || !targetPeerId) return;
+    this.queueOrSendEvent({
+      type: 'player_hit',
+      targetPeerId,
+      damage,
+      sourceX,
+      sourceY,
+      knockbackMult,
+      attackerName: attackerName || this.localPlayerName,
     });
   }
 
