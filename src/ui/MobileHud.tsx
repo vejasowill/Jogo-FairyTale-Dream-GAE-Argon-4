@@ -38,6 +38,7 @@ import {
   HudElementKey,
   MOUNT_STORAGE_SIZE,
   PlaceableType,
+  ToolType,
   TOTAL_INVENTORY_SIZE,
 } from '../game/core/types';
 import { GameEngine, HudSnapshot } from '../game/loop/GameEngine';
@@ -1229,7 +1230,11 @@ export const MobileHud: React.FC<MobileHudProps> = ({
             >
               <Swords className="w-6 h-6 sm:w-7 sm:h-7 text-amber-200" />
               <span className="text-[8px] font-pixel font-bold mt-0.5">
-                Atacar
+                {selectedItem?.toolType === ToolType.WATERING_CAN ||
+                selectedItem?.id === 'watering_can' ||
+                selectedItem?.id === 'watering_can_full'
+                  ? 'Regar'
+                  : 'Atacar'}
               </span>
             </button>
           </div>

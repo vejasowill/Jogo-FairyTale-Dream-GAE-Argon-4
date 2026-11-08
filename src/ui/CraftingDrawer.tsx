@@ -814,52 +814,54 @@ export const CraftingDrawer: React.FC<CraftingDrawerProps> = ({
                   </div>
 
                   {/* Clothing Recipe Grid */}
-                  <div className="grid grid-cols-4 sm:grid-cols-5 gap-2">
-                    {filteredRecipes.map((recipe) => {
-                      const baseItem = ITEMS[recipe.resultItemId];
-                      if (!baseItem) return null;
-                      const isSelected = selectedRecipe?.id === recipe.id;
-                      const previewItemId =
-                        isSelected && baseItem.canBeDyed
-                          ? getDyedGarmentItemId(baseItem.id, craftColorId)
-                          : baseItem.id;
-                      const canCraft = engine.getMaxCraftableCount(recipe) > 0;
-                      const isWeavingThis =
-                        weavingState?.cookingRecipeId === recipe.id &&
-                        (weavingState?.cookingInputCount || 0) > 0;
+                  <div className="max-h-[260px] overflow-y-auto pr-1">
+                    <div className="grid grid-cols-4 sm:grid-cols-5 gap-2 content-start auto-rows-max">
+                      {filteredRecipes.map((recipe) => {
+                        const baseItem = ITEMS[recipe.resultItemId];
+                        if (!baseItem) return null;
+                        const isSelected = selectedRecipe?.id === recipe.id;
+                        const previewItemId =
+                          isSelected && baseItem.canBeDyed
+                            ? getDyedGarmentItemId(baseItem.id, craftColorId)
+                            : baseItem.id;
+                        const canCraft = engine.getMaxCraftableCount(recipe) > 0;
+                        const isWeavingThis =
+                          weavingState?.cookingRecipeId === recipe.id &&
+                          (weavingState?.cookingInputCount || 0) > 0;
 
-                      return (
-                        <button
-                          key={recipe.id}
-                          onClick={() => setSelectedRecipeId(recipe.id)}
-                          className={`relative aspect-square min-h-[58px] p-1.5 flex flex-col items-center justify-center transition-transform rounded-sm ${
-                            isSelected ? theme.slotActiveClass : 'mc-slot'
-                          } ${!canCraft && !isWeavingThis ? 'opacity-60' : ''}`}
-                          title={baseItem.name}
-                        >
-                          <img
-                            src={spriteAtlas.getItemIconUrl(previewItemId)}
-                            alt={baseItem.name}
-                            className="w-7 h-7 pixelated"
-                          />
-                          <span className="mt-1 text-[9px] text-white font-bold truncate max-w-full">
-                            {baseItem.name}
-                          </span>
-                          <span className="absolute top-0.5 left-0.5 px-1 bg-black/75 text-[8px] font-mono-tabular text-fuchsia-300 rounded-sm">
-                            {formatCraftDuration(recipe.craftTimeSec)}
-                          </span>
-                          {isWeavingThis ? (
-                            <span className="absolute top-0.5 right-0.5 w-2.5 h-2.5 rounded-full bg-fuchsia-400 animate-ping" />
-                          ) : (
-                            <span
-                              className={`absolute top-1 right-1 w-2 h-2 rounded-full ${
-                                canCraft ? 'bg-emerald-400' : 'bg-stone-600'
-                              }`}
+                        return (
+                          <button
+                            key={recipe.id}
+                            onClick={() => setSelectedRecipeId(recipe.id)}
+                            className={`relative h-[64px] w-full p-1.5 flex flex-col items-center justify-center transition-transform rounded-sm ${
+                              isSelected ? theme.slotActiveClass : 'mc-slot'
+                            } ${!canCraft && !isWeavingThis ? 'opacity-60' : ''}`}
+                            title={baseItem.name}
+                          >
+                            <img
+                              src={spriteAtlas.getItemIconUrl(previewItemId)}
+                              alt={baseItem.name}
+                              className="w-7 h-7 pixelated"
                             />
-                          )}
-                        </button>
-                      );
-                    })}
+                            <span className="mt-1 text-[9px] text-white font-bold truncate max-w-full">
+                              {baseItem.name}
+                            </span>
+                            <span className="absolute top-0.5 left-0.5 px-1 bg-black/75 text-[8px] font-mono-tabular text-fuchsia-300 rounded-sm">
+                              {formatCraftDuration(recipe.craftTimeSec)}
+                            </span>
+                            {isWeavingThis ? (
+                              <span className="absolute top-0.5 right-0.5 w-2.5 h-2.5 rounded-full bg-fuchsia-400 animate-ping" />
+                            ) : (
+                              <span
+                                className={`absolute top-1 right-1 w-2 h-2 rounded-full ${
+                                  canCraft ? 'bg-emerald-400' : 'bg-stone-600'
+                                }`}
+                              />
+                            )}
+                          </button>
+                        );
+                      })}
+                    </div>
                   </div>
 
                   {/* Active Loom / Weaving Queue & Output Box */}
@@ -1372,50 +1374,52 @@ export const CraftingDrawer: React.FC<CraftingDrawerProps> = ({
                       }
 
                       return (
-                        <div className="grid grid-cols-4 sm:grid-cols-5 gap-2 max-h-[210px] overflow-y-auto pr-1">
-                          {invClothing.map(({ slot, idx, def }) => {
-                            if (!slot || !def) return null;
-                            const isSel =
-                              selectedDyeSource?.kind === 'inventory' &&
-                              selectedDyeSource.slotIndex === idx;
-                            return (
-                              <button
-                                key={idx}
-                                onClick={() => {
-                                  setSelectedDyeSource({
-                                    kind: 'inventory',
-                                    slotIndex: idx,
-                                  });
-                                  if (def.garmentColorId) {
-                                    setTargetDyeColorId(def.garmentColorId);
-                                  }
-                                }}
-                                className={`p-1.5 rounded-sm border flex flex-col items-center gap-1 relative ${
-                                  isSel ? theme.slotActiveClass : 'mc-slot'
-                                }`}
-                              >
-                                <img
-                                  src={spriteAtlas.getItemIconUrl(def.id)}
-                                  alt={def.name}
-                                  className="w-6 h-6 pixelated"
-                                />
-                                <span className="text-[9px] text-white font-bold truncate max-w-full">
-                                  {def.name}
-                                </span>
-                                <span
-                                  className={`text-[8px] ${
-                                    def.canBeDyed
-                                      ? 'text-emerald-300'
-                                      : 'text-amber-300'
+                        <div className="max-h-[210px] overflow-y-auto pr-1">
+                          <div className="grid grid-cols-4 sm:grid-cols-5 gap-2 content-start auto-rows-max">
+                            {invClothing.map(({ slot, idx, def }) => {
+                              if (!slot || !def) return null;
+                              const isSel =
+                                selectedDyeSource?.kind === 'inventory' &&
+                                selectedDyeSource.slotIndex === idx;
+                              return (
+                                <button
+                                  key={idx}
+                                  onClick={() => {
+                                    setSelectedDyeSource({
+                                      kind: 'inventory',
+                                      slotIndex: idx,
+                                    });
+                                    if (def.garmentColorId) {
+                                      setTargetDyeColorId(def.garmentColorId);
+                                    }
+                                  }}
+                                  className={`h-[64px] w-full p-1.5 rounded-sm border flex flex-col items-center justify-center gap-1 relative ${
+                                    isSel ? theme.slotActiveClass : 'mc-slot'
                                   }`}
                                 >
-                                  {def.canBeDyed
-                                    ? 'Tingível'
-                                    : 'Não tingível'}
-                                </span>
-                              </button>
-                            );
-                          })}
+                                  <img
+                                    src={spriteAtlas.getItemIconUrl(def.id)}
+                                    alt={def.name}
+                                    className="w-6 h-6 pixelated"
+                                  />
+                                  <span className="text-[9px] text-white font-bold truncate max-w-full">
+                                    {def.name}
+                                  </span>
+                                  <span
+                                    className={`text-[8px] ${
+                                      def.canBeDyed
+                                        ? 'text-emerald-300'
+                                        : 'text-amber-300'
+                                    }`}
+                                  >
+                                    {def.canBeDyed
+                                      ? 'Tingível'
+                                      : 'Não tingível'}
+                                  </span>
+                                </button>
+                              );
+                            })}
+                          </div>
                         </div>
                       );
                     })()}
@@ -1637,10 +1641,405 @@ export const CraftingDrawer: React.FC<CraftingDrawerProps> = ({
               </div>
             )}
           </div>
+        ) : activeTab === 'craft' && isThermalStation ? (
+          /* ================================================================= */
+          /* CAMPFIRE & FURNACE: 2-COLUMN DIRECT INTERFACE                     */
+          /* LEFT = PLAYER INVENTORY | RIGHT = 3 INTERACTIVE THERMAL FIELDS    */
+          /* ================================================================= */
+          <div className="flex-1 overflow-y-auto p-2.5 sm:p-3.5 grid grid-cols-1 sm:grid-cols-12 gap-3 items-center">
+            {/* LEFT COLUMN (7 cols): Player Inventory (Backpack 24 + Hotbar 8) */}
+            <div className="sm:col-span-7 medieval-inset p-2.5 space-y-2.5">
+              {/* 3x8 Backpack */}
+              <div className="space-y-1">
+                <div className="flex items-center justify-between text-[10px]">
+                  <span className="font-pixel text-[#c4ab7d]">
+                    MOCHILA (24 SLOTS · 3x8)
+                  </span>
+                </div>
+                <div className="grid grid-cols-8 gap-1">
+                  {player.inventory
+                    .slice(HOTBAR_SIZE, TOTAL_INVENTORY_SIZE)
+                    .map((slot, offset) => {
+                      const idx = offset + HOTBAR_SIZE;
+                      const def = slot ? ITEMS[slot.itemId] : null;
+                      const isSel = selectedInvIndex === idx;
+                      return (
+                        <button
+                          key={idx}
+                          draggable={Boolean(slot && slot.count > 0)}
+                          onDragStart={(e) => {
+                            e.dataTransfer.setData('text/plain', String(idx));
+                            setSelectedInvIndex(idx);
+                          }}
+                          onClick={() => handleInventorySlotClick(idx)}
+                          className={`relative aspect-square min-h-[36px] sm:min-h-[42px] flex flex-col items-center justify-center p-0.5 ${
+                            isSel
+                              ? 'mc-slot-active ring-2 ring-amber-400'
+                              : selectedInvIndex !== null
+                              ? 'mc-slot hover:border-amber-400/70'
+                              : 'mc-slot'
+                          }`}
+                          title={def ? `${def.name} (x${slot?.count})` : undefined}
+                        >
+                          {slot && def ? (
+                            <>
+                              <img
+                                src={spriteAtlas.getItemIconUrl(
+                                  slot.itemId,
+                                  slot.selectedColor
+                                )}
+                                alt={def.name}
+                                className="w-5 h-5 sm:w-6 sm:h-6 pixelated pointer-events-none"
+                              />
+                              {slot.count > 1 && (
+                                <span className="absolute bottom-0 right-0.5 text-[8px] sm:text-[9px] font-mono-tabular font-extrabold text-[#fef08a] pointer-events-none">
+                                  {slot.count}
+                                </span>
+                              )}
+                            </>
+                          ) : null}
+                        </button>
+                      );
+                    })}
+                </div>
+              </div>
+
+              {/* 1x8 Hotbar */}
+              <div className="space-y-1 pt-1.5 border-t border-[#3d281a]">
+                <div className="flex items-center justify-between text-[10px]">
+                  <span className="font-pixel text-amber-400">
+                    MÃO ATIVA (8 SLOTS)
+                  </span>
+                  <span className="text-[#c4ab7d]">Teclas 1–8</span>
+                </div>
+                <div className="grid grid-cols-8 gap-1">
+                  {player.inventory.slice(0, HOTBAR_SIZE).map((slot, idx) => {
+                    const def = slot ? ITEMS[slot.itemId] : null;
+                    const isSel = selectedInvIndex === idx;
+                    return (
+                      <button
+                        key={idx}
+                        draggable={Boolean(slot && slot.count > 0)}
+                        onDragStart={(e) => {
+                          e.dataTransfer.setData('text/plain', String(idx));
+                          setSelectedInvIndex(idx);
+                        }}
+                        onClick={() => handleInventorySlotClick(idx)}
+                        className={`relative aspect-square min-h-[38px] sm:min-h-[44px] flex flex-col items-center justify-center p-0.5 ${
+                          isSel
+                            ? 'mc-slot-active ring-2 ring-amber-400'
+                            : selectedInvIndex !== null
+                            ? 'mc-slot hover:border-amber-400/70'
+                            : 'mc-slot'
+                        }`}
+                        title={def ? `${def.name} (x${slot?.count})` : undefined}
+                      >
+                        <span className="absolute top-0 left-0.5 text-[7px] font-mono-tabular text-amber-400/80 pointer-events-none">
+                          {idx + 1}
+                        </span>
+                        {slot && def ? (
+                          <>
+                            <img
+                              src={spriteAtlas.getItemIconUrl(
+                                slot.itemId,
+                                slot.selectedColor
+                              )}
+                              alt={def.name}
+                              className="w-5 h-5 sm:w-6 sm:h-6 pixelated pointer-events-none"
+                            />
+                            {slot.count > 1 && (
+                              <span className="absolute bottom-0 right-0.5 text-[8px] sm:text-[9px] font-mono-tabular font-extrabold text-[#fef08a] pointer-events-none">
+                                {slot.count}
+                              </span>
+                            )}
+                          </>
+                        ) : null}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
+
+            {/* RIGHT COLUMN (5 cols): Station-Themed 3-Slot Processing Chamber */}
+            <div className="sm:col-span-5 flex items-center justify-center">
+              {(() => {
+                const stationType = activeStation as
+                  | PlaceableType.CAMPFIRE
+                  | PlaceableType.FURNACE;
+                const isCampfire = stationType === PlaceableType.CAMPFIRE;
+
+                const selectedInvSlot =
+                  selectedInvIndex !== null
+                    ? player.inventory[selectedInvIndex]
+                    : null;
+                const selectedCanBeInput = Boolean(
+                  selectedInvSlot &&
+                    engine.canItemBeProcessedInThermalStation(
+                      stationType,
+                      selectedInvSlot.itemId
+                    )
+                );
+                const selectedCanBeFuel = Boolean(
+                  selectedInvSlot && FUEL_ITEMS[selectedInvSlot.itemId]
+                );
+
+                const activeInputItemId = activeCookingRecipe
+                  ? thermalState?.cookingMaterialOptionId ||
+                    engine.getRecipeActiveIngredients(
+                      activeCookingRecipe,
+                      thermalState?.cookingMaterialOptionId || undefined
+                    )[0]?.itemId ||
+                    activeCookingRecipe.resultItemId
+                  : null;
+                const activeInputDef = activeInputItemId
+                  ? ITEMS[activeInputItemId] || null
+                  : null;
+
+                const handleInputSlotInteract = (slotIdxOverride?: number) => {
+                  const targetInvIdx =
+                    slotIdxOverride !== undefined
+                      ? slotIdxOverride
+                      : selectedInvIndex;
+                  if (targetInvIdx !== null) {
+                    const deposited = engine.depositInventorySlotToThermalInput(
+                      stationType,
+                      targetInvIdx
+                    );
+                    if (
+                      deposited &&
+                      !engine.player.inventory[targetInvIdx]
+                    ) {
+                      setSelectedInvIndex(null);
+                    }
+                    return;
+                  }
+                  if (cookingInputCount > 0) {
+                    engine.cancelThermalStationQueue(stationType);
+                  }
+                };
+
+                const handleFuelSlotInteract = (slotIdxOverride?: number) => {
+                  const targetInvIdx =
+                    slotIdxOverride !== undefined
+                      ? slotIdxOverride
+                      : selectedInvIndex;
+                  if (targetInvIdx !== null) {
+                    const deposited = engine.depositInventorySlotToThermalFuel(
+                      stationType,
+                      targetInvIdx
+                    );
+                    if (
+                      deposited &&
+                      !engine.player.inventory[targetInvIdx]
+                    ) {
+                      setSelectedInvIndex(null);
+                    }
+                    return;
+                  }
+                  if ((thermalState?.fuelCount || 0) > 0) {
+                    engine.removeFuelFromThermalStation(stationType);
+                  }
+                };
+
+                const handleOutputSlotInteract = () => {
+                  if (outputItemDef && outputCount > 0) {
+                    engine.collectThermalStationOutput(stationType);
+                  }
+                };
+
+                return (
+                  <div
+                    className={`w-full py-7 px-5 rounded-sm border-2 flex items-center justify-center relative overflow-hidden ${
+                      isCampfire
+                        ? 'bg-gradient-to-b from-[#2c1207] via-[#1c0b05] to-[#120603] border-orange-500/80 shadow-[inset_0_0_36px_rgba(249,115,22,0.22)]'
+                        : 'bg-gradient-to-b from-[#252229] via-[#18161c] to-[#0f0d12] border-red-500/80 shadow-[inset_0_0_36px_rgba(239,68,68,0.25)]'
+                    }`}
+                  >
+                    {/* Subtle Station Watermark Identity */}
+                    <img
+                      src={spriteAtlas.getItemIconUrl(
+                        isCampfire ? 'campfire' : 'furnace'
+                      )}
+                      alt=""
+                      className="w-24 h-24 pixelated opacity-[0.07] absolute -bottom-3 -right-3 pointer-events-none"
+                    />
+
+                    <div className="flex items-center justify-center gap-5 sm:gap-7 relative z-10">
+                      {/* Left Stack: [1] Input Slot (Top) -> Flame Indicator -> [2] Fuel Slot (Bottom) */}
+                      <div className="flex flex-col items-center gap-3">
+                        {/* FIELD 1: Item a ser processado (Input) */}
+                        <button
+                          type="button"
+                          onClick={() => handleInputSlotInteract()}
+                          onDragOver={(e) => e.preventDefault()}
+                          onDrop={(e) => {
+                            e.preventDefault();
+                            const idx = Number(
+                              e.dataTransfer.getData('text/plain')
+                            );
+                            if (Number.isInteger(idx) && idx >= 0) {
+                              handleInputSlotInteract(idx);
+                            }
+                          }}
+                          className={`w-16 h-16 sm:w-[68px] sm:h-[68px] rounded-sm flex items-center justify-center relative transition-all ${
+                            selectedCanBeInput
+                              ? isCampfire
+                                ? 'bg-[#3b1709] border-2 border-orange-400 ring-2 ring-orange-400/50 shadow-[0_0_14px_rgba(251,146,60,0.45)]'
+                                : 'bg-[#2f1414] border-2 border-red-400 ring-2 ring-red-400/50 shadow-[0_0_14px_rgba(248,113,113,0.45)]'
+                              : activeInputDef && cookingInputCount > 0
+                              ? isCampfire
+                                ? 'bg-[#2b1107] border-2 border-orange-500/80'
+                                : 'bg-[#261619] border-2 border-red-500/80'
+                              : isCampfire
+                              ? 'bg-[#170904] border-2 border-orange-900/70 hover:border-orange-500/60'
+                              : 'bg-[#121015] border-2 border-stone-700 hover:border-red-500/60'
+                          }`}
+                        >
+                          {activeInputDef && cookingInputCount > 0 ? (
+                            <>
+                              <img
+                                src={spriteAtlas.getItemIconUrl(
+                                  activeInputDef.id
+                                )}
+                                alt={activeInputDef.name}
+                                className="w-9 h-9 pixelated pointer-events-none"
+                              />
+                              <span className="absolute bottom-0.5 right-1 text-[11px] font-mono-tabular font-extrabold text-[#fef08a] drop-shadow pointer-events-none">
+                                x{cookingInputCount}
+                              </span>
+                            </>
+                          ) : null}
+                        </button>
+
+                        {/* Active Flame Gauge between Input and Fuel */}
+                        <div className="flex flex-col items-center gap-1">
+                          <div className="relative w-7 h-7 flex items-center justify-center">
+                            <Flame
+                              className="w-6 h-6 text-stone-700/70"
+                              strokeWidth={2}
+                            />
+                            {fuelBurnRem > 0 && (
+                              <div
+                                className="absolute bottom-0 left-0 right-0 overflow-hidden flex items-end justify-center transition-all duration-150"
+                                style={{ height: `${fuelFlamePct}%` }}
+                              >
+                                <Flame
+                                  className={`w-6 h-6 shrink-0 ${
+                                    isCampfire
+                                      ? 'text-orange-400 drop-shadow-[0_0_8px_rgba(251,146,60,0.85)]'
+                                      : 'text-red-400 drop-shadow-[0_0_8px_rgba(248,113,113,0.85)]'
+                                  }`}
+                                  strokeWidth={2}
+                                />
+                              </div>
+                            )}
+                          </div>
+                        </div>
+
+                        {/* FIELD 2: Combustível (Fuel) — Opaque simple fire icon when empty */}
+                        <button
+                          type="button"
+                          onClick={() => handleFuelSlotInteract()}
+                          onDragOver={(e) => e.preventDefault()}
+                          onDrop={(e) => {
+                            e.preventDefault();
+                            const idx = Number(
+                              e.dataTransfer.getData('text/plain')
+                            );
+                            if (Number.isInteger(idx) && idx >= 0) {
+                              handleFuelSlotInteract(idx);
+                            }
+                          }}
+                          className={`w-16 h-16 sm:w-[68px] sm:h-[68px] rounded-sm flex items-center justify-center relative transition-all ${
+                            selectedCanBeFuel
+                              ? 'bg-[#3b1c08] border-2 border-amber-400 ring-2 ring-amber-400/50 shadow-[0_0_14px_rgba(251,191,36,0.45)]'
+                              : fuelItemDef && (thermalState?.fuelCount || 0) > 0
+                              ? 'bg-[#291307] border-2 border-orange-500/80'
+                              : isCampfire
+                              ? 'bg-[#170904] border-2 border-orange-900/70 hover:border-orange-500/60'
+                              : 'bg-[#121015] border-2 border-stone-700 hover:border-red-500/60'
+                          }`}
+                        >
+                          {fuelItemDef && (thermalState?.fuelCount || 0) > 0 ? (
+                            <>
+                              <img
+                                src={spriteAtlas.getItemIconUrl(fuelItemDef.id)}
+                                alt={fuelItemDef.name}
+                                className="w-9 h-9 pixelated pointer-events-none"
+                              />
+                              <span className="absolute bottom-0.5 right-1 text-[11px] font-mono-tabular font-extrabold text-[#fef08a] drop-shadow pointer-events-none">
+                                x{thermalState?.fuelCount}
+                              </span>
+                            </>
+                          ) : (
+                            <Flame
+                              className="w-7 h-7 text-orange-400/20 pointer-events-none"
+                              strokeWidth={1.75}
+                            />
+                          )}
+                        </button>
+                      </div>
+
+                      {/* Center Progress Bar & Arrow */}
+                      <div className="flex flex-col items-center justify-center gap-1.5 w-16 sm:w-20">
+                        <div className="w-full h-3 bg-black/70 border border-white/15 rounded-sm overflow-hidden">
+                          <div
+                            className={`h-full transition-all duration-150 ${
+                              isCampfire
+                                ? 'bg-gradient-to-r from-orange-600 via-amber-400 to-yellow-300'
+                                : 'bg-gradient-to-r from-red-600 via-orange-500 to-amber-300'
+                            }`}
+                            style={{ width: `${cookingPct}%` }}
+                          />
+                        </div>
+                        <ArrowRight
+                          className={`w-6 h-6 ${
+                            cookingInputCount > 0 && fuelBurnRem > 0
+                              ? isCampfire
+                                ? 'text-orange-400 animate-pulse'
+                                : 'text-red-400 animate-pulse'
+                              : 'text-stone-600'
+                          }`}
+                        />
+                      </div>
+
+                      {/* FIELD 3: Produto (Output) — Only shows processed item for collection on click */}
+                      <button
+                        type="button"
+                        onClick={handleOutputSlotInteract}
+                        disabled={!outputItemDef || outputCount <= 0}
+                        className={`w-20 h-20 sm:w-[82px] sm:h-[82px] rounded-sm flex items-center justify-center relative transition-all ${
+                          outputItemDef && outputCount > 0
+                            ? 'bg-emerald-950/75 border-2 border-emerald-400 shadow-[0_0_18px_rgba(52,211,153,0.45)] cursor-pointer hover:scale-105'
+                            : isCampfire
+                            ? 'bg-[#170904] border-2 border-orange-900/70 cursor-default'
+                            : 'bg-[#121015] border-2 border-stone-700 cursor-default'
+                        }`}
+                      >
+                        {outputItemDef && outputCount > 0 ? (
+                          <>
+                            <img
+                              src={spriteAtlas.getItemIconUrl(outputItemDef.id)}
+                              alt={outputItemDef.name}
+                              className="w-10 h-10 pixelated pointer-events-none"
+                            />
+                            <span className="absolute bottom-1 right-1.5 text-xs font-mono-tabular font-extrabold text-emerald-300 drop-shadow pointer-events-none">
+                              x{outputCount}
+                            </span>
+                          </>
+                        ) : null}
+                      </button>
+                    </div>
+                  </div>
+                );
+              })()}
+            </div>
+          </div>
         ) : activeTab === 'craft' ? (
           <div className="flex-1 overflow-y-auto p-2.5 sm:p-3.5 grid grid-cols-1 sm:grid-cols-12 gap-3 items-start">
             {/* LEFT COLUMN (7 cols): Category Filter + Station Recipe Grid */}
-            <div className="sm:col-span-7 bg-black/35 border border-white/10 p-2.5 space-y-2.5 flex flex-col h-full">
+            <div className="sm:col-span-7 bg-black/35 border border-white/10 p-2.5 space-y-2.5 flex flex-col">
               {/* Category Filter Bar */}
               <div className="flex flex-wrap items-center justify-between gap-1.5 border-b border-white/10 pb-2">
                 <div className="flex flex-wrap items-center gap-1">
@@ -1685,389 +2084,63 @@ export const CraftingDrawer: React.FC<CraftingDrawerProps> = ({
                 </span>
               </div>
 
-              {/* Recipe Slot Grid */}
-              <div className="grid grid-cols-5 sm:grid-cols-6 gap-1.5 max-h-[340px] overflow-y-auto pr-1">
-                {filteredRecipes.map((recipe) => {
-                  const item = ITEMS[recipe.resultItemId];
-                  if (!item) return null;
-                  const maxPossible = engine.getMaxCraftableCount(recipe);
-                  const canCraft = maxPossible > 0;
-                  const isSelected = selectedRecipe?.id === recipe.id;
-                  const isCookingThis =
-                    isThermalStation &&
-                    thermalState?.cookingRecipeId === recipe.id &&
-                    (thermalState?.cookingInputCount || 0) > 0;
+              {/* Recipe Slot Grid with Fixed Spacing & Natural Vertical Scroll */}
+              <div className="max-h-[340px] overflow-y-auto pr-1">
+                <div className="grid grid-cols-5 sm:grid-cols-6 gap-2 content-start auto-rows-max">
+                  {filteredRecipes.map((recipe) => {
+                    const item = ITEMS[recipe.resultItemId];
+                    if (!item) return null;
+                    const maxPossible = engine.getMaxCraftableCount(recipe);
+                    const canCraft = maxPossible > 0;
+                    const isSelected = selectedRecipe?.id === recipe.id;
 
-                  return (
-                    <button
-                      key={recipe.id}
-                      onClick={() => setSelectedRecipeId(recipe.id)}
-                      className={`relative aspect-square min-h-[50px] p-1 flex flex-col items-center justify-center transition-transform rounded-sm ${
-                        isSelected ? theme.slotActiveClass : 'mc-slot'
-                      } ${!canCraft && !isCookingThis ? 'opacity-55' : ''}`}
-                      title={item.name}
-                    >
-                      <img
-                        src={spriteAtlas.getItemIconUrl(recipe.resultItemId)}
-                        alt={item.name}
-                        className="w-7 h-7 pixelated"
-                      />
+                    return (
+                      <button
+                        key={recipe.id}
+                        onClick={() => setSelectedRecipeId(recipe.id)}
+                        className={`relative h-[56px] w-full p-1 flex flex-col items-center justify-center transition-transform rounded-sm ${
+                          isSelected ? theme.slotActiveClass : 'mc-slot'
+                        } ${!canCraft ? 'opacity-55' : ''}`}
+                        title={item.name}
+                      >
+                        <img
+                          src={spriteAtlas.getItemIconUrl(recipe.resultItemId)}
+                          alt={item.name}
+                          className="w-7 h-7 pixelated"
+                        />
 
-                      {recipe.resultCount > 1 && (
-                        <span className="absolute bottom-0.5 right-1 text-[9px] font-mono-tabular font-extrabold text-white drop-shadow">
-                          x{recipe.resultCount}
-                        </span>
-                      )}
+                        {recipe.resultCount > 1 && (
+                          <span className="absolute bottom-0.5 right-1 text-[9px] font-mono-tabular font-extrabold text-white drop-shadow">
+                            x{recipe.resultCount}
+                          </span>
+                        )}
 
-                      {(recipe.craftTimeSec || 0) > 0 && (
-                        <span className="absolute top-0.5 left-0.5 px-1 bg-black/75 text-[8px] font-mono-tabular text-orange-300 rounded-sm">
-                          {recipe.craftTimeSec}s
-                        </span>
-                      )}
+                        {(recipe.craftTimeSec || 0) > 0 && (
+                          <span className="absolute top-0.5 left-0.5 px-1 bg-black/75 text-[8px] font-mono-tabular text-orange-300 rounded-sm">
+                            {recipe.craftTimeSec}s
+                          </span>
+                        )}
 
-                      {isCookingThis ? (
-                        <span className="absolute top-0.5 right-0.5 w-2.5 h-2.5 rounded-full bg-orange-400 animate-ping" />
-                      ) : (
                         <span
                           className={`absolute top-1 right-1 w-2 h-2 rounded-full ${
                             canCraft ? 'bg-emerald-400' : 'bg-stone-600'
                           }`}
                         />
-                      )}
-                    </button>
-                  );
-                })}
+                      </button>
+                    );
+                  })}
 
-                {filteredRecipes.length === 0 && (
-                  <div className="col-span-6 py-8 text-center text-xs text-[#c4ab7d]">
-                    {theme.emptyHint}
-                  </div>
-                )}
+                  {filteredRecipes.length === 0 && (
+                    <div className="col-span-6 py-8 text-center text-xs text-[#c4ab7d]">
+                      {theme.emptyHint}
+                    </div>
+                  )}
+                </div>
               </div>
             </div>
 
             {/* RIGHT COLUMN (5 cols): Unique Station Apparatus & Recipe Inspector */}
             <div className="sm:col-span-5 space-y-2.5">
-              {/* ============================================================= */}
-              {/* THERMAL APPARATUS PANEL (EXCLUSIVE TO CAMPFIRE & FURNACE!)    */}
-              {/* ============================================================= */}
-              {isThermalStation && thermalState && (
-                <div
-                  className={`p-3 border-2 rounded-sm space-y-2.5 ${
-                    activeStation === PlaceableType.CAMPFIRE
-                      ? 'bg-[#2a1109] border-orange-500/80'
-                      : 'bg-[#1b191d] border-red-500/80'
-                  }`}
-                >
-                  <div className="flex items-center justify-between border-b border-white/15 pb-1.5">
-                    <div className="flex items-center gap-1.5">
-                      <Flame
-                        className={`w-4 h-4 ${
-                          fuelBurnRem > 0
-                            ? 'text-orange-400 animate-pulse'
-                            : 'text-stone-500'
-                        }`}
-                      />
-                      <span
-                        className={`font-pixel text-[10px] font-bold ${theme.accentTextClass}`}
-                      >
-                        {theme.matrixTitle}
-                      </span>
-                    </div>
-                    <span
-                      className={`text-[10px] font-mono-tabular font-bold ${
-                        fuelBurnRem > 0 ? 'text-amber-300' : 'text-stone-400'
-                      }`}
-                    >
-                      {fuelBurnRem > 0
-                        ? `🔥 Chama Ativa: ${Math.ceil(fuelBurnRem)}s`
-                        : '❄️ Fogo Apagado (Adicione Lenha)'}
-                    </span>
-                  </div>
-
-                  {/* Minecraft-Style 3-Slot Thermal Layout: [Input + Fuel] -> [Progress Arrow] -> [Output] */}
-                  <div className="grid grid-cols-12 gap-2 items-center bg-black/45 p-2.5 border border-white/10 rounded-sm">
-                    {/* Left (5 cols): Input Slot (Top) + Flame Bar + Fuel Slot (Bottom) */}
-                    <div className="col-span-5 flex flex-col items-center gap-1.5">
-                      {/* Input Slot */}
-                      <div className="w-full flex items-center gap-2 bg-black/50 p-1.5 border border-white/15 rounded-sm">
-                        <div className="w-10 h-10 mc-slot flex items-center justify-center relative shrink-0">
-                          {activeCookingRecipe && activeCookingOutDef ? (
-                            <>
-                              <img
-                                src={spriteAtlas.getItemIconUrl(
-                                  engine.getRecipeActiveIngredients(
-                                    activeCookingRecipe,
-                                    thermalState.cookingMaterialOptionId ||
-                                      undefined
-                                  )[0]?.itemId ||
-                                    activeCookingRecipe.resultItemId
-                                )}
-                                alt={activeCookingOutDef.name}
-                                className="w-6 h-6 pixelated"
-                              />
-                              <span className="absolute bottom-0 right-0.5 text-[9px] font-mono-tabular font-extrabold text-amber-300">
-                                x{cookingInputCount}
-                              </span>
-                            </>
-                          ) : (
-                            <Utensils className="w-4 h-4 text-stone-600" />
-                          )}
-                        </div>
-                        <div className="min-w-0 flex-1">
-                          <div className="text-[9px] font-pixel text-[#c4ab7d]">
-                            {activeStation === PlaceableType.CAMPFIRE
-                              ? 'NA GRELHA:'
-                              : 'NO FORNO:'}
-                          </div>
-                          <div className="text-[10px] font-bold text-white truncate">
-                            {activeCookingOutDef
-                              ? `${activeCookingOutDef.name} (${cookingInputCount}x)`
-                              : 'Vazio'}
-                          </div>
-                          {cookingInputCount > 0 && (
-                            <button
-                              onClick={() =>
-                                engine.cancelThermalStationQueue(
-                                  activeStation as
-                                    | PlaceableType.CAMPFIRE
-                                    | PlaceableType.FURNACE
-                                )
-                              }
-                              className="text-[9px] text-rose-400 hover:underline font-bold"
-                            >
-                              Cancelar fila
-                            </button>
-                          )}
-                        </div>
-                      </div>
-
-                      {/* Burn Flame Progress Bar */}
-                      <div className="w-full space-y-0.5">
-                        <div className="flex items-center justify-between text-[9px]">
-                          <span className="text-orange-300 flex items-center gap-1">
-                            <Flame className="w-3 h-3" /> Combustão
-                          </span>
-                          <span className="font-mono-tabular text-amber-300">
-                            {fuelBurnRem > 0
-                              ? `${Math.ceil(fuelBurnRem)}s / ${fuelBurnMax}s`
-                              : '0s'}
-                          </span>
-                        </div>
-                        <div className="w-full h-2 bg-stone-900 border border-stone-700 overflow-hidden rounded-sm">
-                          <div
-                            className="h-full bg-gradient-to-r from-red-600 via-orange-500 to-yellow-300 transition-all duration-150"
-                            style={{ width: `${fuelFlamePct}%` }}
-                          />
-                        </div>
-                      </div>
-
-                      {/* Fuel Slot ("Slot para Lenha") */}
-                      <div className="w-full flex items-center gap-2 bg-black/50 p-1.5 border border-orange-500/40 rounded-sm">
-                        <div className="w-10 h-10 mc-slot flex items-center justify-center relative shrink-0 border-orange-500/50">
-                          {fuelItemDef && (thermalState.fuelCount || 0) > 0 ? (
-                            <>
-                              <img
-                                src={spriteAtlas.getItemIconUrl(fuelItemDef.id)}
-                                alt={fuelItemDef.name}
-                                className="w-6 h-6 pixelated"
-                              />
-                              <span className="absolute bottom-0 right-0.5 text-[9px] font-mono-tabular font-extrabold text-amber-300">
-                                x{thermalState.fuelCount}
-                              </span>
-                            </>
-                          ) : (
-                            <Flame className="w-4 h-4 text-orange-500/40" />
-                          )}
-                        </div>
-                        <div className="min-w-0 flex-1">
-                          <div className="text-[9px] font-pixel text-orange-300">
-                            SLOT DE LENHA:
-                          </div>
-                          <div className="text-[10px] font-bold text-white truncate">
-                            {fuelItemDef && (thermalState.fuelCount || 0) > 0
-                              ? `${fuelItemDef.name} (${thermalState.fuelCount}x)`
-                              : 'Sem Lenha'}
-                          </div>
-                          {fuelItemDef && (thermalState.fuelCount || 0) > 0 && (
-                            <button
-                              onClick={() =>
-                                engine.removeFuelFromThermalStation(
-                                  activeStation as
-                                    | PlaceableType.CAMPFIRE
-                                    | PlaceableType.FURNACE
-                                )
-                              }
-                              className="text-[9px] text-amber-300 hover:underline font-bold"
-                            >
-                              Retirar lenha
-                            </button>
-                          )}
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* Center (3 cols): Animated Smelting/Cooking Progress Arrow & Timer */}
-                    <div className="col-span-3 flex flex-col items-center justify-center gap-1 text-center">
-                      <div className="text-[9px] font-mono-tabular text-amber-300 font-bold">
-                        {cookingInputCount > 0
-                          ? `${cookingProgress.toFixed(1)}s / ${cookingDuration}s`
-                          : selectedRecipe?.craftTimeSec
-                          ? `⏱ ${selectedRecipe.craftTimeSec}s`
-                          : 'Pronto'}
-                      </div>
-                      <div className="w-full h-3 bg-stone-900 border border-stone-600 rounded-sm overflow-hidden relative">
-                        <div
-                          className="h-full bg-gradient-to-r from-amber-500 via-orange-400 to-emerald-400 transition-all duration-150"
-                          style={{ width: `${cookingPct}%` }}
-                        />
-                      </div>
-                      <ArrowRight
-                        className={`w-5 h-5 ${
-                          cookingInputCount > 0 && fuelBurnRem > 0
-                            ? 'text-amber-300 animate-pulse'
-                            : 'text-stone-500'
-                        }`}
-                      />
-                      <span className="text-[8px] text-[#c4ab7d] leading-tight">
-                        {cookingInputCount > 0
-                          ? fuelBurnRem > 0
-                            ? activeStation === PlaceableType.CAMPFIRE
-                              ? 'Assando...'
-                              : 'Fundindo...'
-                            : 'Falta Lenha!'
-                          : 'Aguardando'}
-                      </span>
-                    </div>
-
-                    {/* Right (4 cols): Output Slot ("Saída Pronta") */}
-                    <div className="col-span-4 flex flex-col items-center justify-center gap-1.5 bg-black/50 p-2 border border-emerald-500/40 rounded-sm">
-                      <span className="text-[9px] font-pixel text-emerald-300">
-                        SAÍDA PRONTA
-                      </span>
-                      <button
-                        onClick={() =>
-                          engine.collectThermalStationOutput(
-                            activeStation as
-                              | PlaceableType.CAMPFIRE
-                              | PlaceableType.FURNACE
-                          )
-                        }
-                        disabled={!outputItemDef || outputCount <= 0}
-                        className={`w-12 h-12 flex items-center justify-center relative rounded-sm border-2 ${
-                          outputItemDef && outputCount > 0
-                            ? 'bg-emerald-950/80 border-emerald-400 shadow-[0_0_15px_rgba(52,211,153,0.5)] animate-bounce cursor-pointer'
-                            : 'mc-slot opacity-60 cursor-default'
-                        }`}
-                        title={
-                          outputItemDef && outputCount > 0
-                            ? `Recolher ${outputCount}x ${outputItemDef.name}`
-                            : 'Nenhum item pronto ainda'
-                        }
-                      >
-                        {outputItemDef && outputCount > 0 ? (
-                          <>
-                            <img
-                              src={spriteAtlas.getItemIconUrl(outputItemDef.id)}
-                              alt={outputItemDef.name}
-                              className="w-7 h-7 pixelated"
-                            />
-                            <span className="absolute bottom-0.5 right-1 text-[10px] font-mono-tabular font-extrabold text-emerald-300">
-                              x{outputCount}
-                            </span>
-                          </>
-                        ) : (
-                          <Sparkles className="w-4 h-4 text-stone-600" />
-                        )}
-                      </button>
-
-                      {outputItemDef && outputCount > 0 ? (
-                        <button
-                          onClick={() =>
-                            engine.collectThermalStationOutput(
-                              activeStation as
-                                | PlaceableType.CAMPFIRE
-                                | PlaceableType.FURNACE
-                            )
-                          }
-                          className="w-full py-1 px-1.5 medieval-btn-emerald font-pixel text-[9px] font-bold"
-                        >
-                          Recolher ({outputCount}x)
-                        </button>
-                      ) : (
-                        <span className="text-[9px] text-stone-400 text-center">
-                          Vazio
-                        </span>
-                      )}
-                    </div>
-                  </div>
-
-                  {/* Selector of Basic Fuels ("Poucos itens básicos que podem ser usados como lenha + Carvão Vegetal") */}
-                  <div className="space-y-1 pt-1 border-t border-white/10">
-                    <div className="flex items-center justify-between text-[9px]">
-                      <span className="font-pixel text-orange-300">
-                        ABASTECER LENHA (COMBUSTÍVEIS PERMITIDOS):
-                      </span>
-                      <span className="text-amber-300">
-                        Carvão Vegetal = 5x mais eficiente!
-                      </span>
-                    </div>
-                    <div className="grid grid-cols-4 gap-1.5">
-                      {FUEL_ITEM_ORDER.map((fuelId) => {
-                        const fuelInfo = FUEL_ITEMS[fuelId];
-                        const haveCount = engine.getItemCount(fuelId);
-                        const isCharcoal = fuelId === 'charcoal';
-                        return (
-                          <button
-                            key={fuelId}
-                            onClick={() =>
-                              engine.addFuelToThermalStation(
-                                activeStation as
-                                  | PlaceableType.CAMPFIRE
-                                  | PlaceableType.FURNACE,
-                                fuelId,
-                                1
-                              )
-                            }
-                            disabled={haveCount <= 0}
-                            className={`p-1.5 rounded-sm border text-left flex flex-col gap-0.5 transition-all ${
-                              haveCount > 0
-                                ? isCharcoal
-                                  ? 'bg-amber-950/70 border-amber-400 hover:bg-amber-900/80'
-                                  : 'bg-black/55 border-orange-500/50 hover:border-orange-400'
-                                : 'bg-black/25 border-white/10 opacity-45 cursor-not-allowed'
-                            }`}
-                            title={`${fuelInfo.name}: ${fuelInfo.efficiencyLabel} (${fuelInfo.smeltCapacityHint})`}
-                          >
-                            <div className="flex items-center justify-between">
-                              <img
-                                src={spriteAtlas.getItemIconUrl(fuelId)}
-                                alt={fuelInfo.name}
-                                className="w-5 h-5 pixelated"
-                              />
-                              <span className="text-[9px] font-mono-tabular font-bold text-amber-300">
-                                +{fuelInfo.burnTimeSec}s
-                              </span>
-                            </div>
-                            <div className="text-[9px] font-bold text-white truncate">
-                              {fuelInfo.name}
-                            </div>
-                            <div className="flex items-center justify-between text-[8px] text-[#c4ab7d]">
-                              <span>Mochila: {haveCount}</span>
-                              {haveCount > 0 && (
-                                <span className="text-emerald-300 font-bold">
-                                  +1 Lenha
-                                </span>
-                              )}
-                            </div>
-                          </button>
-                        );
-                      })}
-                    </div>
-                  </div>
-                </div>
-              )}
-
               {/* ============================================================= */}
               {/* SELECTED RECIPE DETAILS & UNIQUE STATION CRAFTING MATRIX      */}
               {/* ============================================================= */}
@@ -3082,8 +3155,8 @@ export const CraftingDrawer: React.FC<CraftingDrawerProps> = ({
               body: 'Aproxime-se de uma Bancada posicionada para criar instantaneamente Ferramentas, Armas, Armaduras, Baús, Botes, Selas, Fornalha e Altar Solar.',
             },
             {
-              title: '3. Fogueira & Fornalha (Lenha + Tempo)',
-              body: 'A Fogueira assa alimentos e elixires; a Fornalha funde minérios e cria Carvão Vegetal. Abasteça o Slot de Lenha com Madeira (12s) ou Carvão Vegetal (60s, 5x mais eficiente) e recolha o resultado pronto.',
+              title: '3. Fogueira & Fornalha (3 Campos Interativos)',
+              body: 'Na esquerda fica seu Inventário e na direita ficam os 3 campos: (1) Campo superior esquerdo: Item a ser processado (alimentos crus ou madeira na Fogueira; minério de ferro, areia ou madeira na Fornalha); (2) Campo inferior esquerdo (com ícone de fogo): Combustível (Madeiras ou Carvão Vegetal); (3) Campo da direita: Produto pronto — clique nele para coletar o item quando houver espaço no inventário.',
             },
             {
               title: '4. Altar Solar (Itens Raros)',

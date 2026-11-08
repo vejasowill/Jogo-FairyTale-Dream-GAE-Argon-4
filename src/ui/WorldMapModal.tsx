@@ -486,9 +486,32 @@ export const WorldMapModal: React.FC<WorldMapModalProps> = ({
     initialZoom: 4,
   });
 
+  const isUnderground = Boolean(world.isUnderground);
   const playerTx = Math.floor(player.x / TILE_SIZE);
   const playerTy = Math.floor(player.y / TILE_SIZE);
-  const remotePlayersList = Array.from(engine.multiplayer.remotePlayers.values());
+  const remotePlayersList = useMemo(
+    () =>
+      Array.from(engine.multiplayer.remotePlayers.values()).filter(
+        (rp) => Boolean(rp.isUnderground) === isUnderground
+      ),
+    [engine.multiplayer.remotePlayers, isUnderground, remoteTick]
+  );
+  const layerTamedAnimals = useMemo(
+    () =>
+      tamedAnimals.filter(
+        (pet) => Boolean(pet.isUnderground) === isUnderground
+      ),
+    [tamedAnimals, isUnderground]
+  );
+  const layerWaypoints = useMemo(
+    () =>
+      waypoints.filter((wp) => Boolean(wp.isUnderground) === isUnderground),
+    [waypoints, isUnderground]
+  );
+  const hasLayerRespawn =
+    player.respawnX !== undefined &&
+    player.respawnY !== undefined &&
+    Boolean(player.respawnIsUnderground) === isUnderground;
 
   // Cluster tamed pets of the SAME species (CreatureKind) when they are close together
   const petClusters = useMemo(() => {
@@ -501,7 +524,7 @@ export const WorldMapModal: React.FC<WorldMapModalProps> = ({
     // Proximity threshold in screen pixels (merges overlapping/adjacent same-type pets)
     const clusterThresholdPx = 18;
     const byKind = new Map<CreatureKind, CreatureEntity[]>();
-    for (const pet of tamedAnimals) {
+    for (const pet of layerTamedAnimals) {
       if (pet.hp <= 0) continue;
       const list = byKind.get(pet.kind) || [];
       list.push(pet);
@@ -562,7 +585,7 @@ export const WorldMapModal: React.FC<WorldMapModalProps> = ({
       }
     }
     return clusters;
-  }, [tamedAnimals, pan.x, pan.y, zoom, playerTx, playerTy]);
+  }, [layerTamedAnimals, pan.x, pan.y, zoom, playerTx, playerTy]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -1258,6 +1281,17 @@ export const WorldMapModal: React.FC<WorldMapModalProps> = ({
               break;
             }
 
+            case PlaceableType.LEVEL_STAIRS: {
+              const sw = Math.max(4, Math.round(cellSize * 1.25));
+              const ox = sx - Math.floor((sw - cellSize) / 2);
+              const oy = sy - Math.floor((sw - cellSize) / 2);
+              ctx.fillStyle = '#0f172a';
+              ctx.fillRect(ox, oy, sw, sw);
+              ctx.fillStyle = '#fbbf24';
+              ctx.fillRect(ox + 1, oy + 1, Math.max(1, sw - 2), Math.max(1, sw - 2));
+              break;
+            }
+
             case PlaceableType.WOOD_FLOOR:
             case PlaceableType.STONE_FLOOR:
             case PlaceableType.BRICK_FLOOR:
@@ -1282,7 +1316,7 @@ export const WorldMapModal: React.FC<WorldMapModalProps> = ({
     // =========================================================================
     // PASS 5: RESPAWN REST POINT & WAYPOINTS / DEATH BAGS
     // =========================================================================
-    if (player.respawnX !== undefined && player.respawnY !== undefined) {
+    if (hasLayerRespawn && player.respawnX !== undefined && player.respawnY !== undefined) {
       const respawnTx = Math.floor(player.respawnX / TILE_SIZE);
       const respawnTy = Math.floor(player.respawnY / TILE_SIZE);
       const rsx = Math.round(centerX + (respawnTx - playerTx) * zoom);
@@ -1300,7 +1334,7 @@ export const WorldMapModal: React.FC<WorldMapModalProps> = ({
     }
 
     if (showWaypoints) {
-      for (const wp of waypoints) {
+      for (const wp of layerWaypoints) {
         const sx = Math.round(centerX + (wp.tileX - playerTx) * zoom);
         const sy = Math.round(centerY + (wp.tileY - playerTy) * zoom);
         if (sx < -20 || sx > w + 20 || sy < -20 || sy > h + 20) continue;
@@ -1376,8 +1410,7 @@ export const WorldMapModal: React.FC<WorldMapModalProps> = ({
     // =========================================================================
     // PASS 9: MINIATURE PLAYER CHARACTER HEADS (Remote Players + Local Player)
     // =========================================================================
-    const remoteList = Array.from(engine.multiplayer.remotePlayers.values());
-    for (const rp of remoteList) {
+    for (const rp of remotePlayersList) {
       const rpTx = rp.x / TILE_SIZE;
       const rpTy = rp.y / TILE_SIZE;
       const sx = centerX + (rpTx - playerTx) * zoom;
@@ -1449,9 +1482,11 @@ export const WorldMapModal: React.FC<WorldMapModalProps> = ({
     engine,
     world,
     player,
-    tamedAnimals,
+    layerTamedAnimals,
     petClusters,
-    waypoints,
+    layerWaypoints,
+    remotePlayersList,
+    hasLayerRespawn,
     zoom,
     pan,
     showNature,
@@ -1488,7 +1523,9 @@ export const WorldMapModal: React.FC<WorldMapModalProps> = ({
     const isExplored = chunk?.explored?.[idx] === 1;
 
     const biomeLabel = isExplored
-      ? getBiomeDisplayName(chunk.tiles[idx], chunk.ecologicalZones?.[idx])
+      ? isUnderground
+        ? 'Subsolo (Caverna)'
+        : getBiomeDisplayName(chunk.tiles[idx], chunk.ecologicalZones?.[idx])
       : 'Área Não Explorada';
 
     // Check if hovering local player
@@ -1552,7 +1589,7 @@ export const WorldMapModal: React.FC<WorldMapModalProps> = ({
 
     // Check waypoints
     if (showWaypoints) {
-      for (const wp of waypoints) {
+      for (const wp of layerWaypoints) {
         const wsx = centerX + (wp.tileX - playerTx) * zoom;
         const wsy = centerY + (wp.tileY - playerTy) * zoom;
         if (Math.hypot(cx - wsx, cy - wsy) <= 9) {
@@ -1714,7 +1751,9 @@ export const WorldMapModal: React.FC<WorldMapModalProps> = ({
   const activeInfo = hoveredInfo || {
     tileX: selectedTile?.tx ?? playerTx,
     tileY: selectedTile?.ty ?? playerTy,
-    biomeLabel: getBiomeDisplayName(world.getTileBiomeFast(playerTx, playerTy)),
+    biomeLabel: isUnderground
+      ? 'Subsolo (Caverna)'
+      : getBiomeDisplayName(world.getTileBiomeFast(playerTx, playerTy)),
     distanceTiles: selectedTile
       ? Math.round(Math.hypot(selectedTile.tx - playerTx, selectedTile.ty - playerTy))
       : 0,
@@ -1735,7 +1774,9 @@ export const WorldMapModal: React.FC<WorldMapModalProps> = ({
             <Compass className="w-4 h-4 text-amber-400" />
             <div className="flex flex-wrap items-baseline gap-2">
               <h2 className="font-pixel text-[11px] sm:text-xs font-bold text-amber-400">
-                ATLAS DO MUNDO EM MINIATURA
+                {isUnderground
+                  ? 'ATLAS DO MUNDO — SUBSOLO'
+                  : 'ATLAS DO MUNDO — SUPERFÍCIE'}
               </h2>
               <span className="text-[10px] text-[#c4ab7d] font-mono-tabular">
                 Posição: ({playerTx}, {playerTy}) · Zoom {zoom}x
@@ -1786,7 +1827,7 @@ export const WorldMapModal: React.FC<WorldMapModalProps> = ({
                   }`}
                 >
                   <Sparkles className="w-3 h-3" />
-                  <span>Pets ({tamedAnimals.length})</span>
+                  <span>Pets ({layerTamedAnimals.length})</span>
                 </button>
                 <button
                   onClick={() => setShowWaypoints((v) => !v)}
@@ -1795,11 +1836,11 @@ export const WorldMapModal: React.FC<WorldMapModalProps> = ({
                   }`}
                 >
                   <MapPin className="w-3 h-3" />
-                  <span>Marcos ({waypoints.length})</span>
+                  <span>Marcos ({layerWaypoints.length})</span>
                 </button>
               </div>
 
-              {player.respawnX !== undefined && player.respawnY !== undefined && (
+              {hasLayerRespawn && (
                 <button
                   onClick={() =>
                     centerOnTile(
@@ -1934,7 +1975,7 @@ export const WorldMapModal: React.FC<WorldMapModalProps> = ({
               {petClusters.length > 0 && (
                 <div className="space-y-1 border-b border-[#3d281a] pb-2 shrink-0">
                   <div className="flex items-center justify-between text-[10px] font-pixel font-bold text-emerald-300">
-                    <span>SEUS PETS ({tamedAnimals.length})</span>
+                    <span>SEUS PETS ({layerTamedAnimals.length})</span>
                     <span className="text-[9px] text-[#c4ab7d] font-normal">
                       {petClusters.length} grupo(s)
                     </span>
@@ -1978,7 +2019,7 @@ export const WorldMapModal: React.FC<WorldMapModalProps> = ({
                 <div className="flex items-center gap-1.5">
                   <MapPin className="w-3.5 h-3.5 text-amber-400" />
                   <h3 className="font-pixel text-[10px] font-bold text-amber-400">
-                    MARCOS ({waypoints.length})
+                    MARCOS ({layerWaypoints.length})
                   </h3>
                 </div>
                 {selectedTile && (
@@ -2035,12 +2076,12 @@ export const WorldMapModal: React.FC<WorldMapModalProps> = ({
               </form>
 
               <div className="space-y-1 flex-1 overflow-y-auto max-h-[140px] pr-0.5">
-                {waypoints.length === 0 ? (
+                {layerWaypoints.length === 0 ? (
                   <div className="text-[10px] text-[#8c6d46] text-center py-3">
                     Toque em qualquer ponto do mapa ou clique em Marcar Aqui para criar um marco.
                   </div>
                 ) : (
-                  waypoints.map((wp) => (
+                  layerWaypoints.map((wp) => (
                     <div
                       key={wp.id}
                       className={`mc-slot px-2 py-1.5 flex items-center justify-between gap-1.5 text-[11px] ${

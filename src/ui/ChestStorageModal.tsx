@@ -229,91 +229,7 @@ export const ChestStorageModal: React.FC<ChestStorageModalProps> = ({
 
         {/* Main Body */}
         <div className="flex-1 overflow-y-auto p-2 sm:p-3 grid grid-cols-1 sm:grid-cols-12 gap-2.5 items-start">
-          {/* LEFT COLUMN (6 cols): CHEST 24-SLOT GRID (3x8) */}
-          <div className="sm:col-span-6 medieval-inset p-2.5 space-y-2">
-            <div className="flex items-center justify-between border-b border-[#3d281a] pb-1">
-              <span className="font-pixel text-[10px] font-bold text-amber-400">
-                BAÚ ({usedChestSlots}/{CHEST_STORAGE_SIZE})
-              </span>
-              <span className="text-[9px] text-[#c4ab7d]">
-                {selectedSlot
-                  ? 'Clique no destino p/ mover ou trocar'
-                  : 'Clique no item p/ selecionar'}
-              </span>
-            </div>
-
-            <div className="grid grid-cols-8 gap-1">
-              {chestSlots.slice(0, CHEST_STORAGE_SIZE).map((slot, idx) => {
-                const def = slot ? ITEMS[slot.itemId] : null;
-                const isSel =
-                  selectedSlot?.container === 'chest' &&
-                  selectedSlot.index === idx;
-                return (
-                  <button
-                    key={idx}
-                    onClick={() => handleSlotClick('chest', idx)}
-                    className={`relative aspect-square min-h-[36px] sm:min-h-[42px] flex flex-col items-center justify-center p-0.5 transition-transform ${
-                      isSel
-                        ? 'mc-slot-active ring-2 ring-amber-400'
-                        : selectedSlot
-                        ? 'mc-slot hover:border-amber-400/70'
-                        : 'mc-slot'
-                    }`}
-                  >
-                    {slot && def ? (
-                      <>
-                        <img
-                          src={spriteAtlas.getItemIconUrl(slot.itemId)}
-                          alt={def.name}
-                          className="w-5 h-5 sm:w-6 sm:h-6 pixelated"
-                        />
-                        {slot.count > 1 && (
-                          <span className="absolute bottom-0 right-0.5 text-[8px] sm:text-[9px] font-mono-tabular font-extrabold text-[#fef08a]">
-                            {slot.count}
-                          </span>
-                        )}
-                      </>
-                    ) : null}
-                  </button>
-                );
-              })}
-            </div>
-
-            {/* Selected Slot Info Strip */}
-            <div className="mc-slot p-2 flex items-center justify-between gap-2 min-h-[50px]">
-              {activeSlot && activeItemDef ? (
-                <>
-                  <div className="flex items-center gap-2 min-w-0">
-                    <img
-                      src={spriteAtlas.getItemIconUrl(activeItemDef.id)}
-                      alt={activeItemDef.name}
-                      className="w-6 h-6 pixelated shrink-0"
-                    />
-                    <div className="min-w-0">
-                      <div className="font-pixel text-[10px] font-bold text-amber-300 truncate">
-                        Selecionado: {activeItemDef.name} (x{activeSlot.count})
-                      </div>
-                      <div className="text-[9px] text-[#c4ab7d] truncate">
-                        Clique em qualquer slot vazio ou ocupado para mover ou trocar de posição.
-                      </div>
-                    </div>
-                  </div>
-                  <button
-                    onClick={() => setSelectedSlot(null)}
-                    className="px-2 py-1 medieval-btn-wood text-[9px] font-bold shrink-0"
-                  >
-                    Cancelar
-                  </button>
-                </>
-              ) : (
-                <div className="text-[10px] text-[#8c6d46] w-full text-center">
-                  Clique em um item e depois clique no local de destino (Baú ou Mochila).
-                </div>
-              )}
-            </div>
-          </div>
-
-          {/* RIGHT COLUMN (6 cols): PLAYER BACKPACK (24) + HOTBAR (8) */}
+          {/* LEFT COLUMN (6 cols): PLAYER BACKPACK (24) + HOTBAR (8) */}
           <div className="sm:col-span-6 medieval-inset p-2.5 space-y-2">
             <div className="flex items-center justify-between border-b border-[#3d281a] pb-1">
               <span className="font-pixel text-[10px] font-bold text-[#e5d5b5]">
@@ -412,6 +328,90 @@ export const ChestStorageModal: React.FC<ChestStorageModalProps> = ({
                   );
                 })}
               </div>
+            </div>
+          </div>
+
+          {/* RIGHT COLUMN (6 cols): CHEST 24-SLOT GRID (3x8) */}
+          <div className="sm:col-span-6 medieval-inset p-2.5 space-y-2">
+            <div className="flex items-center justify-between border-b border-[#3d281a] pb-1">
+              <span className="font-pixel text-[10px] font-bold text-amber-400">
+                BAÚ ({usedChestSlots}/{CHEST_STORAGE_SIZE})
+              </span>
+              <span className="text-[9px] text-[#c4ab7d]">
+                {selectedSlot
+                  ? 'Clique no destino p/ mover ou trocar'
+                  : 'Clique no item p/ selecionar'}
+              </span>
+            </div>
+
+            <div className="grid grid-cols-8 gap-1">
+              {chestSlots.slice(0, CHEST_STORAGE_SIZE).map((slot, idx) => {
+                const def = slot ? ITEMS[slot.itemId] : null;
+                const isSel =
+                  selectedSlot?.container === 'chest' &&
+                  selectedSlot.index === idx;
+                return (
+                  <button
+                    key={idx}
+                    onClick={() => handleSlotClick('chest', idx)}
+                    className={`relative aspect-square min-h-[36px] sm:min-h-[42px] flex flex-col items-center justify-center p-0.5 transition-transform ${
+                      isSel
+                        ? 'mc-slot-active ring-2 ring-amber-400'
+                        : selectedSlot
+                        ? 'mc-slot hover:border-amber-400/70'
+                        : 'mc-slot'
+                    }`}
+                  >
+                    {slot && def ? (
+                      <>
+                        <img
+                          src={spriteAtlas.getItemIconUrl(slot.itemId)}
+                          alt={def.name}
+                          className="w-5 h-5 sm:w-6 sm:h-6 pixelated"
+                        />
+                        {slot.count > 1 && (
+                          <span className="absolute bottom-0 right-0.5 text-[8px] sm:text-[9px] font-mono-tabular font-extrabold text-[#fef08a]">
+                            {slot.count}
+                          </span>
+                        )}
+                      </>
+                    ) : null}
+                  </button>
+                );
+              })}
+            </div>
+
+            {/* Selected Slot Info Strip */}
+            <div className="mc-slot p-2 flex items-center justify-between gap-2 min-h-[50px]">
+              {activeSlot && activeItemDef ? (
+                <>
+                  <div className="flex items-center gap-2 min-w-0">
+                    <img
+                      src={spriteAtlas.getItemIconUrl(activeItemDef.id)}
+                      alt={activeItemDef.name}
+                      className="w-6 h-6 pixelated shrink-0"
+                    />
+                    <div className="min-w-0">
+                      <div className="font-pixel text-[10px] font-bold text-amber-300 truncate">
+                        Selecionado: {activeItemDef.name} (x{activeSlot.count})
+                      </div>
+                      <div className="text-[9px] text-[#c4ab7d] truncate">
+                        Clique em qualquer slot vazio ou ocupado para mover ou trocar de posição.
+                      </div>
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => setSelectedSlot(null)}
+                    className="px-2 py-1 medieval-btn-wood text-[9px] font-bold shrink-0"
+                  >
+                    Cancelar
+                  </button>
+                </>
+              ) : (
+                <div className="text-[10px] text-[#8c6d46] w-full text-center">
+                  Clique em um item e depois clique no local de destino (Mochila ou Baú).
+                </div>
+              )}
             </div>
           </div>
         </div>

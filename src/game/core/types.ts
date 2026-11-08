@@ -860,6 +860,7 @@ export interface PlayerState {
   respawnX?: number;
   respawnY?: number;
   respawnLabel?: string;
+  respawnIsUnderground?: boolean;
   // Daily Healing Fountain & Village Well usage & Sleep countdown state
   lastFountainUseDay?: number;
   lastWellUseDay?: number;
@@ -935,7 +936,7 @@ export interface OnlineActivationStep {
 }
 
 // REGRA PERMANENTE: A cada nova atualização do jogo, incremente a versão para o número seguinte da beta (ex: 0.4.4-beta -> 0.4.5-beta).
-export const GAME_VERSION = '0.7.9-beta';
+export const GAME_VERSION = '0.8.0-beta';
 export const CURRENT_WORLD_GEN_VERSION = 5;
 
 export interface OnlineSessionInfo {

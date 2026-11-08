@@ -1133,8 +1133,7 @@ export const RECIPES: CraftingRecipe[] = [
   },
 
   // ==========================================================================
-  // 3. FOGUEIRA (requiredStation: CAMPFIRE — Culinária, Ingredientes & Brasa)
-  // Requer Lenha no Slot de Combustível e possui Tempo de Preparo (craftTimeSec).
+  // 3. FOGUEIRA (requiredStation: CAMPFIRE — Processamento Direto de 1 Item + Combustível)
   // ==========================================================================
   {
     id: 'campfire_charcoal',
@@ -1143,7 +1142,16 @@ export const RECIPES: CraftingRecipe[] = [
     requiredStation: PlaceableType.CAMPFIRE,
     craftTimeSec: 6,
     rarity: RarityTier.BASIC,
-    ingredients: [{ itemId: 'wood', count: 2 }],
+    ingredients: [{ itemId: 'wood', count: 1 }],
+  },
+  {
+    id: 'campfire_charcoal_hardwood',
+    resultItemId: 'charcoal',
+    resultCount: 2,
+    requiredStation: PlaceableType.CAMPFIRE,
+    craftTimeSec: 7,
+    rarity: RarityTier.RARE,
+    ingredients: [{ itemId: 'hardwood', count: 1 }],
   },
   {
     id: 'cook_fish_tilapia',
@@ -1166,11 +1174,11 @@ export const RECIPES: CraftingRecipe[] = [
   {
     id: 'bake_fresh_bread',
     resultItemId: 'fresh_bread',
-    resultCount: 2,
+    resultCount: 1,
     requiredStation: PlaceableType.CAMPFIRE,
     craftTimeSec: 6,
     rarity: RarityTier.BASIC,
-    ingredients: [{ itemId: 'wheat', count: 2 }],
+    ingredients: [{ itemId: 'wheat', count: 1 }],
   },
   {
     id: 'cook_lamb_campfire',
@@ -1199,12 +1207,14 @@ export const RECIPES: CraftingRecipe[] = [
     rarity: RarityTier.BASIC,
     ingredients: [{ itemId: 'raw_beef', count: 1 }],
   },
+
+  // --- CULINÁRIA COMPOSTA, ELIXIRES & ALVENARIA (BANCADA DE TRABALHO) ---
   {
     id: 'cook_vegetable_stew',
     resultItemId: 'vegetable_stew',
     resultCount: 1,
-    requiredStation: PlaceableType.CAMPFIRE,
-    craftTimeSec: 8,
+    requiredStation: PlaceableType.WORKBENCH,
+    craftTimeSec: 0,
     rarity: RarityTier.BASIC,
     ingredients: [
       { itemId: 'carrot', count: 2 },
@@ -1216,8 +1226,8 @@ export const RECIPES: CraftingRecipe[] = [
     id: 'cook_warrior_feast',
     resultItemId: 'warrior_feast',
     resultCount: 1,
-    requiredStation: PlaceableType.CAMPFIRE,
-    craftTimeSec: 10,
+    requiredStation: PlaceableType.WORKBENCH,
+    craftTimeSec: 0,
     rarity: RarityTier.RARE,
     ingredients: [
       { itemId: 'apple', count: 2 },
@@ -1229,8 +1239,8 @@ export const RECIPES: CraftingRecipe[] = [
     id: 'craft_coconut_elixir',
     resultItemId: 'coconut_elixir',
     resultCount: 2,
-    requiredStation: PlaceableType.CAMPFIRE,
-    craftTimeSec: 6,
+    requiredStation: PlaceableType.WORKBENCH,
+    craftTimeSec: 0,
     rarity: RarityTier.RARE,
     ingredients: [
       { itemId: 'coconut', count: 2 },
@@ -1241,8 +1251,8 @@ export const RECIPES: CraftingRecipe[] = [
     id: 'brew_healing_salve',
     resultItemId: 'healing_salve',
     resultCount: 2,
-    requiredStation: PlaceableType.CAMPFIRE,
-    craftTimeSec: 7,
+    requiredStation: PlaceableType.WORKBENCH,
+    craftTimeSec: 0,
     rarity: RarityTier.RARE,
     ingredients: [
       { itemId: 'berry', count: 3 },
@@ -1254,8 +1264,8 @@ export const RECIPES: CraftingRecipe[] = [
     id: 'craft_herbal_poultice',
     resultItemId: 'herbal_poultice',
     resultCount: 2,
-    requiredStation: PlaceableType.CAMPFIRE,
-    craftTimeSec: 6,
+    requiredStation: PlaceableType.WORKBENCH,
+    craftTimeSec: 0,
     rarity: RarityTier.RARE,
     ingredients: [
       { itemId: 'medic_herb', count: 2 },
@@ -1267,8 +1277,8 @@ export const RECIPES: CraftingRecipe[] = [
     id: 'brew_shadow_elixir',
     resultItemId: 'shadow_elixir',
     resultCount: 2,
-    requiredStation: PlaceableType.CAMPFIRE,
-    craftTimeSec: 8,
+    requiredStation: PlaceableType.WORKBENCH,
+    craftTimeSec: 0,
     rarity: RarityTier.RARE,
     ingredients: [
       { itemId: 'dark_essence', count: 2 },
@@ -1280,8 +1290,8 @@ export const RECIPES: CraftingRecipe[] = [
     id: 'craft_taming_treat',
     resultItemId: 'taming_treat',
     resultCount: 2,
-    requiredStation: PlaceableType.CAMPFIRE,
-    craftTimeSec: 5,
+    requiredStation: PlaceableType.WORKBENCH,
+    craftTimeSec: 0,
     rarity: RarityTier.RARE,
     ingredients: [
       { itemId: 'berry', count: 2 },
@@ -1294,8 +1304,8 @@ export const RECIPES: CraftingRecipe[] = [
     id: 'craft_farm_feed',
     resultItemId: 'farm_feed',
     resultCount: 2,
-    requiredStation: PlaceableType.CAMPFIRE,
-    craftTimeSec: 5,
+    requiredStation: PlaceableType.WORKBENCH,
+    craftTimeSec: 0,
     rarity: RarityTier.BASIC,
     ingredients: [
       { itemId: 'wheat', count: 2 },
@@ -1303,10 +1313,72 @@ export const RECIPES: CraftingRecipe[] = [
       { itemId: 'berry', count: 1 },
     ],
   },
+  {
+    id: 'craft_brick_floor',
+    resultItemId: 'brick_floor',
+    resultCount: 4,
+    requiredStation: PlaceableType.WORKBENCH,
+    craftTimeSec: 0,
+    rarity: RarityTier.RARE,
+    ingredients: [
+      { itemId: 'stone', count: 2 },
+      { itemId: 'flint', count: 1 },
+    ],
+  },
+  {
+    id: 'craft_brick_wall',
+    resultItemId: 'brick_wall',
+    resultCount: 3,
+    requiredStation: PlaceableType.WORKBENCH,
+    craftTimeSec: 0,
+    rarity: RarityTier.RARE,
+    ingredients: [
+      { itemId: 'stone', count: 4 },
+      { itemId: 'iron_bar', count: 1 },
+      { itemId: 'flint', count: 1 },
+    ],
+  },
+  {
+    id: 'craft_stone_wall',
+    resultItemId: 'stone_wall',
+    resultCount: 2,
+    requiredStation: PlaceableType.WORKBENCH,
+    craftTimeSec: 0,
+    rarity: RarityTier.RARE,
+    ingredients: [
+      { itemId: 'stone', count: 5 },
+      { itemId: 'iron_bar', count: 1 },
+    ],
+  },
+  {
+    id: 'craft_stone_window',
+    resultItemId: 'stone_window',
+    resultCount: 2,
+    requiredStation: PlaceableType.WORKBENCH,
+    craftTimeSec: 0,
+    rarity: RarityTier.RARE,
+    ingredients: [
+      { itemId: 'stone', count: 4 },
+      { itemId: 'glass', count: 1 },
+    ],
+  },
+  {
+    id: 'craft_fire_bomb',
+    resultItemId: 'fire_bomb',
+    resultCount: 2,
+    requiredStation: PlaceableType.WORKBENCH,
+    craftTimeSec: 0,
+    rarity: RarityTier.RARE,
+    ingredients: [
+      { itemId: 'flint', count: 2 },
+      { itemId: 'iron_ore', count: 1 },
+      { itemId: 'solar_crystal', count: 1 },
+      { itemId: 'charcoal', count: 1 },
+    ],
+  },
 
   // ==========================================================================
-  // 4. FORNALHA (requiredStation: FURNACE — Fundição Metalúrgica & Alvenaria)
-  // Requer Lenha/Carvão no Slot de Combustível e possui Tempo de Fundição.
+  // 4. FORNALHA (requiredStation: FURNACE — Processamento Direto de 1 Item + Combustível)
   // ==========================================================================
   {
     id: 'smelt_charcoal_wood',
@@ -1342,70 +1414,7 @@ export const RECIPES: CraftingRecipe[] = [
     requiredStation: PlaceableType.FURNACE,
     craftTimeSec: 8,
     rarity: RarityTier.RARE,
-    ingredients: [{ itemId: 'iron_ore', count: 2 }],
-  },
-  {
-    id: 'craft_brick_floor',
-    resultItemId: 'brick_floor',
-    resultCount: 4,
-    requiredStation: PlaceableType.FURNACE,
-    craftTimeSec: 6,
-    rarity: RarityTier.RARE,
-    ingredients: [
-      { itemId: 'stone', count: 2 },
-      { itemId: 'flint', count: 1 },
-    ],
-  },
-  {
-    id: 'craft_brick_wall',
-    resultItemId: 'brick_wall',
-    resultCount: 3,
-    requiredStation: PlaceableType.FURNACE,
-    craftTimeSec: 8,
-    rarity: RarityTier.RARE,
-    ingredients: [
-      { itemId: 'stone', count: 4 },
-      { itemId: 'iron_bar', count: 1 },
-      { itemId: 'flint', count: 1 },
-    ],
-  },
-  {
-    id: 'craft_stone_wall',
-    resultItemId: 'stone_wall',
-    resultCount: 2,
-    requiredStation: PlaceableType.FURNACE,
-    craftTimeSec: 7,
-    rarity: RarityTier.RARE,
-    ingredients: [
-      { itemId: 'stone', count: 5 },
-      { itemId: 'iron_bar', count: 1 },
-    ],
-  },
-  {
-    id: 'craft_stone_window',
-    resultItemId: 'stone_window',
-    resultCount: 2,
-    requiredStation: PlaceableType.FURNACE,
-    craftTimeSec: 7,
-    rarity: RarityTier.RARE,
-    ingredients: [
-      { itemId: 'stone', count: 4 },
-      { itemId: 'glass', count: 1 },
-    ],
-  },
-  {
-    id: 'craft_fire_bomb',
-    resultItemId: 'fire_bomb',
-    resultCount: 2,
-    requiredStation: PlaceableType.FURNACE,
-    craftTimeSec: 8,
-    rarity: RarityTier.RARE,
-    ingredients: [
-      { itemId: 'flint', count: 2 },
-      { itemId: 'iron_ore', count: 1 },
-      { itemId: 'solar_crystal', count: 1 },
-      { itemId: 'charcoal', count: 1 },
-    ],
+    ingredients: [{ itemId: 'iron_ore', count: 1 }],
   },
   {
     id: 'cook_lamb_furnace',
@@ -1433,6 +1442,33 @@ export const RECIPES: CraftingRecipe[] = [
     craftTimeSec: 5,
     rarity: RarityTier.BASIC,
     ingredients: [{ itemId: 'raw_beef', count: 1 }],
+  },
+  {
+    id: 'cook_fish_tilapia_furnace',
+    resultItemId: 'cooked_fish',
+    resultCount: 1,
+    requiredStation: PlaceableType.FURNACE,
+    craftTimeSec: 5,
+    rarity: RarityTier.BASIC,
+    ingredients: [{ itemId: 'fish_tilapia', count: 1 }],
+  },
+  {
+    id: 'cook_fish_salmon_furnace',
+    resultItemId: 'cooked_fish',
+    resultCount: 2,
+    requiredStation: PlaceableType.FURNACE,
+    craftTimeSec: 5,
+    rarity: RarityTier.RARE,
+    ingredients: [{ itemId: 'fish_salmon', count: 1 }],
+  },
+  {
+    id: 'bake_fresh_bread_furnace',
+    resultItemId: 'fresh_bread',
+    resultCount: 1,
+    requiredStation: PlaceableType.FURNACE,
+    craftTimeSec: 5,
+    rarity: RarityTier.BASIC,
+    ingredients: [{ itemId: 'wheat', count: 1 }],
   },
 
   // ==========================================================================

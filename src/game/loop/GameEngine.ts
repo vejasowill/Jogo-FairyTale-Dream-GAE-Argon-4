@@ -7860,13 +7860,18 @@ export class GameEngine {
       }
     }
 
-    // Watering can refill & irrigation are triggered via the Interact button (performInteractAction)
+    // Watering can refill & irrigation when pressing Attack/Regar button
     if (
       equippedTool === ToolType.WATERING_CAN ||
       heldItem?.id === 'watering_can' ||
       heldItem?.id === 'watering_can_full'
     ) {
-      // Do not consume watering can charges or refill on the Attack/Break button
+      if (
+        !isHoldRepeat &&
+        this.tryUseWateringCanInteraction(this.getAimedTarget())
+      ) {
+        return;
+      }
     }
 
     // B2. Check Nature Nodes & Dismantling Structures strictly at the active breaking target, direct forward tile, or aimed target
@@ -12527,6 +12532,7 @@ export class GameEngine {
     this.player.respawnX = safePos.x;
     this.player.respawnY = safePos.y;
     this.player.respawnLabel = label;
+    this.player.respawnIsUnderground = Boolean(this.world.isUnderground);
   }
 
   public lootDeathBag(bagId: string): boolean {
@@ -16625,6 +16631,200 @@ export class GameEngine {
     );
   }
 
+  public getInventoryFitCount(itemId: string, count: number): number {
+    if (count <= 0) return 0;
+    if (itemId === 'gold_coin') return count;
+    const def = ITEMS[itemId];
+    if (!def) return 0;
+    let capacity = 0;
+    for (let i = 0; i < this.player.inventory.length; i++) {
+      const slot = this.player.inventory[i];
+      if (!slot) {
+        capacity += def.maxStack;
+      } else if (slot.itemId === itemId && slot.count < def.maxStack) {
+        capacity += def.maxStack - slot.count;
+      }
+      if (capacity >= count) return count;
+    }
+    return Math.min(count, capacity);
+  }
+
+  public getMatchingThermalRecipeForItem(
+    stationType: PlaceableType.CAMPFIRE | PlaceableType.FURNACE,
+    itemId: string
+  ): { recipe: CraftingRecipe; materialOptionId?: string } | null {
+    for (const r of RECIPES) {
+      if (r.requiredStation !== stationType) continue;
+      if (r.materialOptions && r.materialOptions.length > 0) {
+        const opt = r.materialOptions.find(
+          (o) => o.ingredients.length === 1 && o.ingredients[0].itemId === itemId
+        );
+        if (opt) {
+          return { recipe: r, materialOptionId: opt.id };
+        }
+      }
+      if (r.ingredients.length === 1 && r.ingredients[0].itemId === itemId) {
+        return { recipe: r };
+      }
+    }
+    return null;
+  }
+
+  public canItemBeProcessedInThermalStation(
+    stationType: PlaceableType.CAMPFIRE | PlaceableType.FURNACE,
+    itemId: string
+  ): boolean {
+    return Boolean(this.getMatchingThermalRecipeForItem(stationType, itemId));
+  }
+
+  public depositInventorySlotToThermalInput(
+    stationType: PlaceableType.CAMPFIRE | PlaceableType.FURNACE,
+    slotIndex: number
+  ): boolean {
+    const slot = this.player.inventory[slotIndex];
+    if (!slot || slot.count <= 0) return false;
+
+    const match = this.getMatchingThermalRecipeForItem(stationType, slot.itemId);
+    if (!match) {
+      return false;
+    }
+
+    const st = this.getActiveThermalStation(stationType);
+    const { recipe, materialOptionId } = match;
+    const ingCountPerBatch = Math.max(
+      1,
+      this.getRecipeActiveIngredients(recipe, materialOptionId)[0]?.count || 1
+    );
+
+    // If the output slot already holds a DIFFERENT finished product, only proceed if it can be collected into inventory first
+    if (
+      st.outputItemId &&
+      st.outputItemId !== recipe.resultItemId &&
+      (st.outputCount || 0) > 0
+    ) {
+      if (
+        this.getInventoryFitCount(st.outputItemId, st.outputCount || 0) <
+        (st.outputCount || 0)
+      ) {
+        this.addFloatingText(
+          'Recolha o produto pronto antes de trocar o item!',
+          this.player.x,
+          this.player.y - 20,
+          '#f87171'
+        );
+        return false;
+      }
+      this.collectThermalStationOutput(stationType);
+    }
+
+    const isSameInput =
+      st.cookingRecipeId === recipe.id &&
+      (st.cookingMaterialOptionId || null) === (materialOptionId || null);
+
+    // If a different item is currently in the input slot, refund it to inventory first (only if it fits)
+    if (
+      st.cookingRecipeId &&
+      !isSameInput &&
+      (st.cookingInputCount || 0) > 0
+    ) {
+      const prevRecipe = RECIPES.find((r) => r.id === st.cookingRecipeId);
+      const prevBatches = st.cookingInputCount || 0;
+      const prevMatOptId = st.cookingMaterialOptionId || undefined;
+      if (prevRecipe) {
+        const prevIng = this.getRecipeActiveIngredients(
+          prevRecipe,
+          prevMatOptId
+        )[0];
+        if (prevIng) {
+          const refundCount = prevIng.count * prevBatches;
+          if (this.getInventoryFitCount(prevIng.itemId, refundCount) < refundCount) {
+            this.addFloatingText(
+              'Mochila sem espaço para trocar o item!',
+              this.player.x,
+              this.player.y - 20,
+              '#f87171'
+            );
+            return false;
+          }
+          this.addItemToInventory(prevIng.itemId, refundCount);
+        }
+      }
+      st.cookingRecipeId = null;
+      st.cookingMaterialOptionId = null;
+      st.cookingInputCount = 0;
+      st.cookingProgress = 0;
+    }
+
+    const currentBatches = st.cookingInputCount || 0;
+    const maxStack = ITEMS[slot.itemId]?.maxStack || 99;
+    const maxBatches = Math.max(1, Math.floor(maxStack / ingCountPerBatch));
+    const availableBatchesInSlot = Math.floor(slot.count / ingCountPerBatch);
+    const spaceBatches = Math.max(0, maxBatches - currentBatches);
+    const batchesToAdd = Math.min(availableBatchesInSlot, spaceBatches);
+    if (batchesToAdd <= 0) return false;
+
+    this.consumeInventoryAt(slotIndex, batchesToAdd * ingCountPerBatch);
+    st.cookingRecipeId = recipe.id;
+    st.cookingMaterialOptionId = materialOptionId || null;
+    st.cookingInputCount = currentBatches + batchesToAdd;
+    st.cookingDuration = Math.max(1, recipe.craftTimeSec || 6);
+    if (currentBatches === 0) {
+      st.cookingProgress = 0;
+    }
+
+    soundManager.playPickup();
+    this.commitThermalStationMutation(st);
+    this.emitUiSnapshot();
+    return true;
+  }
+
+  public depositInventorySlotToThermalFuel(
+    stationType: PlaceableType.CAMPFIRE | PlaceableType.FURNACE,
+    slotIndex: number
+  ): boolean {
+    const slot = this.player.inventory[slotIndex];
+    if (!slot || slot.count <= 0) return false;
+    if (!isFuelItem(slot.itemId)) return false;
+
+    const fuelItemId = slot.itemId;
+    const st = this.getActiveThermalStation(stationType);
+
+    if (
+      st.fuelItemId &&
+      st.fuelItemId !== fuelItemId &&
+      (st.fuelCount || 0) > 0
+    ) {
+      const prevFuelId = st.fuelItemId;
+      const prevFuelCount = st.fuelCount || 0;
+      if (this.getInventoryFitCount(prevFuelId, prevFuelCount) < prevFuelCount) {
+        this.addFloatingText(
+          'Mochila sem espaço para trocar o combustível!',
+          this.player.x,
+          this.player.y - 20,
+          '#f87171'
+        );
+        return false;
+      }
+      this.addItemToInventory(prevFuelId, prevFuelCount);
+      st.fuelItemId = null;
+      st.fuelCount = 0;
+    }
+
+    const currentCount = st.fuelCount || 0;
+    const maxStack = ITEMS[fuelItemId]?.maxStack || 99;
+    const space = Math.max(0, maxStack - currentCount);
+    const toAdd = Math.min(slot.count, space);
+    if (toAdd <= 0) return false;
+
+    this.consumeInventoryAt(slotIndex, toAdd);
+    st.fuelItemId = fuelItemId;
+    st.fuelCount = currentCount + toAdd;
+    soundManager.playPickup();
+    this.commitThermalStationMutation(st);
+    this.emitUiSnapshot();
+    return true;
+  }
+
   public addFuelToThermalStation(
     stationType: PlaceableType.CAMPFIRE | PlaceableType.FURNACE,
     fuelItemId: string,
@@ -16635,11 +16835,13 @@ export class GameEngine {
     if (have <= 0) return false;
 
     const st = this.getActiveThermalStation(stationType);
-    // If another fuel type is currently sitting in the fuel slot, return it to the player first
     if (st.fuelItemId && st.fuelItemId !== fuelItemId && (st.fuelCount || 0) > 0) {
-      if (!this.addItemToInventory(st.fuelItemId, st.fuelCount!)) {
-        this.spawnDrop(st.fuelItemId, st.fuelCount!, this.player.x, this.player.y);
+      if (
+        this.getInventoryFitCount(st.fuelItemId, st.fuelCount!) < st.fuelCount!
+      ) {
+        return false;
       }
+      this.addItemToInventory(st.fuelItemId, st.fuelCount!);
       st.fuelItemId = null;
       st.fuelCount = 0;
     }
@@ -16665,7 +16867,27 @@ export class GameEngine {
     const st = this.getActiveThermalStation(stationType);
     if (!st.fuelItemId || !st.fuelCount || st.fuelCount <= 0) return false;
 
+    const fit = this.getInventoryFitCount(st.fuelItemId, st.fuelCount);
+    if (fit <= 0) {
+      this.addFloatingText(
+        'Mochila cheia!',
+        this.player.x,
+        this.player.y - 20,
+        '#f87171'
+      );
+      return false;
+    }
+
     if (this.multiplayer.isOnline && this.multiplayer.role === 'GUEST') {
+      if (fit < st.fuelCount) {
+        this.addFloatingText(
+          'Mochila sem espaço suficiente!',
+          this.player.x,
+          this.player.y - 20,
+          '#f87171'
+        );
+        return false;
+      }
       const withdrawKey = `thermal_fuel:${st.id}`;
       if (this.pendingContainerWithdraws.has(withdrawKey)) return false;
       this.pendingContainerWithdraws.set(withdrawKey, Date.now() + 2000);
@@ -16679,13 +16901,13 @@ export class GameEngine {
     }
 
     const itemId = st.fuelItemId;
-    const count = st.fuelCount;
-    st.fuelItemId = null;
-    st.fuelCount = 0;
-
-    if (!this.addItemToInventory(itemId, count)) {
-      this.spawnDrop(itemId, count, this.player.x, this.player.y);
+    st.fuelCount -= fit;
+    if (st.fuelCount <= 0) {
+      st.fuelItemId = null;
+      st.fuelCount = 0;
     }
+
+    this.addItemToInventory(itemId, fit);
     soundManager.playPickup();
     this.commitThermalStationMutation(st);
     this.emitUiSnapshot();
@@ -16707,25 +16929,24 @@ export class GameEngine {
 
     const st = this.getActiveThermalStation(stationType);
 
-    // If the output slot holds a DIFFERENT finished item, auto-collect it synchronously so it isn't overwritten by the new queue mutation!
     if (
       st.outputItemId &&
       st.outputItemId !== recipe.resultItemId &&
       (st.outputCount || 0) > 0
     ) {
+      if (
+        this.getInventoryFitCount(st.outputItemId, st.outputCount || 0) <
+        (st.outputCount || 0)
+      ) {
+        return false;
+      }
       const prevOutId = st.outputItemId;
       const prevOutCount = st.outputCount || 0;
       st.outputItemId = null;
       st.outputCount = 0;
-      this.addItemOrDropOnGround(
-        prevOutId,
-        prevOutCount,
-        this.player.x,
-        this.player.y + 10
-      );
+      this.addItemToInventory(prevOutId, prevOutCount);
     }
 
-    // If a different recipe or material option was previously queued in the input slot, refund its remaining batches synchronously!
     if (
       st.cookingRecipeId &&
       (st.cookingRecipeId !== recipe.id ||
@@ -16774,21 +16995,6 @@ export class GameEngine {
       st.cookingProgress = 0;
     }
 
-    // Auto-insert 1 fuel unit from inventory if the station has no fuel and isn't currently burning
-    if (
-      (st.fuelBurnRemaining || 0) <= 0 &&
-      (!st.fuelItemId || (st.fuelCount || 0) <= 0)
-    ) {
-      for (const fuelId of FUEL_ITEM_ORDER) {
-        if (this.getItemCount(fuelId) > 0) {
-          this.removeItemFromInventory(fuelId, 1);
-          st.fuelItemId = fuelId;
-          st.fuelCount = 1;
-          break;
-        }
-      }
-    }
-
     soundManager.playPickup();
     this.commitThermalStationMutation(st);
     this.emitUiSnapshot();
@@ -16807,44 +17013,66 @@ export class GameEngine {
       return false;
     }
 
-    if (this.multiplayer.isOnline && this.multiplayer.role === 'GUEST') {
-      const withdrawKey = `thermal_queue:${st.id}`;
-      if (this.pendingContainerWithdraws.has(withdrawKey)) return false;
-      this.pendingContainerWithdraws.set(withdrawKey, Date.now() + 2000);
-      this.multiplayer.sendWorldInteractRequest({
-        action: 'container_withdraw',
-        containerKind: 'thermal_queue',
-        structureId: st.id,
-        stationType,
-      });
+    const recipe = RECIPES.find((r) => r.id === st.cookingRecipeId);
+    const savedMatOptId = st.cookingMaterialOptionId || undefined;
+    const activeIngredients = recipe
+      ? this.getRecipeActiveIngredients(recipe, savedMatOptId)
+      : [];
+    const primaryIng = activeIngredients[0];
+
+    if (primaryIng) {
+      const totalItems = primaryIng.count * st.cookingInputCount;
+      const fitItems = this.getInventoryFitCount(primaryIng.itemId, totalItems);
+      const fitBatches = Math.floor(fitItems / Math.max(1, primaryIng.count));
+      if (fitBatches <= 0) {
+        this.addFloatingText(
+          'Mochila cheia!',
+          this.player.x,
+          this.player.y - 20,
+          '#f87171'
+        );
+        return false;
+      }
+
+      if (this.multiplayer.isOnline && this.multiplayer.role === 'GUEST') {
+        if (fitBatches < st.cookingInputCount) {
+          this.addFloatingText(
+            'Mochila sem espaço suficiente!',
+            this.player.x,
+            this.player.y - 20,
+            '#f87171'
+          );
+          return false;
+        }
+        const withdrawKey = `thermal_queue:${st.id}`;
+        if (this.pendingContainerWithdraws.has(withdrawKey)) return false;
+        this.pendingContainerWithdraws.set(withdrawKey, Date.now() + 2000);
+        this.multiplayer.sendWorldInteractRequest({
+          action: 'container_withdraw',
+          containerKind: 'thermal_queue',
+          structureId: st.id,
+          stationType,
+        });
+        return true;
+      }
+
+      st.cookingInputCount -= fitBatches;
+      if (st.cookingInputCount <= 0) {
+        st.cookingRecipeId = null;
+        st.cookingMaterialOptionId = null;
+        st.cookingInputCount = 0;
+        st.cookingProgress = 0;
+      }
+      for (const ing of activeIngredients) {
+        this.addItemToInventory(ing.itemId, ing.count * fitBatches);
+      }
+      soundManager.playPickup();
+      this.commitThermalStationMutation(st);
+      this.emitUiSnapshot();
       return true;
     }
 
-    const recipe = RECIPES.find((r) => r.id === st.cookingRecipeId);
-    const batches = st.cookingInputCount;
-    const savedMatOptId = st.cookingMaterialOptionId || undefined;
-    st.cookingRecipeId = null;
-    st.cookingMaterialOptionId = null;
-    st.cookingInputCount = 0;
-    st.cookingProgress = 0;
-
-    if (recipe) {
-      const activeIngredients = this.getRecipeActiveIngredients(
-        recipe,
-        savedMatOptId
-      );
-      for (const ing of activeIngredients) {
-        const refundCount = ing.count * batches;
-        if (!this.addItemToInventory(ing.itemId, refundCount)) {
-          this.spawnDrop(ing.itemId, refundCount, this.player.x, this.player.y);
-        }
-      }
-    }
-
-    soundManager.playPickup();
-    this.commitThermalStationMutation(st);
-    this.emitUiSnapshot();
-    return true;
+    return false;
   }
 
   public collectThermalStationOutput(
@@ -16855,7 +17083,27 @@ export class GameEngine {
       return false;
     }
 
+    const fit = this.getInventoryFitCount(st.outputItemId, st.outputCount);
+    if (fit <= 0) {
+      this.addFloatingText(
+        'Mochila cheia!',
+        this.player.x,
+        this.player.y - 20,
+        '#f87171'
+      );
+      return false;
+    }
+
     if (this.multiplayer.isOnline && this.multiplayer.role === 'GUEST') {
+      if (fit < st.outputCount) {
+        this.addFloatingText(
+          'Mochila sem espaço suficiente!',
+          this.player.x,
+          this.player.y - 20,
+          '#f87171'
+        );
+        return false;
+      }
       const withdrawKey = `thermal_output:${st.id}`;
       if (this.pendingContainerWithdraws.has(withdrawKey)) return false;
       this.pendingContainerWithdraws.set(withdrawKey, Date.now() + 2000);
@@ -16869,21 +17117,18 @@ export class GameEngine {
     }
 
     const itemId = st.outputItemId;
-    const count = st.outputCount;
-    st.outputItemId = null;
-    st.outputCount = 0;
+    st.outputCount -= fit;
+    if (st.outputCount <= 0) {
+      st.outputItemId = null;
+      st.outputCount = 0;
+    }
 
-    this.addItemOrDropOnGround(
-      itemId,
-      count,
-      this.player.x,
-      this.player.y + 10
-    );
+    this.addItemToInventory(itemId, fit);
 
     soundManager.playCraft();
     const outDef = ITEMS[itemId];
     this.addFloatingText(
-      `+${count}x ${outDef?.name || itemId}`,
+      `+${fit}x ${outDef?.name || itemId}`,
       this.player.x,
       this.player.y - 20,
       '#4ade80'
@@ -17690,6 +17935,7 @@ export class GameEngine {
       tileX,
       tileY,
       color,
+      isUnderground: Boolean(this.world.isUnderground),
     });
     soundManager.playPickup();
     this.emitUiSnapshot();
@@ -21849,6 +22095,7 @@ export class GameEngine {
           label: `🎒 Bolsinha (${mm}:${ss})`,
           tileX: Math.floor(bag.x / TILE_SIZE),
           tileY: Math.floor(bag.y / TILE_SIZE),
+          isUnderground: Boolean(bag.isUnderground),
           color: '#f43f5e',
           isDeathBag: true,
           expiresTimer: bag.expiresTimer,
@@ -21870,9 +22117,16 @@ export class GameEngine {
         (c) =>
           c.tamed &&
           c.kind !== CreatureKind.BOAT &&
+          Boolean(c.isUnderground) === Boolean(this.player.isUnderground) &&
           this.isCreatureOwnedByLocalPlayer(c)
       ),
-      waypoints: [...deathBagWaypoints, ...this.waypoints],
+      waypoints: [
+        ...deathBagWaypoints,
+        ...this.waypoints.filter(
+          (wp) =>
+            Boolean(wp.isUnderground) === Boolean(this.player.isUnderground)
+        ),
+      ],
       deathBags: this.deathBags,
       isPaused: this.isPaused,
       canPause: !this.hasConnectedNetworkPlayers(),
