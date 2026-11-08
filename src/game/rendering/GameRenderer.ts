@@ -579,6 +579,16 @@ export class GameRenderer {
 
         // Pass 1A: Ground-Layer Structures (Floors, Carpets, Bridges first, then Spike Traps on top)
         for (const st of chunk.structures) {
+          const stWx = st.tileX * TILE_SIZE;
+          const stWy = st.tileY * TILE_SIZE;
+          if (
+            stWx + TILE_SIZE < camera.x - halfW ||
+            stWx > camera.x + halfW ||
+            stWy + TILE_SIZE < camera.y - halfH ||
+            stWy > camera.y + halfH
+          ) {
+            continue;
+          }
           if (world.isUnderground) {
             const stLx = ((st.tileX % CHUNK_SIZE) + CHUNK_SIZE) % CHUNK_SIZE;
             const stLy = ((st.tileY % CHUNK_SIZE) + CHUNK_SIZE) % CHUNK_SIZE;
@@ -639,6 +649,36 @@ export class GameRenderer {
               continue;
             }
           }
+          const stWx = st.tileX * TILE_SIZE;
+          const stWy = st.tileY * TILE_SIZE;
+
+          const stLight = GameRenderer.getStructureLightSpec(st);
+          if (
+            stLight &&
+            stWx + TILE_SIZE / 2 + stLight.radius >= camera.x - halfW &&
+            stWx + TILE_SIZE / 2 - stLight.radius <= camera.x + halfW &&
+            stWy + TILE_SIZE / 2 + stLight.radius >= camera.y - halfH &&
+            stWy + TILE_SIZE / 2 - stLight.radius <= camera.y + halfH
+          ) {
+            lightSources.push({
+              x: stWx + TILE_SIZE / 2,
+              y: stWy + TILE_SIZE / 2,
+              radius: stLight.radius,
+              color: stLight.color,
+              strength: stLight.strength,
+            });
+          }
+
+          // Camera frustum culling for structure visual bounds
+          if (
+            stWx + TILE_SIZE * 2 < camera.x - halfW ||
+            stWx - TILE_SIZE > camera.x + halfW ||
+            stWy + TILE_SIZE * 2 < camera.y - halfH ||
+            stWy - TILE_SIZE * 2 > camera.y + halfH
+          ) {
+            continue;
+          }
+
           const bp = CONSTRUCTION_BLUEPRINTS[st.type];
           const isFloorOrBridge =
             (bp?.layer === 'GROUND' ||
@@ -666,10 +706,10 @@ export class GameRenderer {
             renderQueue.push({
               ySort:
                 st.type === PlaceableType.LEVEL_STAIRS
-                  ? st.tileY * TILE_SIZE + 2
+                  ? stWy + 2
                   : isWallTorch
-                  ? st.tileY * TILE_SIZE + TILE_SIZE * 0.94
-                  : st.tileY * TILE_SIZE + TILE_SIZE * 0.85,
+                  ? stWy + TILE_SIZE * 0.94
+                  : stWy + TILE_SIZE * 0.85,
               draw: (c) =>
                 this.drawStructure(
                   c,
@@ -681,17 +721,6 @@ export class GameRenderer {
                   creatures,
                   isAimedStructure
                 ),
-            });
-          }
-
-          const stLight = GameRenderer.getStructureLightSpec(st);
-          if (stLight) {
-            lightSources.push({
-              x: st.tileX * TILE_SIZE + TILE_SIZE / 2,
-              y: st.tileY * TILE_SIZE + TILE_SIZE / 2,
-              radius: stLight.radius,
-              color: stLight.color,
-              strength: stLight.strength,
             });
           }
         }
@@ -3048,6 +3077,9 @@ export class GameRenderer {
     }
   }
 
+  private dirtPathStampCache = new Map<number, HTMLCanvasElement>();
+  private tilledSoilStampCache = new Map<number, HTMLCanvasElement>();
+
   private drawDirtPath(
     ctx: CanvasRenderingContext2D,
     world: WorldManager,
@@ -3081,154 +3113,169 @@ export class GameRenderer {
     const hasNE = hasN && hasE && isPathConnectedAt(st.tileX + 1, st.tileY - 1);
     const hasSW = hasS && hasW && isPathConnectedAt(st.tileX - 1, st.tileY + 1);
     const hasSE = hasS && hasE && isPathConnectedAt(st.tileX + 1, st.tileY + 1);
-
-    const outerFadeRgb = '138, 102, 66';
-    const baseColor = '#8a6642';
-    const centerColor = '#9b744d';
-    const pebbleDark = '#6e4f30';
-    const pebbleLight = '#b38b62';
-
-    const padOuterN = hasN ? 0 : 1;
-    const padOuterS = hasS ? 0 : 1;
-    const padOuterW = hasW ? 0 : 1;
-    const padOuterE = hasE ? 0 : 1;
-
-    const padMidN = hasN ? 0 : 3;
-    const padMidS = hasS ? 0 : 3;
-    const padMidW = hasW ? 0 : 3;
-    const padMidE = hasE ? 0 : 3;
-
-    const padCoreN = hasN ? 0 : 5;
-    const padCoreS = hasS ? 0 : 5;
-    const padCoreW = hasW ? 0 : 5;
-    const padCoreE = hasE ? 0 : 5;
-
-    const drawAdaptiveRoundedLayer = (
-      pN: number,
-      pS: number,
-      pW: number,
-      pE: number,
-      cornerStep: number,
-      fillStyle: string
-    ) => {
-      const x = sx + pW;
-      const y = sy + pN;
-      const w = TILE_SIZE - pW - pE;
-      const h = TILE_SIZE - pN - pS;
-      if (w <= 0 || h <= 0) return;
-
-      ctx.fillStyle = fillStyle;
-      const cNW = !hasN && !hasW ? cornerStep : 0;
-      const cNE = !hasN && !hasE ? cornerStep : 0;
-      const cSW = !hasS && !hasW ? cornerStep : 0;
-      const cSE = !hasS && !hasE ? cornerStep : 0;
-
-      for (let py = 0; py < h; py++) {
-        let leftCut = 0;
-        let rightCut = 0;
-        if (py < cNW) leftCut = cNW - py;
-        else if (py >= h - cSW) leftCut = py - (h - cSW) + 1;
-
-        if (py < cNE) rightCut = cNE - py;
-        else if (py >= h - cSE) rightCut = py - (h - cSE) + 1;
-
-        const rowW = w - leftCut - rightCut;
-        if (rowW > 0) {
-          ctx.fillRect(x + leftCut, y + py, rowW, 1);
-        }
-      }
-    };
-
-    // Progressive 3-step transition blending smoothly into surrounding biome ground
-    drawAdaptiveRoundedLayer(
-      padOuterN,
-      padOuterS,
-      padOuterW,
-      padOuterE,
-      4,
-      `rgba(${outerFadeRgb}, 0.28)`
-    );
-    drawAdaptiveRoundedLayer(
-      padMidN,
-      padMidS,
-      padMidW,
-      padMidE,
-      3,
-      `rgba(${outerFadeRgb}, 0.58)`
-    );
-    drawAdaptiveRoundedLayer(
-      padCoreN - (hasN ? 0 : 1),
-      padCoreS - (hasS ? 0 : 1),
-      padCoreW - (hasW ? 0 : 1),
-      padCoreE - (hasE ? 0 : 1),
-      2,
-      `rgba(${outerFadeRgb}, 0.88)`
-    );
-    drawAdaptiveRoundedLayer(
-      padCoreN,
-      padCoreS,
-      padCoreW,
-      padCoreE,
-      2,
-      baseColor
-    );
-
-    // Inner compacted beaten earth surface
-    drawAdaptiveRoundedLayer(
-      hasN ? 0 : 7,
-      hasS ? 0 : 7,
-      hasW ? 0 : 7,
-      hasE ? 0 : 7,
-      2,
-      centerColor
-    );
-
-    // Organic earth crumbs & pebbles along unconnected borders
     const seed = (st.tileX * 41 + st.tileY * 83) & 7;
-    ctx.fillStyle = `rgba(${outerFadeRgb}, 0.48)`;
-    if (!hasN) {
-      ctx.fillRect(sx + 6 + seed, sy + 1, 3, 1);
-      ctx.fillRect(sx + 18 - seed, sy + 2, 4, 1);
-    }
-    if (!hasS) {
-      ctx.fillRect(sx + 7 + seed, sy + TILE_SIZE - 2, 3, 1);
-      ctx.fillRect(sx + 17 - seed, sy + TILE_SIZE - 3, 4, 1);
-    }
-    if (!hasW) {
-      ctx.fillRect(sx + 1, sy + 7 + seed, 1, 3);
-      ctx.fillRect(sx + 2, sy + 18 - seed, 1, 4);
-    }
-    if (!hasE) {
-      ctx.fillRect(sx + TILE_SIZE - 2, sy + 8 + seed, 1, 3);
-      ctx.fillRect(sx + TILE_SIZE - 3, sy + 17 - seed, 1, 4);
+
+    const stampKey =
+      mask |
+      (hasNW ? 16 : 0) |
+      (hasNE ? 32 : 0) |
+      (hasSW ? 64 : 0) |
+      (hasSE ? 128 : 0) |
+      (seed << 8);
+
+    let stamp = this.dirtPathStampCache.get(stampKey);
+    if (!stamp) {
+      stamp = document.createElement('canvas');
+      stamp.width = TILE_SIZE;
+      stamp.height = TILE_SIZE;
+      const sCtx = stamp.getContext('2d')!;
+
+      const outerFadeRgb = '138, 102, 66';
+      const baseColor = '#8a6642';
+      const centerColor = '#9b744d';
+      const pebbleDark = '#6e4f30';
+      const pebbleLight = '#b38b62';
+
+      const padOuterN = hasN ? 0 : 1;
+      const padOuterS = hasS ? 0 : 1;
+      const padOuterW = hasW ? 0 : 1;
+      const padOuterE = hasE ? 0 : 1;
+
+      const padMidN = hasN ? 0 : 3;
+      const padMidS = hasS ? 0 : 3;
+      const padMidW = hasW ? 0 : 3;
+      const padMidE = hasE ? 0 : 3;
+
+      const padCoreN = hasN ? 0 : 5;
+      const padCoreS = hasS ? 0 : 5;
+      const padCoreW = hasW ? 0 : 5;
+      const padCoreE = hasE ? 0 : 5;
+
+      const drawAdaptiveRoundedLayer = (
+        pN: number,
+        pS: number,
+        pW: number,
+        pE: number,
+        cornerStep: number,
+        fillStyle: string
+      ) => {
+        const x = pW;
+        const y = pN;
+        const w = TILE_SIZE - pW - pE;
+        const h = TILE_SIZE - pN - pS;
+        if (w <= 0 || h <= 0) return;
+
+        sCtx.fillStyle = fillStyle;
+        const cNW = !hasN && !hasW ? cornerStep : 0;
+        const cNE = !hasN && !hasE ? cornerStep : 0;
+        const cSW = !hasS && !hasW ? cornerStep : 0;
+        const cSE = !hasS && !hasE ? cornerStep : 0;
+
+        for (let py = 0; py < h; py++) {
+          let leftCut = 0;
+          let rightCut = 0;
+          if (py < cNW) leftCut = cNW - py;
+          else if (py >= h - cSW) leftCut = py - (h - cSW) + 1;
+
+          if (py < cNE) rightCut = cNE - py;
+          else if (py >= h - cSE) rightCut = py - (h - cSE) + 1;
+
+          const rowW = w - leftCut - rightCut;
+          if (rowW > 0) {
+            sCtx.fillRect(x + leftCut, y + py, rowW, 1);
+          }
+        }
+      };
+
+      drawAdaptiveRoundedLayer(
+        padOuterN,
+        padOuterS,
+        padOuterW,
+        padOuterE,
+        4,
+        `rgba(${outerFadeRgb}, 0.28)`
+      );
+      drawAdaptiveRoundedLayer(
+        padMidN,
+        padMidS,
+        padMidW,
+        padMidE,
+        3,
+        `rgba(${outerFadeRgb}, 0.58)`
+      );
+      drawAdaptiveRoundedLayer(
+        padCoreN - (hasN ? 0 : 1),
+        padCoreS - (hasS ? 0 : 1),
+        padCoreW - (hasW ? 0 : 1),
+        padCoreE - (hasE ? 0 : 1),
+        2,
+        `rgba(${outerFadeRgb}, 0.88)`
+      );
+      drawAdaptiveRoundedLayer(
+        padCoreN,
+        padCoreS,
+        padCoreW,
+        padCoreE,
+        2,
+        baseColor
+      );
+
+      drawAdaptiveRoundedLayer(
+        hasN ? 0 : 7,
+        hasS ? 0 : 7,
+        hasW ? 0 : 7,
+        hasE ? 0 : 7,
+        2,
+        centerColor
+      );
+
+      sCtx.fillStyle = `rgba(${outerFadeRgb}, 0.48)`;
+      if (!hasN) {
+        sCtx.fillRect(6 + seed, 1, 3, 1);
+        sCtx.fillRect(18 - seed, 2, 4, 1);
+      }
+      if (!hasS) {
+        sCtx.fillRect(7 + seed, TILE_SIZE - 2, 3, 1);
+        sCtx.fillRect(17 - seed, TILE_SIZE - 3, 4, 1);
+      }
+      if (!hasW) {
+        sCtx.fillRect(1, 7 + seed, 1, 3);
+        sCtx.fillRect(2, 18 - seed, 1, 4);
+      }
+      if (!hasE) {
+        sCtx.fillRect(TILE_SIZE - 2, 8 + seed, 1, 3);
+        sCtx.fillRect(TILE_SIZE - 3, 17 - seed, 1, 4);
+      }
+
+      sCtx.fillStyle = pebbleDark;
+      if (hasN && hasW && !hasNW) {
+        sCtx.fillRect(0, 0, 3, 2);
+        sCtx.fillRect(0, 0, 2, 3);
+      }
+      if (hasN && hasE && !hasNE) {
+        sCtx.fillRect(TILE_SIZE - 3, 0, 3, 2);
+        sCtx.fillRect(TILE_SIZE - 2, 0, 2, 3);
+      }
+      if (hasS && hasW && !hasSW) {
+        sCtx.fillRect(0, TILE_SIZE - 2, 3, 2);
+        sCtx.fillRect(0, TILE_SIZE - 3, 2, 3);
+      }
+      if (hasS && hasE && !hasSE) {
+        sCtx.fillRect(TILE_SIZE - 3, TILE_SIZE - 2, 3, 2);
+        sCtx.fillRect(TILE_SIZE - 2, TILE_SIZE - 3, 2, 3);
+      }
+
+      sCtx.fillStyle = pebbleDark;
+      sCtx.fillRect(9 + (seed & 3), 10 + ((seed >> 1) & 3), 2, 2);
+      sCtx.fillRect(19 - (seed & 3), 18 - ((seed >> 1) & 3), 3, 1);
+      sCtx.fillStyle = pebbleLight;
+      sCtx.fillRect(13 + (seed & 3), 14 - (seed & 2), 2, 1);
+      sCtx.fillRect(10, 20 - (seed & 3), 2, 1);
+
+      this.dirtPathStampCache.set(stampKey, stamp);
     }
 
-    // Inner concave corner transitions for L-junctions / crossroads
-    ctx.fillStyle = pebbleDark;
-    if (hasN && hasW && !hasNW) {
-      ctx.fillRect(sx, sy, 3, 2);
-      ctx.fillRect(sx, sy, 2, 3);
-    }
-    if (hasN && hasE && !hasNE) {
-      ctx.fillRect(sx + TILE_SIZE - 3, sy, 3, 2);
-      ctx.fillRect(sx + TILE_SIZE - 2, sy, 2, 3);
-    }
-    if (hasS && hasW && !hasSW) {
-      ctx.fillRect(sx, sy + TILE_SIZE - 2, 3, 2);
-      ctx.fillRect(sx, sy + TILE_SIZE - 3, 2, 3);
-    }
-    if (hasS && hasE && !hasSE) {
-      ctx.fillRect(sx + TILE_SIZE - 3, sy + TILE_SIZE - 2, 3, 2);
-      ctx.fillRect(sx + TILE_SIZE - 2, sy + TILE_SIZE - 3, 2, 3);
-    }
-
-    // Subtle compacted pebbles & path texture inside the core
-    ctx.fillStyle = pebbleDark;
-    ctx.fillRect(sx + 9 + (seed & 3), sy + 10 + ((seed >> 1) & 3), 2, 2);
-    ctx.fillRect(sx + 19 - (seed & 3), sy + 18 - ((seed >> 1) & 3), 3, 1);
-    ctx.fillStyle = pebbleLight;
-    ctx.fillRect(sx + 13 + (seed & 3), sy + 14 - (seed & 2), 2, 1);
-    ctx.fillRect(sx + 10, sy + 20 - (seed & 3), 2, 1);
+    ctx.drawImage(stamp, sx, sy);
   }
 
   private drawTilledSoilAndCrop(
@@ -3258,191 +3305,199 @@ export class GameRenderer {
     const hasNE = hasN && hasE && isTilledAt(st.tileX + 1, st.tileY - 1);
     const hasSW = hasS && hasW && isTilledAt(st.tileX - 1, st.tileY + 1);
     const hasSE = hasS && hasE && isTilledAt(st.tileX + 1, st.tileY + 1);
-
-    const outerFadeRgb = isWatered ? '59, 35, 20' : '104, 68, 40';
-    const baseColor = isWatered ? '#3b2314' : '#684428';
-    const ridgeColor = isWatered ? '#28170c' : '#54341c';
-    const highlightColor = isWatered ? '#4d2d18' : '#785030';
-
-    // Progressive multi-step border insets on unconnected sides (0px on connected sides)
-    const padOuterN = hasN ? 0 : 1;
-    const padOuterS = hasS ? 0 : 1;
-    const padOuterW = hasW ? 0 : 1;
-    const padOuterE = hasE ? 0 : 1;
-
-    const padMidN = hasN ? 0 : 3;
-    const padMidS = hasS ? 0 : 3;
-    const padMidW = hasW ? 0 : 3;
-    const padMidE = hasE ? 0 : 3;
-
-    const padCoreN = hasN ? 0 : 5;
-    const padCoreS = hasS ? 0 : 5;
-    const padCoreW = hasW ? 0 : 5;
-    const padCoreE = hasE ? 0 : 5;
-
-    const drawAdaptiveRoundedLayer = (
-      pN: number,
-      pS: number,
-      pW: number,
-      pE: number,
-      cornerStep: number,
-      fillStyle: string
-    ) => {
-      const x = sx + pW;
-      const y = sy + pN;
-      const w = TILE_SIZE - pW - pE;
-      const h = TILE_SIZE - pN - pS;
-      if (w <= 0 || h <= 0) return;
-
-      ctx.fillStyle = fillStyle;
-      // Main center cross to leave outer unconnected corners stepped/rounded
-      const cNW = !hasN && !hasW ? cornerStep : 0;
-      const cNE = !hasN && !hasE ? cornerStep : 0;
-      const cSW = !hasS && !hasW ? cornerStep : 0;
-      const cSE = !hasS && !hasE ? cornerStep : 0;
-
-      // Row-by-row progressive scan for clean pixel-art rounded corners without allocations
-      for (let py = 0; py < h; py++) {
-        let leftCut = 0;
-        let rightCut = 0;
-        if (py < cNW) leftCut = cNW - py;
-        else if (py >= h - cSW) leftCut = py - (h - cSW) + 1;
-
-        if (py < cNE) rightCut = cNE - py;
-        else if (py >= h - cSE) rightCut = py - (h - cSE) + 1;
-
-        const rowW = w - leftCut - rightCut;
-        if (rowW > 0) {
-          ctx.fillRect(x + leftCut, y + py, rowW, 1);
-        }
-      }
-    };
-
-    // Step 1: Soft outer soil transition halo (28% opacity) blending into surrounding ground
-    drawAdaptiveRoundedLayer(
-      padOuterN,
-      padOuterS,
-      padOuterW,
-      padOuterE,
-      4,
-      `rgba(${outerFadeRgb}, 0.28)`
-    );
-
-    // Step 2: Mid-tone progressive soil shoulder (58% opacity)
-    drawAdaptiveRoundedLayer(
-      padMidN,
-      padMidS,
-      padMidW,
-      padMidE,
-      3,
-      `rgba(${outerFadeRgb}, 0.58)`
-    );
-
-    // Step 3: Rich inner tilled soil bed (92% opacity) & full core
-    drawAdaptiveRoundedLayer(
-      padCoreN - (hasN ? 0 : 1),
-      padCoreS - (hasS ? 0 : 1),
-      padCoreW - (hasW ? 0 : 1),
-      padCoreE - (hasE ? 0 : 1),
-      2,
-      `rgba(${outerFadeRgb}, 0.86)`
-    );
-    drawAdaptiveRoundedLayer(
-      padCoreN,
-      padCoreS,
-      padCoreW,
-      padCoreE,
-      2,
-      baseColor
-    );
-
-    // Organic soil granules / crumbs along unconnected edges for natural progressive blending
     const seed = (st.tileX * 37 + st.tileY * 73) & 7;
-    ctx.fillStyle = `rgba(${outerFadeRgb}, 0.45)`;
-    if (!hasN) {
-      ctx.fillRect(sx + 6 + seed, sy + 1, 3, 1);
-      ctx.fillRect(sx + 19 - seed, sy + 2, 4, 1);
-    }
-    if (!hasS) {
-      ctx.fillRect(sx + 7 + seed, sy + TILE_SIZE - 2, 3, 1);
-      ctx.fillRect(sx + 18 - seed, sy + TILE_SIZE - 3, 4, 1);
-    }
-    if (!hasW) {
-      ctx.fillRect(sx + 1, sy + 7 + seed, 1, 3);
-      ctx.fillRect(sx + 2, sy + 19 - seed, 1, 4);
-    }
-    if (!hasE) {
-      ctx.fillRect(sx + TILE_SIZE - 2, sy + 8 + seed, 1, 3);
-      ctx.fillRect(sx + TILE_SIZE - 3, sy + 18 - seed, 1, 4);
-    }
 
-    // Inner concave corner transitions when 2 cardinal sides connect (e.g. L-junction) but diagonal is grass/sand
-    ctx.fillStyle = highlightColor;
-    if (hasN && hasW && !hasNW) {
-      ctx.fillRect(sx, sy, 3, 2);
-      ctx.fillRect(sx, sy, 2, 3);
-    }
-    if (hasN && hasE && !hasNE) {
-      ctx.fillRect(sx + TILE_SIZE - 3, sy, 3, 2);
-      ctx.fillRect(sx + TILE_SIZE - 2, sy, 2, 3);
-    }
-    if (hasS && hasW && !hasSW) {
-      ctx.fillRect(sx, sy + TILE_SIZE - 2, 3, 2);
-      ctx.fillRect(sx, sy + TILE_SIZE - 3, 2, 3);
-    }
-    if (hasS && hasE && !hasSE) {
-      ctx.fillRect(sx + TILE_SIZE - 3, sy + TILE_SIZE - 2, 3, 2);
-      ctx.fillRect(sx + TILE_SIZE - 2, sy + TILE_SIZE - 3, 2, 3);
-    }
+    const soilKey =
+      mask |
+      (hasNW ? 16 : 0) |
+      (hasNE ? 32 : 0) |
+      (hasSW ? 64 : 0) |
+      (hasSE ? 128 : 0) |
+      (seed << 8) |
+      (isWatered ? 2048 : 0) |
+      (isFertilized ? 4096 : 0);
 
-    // Continuous horizontal plowed furrows & ridges (connect seamlessly left/right across adjacent tilled tiles)
-    const furrowRows = [3, 10, 17, 24];
-    for (let i = 0; i < furrowRows.length; i++) {
-      const r = furrowRows[i];
-      // Skip the outermost top/bottom furrow if that edge is unconnected so the progressive border breathes
-      if (i === 0 && !hasN) continue;
-      if (i === furrowRows.length - 1 && !hasS) continue;
+    let soilStamp = this.tilledSoilStampCache.get(soilKey);
+    if (!soilStamp) {
+      soilStamp = document.createElement('canvas');
+      soilStamp.width = TILE_SIZE;
+      soilStamp.height = TILE_SIZE;
+      const sCtx = soilStamp.getContext('2d')!;
 
-      const isOuterRow = (i === 1 && !hasN) || (i === furrowRows.length - 2 && !hasS);
-      const fLeft = hasW ? 0 : isOuterRow ? 6 : 5;
-      const fRight = hasE ? 0 : isOuterRow ? 6 : 5;
-      const fWidth = TILE_SIZE - fLeft - fRight;
-      if (fWidth <= 0) continue;
+      const outerFadeRgb = isWatered ? '59, 35, 20' : '104, 68, 40';
+      const baseColor = isWatered ? '#3b2314' : '#684428';
+      const ridgeColor = isWatered ? '#28170c' : '#54341c';
+      const highlightColor = isWatered ? '#4d2d18' : '#785030';
 
-      ctx.fillStyle = ridgeColor;
-      ctx.fillRect(sx + fLeft, sy + r, fWidth, 4);
-      // Tapered ends on unconnected West/East sides
-      if (!hasW && fWidth > 2) {
-        ctx.fillRect(sx + fLeft - 1, sy + r + 1, 1, 2);
+      const padOuterN = hasN ? 0 : 1;
+      const padOuterS = hasS ? 0 : 1;
+      const padOuterW = hasW ? 0 : 1;
+      const padOuterE = hasE ? 0 : 1;
+
+      const padMidN = hasN ? 0 : 3;
+      const padMidS = hasS ? 0 : 3;
+      const padMidW = hasW ? 0 : 3;
+      const padMidE = hasE ? 0 : 3;
+
+      const padCoreN = hasN ? 0 : 5;
+      const padCoreS = hasS ? 0 : 5;
+      const padCoreW = hasW ? 0 : 5;
+      const padCoreE = hasE ? 0 : 5;
+
+      const drawAdaptiveRoundedLayer = (
+        pN: number,
+        pS: number,
+        pW: number,
+        pE: number,
+        cornerStep: number,
+        fillStyle: string
+      ) => {
+        const x = pW;
+        const y = pN;
+        const w = TILE_SIZE - pW - pE;
+        const h = TILE_SIZE - pN - pS;
+        if (w <= 0 || h <= 0) return;
+
+        sCtx.fillStyle = fillStyle;
+        const cNW = !hasN && !hasW ? cornerStep : 0;
+        const cNE = !hasN && !hasE ? cornerStep : 0;
+        const cSW = !hasS && !hasW ? cornerStep : 0;
+        const cSE = !hasS && !hasE ? cornerStep : 0;
+
+        for (let py = 0; py < h; py++) {
+          let leftCut = 0;
+          let rightCut = 0;
+          if (py < cNW) leftCut = cNW - py;
+          else if (py >= h - cSW) leftCut = py - (h - cSW) + 1;
+
+          if (py < cNE) rightCut = cNE - py;
+          else if (py >= h - cSE) rightCut = py - (h - cSE) + 1;
+
+          const rowW = w - leftCut - rightCut;
+          if (rowW > 0) {
+            sCtx.fillRect(x + leftCut, y + py, rowW, 1);
+          }
+        }
+      };
+
+      drawAdaptiveRoundedLayer(
+        padOuterN,
+        padOuterS,
+        padOuterW,
+        padOuterE,
+        4,
+        `rgba(${outerFadeRgb}, 0.28)`
+      );
+      drawAdaptiveRoundedLayer(
+        padMidN,
+        padMidS,
+        padMidW,
+        padMidE,
+        3,
+        `rgba(${outerFadeRgb}, 0.58)`
+      );
+      drawAdaptiveRoundedLayer(
+        padCoreN - (hasN ? 0 : 1),
+        padCoreS - (hasS ? 0 : 1),
+        padCoreW - (hasW ? 0 : 1),
+        padCoreE - (hasE ? 0 : 1),
+        2,
+        `rgba(${outerFadeRgb}, 0.86)`
+      );
+      drawAdaptiveRoundedLayer(
+        padCoreN,
+        padCoreS,
+        padCoreW,
+        padCoreE,
+        2,
+        baseColor
+      );
+
+      sCtx.fillStyle = `rgba(${outerFadeRgb}, 0.45)`;
+      if (!hasN) {
+        sCtx.fillRect(6 + seed, 1, 3, 1);
+        sCtx.fillRect(19 - seed, 2, 4, 1);
       }
-      if (!hasE && fWidth > 2) {
-        ctx.fillRect(sx + TILE_SIZE - fRight, sy + r + 1, 1, 2);
+      if (!hasS) {
+        sCtx.fillRect(7 + seed, TILE_SIZE - 2, 3, 1);
+        sCtx.fillRect(18 - seed, TILE_SIZE - 3, 4, 1);
+      }
+      if (!hasW) {
+        sCtx.fillRect(1, 7 + seed, 1, 3);
+        sCtx.fillRect(2, 19 - seed, 1, 4);
+      }
+      if (!hasE) {
+        sCtx.fillRect(TILE_SIZE - 2, 8 + seed, 1, 3);
+        sCtx.fillRect(TILE_SIZE - 3, 18 - seed, 1, 4);
       }
 
-      ctx.fillStyle = highlightColor;
-      ctx.fillRect(sx + fLeft, sy + r, fWidth, 1);
+      sCtx.fillStyle = highlightColor;
+      if (hasN && hasW && !hasNW) {
+        sCtx.fillRect(0, 0, 3, 2);
+        sCtx.fillRect(0, 0, 2, 3);
+      }
+      if (hasN && hasE && !hasNE) {
+        sCtx.fillRect(TILE_SIZE - 3, 0, 3, 2);
+        sCtx.fillRect(TILE_SIZE - 2, 0, 2, 3);
+      }
+      if (hasS && hasW && !hasSW) {
+        sCtx.fillRect(0, TILE_SIZE - 2, 3, 2);
+        sCtx.fillRect(0, TILE_SIZE - 3, 2, 3);
+      }
+      if (hasS && hasE && !hasSE) {
+        sCtx.fillRect(TILE_SIZE - 3, TILE_SIZE - 2, 3, 2);
+        sCtx.fillRect(TILE_SIZE - 2, TILE_SIZE - 3, 2, 3);
+      }
+
+      const furrowRows = [3, 10, 17, 24];
+      for (let i = 0; i < furrowRows.length; i++) {
+        const r = furrowRows[i];
+        if (i === 0 && !hasN) continue;
+        if (i === furrowRows.length - 1 && !hasS) continue;
+
+        const isOuterRow =
+          (i === 1 && !hasN) || (i === furrowRows.length - 2 && !hasS);
+        const fLeft = hasW ? 0 : isOuterRow ? 6 : 5;
+        const fRight = hasE ? 0 : isOuterRow ? 6 : 5;
+        const fWidth = TILE_SIZE - fLeft - fRight;
+        if (fWidth <= 0) continue;
+
+        sCtx.fillStyle = ridgeColor;
+        sCtx.fillRect(fLeft, r, fWidth, 4);
+        if (!hasW && fWidth > 2) {
+          sCtx.fillRect(fLeft - 1, r + 1, 1, 2);
+        }
+        if (!hasE && fWidth > 2) {
+          sCtx.fillRect(TILE_SIZE - fRight, r + 1, 1, 2);
+        }
+
+        sCtx.fillStyle = highlightColor;
+        sCtx.fillRect(fLeft, r, fWidth, 1);
+      }
+
+      if (isWatered) {
+        sCtx.fillStyle = 'rgba(96, 165, 250, 0.28)';
+        sCtx.fillRect(7, 11, 2, 1);
+        sCtx.fillRect(19, 13, 2, 1);
+        sCtx.fillRect(11, 19, 2, 1);
+        sCtx.fillRect(22, 21, 2, 1);
+      }
+
+      if (isFertilized) {
+        sCtx.fillStyle = '#fef08a';
+        sCtx.fillRect(7, 10, 2, 1);
+        sCtx.fillRect(21, 11, 1, 2);
+        sCtx.fillRect(14, 18, 2, 1);
+        sCtx.fillRect(23, 17, 1, 1);
+        sCtx.fillStyle = '#f8fafc';
+        sCtx.fillRect(9, 14, 1, 1);
+        sCtx.fillRect(18, 21, 2, 1);
+      }
+
+      this.tilledSoilStampCache.set(soilKey, soilStamp);
     }
 
-    // Wet moisture glistening effect
-    if (isWatered) {
-      ctx.fillStyle = 'rgba(96, 165, 250, 0.28)';
-      ctx.fillRect(sx + 7, sy + 11, 2, 1);
-      ctx.fillRect(sx + 19, sy + 13, 2, 1);
-      ctx.fillRect(sx + 11, sy + 19, 2, 1);
-      ctx.fillRect(sx + 22, sy + 21, 2, 1);
-    }
-
-    // Organic Bone Fertilizer Flecks
-    if (isFertilized) {
-      ctx.fillStyle = '#fef08a';
-      ctx.fillRect(sx + 7, sy + 10, 2, 1);
-      ctx.fillRect(sx + 21, sy + 11, 1, 2);
-      ctx.fillRect(sx + 14, sy + 18, 2, 1);
-      ctx.fillRect(sx + 23, sy + 17, 1, 1);
-      ctx.fillStyle = '#f8fafc';
-      ctx.fillRect(sx + 9, sy + 14, 1, 1);
-      ctx.fillRect(sx + 18, sy + 21, 2, 1);
-    }
+    ctx.drawImage(soilStamp, sx, sy);
 
     // 2. Crop Plant Stages (0..3) with natural height & width variation per tile
     if (!crop) return;
@@ -3470,6 +3525,7 @@ export class GameRenderer {
           ? '#fbbf24'
           : '#ef4444';
 
+      const ridgeColor = isWatered ? '#28170c' : '#54341c';
       for (const off of [-7, 0, 7]) {
         ctx.fillStyle = ridgeColor;
         ctx.fillRect(cx + off - 2, cy - 3, 5, 4);
@@ -4351,14 +4407,20 @@ export class GameRenderer {
     }
 
     // If Villagers are currently sleeping/inside this house or bed and player is nearby, show a cozy occupied indicator
-    if (creatures && player) {
+    if (
+      creatures &&
+      player &&
+      (st.type === PlaceableType.BED ||
+        st.type === PlaceableType.EXPLORER_TENT ||
+        st.type === PlaceableType.VILLAGE_HOUSE) &&
+      Math.abs(player.x - centerX) <= 145 &&
+      Math.abs(player.y - (wy + 16)) <= 145 &&
+      Math.hypot(player.x - centerX, player.y - (wy + 16)) <= 145
+    ) {
       const sleepingInside = creatures.filter(
         (c) => c.isInsideHouse && c.homeHouseId === st.id && c.hp > 0
       );
-      if (
-        sleepingInside.length > 0 &&
-        Math.hypot(player.x - centerX, player.y - (wy + 16)) <= 145
-      ) {
+      if (sleepingInside.length > 0) {
         const names = sleepingInside.map((r) => r.name).join(' & ');
         const badgeText =
           st.type === PlaceableType.BED
@@ -5745,25 +5807,79 @@ export class GameRenderer {
     }
 
     // 3. 16-STATE ARCHITECTURAL WALLS & WINDOWS (Oak, Dark Oak, Pine, Coconut Palm, Stone, Brick)
+    // Check if this wall is viewed purely from the side (vertical North-South alignment)
+    const isSideProfile = world.isWallOrDoorSideProfileAt(st.tileX, st.tileY, st);
+
+    if (!isSideProfile) {
+      // Dynamic ground shadow matched to adaptive corner span
+      const hasVert = hasN || hasS;
+      const spanX = hasW ? wx : hasVert && hasE ? wx + 12 : wx + 2;
+      const spanRight = hasE
+        ? wx + TILE_SIZE
+        : hasVert && hasW
+        ? wx + 20
+        : wx + TILE_SIZE - 2;
+      const spanW = Math.max(8, spanRight - spanX);
+      ctx.fillStyle = 'rgba(8, 12, 18, 0.32)';
+      ctx.fillRect(
+        spanX + Math.round(shadowDx * 0.5),
+        wy + TILE_SIZE - 4,
+        spanW,
+        6
+      );
+    }
+
+    const wallStampKey = `${st.type}_${mask}_${isSideProfile ? 1 : 0}`;
+    let wallStamp = this.wallStampCache.get(wallStampKey);
+    if (!wallStamp) {
+      wallStamp = this.createWallOrWindowStamp(st.type, mask, isSideProfile);
+      this.wallStampCache.set(wallStampKey, wallStamp);
+    }
+    ctx.drawImage(wallStamp, wx - 2, wy - 16);
+  }
+
+  private wallStampCache = new Map<string, HTMLCanvasElement>();
+
+  /**
+   * Pre-renders a 16-state Wall or Window structure tile onto a 36x52 offscreen canvas stamp
+   * (origin offset: ox = 2, oy = 16) so rendering any wall/window tile in the world takes a single drawImage call.
+   */
+  private createWallOrWindowStamp(
+    type: PlaceableType,
+    mask: number,
+    isSideProfile: boolean
+  ): HTMLCanvasElement {
+    const stamp = document.createElement('canvas');
+    stamp.width = 36;
+    stamp.height = 52;
+    const ctx = stamp.getContext('2d')!;
+    const wx = 2;
+    const wy = 16;
+
+    const hasN = (mask & 1) !== 0;
+    const hasE = (mask & 2) !== 0;
+    const hasS = (mask & 4) !== 0;
+    const hasW = (mask & 8) !== 0;
+
     const isStone =
-      st.type === PlaceableType.STONE_WALL ||
-      st.type === PlaceableType.STONE_WINDOW;
-    const isBrick = st.type === PlaceableType.BRICK_WALL;
+      type === PlaceableType.STONE_WALL ||
+      type === PlaceableType.STONE_WINDOW;
+    const isBrick = type === PlaceableType.BRICK_WALL;
     const isDarkOak =
-      st.type === PlaceableType.DARK_OAK_WALL ||
-      st.type === PlaceableType.DARK_OAK_WINDOW;
+      type === PlaceableType.DARK_OAK_WALL ||
+      type === PlaceableType.DARK_OAK_WINDOW;
     const isPine =
-      st.type === PlaceableType.PINE_WALL ||
-      st.type === PlaceableType.PINE_WINDOW;
+      type === PlaceableType.PINE_WALL ||
+      type === PlaceableType.PINE_WINDOW;
     const isPalm =
-      st.type === PlaceableType.PALM_WALL ||
-      st.type === PlaceableType.PALM_WINDOW;
+      type === PlaceableType.PALM_WALL ||
+      type === PlaceableType.PALM_WINDOW;
     const isWindow =
-      st.type === PlaceableType.WOOD_WINDOW ||
-      st.type === PlaceableType.DARK_OAK_WINDOW ||
-      st.type === PlaceableType.PINE_WINDOW ||
-      st.type === PlaceableType.PALM_WINDOW ||
-      st.type === PlaceableType.STONE_WINDOW;
+      type === PlaceableType.WOOD_WINDOW ||
+      type === PlaceableType.DARK_OAK_WINDOW ||
+      type === PlaceableType.PINE_WINDOW ||
+      type === PlaceableType.PALM_WINDOW ||
+      type === PlaceableType.STONE_WINDOW;
 
     const topCap = isBrick
       ? '#d97706'
@@ -5809,9 +5925,6 @@ export class GameRenderer {
       : isPalm
       ? '#3b2412'
       : '#3d1f0a';
-
-    // Check if this wall is viewed purely from the side (vertical North-South alignment)
-    const isSideProfile = world.isWallOrDoorSideProfileAt(st.tileX, st.tileY, st);
 
     if (isSideProfile) {
       // SLENDER SIDE-VIEWED WALL (8px wide centered at wx + 12 instead of full tile width)
@@ -5891,7 +6004,7 @@ export class GameRenderer {
         ctx.fillStyle = faceDark;
         ctx.fillRect(vx + 1, botY - 9, vw - 2, 1);
       }
-      return;
+      return stamp;
     }
 
     // HORIZONTAL OR CORNER/T-JUNCTION WALL (adaptive to 8px vertical wall at wx + 12..20)
@@ -5903,15 +6016,6 @@ export class GameRenderer {
       ? wx + 20
       : wx + TILE_SIZE - 2;
     const spanW = Math.max(8, spanRight - spanX);
-
-    // Ground shadow matched to adaptive corner span
-    ctx.fillStyle = 'rgba(8, 12, 18, 0.32)';
-    ctx.fillRect(
-      spanX + Math.round(shadowDx * 0.5),
-      wy + TILE_SIZE - 4,
-      spanW,
-      6
-    );
 
     // North Arm (slender 8px side profile at wx + 12..20)
     if (hasN) {
@@ -5966,7 +6070,6 @@ export class GameRenderer {
       ctx.fillRect(texLeft, wy + 5, texW, 1);
       ctx.fillRect(texLeft, wy + 14, texW, 1);
       ctx.fillRect(texLeft, wy + 23, texW, 1);
-      // Vertical mortar joints within adaptive span
       if (wx + 12 >= texLeft + 2 && wx + 12 <= texRight - 2) {
         ctx.fillRect(wx + 12, wy - 2, 1, 7);
         ctx.fillRect(wx + 12, wy + 16, 1, 7);
@@ -5990,12 +6093,10 @@ export class GameRenderer {
       if (texW > midW + 2) {
         ctx.fillRect(texLeft + midW + 2, wy + 18, texW - midW - 2, 7);
       }
-      // Stone bevel highlights
       ctx.fillStyle = '#94a3b8';
       ctx.fillRect(texLeft + 1, wy - 1, Math.max(2, midW - 2), 2);
       ctx.fillRect(texLeft + 2, wy + 9, Math.max(2, texW - 4), 2);
     } else if (isDarkOak) {
-      // Parede de Carvalho Escuro: Painéis verticais entalhados em madeira chocolate-expresso com frisos de bronze
       for (let px = texLeft + 1; px < texRight - 3; px += 7) {
         const pw = Math.min(5, texRight - px - 1);
         if (pw <= 1) continue;
@@ -6004,7 +6105,6 @@ export class GameRenderer {
         ctx.fillStyle = '#5c3a21';
         ctx.fillRect(px + 1, wy, Math.max(1, pw - 2), 19);
       }
-      // Warm antique bronze horizontal trim bands & studs
       ctx.fillStyle = '#92400e';
       ctx.fillRect(spanX, wy - 3, spanW, 2);
       ctx.fillRect(spanX, wy + 22, spanW, 2);
@@ -6014,7 +6114,6 @@ export class GameRenderer {
         ctx.fillRect(sx, wy + 22, 2, 1);
       }
     } else if (isPine) {
-      // Parede de Pinheiro: Toras horizontais arredondadas de abeto claro com encaixes rústicos de cabana nas pontas
       const logRows = [wy - 3, wy + 4, wy + 11, wy + 18];
       for (const ly of logRows) {
         ctx.fillStyle = '#b88c56';
@@ -6023,10 +6122,8 @@ export class GameRenderer {
         ctx.fillRect(texLeft, ly, texW, 2);
         ctx.fillStyle = '#f3d9a4';
         ctx.fillRect(texLeft + 1, ly, Math.max(2, texW - 2), 1);
-        // Dark spruce bark seam between logs
         ctx.fillStyle = '#5c3a21';
         ctx.fillRect(texLeft, ly + 5, texW, 1);
-        // Notched log-cabin corner joints on exposed or connected ends
         ctx.fillStyle = '#6b4226';
         ctx.fillRect(texLeft, ly + 1, 3, 4);
         if (texW > 7) {
@@ -6034,30 +6131,24 @@ export class GameRenderer {
         }
       }
     } else if (isPalm) {
-      // Parede de Coqueiro: Troncos inteiros de coqueiro enfileirados lado a lado com anéis naturais e amarração de fibra
       ctx.fillStyle = '#2b190b';
       ctx.fillRect(faceLeft, wy - 5, faceW, 31);
       for (let tx = faceLeft; tx < faceRight - 1; tx += 6) {
         const tw = Math.min(5, faceRight - tx);
         if (tw <= 1) continue;
-        // Cylindrical trunk base
         ctx.fillStyle = '#754f2b';
         ctx.fillRect(tx, wy - 5, tw, 31);
-        // Cylindrical trunk mid highlight
         ctx.fillStyle = '#a67b4b';
         ctx.fillRect(tx + 1, wy - 5, Math.max(1, tw - 2), 31);
-        // Center trunk ridge highlight
         if (tw >= 4) {
           ctx.fillStyle = '#c99e67';
           ctx.fillRect(tx + 2, wy - 5, 1, 31);
         }
-        // Horizontal palm trunk bark rings along each vertical trunk
         ctx.fillStyle = '#4a3019';
         for (const ry of [wy - 1, wy + 5, wy + 11, wy + 17, wy + 23]) {
           ctx.fillRect(tx, ry, tw, 1);
         }
       }
-      // Horizontal coir/sisal rope bindings tying the trunks together
       ctx.fillStyle = '#d97706';
       ctx.fillRect(spanX, wy + 2, spanW, 2);
       ctx.fillRect(spanX, wy + 19, spanW, 2);
@@ -6067,23 +6158,19 @@ export class GameRenderer {
         ctx.fillRect(rx, wy + 19, 2, 1);
       }
     } else {
-      // Parede de Carvalho: Tábuas horizontais douradas com cintas de ferro forjado
       ctx.fillStyle = '#7c471e';
       ctx.fillRect(texLeft, wy - 2, texW, 6);
       ctx.fillRect(texLeft, wy + 7, texW, 6);
       ctx.fillRect(texLeft, wy + 16, texW, 6);
-      // Warm timber highlights
       ctx.fillStyle = '#9a602d';
       ctx.fillRect(texLeft + 1, wy - 2, Math.max(2, texW - 2), 2);
       ctx.fillRect(texLeft + 1, wy + 7, Math.max(2, texW - 2), 2);
       ctx.fillRect(texLeft + 1, wy + 16, Math.max(2, texW - 2), 2);
-      // Horizontal iron binding straps matched to adaptive span
       ctx.fillStyle = '#334155';
       ctx.fillRect(spanX, wy + 4, spanW, 2);
       ctx.fillRect(spanX, wy + 21, spanW, 2);
     }
 
-    // Window Glass (33% transparency) & Solid Mullion Frame if Window Wall
     if (isWindow) {
       ctx.restore();
       const frameColor = isDarkOak
@@ -6091,13 +6178,11 @@ export class GameRenderer {
         : isPine || isPalm
         ? '#5c3a21'
         : '#1e293b';
-      // Solid outer frame border around glass opening
       ctx.fillStyle = frameColor;
       ctx.fillRect(winLeft, wy - 1, winW, 2);
       ctx.fillRect(winLeft, wy + 16, winW, 2);
       ctx.fillRect(winLeft, wy + 1, 2, 15);
       ctx.fillRect(winLeft + winW - 2, wy + 1, 2, 15);
-      // Pine Alpine side shutters
       if (isPine && winLeft >= spanX + 3 && winRight <= spanRight - 3) {
         ctx.fillStyle = '#5c3a21';
         ctx.fillRect(winLeft - 3, wy, 3, 16);
@@ -6106,7 +6191,6 @@ export class GameRenderer {
         ctx.fillRect(winLeft - 2, wy + 2, 1, 12);
         ctx.fillRect(winRight + 1, wy + 2, 1, 12);
       }
-      // Window glass pane with 33% transparency (alpha = 0.67)
       ctx.save();
       ctx.globalAlpha = 0.67;
       ctx.fillStyle = isDarkOak ? '#0284c7' : '#38bdf8';
@@ -6114,11 +6198,9 @@ export class GameRenderer {
       ctx.fillStyle = '#bae6fd';
       ctx.fillRect(winLeft + 3, wy + 2, 2, 7);
       ctx.restore();
-      // Solid mullion cross-bar & sill
       ctx.fillStyle = isPalm ? '#d97706' : frameColor;
       ctx.fillRect(winLeft + 1, wy + 8, Math.max(2, winW - 2), 2);
       if (isDarkOak || isPine || isPalm) {
-        // Vertical center mullion for 4-pane manor/cabin/tropical window
         ctx.fillRect(
           winLeft + Math.floor(winW / 2) - 1,
           wy + 1,
@@ -6134,7 +6216,6 @@ export class GameRenderer {
     const capInnerLeft = hasW ? spanX : spanX + 1;
     const capInnerRight = hasE ? spanRight : spanRight - 1;
     if (isPalm) {
-      // Scalloped row of whole coconut-palm trunk cross-sections along the top of the wall
       ctx.fillStyle = '#3b2412';
       ctx.fillRect(
         capInnerLeft,
@@ -6166,7 +6247,6 @@ export class GameRenderer {
       );
     }
 
-    // Seamless North Miter into the horizontal Top Cap
     if (hasN) {
       const nvx = wx + 12;
       const nvw = 8;
@@ -6176,7 +6256,6 @@ export class GameRenderer {
       ctx.fillRect(nvx + 2, wy - 16, 2, 9);
     }
 
-    // South Arm (slender 8px side profile seamlessly mitering from the top cap down to southern tile)
     if (hasS) {
       const svx = wx + 12;
       const svw = 8;
@@ -6190,6 +6269,7 @@ export class GameRenderer {
       ctx.fillRect(svx + 1, wy + 6, svw - 2, 1);
       ctx.fillRect(svx + 1, wy + 16, svw - 2, 1);
     }
+    return stamp;
   }
 
   /**
@@ -8893,6 +8973,54 @@ export class GameRenderer {
     ctx.restore();
   }
 
+  private lightMaskStampCache = new Map<number, HTMLCanvasElement>();
+  private yellowLightStamp: HTMLCanvasElement | null = null;
+
+  private getLightMaskStamp(strength: number): HTMLCanvasElement {
+    const key = Math.round(Math.max(0, Math.min(1, strength)) * 20);
+    let stamp = this.lightMaskStampCache.get(key);
+    if (!stamp) {
+      const s = key / 20;
+      const size = 128;
+      const half = size / 2;
+      stamp = document.createElement('canvas');
+      stamp.width = size;
+      stamp.height = size;
+      const sCtx = stamp.getContext('2d')!;
+      const grad = sCtx.createRadialGradient(half, half, 0, half, half, half);
+      grad.addColorStop(0.0, `rgba(0, 0, 0, ${(1.0 * s).toFixed(3)})`);
+      grad.addColorStop(0.15, `rgba(0, 0, 0, ${(0.92 * s).toFixed(3)})`);
+      grad.addColorStop(0.35, `rgba(0, 0, 0, ${(0.72 * s).toFixed(3)})`);
+      grad.addColorStop(0.6, `rgba(0, 0, 0, ${(0.42 * s).toFixed(3)})`);
+      grad.addColorStop(0.82, `rgba(0, 0, 0, ${(0.14 * s).toFixed(3)})`);
+      grad.addColorStop(1.0, 'rgba(0, 0, 0, 0.0)');
+      sCtx.fillStyle = grad;
+      sCtx.fillRect(0, 0, size, size);
+      this.lightMaskStampCache.set(key, stamp);
+    }
+    return stamp;
+  }
+
+  private getYellowLightStamp(): HTMLCanvasElement {
+    if (!this.yellowLightStamp) {
+      const size = 64;
+      const half = size / 2;
+      const stamp = document.createElement('canvas');
+      stamp.width = size;
+      stamp.height = size;
+      const sCtx = stamp.getContext('2d')!;
+      const yGrad = sCtx.createRadialGradient(half, half, 0, half, half, half);
+      yGrad.addColorStop(0.0, 'rgba(250, 204, 21, 0.34)');
+      yGrad.addColorStop(0.45, 'rgba(250, 204, 21, 0.18)');
+      yGrad.addColorStop(0.8, 'rgba(250, 204, 21, 0.06)');
+      yGrad.addColorStop(1.0, 'rgba(250, 204, 21, 0.0)');
+      sCtx.fillStyle = yGrad;
+      sCtx.fillRect(0, 0, size, size);
+      this.yellowLightStamp = stamp;
+    }
+    return this.yellowLightStamp;
+  }
+
   private renderDayNightOverlay(
     ctx: CanvasRenderingContext2D,
     camera: Camera,
@@ -8965,7 +9093,7 @@ export class GameRenderer {
       lCtx.fillStyle = `rgba(${tintR}, ${tintG}, ${tintB}, ${darkness.toFixed(3)})`;
       lCtx.fillRect(0, 0, w, h);
 
-      // Carve out darkness using a pure progressive luminosity mask:
+      // Carve out darkness using a cached progressive luminosity mask stamp:
       // 100% light (or custom strength, e.g. 80% for fireflies) at the exact point of light (r = 0),
       // progressively fading out to 0% light (100% ambient darkness) at r.
       lCtx.globalCompositeOperation = 'destination-out';
@@ -8977,18 +9105,8 @@ export class GameRenderer {
         if (sx + r < 0 || sx - r > w || sy + r < 0 || sy - r > h) continue;
 
         const strength = Math.max(0, Math.min(1, light.strength ?? 1.0));
-        const grad = lCtx.createRadialGradient(sx, sy, 0, sx, sy, r);
-        grad.addColorStop(0.0, `rgba(0, 0, 0, ${(1.0 * strength).toFixed(3)})`);
-        grad.addColorStop(0.15, `rgba(0, 0, 0, ${(0.92 * strength).toFixed(3)})`);
-        grad.addColorStop(0.35, `rgba(0, 0, 0, ${(0.72 * strength).toFixed(3)})`);
-        grad.addColorStop(0.6, `rgba(0, 0, 0, ${(0.42 * strength).toFixed(3)})`);
-        grad.addColorStop(0.82, `rgba(0, 0, 0, ${(0.14 * strength).toFixed(3)})`);
-        grad.addColorStop(1.0, 'rgba(0, 0, 0, 0.0)');
-
-        lCtx.fillStyle = grad;
-        lCtx.beginPath();
-        lCtx.arc(sx, sy, r, 0, Math.PI * 2);
-        lCtx.fill();
+        const maskStamp = this.getLightMaskStamp(strength);
+        lCtx.drawImage(maskStamp, sx - r, sy - r, r * 2, r * 2);
       }
       lCtx.globalCompositeOperation = 'source-over';
 
@@ -9006,17 +9124,11 @@ export class GameRenderer {
           darknessRatio * Math.min(1, Math.max(0, (light.strength ?? 0.8) / 0.8));
         if (yellowScale <= 0.01) continue;
 
-        const yGrad = lCtx.createRadialGradient(sx, sy, 0, sx, sy, r);
-        yGrad.addColorStop(0.0, `rgba(250, 204, 21, ${(0.34 * yellowScale).toFixed(3)})`);
-        yGrad.addColorStop(0.45, `rgba(250, 204, 21, ${(0.18 * yellowScale).toFixed(3)})`);
-        yGrad.addColorStop(0.8, `rgba(250, 204, 21, ${(0.06 * yellowScale).toFixed(3)})`);
-        yGrad.addColorStop(1.0, 'rgba(250, 204, 21, 0.0)');
-
-        lCtx.fillStyle = yGrad;
-        lCtx.beginPath();
-        lCtx.arc(sx, sy, r, 0, Math.PI * 2);
-        lCtx.fill();
+        const yellowStamp = this.getYellowLightStamp();
+        lCtx.globalAlpha = yellowScale;
+        lCtx.drawImage(yellowStamp, sx - r, sy - r, r * 2, r * 2);
       }
+      lCtx.globalAlpha = 1.0;
 
       ctx.drawImage(this.lightCanvas, 0, 0);
     }

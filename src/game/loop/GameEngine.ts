@@ -10474,6 +10474,12 @@ export class GameEngine {
         for (const st of chunk.structures) {
           const sx = st.tileX * TILE_SIZE + TILE_SIZE / 2;
           const sy = st.tileY * TILE_SIZE + TILE_SIZE / 2;
+          if (
+            Math.abs(sx - this.player.x) > TILE_SIZE * 2.8 ||
+            Math.abs(sy - this.player.y) > TILE_SIZE * 2.8
+          ) {
+            continue;
+          }
           const distPlayer = Math.hypot(sx - this.player.x, sy - this.player.y);
 
           // 1A. Tilled Soil / Crops within reach
@@ -10699,6 +10705,10 @@ export class GameEngine {
           }
 
           if (distPlayer <= TILE_SIZE * 2.8) {
+            const stationScore = computeDirectionalScore(sx, sy, -5);
+            if (!Number.isFinite(stationScore)) {
+              continue;
+            }
             const itemDef = ITEMS[st.itemId];
             const hasLoot = Boolean(st.lootItems && st.lootItems.length > 0);
             const occupiedChestSlots =
@@ -10883,7 +10893,7 @@ export class GameEngine {
                 : 'Abrir Altar Solar ✦';
 
             candidates.push({
-              score: computeDirectionalScore(sx, sy, -5),
+              score: stationScore,
               info: {
                 kind: 'station',
                 label: stationLabel,

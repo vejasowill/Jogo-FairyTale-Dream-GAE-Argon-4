@@ -5005,6 +5005,173 @@ export class WorldManager {
   }
 
   /**
+   * Per-chunk O(1) spatial index for structures and nature nodes on each of the 256 tiles (16x16),
+   * plus a precomputed roof-enclosure signature for RoofSystem.
+   * Automatically rebuilds in O(N_chunk) only when a chunk's structures/nodes or dirtyRev change.
+   */
+  private chunkSpatialIndexMap = new WeakMap<
+    ChunkData,
+    {
+      dirtyRev: number;
+      structLen: number;
+      nodeLen: number;
+      firstStruct: PlacedStructure | undefined;
+      lastStruct: PlacedStructure | undefined;
+      firstNode: NatureNode | undefined;
+      lastNode: NatureNode | undefined;
+      nodeAtTile: (NatureNode | undefined)[];
+      structuresAtTile: (PlacedStructure[] | undefined)[];
+      groundAtTile: (PlacedStructure | undefined)[];
+      wallAtTile: (PlacedStructure | undefined)[];
+      doorAtTile: (PlacedStructure | undefined)[];
+      topAtTile: (PlacedStructure | undefined)[];
+      roofWallSig: string;
+    }
+  >();
+
+  private connMaskByType = new Map<PlaceableType, Map<number, number>>();
+
+  private getChunkSpatialIndex(chunk: ChunkData) {
+    const sLen = chunk.structures.length;
+    const nLen = chunk.nodes.length;
+    const dirtyRev = chunk.dirtyRev || 0;
+    const firstStruct = sLen > 0 ? chunk.structures[0] : undefined;
+    const lastStruct = sLen > 0 ? chunk.structures[sLen - 1] : undefined;
+    const firstNode = nLen > 0 ? chunk.nodes[0] : undefined;
+    const lastNode = nLen > 0 ? chunk.nodes[nLen - 1] : undefined;
+
+    const existing = this.chunkSpatialIndexMap.get(chunk);
+    if (
+      existing &&
+      existing.dirtyRev === dirtyRev &&
+      existing.structLen === sLen &&
+      existing.nodeLen === nLen &&
+      existing.firstStruct === firstStruct &&
+      existing.lastStruct === lastStruct &&
+      existing.firstNode === firstNode &&
+      existing.lastNode === lastNode
+    ) {
+      return existing;
+    }
+
+    // Invalidate connection mask cache whenever any chunk's structure layout changes
+    if (
+      !existing ||
+      existing.structLen !== sLen ||
+      existing.dirtyRev !== dirtyRev ||
+      existing.lastStruct !== lastStruct
+    ) {
+      this.connMaskByType.clear();
+    }
+
+    const nodeAtTile = new Array<NatureNode | undefined>(256);
+    const structuresAtTile = new Array<PlacedStructure[] | undefined>(256);
+    const groundAtTile = new Array<PlacedStructure | undefined>(256);
+    const wallAtTile = new Array<PlacedStructure | undefined>(256);
+    const doorAtTile = new Array<PlacedStructure | undefined>(256);
+    const topAtTile = new Array<PlacedStructure | undefined>(256);
+
+    for (let i = 0; i < nLen; i++) {
+      const n = chunk.nodes[i];
+      const lx = ((n.tileX % CHUNK_SIZE) + CHUNK_SIZE) % CHUNK_SIZE;
+      const ly = ((n.tileY % CHUNK_SIZE) + CHUNK_SIZE) % CHUNK_SIZE;
+      nodeAtTile[ly * CHUNK_SIZE + lx] = n;
+    }
+
+    const sigParts: string[] = [];
+    for (let i = 0; i < sLen; i++) {
+      const s = chunk.structures[i];
+      const lx = ((s.tileX % CHUNK_SIZE) + CHUNK_SIZE) % CHUNK_SIZE;
+      const ly = ((s.tileY % CHUNK_SIZE) + CHUNK_SIZE) % CHUNK_SIZE;
+      const idx = ly * CHUNK_SIZE + lx;
+
+      let list = structuresAtTile[idx];
+      if (!list) {
+        list = [s];
+        structuresAtTile[idx] = list;
+      } else {
+        list.push(s);
+      }
+
+      const bp = CONSTRUCTION_BLUEPRINTS[s.type];
+      if (
+        s.isBridge ||
+        s.type === PlaceableType.WOOD_BRIDGE ||
+        bp?.layer === 'GROUND'
+      ) {
+        groundAtTile[idx] = s;
+      }
+      if (WorldManager.isWallMountableStructure(s.type)) {
+        wallAtTile[idx] = s;
+      }
+      if (WorldManager.isDoorOrGateStructure(s.type)) {
+        doorAtTile[idx] = s;
+      }
+
+      if (
+        (bp &&
+          bp.layer === 'WALL' &&
+          s.type !== PlaceableType.WOOD_FENCE &&
+          s.type !== PlaceableType.FENCE_GATE) ||
+        s.type === PlaceableType.VILLAGE_HOUSE ||
+        s.type === PlaceableType.EXPLORER_TENT
+      ) {
+        sigParts.push(`${s.tileX},${s.tileY},${s.type}`);
+      }
+    }
+
+    for (let idx = 0; idx < 256; idx++) {
+      const matches = structuresAtTile[idx];
+      if (!matches || matches.length === 0) continue;
+      if (matches.length === 1) {
+        topAtTile[idx] = matches[0];
+      } else {
+        topAtTile[idx] =
+          matches.find(
+            (s) => CONSTRUCTION_BLUEPRINTS[s.type]?.layer === 'WALL'
+          ) ||
+          matches.find(
+            (s) =>
+              CONSTRUCTION_BLUEPRINTS[s.type]?.layer !== 'GROUND' &&
+              s.type !== PlaceableType.SPIKE_TRAP
+          ) ||
+          matches.find(
+            (s) => CONSTRUCTION_BLUEPRINTS[s.type]?.layer !== 'GROUND'
+          ) ||
+          matches[matches.length - 1];
+      }
+    }
+
+    const built = {
+      dirtyRev,
+      structLen: sLen,
+      nodeLen: nLen,
+      firstStruct,
+      lastStruct,
+      firstNode,
+      lastNode,
+      nodeAtTile,
+      structuresAtTile,
+      groundAtTile,
+      wallAtTile,
+      doorAtTile,
+      topAtTile,
+      roofWallSig: sigParts.join(';'),
+    };
+    this.chunkSpatialIndexMap.set(chunk, built);
+    return built;
+  }
+
+  /**
+   * Returns the precomputed roof-enclosure signature string for chunk `(cx, cy)` in O(1).
+   */
+  public getChunkRoofWallSig(cx: number, cy: number): string {
+    const chunk = this.chunks[WorldManager.chunkKey(cx, cy)];
+    if (!chunk || chunk.structures.length === 0) return '';
+    return this.getChunkSpatialIndex(chunk).roofWallSig;
+  }
+
+  /**
    * Returns true if tile `(tx, ty)` is open water (`BiomeType.OCEAN` without a Bridge or Ground Floor structure),
    * meaning any entity or player on this tile is swimming.
    */
@@ -5012,22 +5179,12 @@ export class WorldManager {
     const biome = this.getTileBiomeFast(tx, ty);
     if (biome !== BiomeType.OCEAN) return false;
 
-    const { cx, cy } = this.tileToChunk(tx, ty);
+    const { cx, cy, lx, ly } = this.tileToChunk(tx, ty);
     const chunk = this.chunks[WorldManager.chunkKey(cx, cy)];
-    if (!chunk) return true;
+    if (!chunk || chunk.structures.length === 0) return true;
 
-    for (const st of chunk.structures) {
-      if (st.tileX === tx && st.tileY === ty) {
-        if (
-          st.isBridge ||
-          st.type === PlaceableType.WOOD_BRIDGE ||
-          CONSTRUCTION_BLUEPRINTS[st.type]?.layer === 'GROUND'
-        ) {
-          return false;
-        }
-      }
-    }
-    return true;
+    const spatial = this.getChunkSpatialIndex(chunk);
+    return !spatial.groundAtTile[ly * CHUNK_SIZE + lx];
   }
 
   /**
@@ -5332,19 +5489,15 @@ export class WorldManager {
   ): boolean {
     const { cx, cy, lx, ly } = this.tileToChunk(tx, ty);
     const chunk = this.getOrCreateChunk(cx, cy);
-    const biome = chunk.tiles[ly * CHUNK_SIZE + lx];
+    const tileIdx = ly * CHUNK_SIZE + lx;
+    const biome = chunk.tiles[tileIdx];
+    const spatial = this.getChunkSpatialIndex(chunk);
 
-    let hasBridge = false;
-    for (const st of chunk.structures) {
-      if (st.tileX === tx && st.tileY === ty) {
-        if (
-          st.isBridge ||
-          st.type === PlaceableType.WOOD_BRIDGE ||
-          CONSTRUCTION_BLUEPRINTS[st.type]?.layer === 'GROUND'
-        ) {
-          hasBridge = true;
-        }
-        if (WorldManager.isStructureCurrentlySolid(st, isHumanEntity)) {
+    const hasBridge = Boolean(spatial.groundAtTile[tileIdx]);
+    const stList = spatial.structuresAtTile[tileIdx];
+    if (stList) {
+      for (let i = 0; i < stList.length; i++) {
+        if (WorldManager.isStructureCurrentlySolid(stList[i], isHumanEntity)) {
           return false;
         }
       }
@@ -5355,13 +5508,10 @@ export class WorldManager {
     }
 
     // Only NatureNodes with hasHitbox: true block tile walkability (e.g. Berry Bushes do NOT block!)
-    const hasSolidNode = chunk.nodes.some(
-      (n) =>
-        n.tileX === tx &&
-        n.tileY === ty &&
-        (NATURE_BLUEPRINTS[n.type]?.hasHitbox ?? true)
-    );
-    if (hasSolidNode) return false;
+    const node = spatial.nodeAtTile[tileIdx];
+    if (node && node.hp > 0 && (NATURE_BLUEPRINTS[node.type]?.hasHitbox ?? true)) {
+      return false;
+    }
 
     return true;
   }
@@ -5384,32 +5534,49 @@ export class WorldManager {
     // 1. Optional dry-land check at the 4 footprint corners when water is disallowed
     if (!allowWater) {
       const footMargin = 5.5;
-      const corners = [
-        { x: wx - footMargin, y: wy - footMargin },
-        { x: wx + footMargin, y: wy - footMargin },
-        { x: wx - footMargin, y: wy + footMargin },
-        { x: wx + footMargin, y: wy + footMargin },
-      ];
-      for (const pt of corners) {
-        const { tx, ty } = this.worldToTile(pt.x, pt.y);
-        if (this.isTileSwimmableWater(tx, ty)) {
-          return false;
-        }
+      if (
+        this.isTileSwimmableWater(
+          Math.floor((wx - footMargin) / TILE_SIZE),
+          Math.floor((wy - footMargin) / TILE_SIZE)
+        ) ||
+        this.isTileSwimmableWater(
+          Math.floor((wx + footMargin) / TILE_SIZE),
+          Math.floor((wy - footMargin) / TILE_SIZE)
+        ) ||
+        this.isTileSwimmableWater(
+          Math.floor((wx - footMargin) / TILE_SIZE),
+          Math.floor((wy + footMargin) / TILE_SIZE)
+        ) ||
+        this.isTileSwimmableWater(
+          Math.floor((wx + footMargin) / TILE_SIZE),
+          Math.floor((wy + footMargin) / TILE_SIZE)
+        )
+      ) {
+        return false;
       }
     }
 
-    // 2. Check nearby tiles (3x3 around entity center) for solid structures & nature nodes
-    const centerTile = this.worldToTile(wx, wy);
-    for (let dy = -1; dy <= 1; dy++) {
-      for (let dx = -1; dx <= 1; dx++) {
-        const tx = centerTile.tx + dx;
-        const ty = centerTile.ty + dy;
-        const { cx, cy } = this.tileToChunk(tx, ty);
-        const chunk = this.getOrCreateChunk(cx, cy);
+    // 2. Check nearby tiles (3x3 around entity center) for solid structures & nature nodes using O(1) spatial index
+    const centerTx = Math.floor(wx / TILE_SIZE);
+    const centerTy = Math.floor(wy / TILE_SIZE);
 
-        // Check Nature Nodes on (tx, ty)
-        for (const node of chunk.nodes) {
-          if (node.tileX !== tx || node.tileY !== ty || node.hp <= 0) continue;
+    for (let dy = -1; dy <= 1; dy++) {
+      const ty = centerTy + dy;
+      const cy = Math.floor(ty / CHUNK_SIZE);
+      const ly = ((ty % CHUNK_SIZE) + CHUNK_SIZE) % CHUNK_SIZE;
+      const rowOffset = ly * CHUNK_SIZE;
+
+      for (let dx = -1; dx <= 1; dx++) {
+        const tx = centerTx + dx;
+        const cx = Math.floor(tx / CHUNK_SIZE);
+        const lx = ((tx % CHUNK_SIZE) + CHUNK_SIZE) % CHUNK_SIZE;
+        const chunk = this.getOrCreateChunk(cx, cy);
+        const spatial = this.getChunkSpatialIndex(chunk);
+        const tileIdx = rowOffset + lx;
+
+        // Check Nature Node on (tx, ty) in O(1)
+        const node = spatial.nodeAtTile[tileIdx];
+        if (node && node.hp > 0) {
           if (WorldManager.isUndergroundBlockNode(node.type)) {
             const boxMinX = tx * TILE_SIZE;
             const boxMaxX = (tx + 1) * TILE_SIZE;
@@ -5417,47 +5584,58 @@ export class WorldManager {
             const boxMaxY = (ty + 1) * TILE_SIZE;
             const closestX = Math.max(boxMinX, Math.min(wx, boxMaxX));
             const closestY = Math.max(boxMinY, Math.min(wy, boxMaxY));
-            if (Math.hypot(wx - closestX, wy - closestY) < entityRadius) {
-              return false;
-            }
-            continue;
-          }
-          const nbp = NATURE_BLUEPRINTS[node.type];
-          if (!nbp || !nbp.hasHitbox || nbp.hitboxRadius <= 0) {
-            continue; // e.g., BERRY_BUSH / SHORT_GRASS / TALL_GRASS have no hitbox!
-          }
-          const nx = tx * TILE_SIZE + TILE_SIZE / 2;
-          const ny = ty * TILE_SIZE + TILE_SIZE * 0.58;
-          if (Math.hypot(wx - nx, wy - ny) < entityRadius + nbp.hitboxRadius) {
-            return false;
-          }
-        }
-
-        // Check Structures on (tx, ty)
-        for (const st of chunk.structures) {
-          if (st.tileX !== tx || st.tileY !== ty) continue;
-          if (!WorldManager.isStructureCurrentlySolid(st, isHumanEntity)) continue;
-
-          const bp = CONSTRUCTION_BLUEPRINTS[st.type];
-          if (bp && bp.hitboxBehavior === 'SOLID_COMPACT' && bp.hitboxRadius) {
-            const sx = tx * TILE_SIZE + TILE_SIZE / 2;
-            const sy = ty * TILE_SIZE + TILE_SIZE * 0.55;
-            if (Math.hypot(wx - sx, wy - sy) < entityRadius + bp.hitboxRadius) {
+            const cdx = wx - closestX;
+            const cdy = wy - closestY;
+            if (cdx * cdx + cdy * cdy < entityRadius * entityRadius) {
               return false;
             }
           } else {
-            // SOLID_FULL (Walls, Windows) or solid DYNAMIC_DOOR / FENCE_GATE: AABB vs Circle
-            // Side-viewed (vertical / North-South) walls & doors have a thinner X profile
-            const isVerticalSideWall = this.isWallOrDoorSideProfileAt(tx, ty, st);
-            const padX = isVerticalSideWall ? 9 : 1;
-            const boxMinX = tx * TILE_SIZE + padX;
-            const boxMaxX = (tx + 1) * TILE_SIZE - padX;
-            const boxMinY = ty * TILE_SIZE + 1;
-            const boxMaxY = (ty + 1) * TILE_SIZE - 1;
-            const closestX = Math.max(boxMinX, Math.min(wx, boxMaxX));
-            const closestY = Math.max(boxMinY, Math.min(wy, boxMaxY));
-            if (Math.hypot(wx - closestX, wy - closestY) < entityRadius) {
-              return false;
+            const nbp = NATURE_BLUEPRINTS[node.type];
+            if (nbp && nbp.hasHitbox && nbp.hitboxRadius > 0) {
+              const nx = tx * TILE_SIZE + TILE_SIZE / 2;
+              const ny = ty * TILE_SIZE + TILE_SIZE * 0.58;
+              const cdx = wx - nx;
+              const cdy = wy - ny;
+              const minR = entityRadius + nbp.hitboxRadius;
+              if (cdx * cdx + cdy * cdy < minR * minR) {
+                return false;
+              }
+            }
+          }
+        }
+
+        // Check Structures on (tx, ty) in O(1)
+        const stList = spatial.structuresAtTile[tileIdx];
+        if (stList) {
+          for (let i = 0; i < stList.length; i++) {
+            const st = stList[i];
+            if (!WorldManager.isStructureCurrentlySolid(st, isHumanEntity)) continue;
+
+            const bp = CONSTRUCTION_BLUEPRINTS[st.type];
+            if (bp && bp.hitboxBehavior === 'SOLID_COMPACT' && bp.hitboxRadius) {
+              const sx = tx * TILE_SIZE + TILE_SIZE / 2;
+              const sy = ty * TILE_SIZE + TILE_SIZE * 0.55;
+              const cdx = wx - sx;
+              const cdy = wy - sy;
+              const minR = entityRadius + bp.hitboxRadius;
+              if (cdx * cdx + cdy * cdy < minR * minR) {
+                return false;
+              }
+            } else {
+              // SOLID_FULL (Walls, Windows) or solid DYNAMIC_DOOR / FENCE_GATE: AABB vs Circle
+              const isVerticalSideWall = this.isWallOrDoorSideProfileAt(tx, ty, st);
+              const padX = isVerticalSideWall ? 9 : 1;
+              const boxMinX = tx * TILE_SIZE + padX;
+              const boxMaxX = (tx + 1) * TILE_SIZE - padX;
+              const boxMinY = ty * TILE_SIZE + 1;
+              const boxMaxY = (ty + 1) * TILE_SIZE - 1;
+              const closestX = Math.max(boxMinX, Math.min(wx, boxMaxX));
+              const closestY = Math.max(boxMinY, Math.min(wy, boxMaxY));
+              const cdx = wx - closestX;
+              const cdy = wy - closestY;
+              if (cdx * cdx + cdy * cdy < entityRadius * entityRadius) {
+                return false;
+              }
             }
           }
         }
@@ -5492,38 +5670,44 @@ export class WorldManager {
       for (let dx = -1; dx <= 1; dx++) {
         const tx = centerTile.tx + dx;
         const ty = centerTile.ty + dy;
-        const { cx, cy } = this.tileToChunk(tx, ty);
+        const { cx, cy, lx, ly } = this.tileToChunk(tx, ty);
         const chunk = this.getOrCreateChunk(cx, cy);
+        const spatial = this.getChunkSpatialIndex(chunk);
+        const tileIdx = ly * CHUNK_SIZE + lx;
 
-        for (const node of chunk.nodes) {
-          if (node.tileX !== tx || node.tileY !== ty) continue;
+        const node = spatial.nodeAtTile[tileIdx];
+        if (node) {
           const nbp = NATURE_BLUEPRINTS[node.type];
-          if (!nbp || !nbp.hasHitbox || nbp.hitboxRadius <= 0) continue;
-          const nx = tx * TILE_SIZE + TILE_SIZE / 2;
-          const ny = ty * TILE_SIZE + TILE_SIZE * 0.58;
-          const dist = Math.hypot(wx - nx, wy - ny);
-          const minDist = entityRadius + nbp.hitboxRadius;
-          if (dist < minDist) {
-            const ux = dist > 0.001 ? (wx - nx) / dist : 0;
-            const uy = dist > 0.001 ? (wy - ny) / dist : 1;
-            const weight = minDist - dist + 2;
-            repulseX += ux * weight;
-            repulseY += uy * weight;
+          if (nbp && nbp.hasHitbox && nbp.hitboxRadius > 0) {
+            const nx = tx * TILE_SIZE + TILE_SIZE / 2;
+            const ny = ty * TILE_SIZE + TILE_SIZE * 0.58;
+            const dist = Math.hypot(wx - nx, wy - ny);
+            const minDist = entityRadius + nbp.hitboxRadius;
+            if (dist < minDist) {
+              const ux = dist > 0.001 ? (wx - nx) / dist : 0;
+              const uy = dist > 0.001 ? (wy - ny) / dist : 1;
+              const weight = minDist - dist + 2;
+              repulseX += ux * weight;
+              repulseY += uy * weight;
+            }
           }
         }
 
-        for (const st of chunk.structures) {
-          if (st.tileX !== tx || st.tileY !== ty) continue;
-          if (!WorldManager.isStructureCurrentlySolid(st, isHumanEntity)) continue;
-          const sx = tx * TILE_SIZE + TILE_SIZE / 2;
-          const sy = ty * TILE_SIZE + TILE_SIZE * 0.54;
-          const dist = Math.hypot(wx - sx, wy - sy);
-          if (dist < TILE_SIZE * 0.85) {
-            const ux = dist > 0.001 ? (wx - sx) / dist : 0;
-            const uy = dist > 0.001 ? (wy - sy) / dist : 1;
-            const weight = TILE_SIZE * 0.85 - dist + 2;
-            repulseX += ux * weight;
-            repulseY += uy * weight;
+        const stList = spatial.structuresAtTile[tileIdx];
+        if (stList) {
+          for (let i = 0; i < stList.length; i++) {
+            const st = stList[i];
+            if (!WorldManager.isStructureCurrentlySolid(st, isHumanEntity)) continue;
+            const sx = tx * TILE_SIZE + TILE_SIZE / 2;
+            const sy = ty * TILE_SIZE + TILE_SIZE * 0.54;
+            const dist = Math.hypot(wx - sx, wy - sy);
+            if (dist < TILE_SIZE * 0.85) {
+              const ux = dist > 0.001 ? (wx - sx) / dist : 0;
+              const uy = dist > 0.001 ? (wy - sy) / dist : 1;
+              const weight = TILE_SIZE * 0.85 - dist + 2;
+              repulseX += ux * weight;
+              repulseY += uy * weight;
+            }
           }
         }
       }
@@ -5626,6 +5810,23 @@ export class WorldManager {
     const bp = CONSTRUCTION_BLUEPRINTS[placeableType];
     if (!bp || bp.connectsToGroups.length === 0) return 0;
 
+    // Ensure the center chunk's spatial index is validated first (which clears connMaskByType if any structure changed)
+    const centerChunk = this.chunks[
+      WorldManager.chunkKey(Math.floor(tx / CHUNK_SIZE), Math.floor(ty / CHUNK_SIZE))
+    ];
+    if (centerChunk) {
+      this.getChunkSpatialIndex(centerChunk);
+    }
+
+    const packedCoord = WorldManager.packTileCoord(tx, ty);
+    let typeCache = this.connMaskByType.get(placeableType);
+    if (typeCache) {
+      const cachedMask = typeCache.get(packedCoord);
+      if (cachedMask !== undefined) {
+        return cachedMask;
+      }
+    }
+
     const connectsAt = (nx: number, ny: number): boolean => {
       // Special rule for Bridges: connect to neighboring bridges/floors OR to shoreline land tiles!
       if (bp.continuityMode === 'BRIDGE_AUTO') {
@@ -5633,16 +5834,21 @@ export class WorldManager {
           return true;
         }
       }
-      const { cx, cy } = this.tileToChunk(nx, ny);
-      const chunk = this.chunks[WorldManager.chunkKey(cx, cy)];
-      if (!chunk) return false;
+      const ncx = Math.floor(nx / CHUNK_SIZE);
+      const ncy = Math.floor(ny / CHUNK_SIZE);
+      const chunk = this.chunks[WorldManager.chunkKey(ncx, ncy)];
+      if (!chunk || chunk.structures.length === 0) return false;
 
-      for (const s of chunk.structures) {
-        if (s.tileX === nx && s.tileY === ny) {
-          const nbp = CONSTRUCTION_BLUEPRINTS[s.type];
-          if (nbp && bp.connectsToGroups.includes(nbp.connectionGroup)) {
-            return true;
-          }
+      const spatial = this.getChunkSpatialIndex(chunk);
+      const nlx = ((nx % CHUNK_SIZE) + CHUNK_SIZE) % CHUNK_SIZE;
+      const nly = ((ny % CHUNK_SIZE) + CHUNK_SIZE) % CHUNK_SIZE;
+      const stList = spatial.structuresAtTile[nly * CHUNK_SIZE + nlx];
+      if (!stList) return false;
+
+      for (let i = 0; i < stList.length; i++) {
+        const nbp = CONSTRUCTION_BLUEPRINTS[stList[i].type];
+        if (nbp && bp.connectsToGroups.includes(nbp.connectionGroup)) {
+          return true;
         }
       }
       return false;
@@ -5653,6 +5859,14 @@ export class WorldManager {
     if (connectsAt(tx + 1, ty)) mask |= 2; // East
     if (connectsAt(tx, ty + 1)) mask |= 4; // South
     if (connectsAt(tx - 1, ty)) mask |= 8; // West
+
+    if (!typeCache) {
+      typeCache = new Map<number, number>();
+      this.connMaskByType.set(placeableType, typeCache);
+    } else if (typeCache.size > 8192) {
+      typeCache.clear();
+    }
+    typeCache.set(packedCoord, mask);
     return mask;
   }
 
@@ -5693,15 +5907,10 @@ export class WorldManager {
     tx: number,
     ty: number
   ): PlacedStructure | undefined {
-    const { cx, cy } = this.tileToChunk(tx, ty);
+    const { cx, cy, lx, ly } = this.tileToChunk(tx, ty);
     const chunk = this.chunks[WorldManager.chunkKey(cx, cy)];
-    if (!chunk) return undefined;
-    return chunk.structures.find(
-      (s) =>
-        s.tileX === tx &&
-        s.tileY === ty &&
-        WorldManager.isDoorOrGateStructure(s.type)
-    );
+    if (!chunk || chunk.structures.length === 0) return undefined;
+    return this.getChunkSpatialIndex(chunk).doorAtTile[ly * CHUNK_SIZE + lx];
   }
 
   /**
@@ -6109,15 +6318,10 @@ export class WorldManager {
     tx: number,
     ty: number
   ): PlacedStructure | undefined {
-    const { cx, cy } = this.tileToChunk(tx, ty);
+    const { cx, cy, lx, ly } = this.tileToChunk(tx, ty);
     const chunk = this.chunks[WorldManager.chunkKey(cx, cy)];
-    if (!chunk) return undefined;
-    return chunk.structures.find(
-      (s) =>
-        s.tileX === tx &&
-        s.tileY === ty &&
-        WorldManager.isWallMountableStructure(s.type)
-    );
+    if (!chunk || chunk.structures.length === 0) return undefined;
+    return this.getChunkSpatialIndex(chunk).wallAtTile[ly * CHUNK_SIZE + lx];
   }
 
   /**
@@ -6161,43 +6365,20 @@ export class WorldManager {
    * Returns the Ground-layer structure (Floor / Carpet / Floating Platform) at (tx, ty), if any.
    */
   public getGroundStructureAtTile(tx: number, ty: number): PlacedStructure | undefined {
-    const { cx, cy } = this.tileToChunk(tx, ty);
+    const { cx, cy, lx, ly } = this.tileToChunk(tx, ty);
     const chunk = this.chunks[WorldManager.chunkKey(cx, cy)];
-    if (!chunk) return undefined;
-    return chunk.structures.find(
-      (s) =>
-        s.tileX === tx &&
-        s.tileY === ty &&
-        CONSTRUCTION_BLUEPRINTS[s.type]?.layer === 'GROUND'
-    );
+    if (!chunk || chunk.structures.length === 0) return undefined;
+    return this.getChunkSpatialIndex(chunk).groundAtTile[ly * CHUNK_SIZE + lx];
   }
 
   /**
    * Returns the top-most structure at (tx, ty) (preferring WALL/FURNITURE over SPIKE_TRAP and GROUND floors).
    */
   public getStructureAtTile(tx: number, ty: number): PlacedStructure | undefined {
-    const { cx, cy } = this.tileToChunk(tx, ty);
+    const { cx, cy, lx, ly } = this.tileToChunk(tx, ty);
     const chunk = this.chunks[WorldManager.chunkKey(cx, cy)];
-    if (!chunk) return undefined;
-    const matches = chunk.structures.filter(
-      (s) => s.tileX === tx && s.tileY === ty
-    );
-    if (matches.length === 0) return undefined;
-    return (
-      matches.find(
-        (s) =>
-          CONSTRUCTION_BLUEPRINTS[s.type]?.layer === 'WALL'
-      ) ||
-      matches.find(
-        (s) =>
-          CONSTRUCTION_BLUEPRINTS[s.type]?.layer !== 'GROUND' &&
-          s.type !== PlaceableType.SPIKE_TRAP
-      ) ||
-      matches.find(
-        (s) => CONSTRUCTION_BLUEPRINTS[s.type]?.layer !== 'GROUND'
-      ) ||
-      matches[matches.length - 1]
-    );
+    if (!chunk || chunk.structures.length === 0) return undefined;
+    return this.getChunkSpatialIndex(chunk).topAtTile[ly * CHUNK_SIZE + lx];
   }
 
   /**

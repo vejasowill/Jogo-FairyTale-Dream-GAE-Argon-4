@@ -19,6 +19,10 @@ export interface BuildingRoof {
   perimeterWallSet: Set<string>;
   internalWallSet: Set<string>;
   doorwaySet: Set<string>;
+  footprintPackedSet: Set<number>;
+  interiorPackedSet: Set<number>;
+  internalWallPackedSet: Set<number>;
+  doorwayPackedSet: Set<number>;
   rooms: BuildingRoomInfo[];
   style: RoofMaterialStyle;
   canvas: HTMLCanvasElement;
@@ -133,12 +137,14 @@ export class RoofSystem {
   private lastMaxCy = -1;
   private cachedRoofs: BuildingRoof[] = [];
   private cachedTileMap = new Map<string, BuildingRoof>();
+  private cachedPackedTileMap = new Map<number, BuildingRoof>();
   private regionCache = new Map<
     string,
     {
       sig: string;
       roofs: BuildingRoof[];
       tileMap: Map<string, BuildingRoof>;
+      packedTileMap: Map<number, BuildingRoof>;
     }
   >();
   private roofCanvasCache = new Map<
@@ -159,7 +165,8 @@ export class RoofSystem {
   }
 
   /**
-   * Computes a fast structural signature of all wall/window/door tiles in the active chunk neighborhood.
+   * Computes a fast structural signature of all wall/window/door tiles in the active chunk neighborhood
+   * using each chunk's precomputed O(1) roofWallSig.
    * Ignores door open/close state so opening a door never triggers roof rebuilding.
    */
   private computeRegionSignature(
@@ -169,19 +176,16 @@ export class RoofSystem {
     minCy: number,
     maxCy: number
   ): string {
-    const parts: string[] = [`${minCx}:${maxCx}:${minCy}:${maxCy}`];
+    let sig = `${minCx}:${maxCx}:${minCy}:${maxCy}`;
     for (let cy = minCy; cy <= maxCy; cy++) {
       for (let cx = minCx; cx <= maxCx; cx++) {
-        const chunk = world.chunks[WorldManager.chunkKey(cx, cy)];
-        if (!chunk || !chunk.structures || chunk.structures.length === 0) continue;
-        for (const st of chunk.structures) {
-          if (isRoofEnclosureStructure(st.type)) {
-            parts.push(`${st.tileX},${st.tileY},${st.type}`);
-          }
+        const chunkSig = world.getChunkRoofWallSig(cx, cy);
+        if (chunkSig) {
+          sig += '|' + chunkSig;
         }
       }
     }
-    return parts.join(';');
+    return sig;
   }
 
   /**
@@ -211,10 +215,10 @@ export class RoofSystem {
     }
 
     this.lastSignature = sig;
-    this.lastMinCx = minCx;
-    this.lastMaxCx = maxCx;
-    this.lastMinCy = minCy;
-    this.lastMaxCy = maxCy;
+    this.lastMinCx = padMinCx;
+    this.lastMaxCx = padMaxCx;
+    this.lastMinCy = padMinCy;
+    this.lastMaxCy = padMaxCy;
     this.cachedRoofs = this.buildRoofsInRegion(
       world,
       padMinCx,
@@ -223,10 +227,14 @@ export class RoofSystem {
       padMaxCy
     );
     this.cachedTileMap.clear();
+    this.cachedPackedTileMap.clear();
     for (let i = 0; i < this.cachedRoofs.length; i++) {
       const b = this.cachedRoofs[i];
       for (const k of b.footprintSet) {
         this.cachedTileMap.set(k, b);
+      }
+      for (const pk of b.footprintPackedSet) {
+        this.cachedPackedTileMap.set(pk, b);
       }
     }
     return this.cachedRoofs;
@@ -236,18 +244,18 @@ export class RoofSystem {
    * Returns the enclosed `BuildingRoof` structure that contains tile `(tx, ty)`
    * (either in its interior, doorway, internal wall, or perimeter wall footprint),
    * or `null` if `(tx, ty)` is not part of an enclosed roofed structure.
-   * Uses O(1) Map lookup and per-region caching so querying multiple chunks in the same frame never rebuilds roofs.
+   * Uses O(1) packed integer Map lookup and per-region caching so querying multiple chunks in the same frame never rebuilds roofs.
    */
   public getBuildingAtTile(
     world: WorldManager,
     tx: number,
     ty: number
   ): BuildingRoof | null {
-    const key = tileKey(tx, ty);
+    const packedKey = WorldManager.packTileCoord(tx, ty);
     const cx = Math.floor(tx / CHUNK_SIZE);
     const cy = Math.floor(ty / CHUNK_SIZE);
 
-    // Fast path: if (cx, cy) is inside the active rendered camera region, use the O(1) cachedTileMap directly!
+    // Fast path: if (cx, cy) is inside the active rendered camera region (including 1-chunk padding), use the O(1) cachedPackedTileMap directly!
     if (
       this.lastSignature &&
       cx >= this.lastMinCx &&
@@ -255,7 +263,7 @@ export class RoofSystem {
       cy >= this.lastMinCy &&
       cy <= this.lastMaxCy
     ) {
-      return this.cachedTileMap.get(key) || null;
+      return this.cachedPackedTileMap.get(packedKey) || null;
     }
 
     const regionKey = `${cx},${cy}`;
@@ -281,20 +289,24 @@ export class RoofSystem {
         padMaxCy
       );
       const tileMap = new Map<string, BuildingRoof>();
+      const packedTileMap = new Map<number, BuildingRoof>();
       for (let i = 0; i < roofs.length; i++) {
         const b = roofs[i];
         for (const k of b.footprintSet) {
           tileMap.set(k, b);
         }
+        for (const pk of b.footprintPackedSet) {
+          packedTileMap.set(pk, b);
+        }
       }
       if (this.regionCache.size > 36) {
         this.regionCache.clear();
       }
-      entry = { sig, roofs, tileMap };
+      entry = { sig, roofs, tileMap, packedTileMap };
       this.regionCache.set(regionKey, entry);
     }
 
-    return entry.tileMap.get(key) || null;
+    return entry.packedTileMap.get(packedKey) || null;
   }
 
   /**
@@ -317,11 +329,11 @@ export class RoofSystem {
       return false;
     }
 
-    const key = tileKey(tx, ty);
+    const packedKey = WorldManager.packTileCoord(tx, ty);
     if (
-      building.interiorSet.has(key) ||
-      building.internalWallSet.has(key) ||
-      building.doorwaySet.has(key)
+      building.interiorPackedSet.has(packedKey) ||
+      building.internalWallPackedSet.has(packedKey) ||
+      building.doorwayPackedSet.has(packedKey)
     ) {
       return true;
     }
@@ -333,10 +345,10 @@ export class RoofSystem {
     const tyDown = Math.floor((wy + 4) / TILE_SIZE);
 
     if (
-      building.interiorSet.has(tileKey(txLeft, ty)) ||
-      building.interiorSet.has(tileKey(txRight, ty)) ||
-      building.interiorSet.has(tileKey(tx, tyUp)) ||
-      building.interiorSet.has(tileKey(tx, tyDown))
+      building.interiorPackedSet.has(WorldManager.packTileCoord(txLeft, ty)) ||
+      building.interiorPackedSet.has(WorldManager.packTileCoord(txRight, ty)) ||
+      building.interiorPackedSet.has(WorldManager.packTileCoord(tx, tyUp)) ||
+      building.interiorPackedSet.has(WorldManager.packTileCoord(tx, tyDown))
     ) {
       return true;
     }
@@ -690,6 +702,10 @@ export class RoofSystem {
         const perimeterWallSet = new Set<string>();
         const internalWallSet = new Set<string>();
         const doorwaySet = new Set<string>();
+        const footprintPackedSet = new Set<number>();
+        const interiorPackedSet = new Set<number>();
+        const internalWallPackedSet = new Set<number>();
+        const doorwayPackedSet = new Set<number>();
         const inThisBuilding = new Uint8Array(totalCells);
 
         let bMinTx = Infinity;
@@ -709,7 +725,9 @@ export class RoofSystem {
           const tx = originX + gx;
           const ty = originY + gy;
           const k = tileKey(tx, ty);
+          const pk = WorldManager.packTileCoord(tx, ty);
           footprintSet.add(k);
+          footprintPackedSet.add(pk);
 
           if (tx < bMinTx) bMinTx = tx;
           if (tx > bMaxTx) bMaxTx = tx;
@@ -718,6 +736,7 @@ export class RoofSystem {
 
           if (cellState[cIdx] === 3) {
             interiorSet.add(k);
+            interiorPackedSet.add(pk);
           } else {
             const st = clusterWallMap.get(k);
             if (st) {
@@ -744,6 +763,7 @@ export class RoofSystem {
                 st.type === PlaceableType.IRON_GATE
               ) {
                 doorwaySet.add(k);
+                doorwayPackedSet.add(pk);
               }
             }
           }
@@ -756,7 +776,9 @@ export class RoofSystem {
           if (cellState[cIdx] !== 4) continue;
           const gx = cIdx % spanW;
           const gy = (cIdx / spanW) | 0;
-          const k = tileKey(originX + gx, originY + gy);
+          const tx = originX + gx;
+          const ty = originY + gy;
+          const k = tileKey(tx, ty);
 
           let touchesOutside = false;
           for (let dy = -1; dy <= 1 && !touchesOutside; dy++) {
@@ -781,6 +803,7 @@ export class RoofSystem {
             perimeterWallSet.add(k);
           } else {
             internalWallSet.add(k);
+            internalWallPackedSet.add(WorldManager.packTileCoord(tx, ty));
           }
         }
 
@@ -846,6 +869,10 @@ export class RoofSystem {
           perimeterWallSet,
           internalWallSet,
           doorwaySet,
+          footprintPackedSet,
+          interiorPackedSet,
+          internalWallPackedSet,
+          doorwayPackedSet,
           rooms,
           style,
           canvas: rendered.canvas,
