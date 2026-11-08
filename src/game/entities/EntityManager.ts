@@ -1314,20 +1314,26 @@ export class EntityManager {
   public populateNearbyLandmarkChunks(
     world: WorldManager,
     playerX: number,
-    playerY: number
+    playerY: number,
+    forUnderground?: boolean
   ): void {
     if (world.worldGenVersion < 2) return;
+    const isUg =
+      forUnderground !== undefined
+        ? Boolean(forUnderground)
+        : Boolean(world.isUnderground);
+    const chunkMap = isUg ? world.undergroundChunks : world.surfaceChunks;
     const pTile = world.worldToTile(playerX, playerY);
     const pChunk = world.tileToChunk(pTile.tx, pTile.ty);
 
     for (let dy = -3; dy <= 3; dy++) {
       for (let dx = -3; dx <= 3; dx++) {
         const chunk =
-          world.chunks[WorldManager.chunkKey(pChunk.cx + dx, pChunk.cy + dy)];
+          chunkMap[WorldManager.chunkKey(pChunk.cx + dx, pChunk.cy + dy)];
         if (!chunk) continue;
         if (!chunk.explored.some((e) => e === 1)) continue;
 
-        if (world.isUnderground || chunk.isUnderground) {
+        if (isUg || chunk.isUnderground) {
           if (!chunk.mobsPopulated) {
             this.populateUndergroundAirPocketMobs(world, chunk);
           }
@@ -1831,10 +1837,18 @@ export class EntityManager {
     playerX: number,
     playerY: number,
     isNight: boolean,
-    additionalPlayerPositions?: Array<{ x: number; y: number }>
+    additionalPlayerPositions?: Array<{
+      x: number;
+      y: number;
+      isUnderground?: boolean;
+    }>
   ): void {
-    const activePlayers: Array<{ x: number; y: number }> = [
-      { x: playerX, y: playerY },
+    const activePlayers: Array<{
+      x: number;
+      y: number;
+      isUnderground?: boolean;
+    }> = [
+      { x: playerX, y: playerY, isUnderground: Boolean(world.isUnderground) },
       ...(Array.isArray(additionalPlayerPositions)
         ? additionalPlayerPositions
         : []),
@@ -1843,14 +1857,22 @@ export class EntityManager {
     this.landmarkCheckTimer -= dt;
     if (this.landmarkCheckTimer <= 0) {
       this.landmarkCheckTimer = 0.45;
-      // Populate any newly revealed Landmark/Village/AirPocket chunks near any active player
-      for (const pPos of activePlayers) {
-        this.populateNearbyLandmarkChunks(world, pPos.x, pPos.y);
+      // Populate any newly revealed Landmark/Village/AirPocket chunks near any active player in their respective layer
+      const prevLayer = world.isUnderground ? 'underground' : 'surface';
+      try {
+        for (const pPos of activePlayers) {
+          const pUg = Boolean(pPos.isUnderground);
+          world.setActiveLayer(pUg ? 'underground' : 'surface');
+          this.populateNearbyLandmarkChunks(world, pPos.x, pPos.y, pUg);
+        }
+      } finally {
+        world.setActiveLayer(prevLayer);
       }
     }
 
-    // In the underground, ONLY Air Pocket enemies (Spider & Zombie) exist — no random surface wildlife or surface monsters spawn!
-    if (world.isUnderground) {
+    // Filter to surface players for surface wildlife & night monster spawning
+    const surfacePlayers = activePlayers.filter((p) => !p.isUnderground);
+    if (surfacePlayers.length === 0) {
       return;
     }
 
@@ -1858,7 +1880,7 @@ export class EntityManager {
     if (this.spawnTimer > 0) return;
     this.spawnTimer = isNight ? 2.8 : 3.5;
 
-    // Despawn untamed non-villager surface creatures very far from ALL active players to keep memory low
+    // Despawn untamed non-villager surface creatures very far from ALL surface players to keep memory low
     this.creatures = this.creatures.filter((c) => {
       if (
         c.isUnderground ||
@@ -1868,7 +1890,7 @@ export class EntityManager {
       ) {
         return true;
       }
-      return activePlayers.some(
+      return surfacePlayers.some(
         (pPos) => Math.hypot(c.x - pPos.x, c.y - pPos.y) < 1480
       );
     });
@@ -1881,22 +1903,25 @@ export class EntityManager {
         c.kind !== CreatureKind.BOAT
     ).length;
     const maxWildPerPlayer = isNight ? 24 : 19;
-    const maxWild = Math.min(48, maxWildPerPlayer * activePlayers.length);
+    const maxWild = Math.min(48, maxWildPerPlayer * surfacePlayers.length);
     if (wildCount >= maxWild) return;
 
     const chosenAnchor =
-      activePlayers[Math.floor(Math.random() * activePlayers.length)] ||
-      activePlayers[0];
+      surfacePlayers[Math.floor(Math.random() * surfacePlayers.length)] ||
+      surfacePlayers[0];
     const angle = Math.random() * Math.PI * 2;
     const dist = 330 + Math.random() * 440;
     const sx = chosenAnchor.x + Math.cos(angle) * dist;
     const sy = chosenAnchor.y + Math.sin(angle) * dist;
 
-    const biome = world.getBiomeAtWorld(sx, sy);
-    // Ilha (BiomeType.ISLAND) só possui spawn de mobs/animais no momento de sua descoberta
-    if (biome === BiomeType.OCEAN || biome === BiomeType.ISLAND) return;
+    const prevWorldLayer = world.isUnderground ? 'underground' : 'surface';
+    world.setActiveLayer('surface');
+    try {
+      const biome = world.getBiomeAtWorld(sx, sy);
+      // Ilha (BiomeType.ISLAND) só possui spawn de mobs/animais no momento de sua descoberta
+      if (biome === BiomeType.OCEAN || biome === BiomeType.ISLAND) return;
 
-    const zone = world.getEcologicalZoneAtWorld(sx, sy);
+      const zone = world.getEcologicalZoneAtWorld(sx, sy);
     const distFromOriginTiles = Math.hypot(sx / TILE_SIZE, sy / TILE_SIZE);
     const roll = Math.random();
 
@@ -2062,37 +2087,43 @@ export class EntityManager {
       }
     }
 
-    // Random chance to spawn a nomadic WANDERER anywhere on land if fewer than 3 Wanderers are currently roaming
-    const activeWanderers = this.creatures.filter(
-      (c) => c.kind === CreatureKind.WANDERER && c.hp > 0
-    ).length;
-    if (activeWanderers < 3 && Math.random() < (isNight ? 0.08 : 0.14)) {
-      // Pick a walking direction that roughly passes near the player's general region so the player can cross paths with them
-      const dirToPlayer = Math.atan2(playerY - sy, playerX - sx);
-      const wanderAngle = dirToPlayer + (Math.random() - 0.5) * 1.1;
-      this.trySpawnCreatureAt(world, CreatureKind.WANDERER, sx, sy, {
-        wanderAngle,
-        nameIndex: Math.floor(Math.random() * 10),
-      });
-      return;
-    }
+      // Random chance to spawn a nomadic WANDERER anywhere on land if fewer than 3 Wanderers are currently roaming
+      const activeWanderers = this.creatures.filter(
+        (c) => c.kind === CreatureKind.WANDERER && c.hp > 0
+      ).length;
+      if (activeWanderers < 3 && Math.random() < (isNight ? 0.08 : 0.14)) {
+        // Pick a walking direction that roughly passes near the anchor player's general region so the player can cross paths with them
+        const dirToPlayer = Math.atan2(
+          chosenAnchor.y - sy,
+          chosenAnchor.x - sx
+        );
+        const wanderAngle = dirToPlayer + (Math.random() - 0.5) * 1.1;
+        this.trySpawnCreatureAt(world, CreatureKind.WANDERER, sx, sy, {
+          wanderAngle,
+          nameIndex: Math.floor(Math.random() * 10),
+        });
+        return;
+      }
 
-    if (!kind) return;
+      if (!kind) return;
 
-    const isHostileKind = EntityManager.isMonsterKind(kind);
-    if (isHostileKind && this.isNearSafeSanctuary(world, sx, sy)) {
-      return;
-    }
+      const isHostileKind = EntityManager.isMonsterKind(kind);
+      if (isHostileKind && this.isNearSafeSanctuary(world, sx, sy)) {
+        return;
+      }
 
-    for (let i = 0; i < groupSize; i++) {
-      const offsetX = i === 0 ? 0 : (Math.random() - 0.5) * 48;
-      const offsetY = i === 0 ? 0 : (Math.random() - 0.5) * 48;
-      const candX = sx + offsetX;
-      const candY = sy + offsetY;
-      if (world.getBiomeAtWorld(candX, candY) === BiomeType.ISLAND) continue;
-      this.trySpawnCreatureAt(world, kind, candX, candY, {
-        isElite: i === 0 && isElite,
-      });
+      for (let i = 0; i < groupSize; i++) {
+        const offsetX = i === 0 ? 0 : (Math.random() - 0.5) * 48;
+        const offsetY = i === 0 ? 0 : (Math.random() - 0.5) * 48;
+        const candX = sx + offsetX;
+        const candY = sy + offsetY;
+        if (world.getBiomeAtWorld(candX, candY) === BiomeType.ISLAND) continue;
+        this.trySpawnCreatureAt(world, kind, candX, candY, {
+          isElite: i === 0 && isElite,
+        });
+      }
+    } finally {
+      world.setActiveLayer(prevWorldLayer);
     }
   }
 

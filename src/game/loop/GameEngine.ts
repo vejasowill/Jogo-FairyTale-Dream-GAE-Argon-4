@@ -716,7 +716,11 @@ export class GameEngine {
       this.updateCreatures(dt);
       const remotePlayerCoords = this.remotePlayersList
         .filter((rp) => rp.hp > 0)
-        .map((rp) => ({ x: rp.x, y: rp.y }));
+        .map((rp) => ({
+          x: rp.x,
+          y: rp.y,
+          isUnderground: Boolean(rp.isUnderground),
+        }));
       this.entities.updateSpawning(
         dt,
         this.world,
@@ -4226,31 +4230,44 @@ export class GameEngine {
     const isSunsetOrNight =
       this.metadata.timeOfDay >= 17.5 || this.metadata.timeOfDay < 5.5;
 
-    for (let i = this.entities.creatures.length - 1; i >= 0; i--) {
-      const cr = this.entities.creatures[i];
-      if (!cr || cr.hp <= 0) continue;
-      if (Boolean(cr.isUnderground) !== Boolean(this.world.isUnderground)) {
-        cr.vx = 0;
-        cr.vy = 0;
-        if (cr.hitFlashTimer > 0) {
-          cr.hitFlashTimer = Math.max(0, cr.hitFlashTimer - dt);
-        }
-        continue;
-      }
-
-      const distToPlayer = Math.hypot(
-        this.player.x - cr.x,
-        this.player.y - cr.y
+    const localPlayerUnder = Boolean(this.player.isUnderground);
+    const hasSurfacePlayer =
+      !localPlayerUnder ||
+      this.remotePlayersList.some((rp) => rp.hp > 0 && !rp.isUnderground);
+    const hasUndergroundPlayer =
+      localPlayerUnder ||
+      this.remotePlayersList.some(
+        (rp) => rp.hp > 0 && Boolean(rp.isUnderground)
       );
-      let minDistToAnyPlayer = distToPlayer;
-      for (const rp of this.remotePlayersList) {
-        if (rp.hp > 0) {
-          const dRp = Math.hypot(rp.x - cr.x, rp.y - cr.y);
-          if (dRp < minDistToAnyPlayer) {
-            minDistToAnyPlayer = dRp;
+
+    try {
+      for (let i = this.entities.creatures.length - 1; i >= 0; i--) {
+        const cr = this.entities.creatures[i];
+        if (!cr || cr.hp <= 0) continue;
+        const crUnder = Boolean(cr.isUnderground);
+        if (crUnder ? !hasUndergroundPlayer : !hasSurfacePlayer) {
+          cr.vx = 0;
+          cr.vy = 0;
+          if (cr.hitFlashTimer > 0) {
+            cr.hitFlashTimer = Math.max(0, cr.hitFlashTimer - dt);
+          }
+          continue;
+        }
+        this.world.setActiveLayer(crUnder ? 'underground' : 'surface');
+
+        const distToPlayer =
+          localPlayerUnder === crUnder
+            ? Math.hypot(this.player.x - cr.x, this.player.y - cr.y)
+            : Infinity;
+        let minDistToAnyPlayer = distToPlayer;
+        for (const rp of this.remotePlayersList) {
+          if (rp.hp > 0 && Boolean(rp.isUnderground) === crUnder) {
+            const dRp = Math.hypot(rp.x - cr.x, rp.y - cr.y);
+            if (dRp < minDistToAnyPlayer) {
+              minDistToAnyPlayer = dRp;
+            }
           }
         }
-      }
 
       // If Villager is currently inside their house:
       // - Stay invisible/safe inside until dawn (05:30), or until the player knocks on the door.
@@ -4352,7 +4369,11 @@ export class GameEngine {
       let retaliateTarget: CreatureEntity | null = null;
       if (cr.retaliateTargetId) {
         const found = this.entities.creatures.find(
-          (o) => o.id === cr.retaliateTargetId && o.hp > 0 && !o.isInsideHouse
+          (o) =>
+            o.id === cr.retaliateTargetId &&
+            o.hp > 0 &&
+            !o.isInsideHouse &&
+            Boolean(o.isUnderground) === crUnder
         );
         const isHostileObserver =
           EntityManager.isMonsterKind(cr.kind) || Boolean(cr.isHostile);
@@ -4441,6 +4462,7 @@ export class GameEngine {
                   o.hp > 0 &&
                   o.tamed &&
                   !o.isBaby &&
+                  Boolean(o.isUnderground) === crUnder &&
                   o.kind === cr.kind &&
                   (o.loveTimer ?? 0) > 0 &&
                   (o.breedingCooldown ?? 0) <= 0
@@ -4454,6 +4476,7 @@ export class GameEngine {
                 other.hp > 0 &&
                 other.tamed &&
                 !other.isBaby &&
+                Boolean(other.isUnderground) === crUnder &&
                 other.kind === cr.kind &&
                 (other.loveTimer ?? 0) > 0 &&
                 (other.breedingCooldown ?? 0) <= 0 &&
@@ -4561,6 +4584,7 @@ export class GameEngine {
                 o.id === cr.combatTargetId &&
                 o.hp > 0 &&
                 !o.isInsideHouse &&
+                Boolean(o.isUnderground) === crUnder &&
                 !o.tamed &&
                 !EntityManager.isPeacefulAnimalKind(o.kind)
             );
@@ -4713,6 +4737,7 @@ export class GameEngine {
               this.activeInteractingNpcId === cr.id &&
               this.player.hp > 0 &&
               !this.player.isSleeping &&
+              localPlayerUnder === crUnder &&
               !cr.isHostile &&
               Math.hypot(this.player.x - cr.x, this.player.y - cr.y) <= 165
             ) {
@@ -4731,6 +4756,7 @@ export class GameEngine {
                   p.persistentPlayerId === cr.interactingPlayerId) &&
                 p.hp > 0 &&
                 !p.isSleeping &&
+                Boolean(p.isUnderground) === crUnder &&
                 !cr.isHostile &&
                 Math.hypot(p.x - cr.x, p.y - cr.y) <= 165
             );
@@ -4757,6 +4783,7 @@ export class GameEngine {
             other.id !== cr.id &&
             other.hp > 0 &&
             !other.isInsideHouse &&
+            Boolean(other.isUnderground) === crUnder &&
             EntityManager.isMonsterKind(other.kind)
           ) {
             const d = Math.hypot(other.x - cr.x, other.y - cr.y);
@@ -5075,7 +5102,13 @@ export class GameEngine {
         }
 
         for (const rp of this.remotePlayersList) {
-          if (rp.hp <= 0 || rp.isSleeping) continue;
+          if (
+            rp.hp <= 0 ||
+            rp.isSleeping ||
+            Boolean(rp.isUnderground) !== crUnder
+          ) {
+            continue;
+          }
           const dRp = Math.hypot(rp.x - cr.x, rp.y - cr.y);
           if (
             dRp < bestEnemyDist &&
@@ -5088,7 +5121,14 @@ export class GameEngine {
         }
 
         for (const other of this.entities.creatures) {
-          if (other.id === cr.id || other.hp <= 0 || other.isInsideHouse) continue;
+          if (
+            other.id === cr.id ||
+            other.hp <= 0 ||
+            other.isInsideHouse ||
+            Boolean(other.isUnderground) !== crUnder
+          ) {
+            continue;
+          }
           // Peaceful animals (Horse, Sheep, Boat) are never targeted or attacked by hostile mobs
           if (EntityManager.isPeacefulAnimalKind(other.kind)) continue;
 
@@ -5169,6 +5209,7 @@ export class GameEngine {
             if (
               this.player.hp > 0 &&
               !this.player.isSleeping &&
+              localPlayerUnder === crUnder &&
               Math.hypot(this.player.x - cr.x, this.player.y - cr.y) <=
                 SEISMIC_RADIUS
             ) {
@@ -5180,6 +5221,7 @@ export class GameEngine {
                 other.id === cr.id ||
                 other.hp <= 0 ||
                 other.isInsideHouse ||
+                Boolean(other.isUnderground) !== crUnder ||
                 EntityManager.isPeacefulAnimalKind(other.kind)
               ) {
                 continue;
@@ -5379,15 +5421,18 @@ export class GameEngine {
             let bestPlayerDist = Infinity;
             const refX = cr.fleeFromX ?? cr.x;
             const refY = cr.fleeFromY ?? cr.y;
-            if (this.player.hp > 0) {
+            if (this.player.hp > 0 && localPlayerUnder === crUnder) {
               attackerX = this.player.x;
               attackerY = this.player.y;
-              bestPlayerDist = Math.hypot(this.player.x - refX, this.player.y - refY);
+              bestPlayerDist = Math.hypot(
+                this.player.x - refX,
+                this.player.y - refY
+              );
               attackerActive = true;
             }
             for (let pi = 0; pi < this.remotePlayersList.length; pi++) {
               const rp = this.remotePlayersList[pi];
-              if (rp.hp > 0) {
+              if (rp.hp > 0 && Boolean(rp.isUnderground) === crUnder) {
                 const d = Math.hypot(rp.x - refX, rp.y - refY);
                 if (d < bestPlayerDist) {
                   bestPlayerDist = d;
@@ -5400,7 +5445,10 @@ export class GameEngine {
           } else if (cr.fleeTargetId) {
             const attCr = this.entities.creatures.find(
               (o) =>
-                o.id === cr.fleeTargetId && o.hp > 0 && !o.isInsideHouse
+                o.id === cr.fleeTargetId &&
+                o.hp > 0 &&
+                !o.isInsideHouse &&
+                Boolean(o.isUnderground) === crUnder
             );
             if (attCr) {
               attackerX = attCr.x;
@@ -5585,10 +5633,13 @@ export class GameEngine {
       ) {
         cr.hp = Math.min(cr.maxHp, cr.hp + dt * 1.25);
       }
-    }
+      }
 
-    // Physical overlap resistance between mobs so creatures following/chasing the player push each other apart and never stack
-    this.resolveCreatureOverlapResistance(dt);
+      // Physical overlap resistance between mobs so creatures following/chasing the player push each other apart and never stack
+      this.resolveCreatureOverlapResistance(dt);
+    } finally {
+      this.world.setActiveLayer(localPlayerUnder ? 'underground' : 'surface');
+    }
   }
 
   /**
@@ -5606,10 +5657,19 @@ export class GameEngine {
         return false;
       }
       if (this.player.mountedEntityId === c.id) return false;
-      if (
-        Math.hypot(this.player.x - c.x, this.player.y - c.y) > 780 &&
-        !(c.tamed && c.aiState === 'follow')
-      ) {
+      const cUnder = Boolean(c.isUnderground);
+      let nearAnySameLayerPlayer =
+        Boolean(this.player.isUnderground) === cUnder &&
+        Math.hypot(this.player.x - c.x, this.player.y - c.y) <= 780;
+      if (!nearAnySameLayerPlayer) {
+        nearAnySameLayerPlayer = this.remotePlayersList.some(
+          (rp) =>
+            rp.hp > 0 &&
+            Boolean(rp.isUnderground) === cUnder &&
+            Math.hypot(rp.x - c.x, rp.y - c.y) <= 780
+        );
+      }
+      if (!nearAnySameLayerPlayer && !(c.tamed && c.aiState === 'follow')) {
         return false;
       }
       return true;
@@ -5626,6 +5686,9 @@ export class GameEngine {
     };
 
     const applySafePush = (c: CreatureEntity, pushX: number, pushY: number): void => {
+      this.world.setActiveLayer(
+        Boolean(c.isUnderground) ? 'underground' : 'surface'
+      );
       const nx = c.x + pushX;
       const ny = c.y + pushY;
       const isHumanC = GameEngine.isHumanCreatureKind(c.kind);
@@ -5650,6 +5713,7 @@ export class GameEngine {
       for (let j = i + 1; j < count; j++) {
         const b = creatures[j];
         if (!isEligible(b)) continue;
+        if (Boolean(a.isUnderground) !== Boolean(b.isUnderground)) continue;
 
         // Allow mating partners in love to touch each other without overlap push-apart
         if (
@@ -7201,7 +7265,11 @@ export class GameEngine {
             const sx = st.tileX * TILE_SIZE + TILE_SIZE / 2;
             const sy = st.tileY * TILE_SIZE + TILE_SIZE / 2;
             for (const cr of this.entities.creatures) {
-              if (cr.isHostile && Math.hypot(cr.x - sx, cr.y - sy) < 220) {
+              if (
+                cr.isHostile &&
+                Boolean(cr.isUnderground) === Boolean(this.world.isUnderground) &&
+                Math.hypot(cr.x - sx, cr.y - sy) < 220
+              ) {
                 this.renderer.spawnLightningBolt(sx, sy - 8, cr.x, cr.y, '#fde047');
                 this.renderer.spawnBurst(cr.x, cr.y, 'SPARK', 10);
                 this.damageCreature(cr, 25, sx, sy);
@@ -7216,7 +7284,11 @@ export class GameEngine {
             const sy = st.tileY * TILE_SIZE + TILE_SIZE / 2;
             for (let ci = this.entities.creatures.length - 1; ci >= 0; ci--) {
               const cr = this.entities.creatures[ci];
-              if (cr.isHostile && Math.hypot(cr.x - sx, cr.y - sy) < 24) {
+              if (
+                cr.isHostile &&
+                Boolean(cr.isUnderground) === Boolean(this.world.isUnderground) &&
+                Math.hypot(cr.x - sx, cr.y - sy) < 24
+              ) {
                 this.renderer.spawnBurst(cr.x, cr.y, 'BLOOD', 7);
                 this.damageCreature(cr, 18, sx, sy, 0.4);
                 this.addFloatingText('Espinhos! -18', cr.x, cr.y - 22, '#fb923c');
@@ -7495,10 +7567,16 @@ export class GameEngine {
         }
       }
 
-      // Check Remote Players in melee arc
+      // Check Remote Players in melee arc (only in the same layer!)
       const remotePlayersInArc = this.remotePlayersList
         .filter((rp) => {
-          if (rp.hp <= 0 || rp.isSleeping) return false;
+          if (
+            rp.hp <= 0 ||
+            rp.isSleeping ||
+            Boolean(rp.isUnderground) !== Boolean(this.player.isUnderground)
+          ) {
+            return false;
+          }
           const distHit = Math.hypot(rp.x - hitCenterX, rp.y - hitCenterY);
           return distHit <= reach * 0.85;
         })
@@ -8253,7 +8331,11 @@ export class GameEngine {
                   sy - 20,
                   '#fde047'
                 );
-                this.syncChunkAtTile(st.tileX, st.tileY);
+                this.syncChunkAtTile(st.tileX, st.tileY, 'surface');
+                this.syncChunkAtTile(st.tileX, st.tileY, 'underground');
+                for (const uChunk of newlyDiscoveredUndergroundChunks) {
+                  this.syncChunkData(uChunk);
+                }
                 this.emitUiSnapshot();
                 return;
               } else if (
@@ -9199,6 +9281,12 @@ export class GameEngine {
             }
           }
 
+          this.syncChunkAtTile(tx, ty, 'surface');
+          this.syncChunkAtTile(tx, ty, 'underground');
+          for (const uChunk of newlyDiscoveredUndergroundChunks) {
+            this.syncChunkData(uChunk);
+          }
+
           this.player.isUnderground = true;
           this.world.setActiveLayer('underground');
           // Player spawns on the exact same cell as the underground Level Stairs (which has no hitbox)
@@ -9209,6 +9297,9 @@ export class GameEngine {
           this.player.isSwimming = false;
           this.camera.x = this.player.x;
           this.camera.y = this.player.y;
+          if (this.multiplayer.isOnline) {
+            this.multiplayer.sendPlayerState(this.player);
+          }
 
           soundManager.playPickup();
           this.renderer.spawnBurst(this.player.x, this.player.y, 'STONE', 10);
@@ -9247,6 +9338,9 @@ export class GameEngine {
           );
           this.camera.x = this.player.x;
           this.camera.y = this.player.y;
+          if (this.multiplayer.isOnline) {
+            this.multiplayer.sendPlayerState(this.player);
+          }
 
           soundManager.playPickup();
           this.renderer.spawnBurst(this.player.x, this.player.y, 'LEAF', 10);
@@ -11441,6 +11535,9 @@ export class GameEngine {
             );
           }
         }
+        for (const discChunk of newlyDiscoveredChunks) {
+          this.syncChunkData(discChunk);
+        }
       }
 
       this.syncChunkAtTile(brokenTx, brokenTy);
@@ -11459,6 +11556,21 @@ export class GameEngine {
   ): void {
     // Villagers inside their houses cannot be damaged
     if (cr.isInsideHouse) return;
+
+    // Surface and Underground are completely isolated environments: attacks never cross layers
+    if (
+      attackerCreature &&
+      Boolean(attackerCreature.isUnderground) !== Boolean(cr.isUnderground)
+    ) {
+      return;
+    }
+    if (
+      !attackerCreature &&
+      !fromNetwork &&
+      Boolean(this.player.isUnderground) !== Boolean(cr.isUnderground)
+    ) {
+      return;
+    }
 
     // Mounts currently ridden by a player are integrated with the player's body and cannot be killed/damaged separately
     if (
@@ -12311,6 +12423,15 @@ export class GameEngine {
     // Enquanto o jogador estiver deitado na cama (dormindo / aguardando outro jogador), ele não recebe dano de ninguém!
     if (this.player.isSleeping) return;
 
+    // Creatures in a different layer (surface vs underground) can NEVER damage the player
+    if (
+      attackerCreature &&
+      Boolean(attackerCreature.isUnderground) !==
+        Boolean(this.player.isUnderground)
+    ) {
+      return;
+    }
+
     const reduction = this.getTotalDefenseBonus();
     const finalDmg = Math.max(1, Math.round(rawAmount * (1 - reduction)));
 
@@ -12332,6 +12453,7 @@ export class GameEngine {
         if (
           pet.tamed &&
           pet.hp > 0 &&
+          Boolean(pet.isUnderground) === Boolean(this.player.isUnderground) &&
           EntityManager.isCombatAllyKind(pet.kind) &&
           this.isCreatureOwnedByLocalPlayer(pet) &&
           pet.aiState === 'follow' &&
@@ -12631,6 +12753,9 @@ export class GameEngine {
       }
     }
     this.revealWorldAndPopulateIslands(this.player.x, this.player.y, 10);
+    if (this.multiplayer.isOnline) {
+      this.multiplayer.sendPlayerState(this.player);
+    }
     this.addFloatingText(
       droppedBag
         ? `Renascido em ${respawnLabel} · 🎒 Bolsinha marcada no Mapa (10 min)!`
@@ -12793,7 +12918,11 @@ export class GameEngine {
 
       for (let i = this.entities.creatures.length - 1; i >= 0; i--) {
         const cr = this.entities.creatures[i];
-        if (!cr.tamed && Math.hypot(cr.x - bx, cr.y - by) <= 115) {
+        if (
+          !cr.tamed &&
+          Boolean(cr.isUnderground) === Boolean(this.player.isUnderground) &&
+          Math.hypot(cr.x - bx, cr.y - by) <= 115
+        ) {
           this.damageCreature(cr, 65, bx, by, 2.0);
         }
       }
@@ -13841,13 +13970,36 @@ export class GameEngine {
     chest.storageUpdatedAt = Date.now();
   }
 
+  private getAllLoadedChunkMaps(): Array<Record<string, ChunkData>> {
+    return [this.world.surfaceChunks, this.world.undergroundChunks];
+  }
+
+  private getStructureLayer(
+    st: PlacedStructure
+  ): 'surface' | 'underground' | undefined {
+    const { cx, cy } = this.world.tileToChunk(st.tileX, st.tileY);
+    const key = WorldManager.chunkKey(cx, cy);
+    const surf = this.world.surfaceChunks[key];
+    if (surf && surf.structures.some((s) => s.id === st.id)) {
+      return 'surface';
+    }
+    const ug = this.world.undergroundChunks[key];
+    if (ug && ug.structures.some((s) => s.id === st.id)) {
+      return 'underground';
+    }
+    if (st.id.startsWith('ug_')) return 'underground';
+    return undefined;
+  }
+
   public getChestById(chestId: string): PlacedStructure | null {
-    for (const chunk of Object.values(this.world.chunks)) {
-      if (!chunk || !Array.isArray(chunk.structures)) continue;
-      for (const st of chunk.structures) {
-        if (st.id === chestId && st.type === PlaceableType.CHEST) {
-          this.ensureChestStorageInitialized(st);
-          return st;
+    for (const chunkMap of this.getAllLoadedChunkMaps()) {
+      for (const chunk of Object.values(chunkMap)) {
+        if (!chunk || !Array.isArray(chunk.structures)) continue;
+        for (const st of chunk.structures) {
+          if (st.id === chestId && st.type === PlaceableType.CHEST) {
+            this.ensureChestStorageInitialized(st);
+            return st;
+          }
         }
       }
     }
@@ -13909,7 +14061,8 @@ export class GameEngine {
     chest.storageRevision = (chest.storageRevision || 0) + 1;
     chest.storageUpdatedAt = now;
     this.lastLocalChestEditAt.set(chest.id, now);
-    this.markLocalChunkModified(chest.tileX, chest.tileY);
+    const chestLayer = this.getStructureLayer(chest);
+    this.markLocalChunkModified(chest.tileX, chest.tileY, chestLayer);
 
     if (this.multiplayer.isOnline && !this.isApplyingNetworkEvent) {
       const clonedSlots = JSON.parse(
@@ -13920,6 +14073,7 @@ export class GameEngine {
         chestId: chest.id,
         tileX: chest.tileX,
         tileY: chest.tileY,
+        isUnderground: chestLayer === 'underground',
         storageRevision: chest.storageRevision,
         storageUpdatedAt: chest.storageUpdatedAt,
         customName: chest.customName,
@@ -13930,7 +14084,7 @@ export class GameEngine {
       } else if (this.multiplayer.role === 'HOST') {
         this.multiplayer.sendWorldInteractResolved(syncPayload);
       }
-      this.syncChunkAtTile(chest.tileX, chest.tileY);
+      this.syncChunkAtTile(chest.tileX, chest.tileY, chestLayer);
     }
 
     void this.saveGame(true);
@@ -13946,7 +14100,8 @@ export class GameEngine {
     st.thermalRevision = (st.thermalRevision || 0) + 1;
     st.thermalUpdatedAt = now;
     this.lastLocalThermalEditAt.set(st.id, now);
-    this.markLocalChunkModified(st.tileX, st.tileY);
+    const stLayer = this.getStructureLayer(st);
+    this.markLocalChunkModified(st.tileX, st.tileY, stLayer);
 
     if (this.multiplayer.isOnline && !this.isApplyingNetworkEvent) {
       const syncPayload = {
@@ -13954,6 +14109,7 @@ export class GameEngine {
         structureId: st.id,
         tileX: st.tileX,
         tileY: st.tileY,
+        isUnderground: stLayer === 'underground',
         thermalRevision: st.thermalRevision,
         thermalUpdatedAt: st.thermalUpdatedAt,
         fuelItemId: st.fuelItemId ?? null,
@@ -13975,7 +14131,7 @@ export class GameEngine {
       } else if (this.multiplayer.role === 'HOST') {
         this.multiplayer.sendWorldInteractResolved(syncPayload);
       }
-      this.syncChunkAtTile(st.tileX, st.tileY);
+      this.syncChunkAtTile(st.tileX, st.tileY, stLayer);
     }
 
     void this.saveGame(true);
@@ -14152,11 +14308,21 @@ export class GameEngine {
 
   private lastLocalChunkEditAt = new Map<string, number>();
 
-  private markLocalChunkModified(tx: number, ty: number): void {
+  private markLocalChunkModified(
+    tx: number,
+    ty: number,
+    layer?: 'surface' | 'underground'
+  ): void {
     const { cx, cy } = this.world.tileToChunk(tx, ty);
     const key = WorldManager.chunkKey(cx, cy);
     this.lastLocalChunkEditAt.set(key, Date.now());
-    const chunk = this.world.chunks[key];
+    const targetMap =
+      layer === 'underground'
+        ? this.world.undergroundChunks
+        : layer === 'surface'
+        ? this.world.surfaceChunks
+        : this.world.chunks;
+    const chunk = targetMap[key];
     if (chunk) {
       this.world.markChunkDirty(chunk);
       this.world.syncChunkAgricultureIndex(chunk);
@@ -15031,12 +15197,14 @@ export class GameEngine {
   }
 
   public getMarketStallById(stallId: string): PlacedStructure | null {
-    for (const chunk of Object.values(this.world.chunks)) {
-      if (!chunk || !Array.isArray(chunk.structures)) continue;
-      for (const st of chunk.structures) {
-        if (st.id === stallId && st.type === PlaceableType.MARKET_STALL) {
-          this.ensureMarketStallInitialized(st);
-          return st;
+    for (const chunkMap of this.getAllLoadedChunkMaps()) {
+      for (const chunk of Object.values(chunkMap)) {
+        if (!chunk || !Array.isArray(chunk.structures)) continue;
+        for (const st of chunk.structures) {
+          if (st.id === stallId && st.type === PlaceableType.MARKET_STALL) {
+            this.ensureMarketStallInitialized(st);
+            return st;
+          }
         }
       }
     }
@@ -18189,12 +18357,19 @@ export class GameEngine {
   private getPetOwnerTarget(
     cr: CreatureEntity
   ): { x: number; y: number } | null {
+    const crUnder = Boolean(cr.isUnderground);
     if (this.isCreatureOwnedByLocalPlayer(cr)) {
+      if (Boolean(this.player.isUnderground) !== crUnder) {
+        return null;
+      }
       return { x: this.player.x, y: this.player.y };
     }
     if (cr.ownerId) {
       for (const rp of this.multiplayer.remotePlayers.values()) {
         if (rp.persistentPlayerId === cr.ownerId || rp.peerId === cr.ownerId) {
+          if (Boolean(rp.isUnderground) !== crUnder) {
+            return null;
+          }
           return { x: rp.x, y: rp.y };
         }
       }
@@ -20054,12 +20229,15 @@ export class GameEngine {
           containerKind === 'thermal_output'
         ) {
           let foundSt: PlacedStructure | null = null;
-          for (const ch of Object.values(this.world.chunks)) {
-            const s = ch.structures.find((item) => item.id === structureId);
-            if (s) {
-              foundSt = s;
-              break;
+          for (const chunkMap of this.getAllLoadedChunkMaps()) {
+            for (const ch of Object.values(chunkMap)) {
+              const s = ch.structures.find((item) => item.id === structureId);
+              if (s) {
+                foundSt = s;
+                break;
+              }
             }
+            if (foundSt) break;
           }
           if (!foundSt) {
             this.multiplayer.sendWorldInteractResolved({
@@ -20241,7 +20419,10 @@ export class GameEngine {
             request.tileX,
             request.tileY
           );
-          const ch = this.world.chunks[WorldManager.chunkKey(cx, cy)];
+          const key = WorldManager.chunkKey(cx, cy);
+          const ch = request.isUnderground
+            ? this.world.undergroundChunks[key]
+            : this.world.surfaceChunks[key] || this.world.undergroundChunks[key];
           chest =
             ch?.structures.find(
               (s) =>
@@ -20261,12 +20442,14 @@ export class GameEngine {
           if (request.customName !== undefined) {
             chest.customName = request.customName;
           }
-          this.markLocalChunkModified(chest.tileX, chest.tileY);
+          const chestLayer = this.getStructureLayer(chest);
+          this.markLocalChunkModified(chest.tileX, chest.tileY, chestLayer);
           this.multiplayer.sendWorldInteractResolved({
             action: 'chest_storage_sync',
             chestId: chest.id,
             tileX: chest.tileX,
             tileY: chest.tileY,
+            isUnderground: chestLayer === 'underground',
             storageRevision: chest.storageRevision,
             storageUpdatedAt: chest.storageUpdatedAt,
             customName: chest.customName,
@@ -20281,23 +20464,27 @@ export class GameEngine {
       case 'thermal_station_sync': {
         const structureId = String(request.structureId || '');
         let st: PlacedStructure | null = null;
-        for (const ch of Object.values(this.world.chunks)) {
-          if (!ch || !Array.isArray(ch.structures)) continue;
-          const found = ch.structures.find(
-            (s) =>
-              s.id === structureId ||
-              (typeof request.tileX === 'number' &&
-                typeof request.tileY === 'number' &&
-                s.tileX === request.tileX &&
-                s.tileY === request.tileY &&
-                (s.type === PlaceableType.CAMPFIRE ||
-                  s.type === PlaceableType.FURNACE ||
-                  s.type === PlaceableType.WEAVING_TABLE))
-          );
-          if (found) {
-            st = found;
-            break;
+        for (const chunkMap of this.getAllLoadedChunkMaps()) {
+          for (const ch of Object.values(chunkMap)) {
+            if (!ch || !Array.isArray(ch.structures)) continue;
+            const found = ch.structures.find(
+              (s) =>
+                s.id === structureId ||
+                (typeof request.tileX === 'number' &&
+                  typeof request.tileY === 'number' &&
+                  s.tileX === request.tileX &&
+                  s.tileY === request.tileY &&
+                  Boolean(ch.isUnderground) === Boolean(request.isUnderground) &&
+                  (s.type === PlaceableType.CAMPFIRE ||
+                    s.type === PlaceableType.FURNACE ||
+                    s.type === PlaceableType.WEAVING_TABLE))
+            );
+            if (found) {
+              st = found;
+              break;
+            }
           }
+          if (st) break;
         }
         if (st) {
           const nextRev = Math.max(
@@ -20319,12 +20506,14 @@ export class GameEngine {
           st.outputCount = Number(request.outputCount ?? 0);
           st.thermalRevision = nextRev;
           st.thermalUpdatedAt = Date.now();
-          this.markLocalChunkModified(st.tileX, st.tileY);
+          const stLayer = this.getStructureLayer(st);
+          this.markLocalChunkModified(st.tileX, st.tileY, stLayer);
           this.multiplayer.sendWorldInteractResolved({
             action: 'thermal_station_sync',
             structureId: st.id,
             tileX: st.tileX,
             tileY: st.tileY,
+            isUnderground: stLayer === 'underground',
             thermalRevision: st.thermalRevision,
             thermalUpdatedAt: st.thermalUpdatedAt,
             fuelItemId: st.fuelItemId,
@@ -20593,7 +20782,10 @@ export class GameEngine {
           typeof result.tileY === 'number'
         ) {
           const { cx, cy } = this.world.tileToChunk(result.tileX, result.tileY);
-          const ch = this.world.chunks[WorldManager.chunkKey(cx, cy)];
+          const key = WorldManager.chunkKey(cx, cy);
+          const ch = result.isUnderground
+            ? this.world.undergroundChunks[key]
+            : this.world.surfaceChunks[key] || this.world.undergroundChunks[key];
           chest =
             ch?.structures.find(
               (s) =>
@@ -20628,23 +20820,27 @@ export class GameEngine {
       case 'thermal_station_sync': {
         const structureId = String(result.structureId || '');
         let st: PlacedStructure | null = null;
-        for (const ch of Object.values(this.world.chunks)) {
-          if (!ch || !Array.isArray(ch.structures)) continue;
-          const found = ch.structures.find(
-            (s) =>
-              s.id === structureId ||
-              (typeof result.tileX === 'number' &&
-                typeof result.tileY === 'number' &&
-                s.tileX === result.tileX &&
-                s.tileY === result.tileY &&
-                (s.type === PlaceableType.CAMPFIRE ||
-                  s.type === PlaceableType.FURNACE ||
-                  s.type === PlaceableType.WEAVING_TABLE))
-          );
-          if (found) {
-            st = found;
-            break;
+        for (const chunkMap of this.getAllLoadedChunkMaps()) {
+          for (const ch of Object.values(chunkMap)) {
+            if (!ch || !Array.isArray(ch.structures)) continue;
+            const found = ch.structures.find(
+              (s) =>
+                s.id === structureId ||
+                (typeof result.tileX === 'number' &&
+                  typeof result.tileY === 'number' &&
+                  s.tileX === result.tileX &&
+                  s.tileY === result.tileY &&
+                  Boolean(ch.isUnderground) === Boolean(result.isUnderground) &&
+                  (s.type === PlaceableType.CAMPFIRE ||
+                    s.type === PlaceableType.FURNACE ||
+                    s.type === PlaceableType.WEAVING_TABLE))
+            );
+            if (found) {
+              st = found;
+              break;
+            }
           }
+          if (st) break;
         }
         if (st) {
           const incomingRev = Number(result.thermalRevision || 0);
@@ -20787,7 +20983,8 @@ export class GameEngine {
         if (snapshot.chunks) {
           for (const [key, ch] of Object.entries(snapshot.chunks)) {
             if (ch) {
-              const prevChunk = this.world.chunks[key];
+              ch.isUnderground = false;
+              const prevChunk = this.world.surfaceChunks[key];
               const prevExplored = prevChunk?.explored;
               const hydrated = this.world.hydrateChunk(ch);
               this.preserveNewerChestStorageInChunk(prevChunk, hydrated);
@@ -20800,10 +20997,33 @@ export class GameEngine {
                   if (prevExplored[i]) hydrated.explored[i] = 1;
                 }
               }
-              this.world.chunks[key] = hydrated;
+              this.world.surfaceChunks[key] = hydrated;
             }
           }
         }
+        if (snapshot.undergroundChunks) {
+          for (const [key, ch] of Object.entries(snapshot.undergroundChunks)) {
+            if (ch) {
+              ch.isUnderground = true;
+              const prevChunk = this.world.undergroundChunks[key];
+              const prevExplored = prevChunk?.explored;
+              const hydrated = this.world.hydrateChunk(ch);
+              this.preserveNewerChestStorageInChunk(prevChunk, hydrated);
+              if (
+                Array.isArray(prevExplored) &&
+                prevExplored.length === hydrated.explored.length
+              ) {
+                for (let i = 0; i < prevExplored.length; i++) {
+                  if (prevExplored[i]) hydrated.explored[i] = 1;
+                }
+              }
+              this.world.undergroundChunks[key] = hydrated;
+            }
+          }
+        }
+        this.world.setActiveLayer(
+          this.player.isUnderground ? 'underground' : 'surface'
+        );
         if (Array.isArray(snapshot.creatures)) {
           this.entities.creatures = snapshot.creatures;
         }
@@ -20834,9 +21054,14 @@ export class GameEngine {
       },
       onChunkSyncReceived: (chunkKey, chunkData) => {
         if (!chunkKey || !chunkData) return;
-        const prevChunk = this.world.chunks[chunkKey];
+        const isUg = Boolean(chunkData.isUnderground);
+        const targetMap = isUg
+          ? this.world.undergroundChunks
+          : this.world.surfaceChunks;
+        const prevChunk = targetMap[chunkKey];
         const prevExplored = prevChunk?.explored;
         const hydrated = this.world.hydrateChunk(chunkData);
+        hydrated.isUnderground = isUg;
         // Protect chests from stale/out-of-order chunk packets
         this.preserveNewerChestStorageInChunk(prevChunk, hydrated);
         // Never overwrite the local player's Fog-of-War exploration when receiving a remote chunk update!
@@ -20848,8 +21073,28 @@ export class GameEngine {
             if (prevExplored[i]) hydrated.explored[i] = 1;
           }
         }
-        this.world.chunks[chunkKey] = hydrated;
-        if (!this.canEntityOccupy(this.player.x, this.player.y)) {
+        targetMap[chunkKey] = hydrated;
+        if (
+          isUg &&
+          (!this.multiplayer?.isOnline || this.multiplayer.role !== 'GUEST')
+        ) {
+          const prevLayer = this.world.isUnderground
+            ? 'underground'
+            : 'surface';
+          this.world.setActiveLayer('underground');
+          try {
+            this.entities.populateUndergroundAirPocketMobs(
+              this.world,
+              hydrated
+            );
+          } finally {
+            this.world.setActiveLayer(prevLayer);
+          }
+        }
+        if (
+          Boolean(this.world.isUnderground) === isUg &&
+          !this.canEntityOccupy(this.player.x, this.player.y)
+        ) {
           this.pushPlayerOutOfHitbox(0.05, false);
         }
         // Note: MultiplayerManager already relays Guest `chunk_sync` to other Guests with `excludePeerId`.
@@ -21148,19 +21393,30 @@ export class GameEngine {
     );
   }
 
-  public syncChunkAtTile(tx: number, ty: number): void {
+  public syncChunkData(chunk: ChunkData | undefined): void {
+    if (!chunk) return;
+    const key = WorldManager.chunkKey(chunk.cx, chunk.cy);
+    this.lastLocalChunkEditAt.set(key, Date.now());
+    this.world.markChunkDirty(chunk);
+    this.world.syncChunkAgricultureIndex(chunk);
+    if (!this.multiplayer.isOnline || this.isApplyingNetworkEvent) return;
+    this.multiplayer.sendChunkSync(key, chunk);
+  }
+
+  public syncChunkAtTile(
+    tx: number,
+    ty: number,
+    layer?: 'surface' | 'underground'
+  ): void {
     const { cx, cy } = this.world.tileToChunk(tx, ty);
     const key = WorldManager.chunkKey(cx, cy);
-    this.lastLocalChunkEditAt.set(key, Date.now());
-    const chunk = this.world.chunks[key];
-    if (chunk) {
-      this.world.markChunkDirty(chunk);
-      this.world.syncChunkAgricultureIndex(chunk);
-    }
-    if (!this.multiplayer.isOnline || this.isApplyingNetworkEvent) return;
-    if (chunk) {
-      this.multiplayer.sendChunkSync(key, chunk);
-    }
+    const targetMap =
+      layer === 'underground'
+        ? this.world.undergroundChunks
+        : layer === 'surface'
+        ? this.world.surfaceChunks
+        : this.world.chunks;
+    this.syncChunkData(targetMap[key]);
   }
 
   public forceMultiplayerResync(): void {
@@ -21215,9 +21471,16 @@ export class GameEngine {
         }
       }
 
-      // Reveal fog of war around allied remote players too
-      if (rp.isMoving) {
-        this.revealWorldAndPopulateIslands(rp.x, rp.y, 10);
+      // Reveal fog of war around allied remote players ONLY when they are in the same layer as the local player
+      if (
+        rp.isMoving &&
+        Boolean(rp.isUnderground) === Boolean(this.world.isUnderground)
+      ) {
+        this.revealWorldAndPopulateIslands(
+          rp.x,
+          rp.y,
+          this.world.isUnderground ? 2 : 10
+        );
       }
     }
 
@@ -21260,6 +21523,12 @@ export class GameEngine {
   private updateGuestCreatures(dt: number): void {
     for (const cr of this.entities.creatures) {
       if (!cr || cr.hp <= 0 || cr.isInsideHouse) continue;
+      if (Boolean(cr.isUnderground) !== Boolean(this.player.isUnderground)) {
+        if (cr.hitFlashTimer > 0) {
+          cr.hitFlashTimer = Math.max(0, cr.hitFlashTimer - dt);
+        }
+        continue;
+      }
       if (
         cr.id === this.player.mountedEntityId ||
         this.remotePlayersList.some((rp) => rp.mountedEntityId === cr.id)
@@ -21565,21 +21834,26 @@ export class GameEngine {
     const chunk = this.world.chunks[WorldManager.chunkKey(pChunk.cx, pChunk.cy)];
     const zone = this.world.getEcologicalZoneAtTile(pTile.tx, pTile.ty);
 
-    // Build dynamic map markers for any active Death Bags (they exist on the map while the bag exists)
-    const deathBagWaypoints: MapWaypoint[] = this.deathBags.map((bag) => {
-      const remSec = Math.max(0, Math.ceil(bag.expiresTimer));
-      const mm = String(Math.floor(remSec / 60)).padStart(2, '0');
-      const ss = String(remSec % 60).padStart(2, '0');
-      return {
-        id: `death_bag_wp_${bag.id}`,
-        label: `🎒 Bolsinha (${mm}:${ss})`,
-        tileX: Math.floor(bag.x / TILE_SIZE),
-        tileY: Math.floor(bag.y / TILE_SIZE),
-        color: '#f43f5e',
-        isDeathBag: true,
-        expiresTimer: bag.expiresTimer,
-      };
-    });
+    // Build dynamic map markers for any active Death Bags in the same layer as the player
+    const deathBagWaypoints: MapWaypoint[] = this.deathBags
+      .filter(
+        (bag) =>
+          Boolean(bag.isUnderground) === Boolean(this.player.isUnderground)
+      )
+      .map((bag) => {
+        const remSec = Math.max(0, Math.ceil(bag.expiresTimer));
+        const mm = String(Math.floor(remSec / 60)).padStart(2, '0');
+        const ss = String(remSec % 60).padStart(2, '0');
+        return {
+          id: `death_bag_wp_${bag.id}`,
+          label: `🎒 Bolsinha (${mm}:${ss})`,
+          tileX: Math.floor(bag.x / TILE_SIZE),
+          tileY: Math.floor(bag.y / TILE_SIZE),
+          color: '#f43f5e',
+          isDeathBag: true,
+          expiresTimer: bag.expiresTimer,
+        };
+      });
 
     return {
       metadata: { ...this.metadata },

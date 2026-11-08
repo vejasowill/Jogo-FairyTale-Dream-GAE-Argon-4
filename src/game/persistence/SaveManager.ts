@@ -954,9 +954,16 @@ export class SaveManager {
         ? chunk.compactNodes
         : '';
 
+    const compactExplored = chunk.isUnderground
+      ? Array.isArray(chunk.explored) && chunk.explored.some((v) => v > 0)
+        ? WorldManager.encodeCompactExplored(chunk.explored)
+        : chunk.compactExplored
+      : undefined;
+
     return {
       cx: chunk.cx,
       cy: chunk.cy,
+      ...(chunk.isUnderground ? { isUnderground: true } : {}),
       ...(chunk.landmarkName ? { landmarkName: chunk.landmarkName } : {}),
       ...(chunk.villageId ? { villageId: chunk.villageId } : {}),
       ...(chunk.mobsPopulated ? { mobsPopulated: true } : {}),
@@ -972,6 +979,7 @@ export class SaveManager {
       ...(compactTiles ? { compactTiles } : {}),
       ...(compactZones ? { compactZones } : {}),
       ...(compactVariants ? { compactVariants } : {}),
+      ...(compactExplored ? { compactExplored } : {}),
       ...(typeof compactNodesStr === 'string'
         ? { compactNodes: compactNodesStr }
         : {}),

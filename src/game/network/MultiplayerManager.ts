@@ -371,6 +371,7 @@ export class MultiplayerManager {
       equippedBySlot: player.equippedBySlot,
       appearance: player.appearance,
       isSleeping: Boolean(player.isSleeping),
+      isUnderground: Boolean(player.isUnderground),
     };
   }
 
@@ -425,6 +426,7 @@ export class MultiplayerManager {
       attractedStallId: c.attractedStallId,
       stallInspectionsToday: c.stallInspectionsToday,
       peaceDebtCoins: c.peaceDebtCoins,
+      isUnderground: Boolean(c.isUnderground),
     }));
   }
 
@@ -3344,17 +3346,21 @@ export class MultiplayerManager {
     const incomingSwing = st.swingTimer ?? 0;
 
     if (existing) {
+      const prevUnderground = Boolean(existing.isUnderground);
+      const nextUnderground = Boolean(st.isUnderground);
       existing.name = st.name || existing.name;
       existing.persistentPlayerId =
         st.persistentPlayerId || existing.persistentPlayerId;
       existing.isHost = Boolean(st.isHost);
+      existing.isUnderground = nextUnderground;
       existing.targetX = typeof st.x === 'number' ? st.x : existing.targetX;
       existing.targetY = typeof st.y === 'number' ? st.y : existing.targetY;
       existing.vx = typeof st.vx === 'number' ? st.vx : existing.vx;
       existing.vy = typeof st.vy === 'number' ? st.vy : existing.vy;
       if (
+        prevUnderground !== nextUnderground ||
         Math.hypot(existing.targetX - existing.x, existing.targetY - existing.y) >
-        96
+          96
       ) {
         existing.x = existing.targetX;
         existing.y = existing.targetY;
@@ -3422,6 +3428,7 @@ export class MultiplayerManager {
         isMoving: Boolean(st.isMoving),
         isSwimming: Boolean(st.isSwimming),
         isSleeping: Boolean(st.isSleeping),
+        isUnderground: Boolean(st.isUnderground),
         mountedEntityId: st.mountedEntityId ?? null,
         mountedSeatIndex:
           typeof st.mountedSeatIndex === 'number' ? st.mountedSeatIndex : null,
@@ -3568,7 +3575,7 @@ export class MultiplayerManager {
         chunkData: networkChunk,
         worldRevision: this.worldRevision,
       },
-      `chunk_${chunkKey}`
+      `chunk_${chunkData.isUnderground ? 'ug' : 'surf'}_${chunkKey}`
     );
   }
 

@@ -816,7 +816,9 @@ export class WorldManager {
           const tx = chunk.cx * CHUNK_SIZE + lx;
           const ty = chunk.cy * CHUNK_SIZE + ly;
           const idx = ly * CHUNK_SIZE + lx;
-          const biome = needsTiles
+          const biome = chunk.isUnderground
+            ? BiomeType.PLAINS
+            : needsTiles
             ? this.computeBiomeAtTileForVersion(tx, ty, chunkGenVer)
             : chunk.tiles[idx];
           if (needsTiles) {
@@ -827,12 +829,9 @@ export class WorldManager {
             chunk.tileVariants[idx] = Math.floor(r * 4);
           }
           if (needsZones && chunk.ecologicalZones) {
-            chunk.ecologicalZones[idx] = this.computeEcologicalZoneAtTile(
-              tx,
-              ty,
-              biome,
-              chunkGenVer
-            );
+            chunk.ecologicalZones[idx] = chunk.isUnderground
+              ? EcologicalZone.MEADOW_CLEARING
+              : this.computeEcologicalZoneAtTile(tx, ty, biome, chunkGenVer);
           }
         }
       }
