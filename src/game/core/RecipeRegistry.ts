@@ -224,6 +224,19 @@ export const RECIPES: CraftingRecipe[] = [
     ],
   },
   {
+    id: 'craft_drilling_stake',
+    resultItemId: 'drilling_stake',
+    resultCount: 1,
+    requiredStation: PlaceableType.WORKBENCH,
+    craftTimeSec: 0,
+    rarity: RarityTier.RARE,
+    ingredients: [
+      { itemId: 'iron_bar', count: 10 },
+      { itemId: 'stone', count: 20 },
+      { itemId: 'wood', count: 6 },
+    ],
+  },
+  {
     id: 'craft_saddle',
     resultItemId: 'saddle',
     resultCount: 1,

@@ -137,9 +137,9 @@ export const ITEMS: Record<string, ItemDefinition> = {
   },
   charcoal: {
     id: 'charcoal',
-    name: 'Carvão Vegetal',
+    name: 'Carvão',
     description:
-      'Combustível de alta pureza térmica obtido ao queimar Madeira Rústica ou Madeira Nobre na Fogueira ou Fornalha. Possui 5x mais eficiência energética que a madeira comum como lenha!',
+      'Minério energético extraído de veios no subsolo ou obtido ao queimar madeira na Fogueira ou Fornalha. Possui 5x mais eficiência energética que a madeira comum como lenha!',
     purposeSummary:
       'Combustível Nobre (60s de queima no Slot de Lenha — 5x mais eficiente que Madeira!), além de criar Tochas em lote e Bombas Solares.',
     category: ItemCategory.RESOURCE,
@@ -2821,6 +2821,30 @@ export const ITEMS: Record<string, ItemDefinition> = {
     isDye: true,
     dyeColorId: 'bege',
   },
+  drilling_stake: {
+    id: 'drilling_stake',
+    name: 'Estaca de Perfuração',
+    description:
+      'Estrutura pesada de ferro, pedra e madeira projetada para abrir passagem até o subsolo. Quebre-a com a mão livre ou qualquer ferramenta (exceto picareta) para coletá-la de volta, ou quebre-a com uma Picareta para perfurar o chão e criar uma Escada de Nível permanente para o subsolo!',
+    purposeSummary:
+      'Perfuração do Subsolo (Hitbox Sólida): Quebre com Picareta para criar uma Escada de Nível indestrutível para o subsolo; quebre com outro item/mão para recolher.',
+    category: ItemCategory.PLACEABLE,
+    rarity: RarityTier.RARE,
+    maxStack: 10,
+    placeableType: PlaceableType.DRILLING_STAKE,
+  },
+  level_stairs: {
+    id: 'level_stairs',
+    name: 'Escada de Nível',
+    description:
+      'Passagem vertical indestrutível que conecta a superfície ao subsolo na mesma coordenada.',
+    purposeSummary:
+      'Acesso Subterrâneo Indestrutível: Permite descer para o subsolo ou subir de volta para a superfície.',
+    category: ItemCategory.PLACEABLE,
+    rarity: RarityTier.RARE,
+    maxStack: 1,
+    placeableType: PlaceableType.LEVEL_STAIRS,
+  },
 };
 
 export function getDyeItemIdForColor(colorId: ClothingColorId): string {
@@ -3803,6 +3827,41 @@ export const CONSTRUCTION_BLUEPRINTS: Record<PlaceableType, ConstructionBlueprin
     maxHp: 12,
     lightRadius: 60,
   },
+  [PlaceableType.DRILLING_STAKE]: {
+    type: PlaceableType.DRILLING_STAKE,
+    role: 'ESTACAO',
+    roleLabel: 'Estaca de Perfuração',
+    layer: 'FURNITURE',
+    layerLabel: 'Equipamento de Perfuração (Hitbox Sólida)',
+    hasHitbox: true,
+    hitboxBehavior: 'SOLID_COMPACT',
+    hitboxLabel: 'Hitbox Compacta (11px)',
+    hitboxRadius: 11,
+    continuityMode: 'STANDALONE',
+    continuityLabel: 'Quebre com Picareta para abrir Escada de Nível ao Subsolo',
+    connectionGroup: 'none',
+    connectsToGroups: [],
+    maxHp: 60,
+    lightRadius: 0,
+  },
+  [PlaceableType.LEVEL_STAIRS]: {
+    type: PlaceableType.LEVEL_STAIRS,
+    role: 'ESTACAO',
+    roleLabel: 'Escada de Nível',
+    layer: 'FURNITURE',
+    layerLabel: 'Passagem de Nível (Indestrutível)',
+    hasHitbox: true,
+    hitboxBehavior: 'SOLID_COMPACT',
+    hitboxLabel: 'Hitbox na Superfície (Descer) · Sem Hitbox no Subsolo (Subir)',
+    hitboxRadius: 11,
+    continuityMode: 'STANDALONE',
+    continuityLabel: 'Passagem Indestrutível entre Superfície e Subsolo',
+    connectionGroup: 'none',
+    connectsToGroups: [],
+    maxHp: 999999,
+    lightRadius: 0,
+    isInteractive: true,
+  },
 };
 
 export function getConstructionBlueprint(
@@ -4127,6 +4186,53 @@ export const NATURE_BLUEPRINTS: Record<NatureNodeType, NatureNodeBlueprint> = {
     hitboxRadius: 0,
     drops: [],
   },
+  [NatureNodeType.UNDERGROUND_DIRT]: {
+    type: NatureNodeType.UNDERGROUND_DIRT,
+    name: 'Parede de Terra do Subsolo',
+    rarity: RarityTier.BASIC,
+    maxHp: 50,
+    materialKind: 'ROUGH_STONE',
+    requiredTool: ToolType.PICKAXE,
+    requiredTier: 1,
+    xpReward: 3,
+    hasHitbox: true,
+    hitboxRadius: 15,
+    drops: [
+      { itemId: 'stone', min: 1, max: 2, chance: 0.35 },
+    ],
+  },
+  [NatureNodeType.UNDERGROUND_COAL]: {
+    type: NatureNodeType.UNDERGROUND_COAL,
+    name: 'Veio de Carvão',
+    rarity: RarityTier.BASIC,
+    maxHp: 75,
+    materialKind: 'ROUGH_STONE',
+    requiredTool: ToolType.PICKAXE,
+    requiredTier: 1,
+    xpReward: 12,
+    hasHitbox: true,
+    hitboxRadius: 15,
+    drops: [
+      { itemId: 'charcoal', min: 1, max: 3, chance: 1.0 },
+      { itemId: 'stone', min: 1, max: 1, chance: 0.6 },
+    ],
+  },
+  [NatureNodeType.UNDERGROUND_IRON]: {
+    type: NatureNodeType.UNDERGROUND_IRON,
+    name: 'Veio de Ferro Subterrâneo',
+    rarity: RarityTier.RARE,
+    maxHp: 110,
+    materialKind: 'IRON_MINERAL',
+    requiredTool: ToolType.PICKAXE,
+    requiredTier: 1,
+    xpReward: 25,
+    hasHitbox: true,
+    hitboxRadius: 15,
+    drops: [
+      { itemId: 'iron_ore', min: 1, max: 3, chance: 1.0 },
+      { itemId: 'stone', min: 1, max: 1, chance: 0.7 },
+    ],
+  },
 };
 
 /**
@@ -4314,6 +4420,8 @@ export const ITEM_BASE_PRICES: Record<string, number> = {
   explorer_tent: 195,
   saddle: 75,
   wood_boat: 60,
+  drilling_stake: 525,
+  level_stairs: 525,
   solar_altar: 540, // 4x Barra de Ferro (192) + 4x Cristal Solar (180) + 4x Madeira Nobre (72) + Consagração
 
   // Ferramentas & Armas Nv.2 (Ferro Forjado & Monstros)
@@ -4841,6 +4949,18 @@ export const STRUCTURE_MATERIAL_REQUIREMENTS: Record<
     requiredTool: ToolType.PICKAXE,
     requiredTier: 2,
     requirementLabel: 'Requer Picareta de Ferro+ (Nv.2+)',
+  },
+  [PlaceableType.DRILLING_STAKE]: {
+    materialKind: 'SOFT_WOOD',
+    requiredTool: ToolType.NONE,
+    requiredTier: 0,
+    requirementLabel: 'Mão/Qualquer Item (Coletar) ou Picareta (Perfurar Subsolo)',
+  },
+  [PlaceableType.LEVEL_STAIRS]: {
+    materialKind: 'ASTRAL_MINERAL',
+    requiredTool: ToolType.PICKAXE,
+    requiredTier: 99,
+    requirementLabel: 'Indestrutível (Escada de Nível)',
   },
 };
 
@@ -5386,7 +5506,7 @@ export const FUEL_ITEMS: Record<string, FuelDefinition> = {
   },
   charcoal: {
     itemId: 'charcoal',
-    name: 'Carvão Vegetal',
+    name: 'Carvão',
     burnTimeSec: 60,
     efficiencyLabel: 'Alta Eficiência (60s · 5x Madeira!)',
     smeltCapacityHint: 'Até 10–12 preparos por unidade!',

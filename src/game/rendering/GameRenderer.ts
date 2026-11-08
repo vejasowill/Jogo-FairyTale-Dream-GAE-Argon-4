@@ -516,9 +516,23 @@ export class GameRenderer {
             if (wx + TILE_SIZE < camera.x - halfW || wx > camera.x + halfW) continue;
 
             const idx = ly * CHUNK_SIZE + lx;
+            if (world.isUnderground) {
+              const isDiscovered =
+                Array.isArray(chunk.explored) && chunk.explored[idx] === 1;
+              if (!isDiscovered) {
+                ctx.fillStyle = '#000000';
+                ctx.fillRect(wx, wy, TILE_SIZE + 0.5, TILE_SIZE + 0.5);
+              } else {
+                this.drawUndergroundFloorTile(ctx, tx, ty, wx, wy);
+              }
+              continue;
+            }
+
             const biome = chunk.tiles[idx];
             const variant = chunk.tileVariants[idx];
-            const zone = world.getEcologicalZoneAtTile(tx, ty);
+            const zone =
+              chunk.ecologicalZones?.[idx] ??
+              world.getEcologicalZoneAtTile(tx, ty);
             const isCoastalBeach =
               biome !== BiomeType.OCEAN &&
               zone === EcologicalZone.COASTAL_TROPICS;
@@ -534,15 +548,47 @@ export class GameRenderer {
             ctx.drawImage(sprite, wx, wy, TILE_SIZE + 0.35, TILE_SIZE + 0.35);
 
             // Seamless Auto-Tiling Coastlines & Biome Ecotone Transitions
-            this.drawSeamlessBiomeBorders(ctx, world, tx, ty, wx, wy, biome, globalTime);
+            this.drawSeamlessBiomeBorders(
+              ctx,
+              world,
+              tx,
+              ty,
+              wx,
+              wy,
+              biome,
+              globalTime,
+              zone,
+              subZone
+            );
 
             // Procedural Ground Micro-Decorations (Minimalist)
-            this.drawTileMicroDetails(ctx, world, tx, ty, wx, wy, biome, subZone, globalTime);
+            this.drawTileMicroDetails(
+              ctx,
+              world,
+              tx,
+              ty,
+              wx,
+              wy,
+              biome,
+              subZone,
+              globalTime,
+              zone
+            );
           }
         }
 
         // Pass 1A: Ground-Layer Structures (Floors, Carpets, Bridges first, then Spike Traps on top)
         for (const st of chunk.structures) {
+          if (world.isUnderground) {
+            const stLx = ((st.tileX % CHUNK_SIZE) + CHUNK_SIZE) % CHUNK_SIZE;
+            const stLy = ((st.tileY % CHUNK_SIZE) + CHUNK_SIZE) % CHUNK_SIZE;
+            if (
+              !Array.isArray(chunk.explored) ||
+              chunk.explored[stLy * CHUNK_SIZE + stLx] !== 1
+            ) {
+              continue;
+            }
+          }
           const bp = CONSTRUCTION_BLUEPRINTS[st.type];
           const isFloorOrBridge =
             (bp?.layer === 'GROUND' ||
@@ -558,8 +604,8 @@ export class GameRenderer {
           }
         }
 
-        // Pass 1A-Puddles: Temporary Rain Puddles on empty soil
-        if (chunk.puddles && chunk.puddles.length > 0) {
+        // Pass 1A-Puddles: Temporary Rain Puddles on empty soil (Surface only)
+        if (!world.isUnderground && chunk.puddles && chunk.puddles.length > 0) {
           const globalRain = buildOptions?.rainIntensity ?? 0;
           for (const puddle of chunk.puddles) {
             const pWx = puddle.tileX * TILE_SIZE;
@@ -583,6 +629,16 @@ export class GameRenderer {
         }
 
         for (const st of chunk.structures) {
+          if (world.isUnderground) {
+            const stLx = ((st.tileX % CHUNK_SIZE) + CHUNK_SIZE) % CHUNK_SIZE;
+            const stLy = ((st.tileY % CHUNK_SIZE) + CHUNK_SIZE) % CHUNK_SIZE;
+            if (
+              !Array.isArray(chunk.explored) ||
+              chunk.explored[stLy * CHUNK_SIZE + stLx] !== 1
+            ) {
+              continue;
+            }
+          }
           const bp = CONSTRUCTION_BLUEPRINTS[st.type];
           const isFloorOrBridge =
             (bp?.layer === 'GROUND' ||
@@ -598,16 +654,22 @@ export class GameRenderer {
           } else if (!isFloorOrBridge) {
             const isWallTorch =
               st.type === PlaceableType.TORCH &&
-              (st.attachedToWall || world.hasWallStructureAtTile(st.tileX, st.tileY));
+              (st.attachedToWall ||
+                world.hasWallStructureAtTile(st.tileX, st.tileY) ||
+                (world.isUnderground &&
+                  world.hasUndergroundDirtBlockAtTile(st.tileX, st.tileY)));
             const isAimedStructure =
               Boolean(aimedTarget) &&
               (aimedTarget!.structureId === st.id ||
                 (Math.floor(aimedTarget!.worldX / TILE_SIZE) === st.tileX &&
                   Math.floor(aimedTarget!.worldY / TILE_SIZE) === st.tileY));
             renderQueue.push({
-              ySort: isWallTorch
-                ? st.tileY * TILE_SIZE + TILE_SIZE * 0.89
-                : st.tileY * TILE_SIZE + TILE_SIZE * 0.85,
+              ySort:
+                st.type === PlaceableType.LEVEL_STAIRS
+                  ? st.tileY * TILE_SIZE + 2
+                  : isWallTorch
+                  ? st.tileY * TILE_SIZE + TILE_SIZE * 0.94
+                  : st.tileY * TILE_SIZE + TILE_SIZE * 0.85,
               draw: (c) =>
                 this.drawStructure(
                   c,
@@ -636,6 +698,16 @@ export class GameRenderer {
 
         // Nature Nodes
         for (const node of chunk.nodes) {
+          if (world.isUnderground) {
+            const nLx = ((node.tileX % CHUNK_SIZE) + CHUNK_SIZE) % CHUNK_SIZE;
+            const nLy = ((node.tileY % CHUNK_SIZE) + CHUNK_SIZE) % CHUNK_SIZE;
+            if (
+              !Array.isArray(chunk.explored) ||
+              chunk.explored[nLy * CHUNK_SIZE + nLx] !== 1
+            ) {
+              continue;
+            }
+          }
           const wx = node.tileX * TILE_SIZE;
           const wy = node.tileY * TILE_SIZE;
           if (
@@ -678,7 +750,8 @@ export class GameRenderer {
                 globalTime,
                 shadowDx,
                 player,
-                isAimedNode
+                isAimedNode,
+                world
               ),
           });
         }
@@ -871,6 +944,18 @@ export class GameRenderer {
 
     // 3. Dropped Items with Rarity Ground Aura & Floating Glint
     for (const drop of droppedItems) {
+      if (Boolean(drop.isUnderground) !== Boolean(world.isUnderground)) {
+        continue;
+      }
+      if (
+        world.isUnderground &&
+        !world.isUndergroundTileDiscovered(
+          Math.floor(drop.x / TILE_SIZE),
+          Math.floor(drop.y / TILE_SIZE)
+        )
+      ) {
+        continue;
+      }
       renderQueue.push({
         ySort: drop.y,
         draw: (c) => {
@@ -916,6 +1001,18 @@ export class GameRenderer {
 
     // 3B. Interactive Death Bags ("Bolsinha de Espólios" — 10-minute timer)
     for (const bag of deathBags) {
+      if (Boolean(bag.isUnderground) !== Boolean(world.isUnderground)) {
+        continue;
+      }
+      if (
+        world.isUnderground &&
+        !world.isUndergroundTileDiscovered(
+          Math.floor(bag.x / TILE_SIZE),
+          Math.floor(bag.y / TILE_SIZE)
+        )
+      ) {
+        continue;
+      }
       if (
         bag.x < camera.x - halfW ||
         bag.x > camera.x + halfW ||
@@ -1020,6 +1117,18 @@ export class GameRenderer {
     // 4. Creatures (Animals, Enemies & Villagers)
     for (const cr of creatures) {
       if (cr.isInsideHouse) continue;
+      if (Boolean(cr.isUnderground) !== Boolean(world.isUnderground)) {
+        continue;
+      }
+      if (
+        world.isUnderground &&
+        !world.isUndergroundTileDiscovered(
+          Math.floor(cr.x / TILE_SIZE),
+          Math.floor(cr.y / TILE_SIZE)
+        )
+      ) {
+        continue;
+      }
       if (
         cr.x < camera.x - halfW ||
         cr.x > camera.x + halfW ||
@@ -1036,7 +1145,7 @@ export class GameRenderer {
         continue;
       }
       const crSwimming =
-        cr.kind === CreatureKind.BOAT
+        world.isUnderground || cr.kind === CreatureKind.BOAT
           ? false
           : Boolean(cr.isSwimming || world.isWorldPosInWater(cr.x, cr.y));
       renderQueue.push({
@@ -1056,6 +1165,9 @@ export class GameRenderer {
 
     // 4B. Remote Online Players
     for (const rp of remotePlayers) {
+      if (Boolean(rp.isUnderground) !== Boolean(world.isUnderground)) {
+        continue;
+      }
       const existingRpMount = rp.mountedEntityId
         ? creatures.find((c) => c.id === rp.mountedEntityId) || null
         : creatures.find(
@@ -1206,41 +1318,43 @@ export class GameRenderer {
     // 5B. Active Burst Particles & Guardian Totem Lightning Arcs
     this.drawActiveParticlesAndBolts(ctx);
 
-    // 6. AAA Ambient Biome & Atmospheric Particles (Fireflies, Butterflies, Golden Pollen, Sand Motes)
-    this.drawAmbientWorldParticles(
-      ctx,
-      camera,
-      world,
-      timeOfDay,
-      globalTime,
-      halfW,
-      halfH,
-      lightSources
-    );
+    // 6. AAA Ambient Biome & Atmospheric Particles (Surface only)
+    if (!world.isUnderground) {
+      this.drawAmbientWorldParticles(
+        ctx,
+        camera,
+        world,
+        timeOfDay,
+        globalTime,
+        halfW,
+        halfH,
+        lightSources
+      );
 
-    // 6A-Weather: Passing Cloud Shadows (only shadow visible, varied sizes, constant wind direction)
-    this.drawCloudShadows(
-      ctx,
-      camera,
-      world,
-      globalTime,
-      halfW,
-      halfH,
-      buildOptions?.weatherState || 'clear',
-      buildOptions?.rainIntensity ?? 0
-    );
-
-    // 6A-Rain: Realistic Biome-Aware Falling Rain & Ground/Water Splashes
-    if ((buildOptions?.rainIntensity ?? 0) > 0.01) {
-      this.drawWeatherRain(
+      // 6A-Weather: Passing Cloud Shadows (only shadow visible, varied sizes, constant wind direction)
+      this.drawCloudShadows(
         ctx,
         camera,
         world,
         globalTime,
         halfW,
         halfH,
+        buildOptions?.weatherState || 'clear',
         buildOptions?.rainIntensity ?? 0
       );
+
+      // 6A-Rain: Realistic Biome-Aware Falling Rain & Ground/Water Splashes
+      if ((buildOptions?.rainIntensity ?? 0) > 0.01) {
+        this.drawWeatherRain(
+          ctx,
+          camera,
+          world,
+          globalTime,
+          halfW,
+          halfH,
+          buildOptions?.rainIntensity ?? 0
+        );
+      }
     }
 
     // 6B. Top-Layer Aimed Target Selector Pointer Arrow & Action Tag (Shows exactly what Interação will act on)
@@ -1363,11 +1477,12 @@ export class GameRenderer {
 
     ctx.restore();
 
-    // 8. Day & Night Dynamic Luminous Filter
+    // 8. Day & Night Dynamic Luminous Filter (or Underground 60px / 33% Cave Darkness)
     const playerLight = GameRenderer.getPlayerLightSpec(
       heldItem?.id || null,
       player.equippedBySlot,
-      player.equippedArmorId
+      player.equippedArmorId,
+      world.isUnderground
     );
     lightSources.push({
       x: player.x,
@@ -1378,10 +1493,14 @@ export class GameRenderer {
     });
 
     for (const rp of remotePlayers) {
+      if (Boolean(rp.isUnderground) !== Boolean(world.isUnderground)) {
+        continue;
+      }
       const rpLight = GameRenderer.getPlayerLightSpec(
         rp.heldItemId || null,
         rp.equippedBySlot,
-        rp.equippedArmorId
+        rp.equippedArmorId,
+        world.isUnderground
       );
       lightSources.push({
         x: rp.x,
@@ -1399,7 +1518,8 @@ export class GameRenderer {
       globalTime,
       lightSources,
       player.hp / Math.max(1, player.maxHp),
-      buildOptions?.localRainIntensity ?? 0
+      buildOptions?.localRainIntensity ?? 0,
+      world.isUnderground
     );
   }
 
@@ -1462,8 +1582,13 @@ export class GameRenderer {
   public static getPlayerLightSpec(
     heldItemId: string | null | undefined,
     equippedBySlot?: PlayerState['equippedBySlot'],
-    equippedArmorId?: string | null
+    equippedArmorId?: string | null,
+    isUnderground = false
   ): { radius: number; strength: number; color: string } {
+    // In the Underground: the character only sees 60px around themselves with 33% illumination
+    if (isUnderground) {
+      return { radius: 60, strength: 0.33, color: '255, 230, 140' };
+    }
     if (heldItemId === 'torch' || heldItemId === 'iron_lantern') {
       return { radius: 200, strength: 1.0, color: '255, 175, 70' };
     }
@@ -1533,6 +1658,71 @@ export class GameRenderer {
     }
   }
 
+  private static readonly BLEND_PALETTES = {
+    SAND_0: {
+      solid: '#cfa95e',
+      mid: 'rgba(207, 169, 94, 0.72)',
+      soft: 'rgba(207, 169, 94, 0.35)',
+    },
+    SAND_1: {
+      solid: '#dfc072',
+      mid: 'rgba(223, 192, 114, 0.72)',
+      soft: 'rgba(223, 192, 114, 0.35)',
+    },
+    SAND_2: {
+      solid: '#d4a459',
+      mid: 'rgba(212, 164, 89, 0.72)',
+      soft: 'rgba(212, 164, 89, 0.35)',
+    },
+    TEMPERATE_FOREST: {
+      solid: '#275332',
+      mid: 'rgba(39, 83, 50, 0.72)',
+      soft: 'rgba(39, 83, 50, 0.36)',
+    },
+    TAIGA_FOREST: {
+      solid: '#2d574c',
+      mid: 'rgba(45, 87, 76, 0.72)',
+      soft: 'rgba(45, 87, 76, 0.36)',
+    },
+    FOREST: {
+      solid: '#3d7a37',
+      mid: 'rgba(61, 122, 55, 0.72)',
+      soft: 'rgba(61, 122, 55, 0.36)',
+    },
+    PLAINS_0: {
+      solid: '#34783d',
+      mid: 'rgba(52, 120, 61, 0.68)',
+      soft: 'rgba(52, 120, 61, 0.32)',
+    },
+    PLAINS_1: {
+      solid: '#41853c',
+      mid: 'rgba(65, 133, 60, 0.68)',
+      soft: 'rgba(65, 133, 60, 0.32)',
+    },
+    PLAINS_2: {
+      solid: '#618a39',
+      mid: 'rgba(97, 138, 57, 0.68)',
+      soft: 'rgba(97, 138, 57, 0.32)',
+    },
+    OCEAN_SHELF: {
+      solid: '#d6b065',
+      mid: 'rgba(217, 169, 92, 0.58)',
+      soft: 'rgba(217, 169, 92, 0.28)',
+    },
+  } as const;
+
+  private static readonly ORGANIC_WAVE_LUT: Float32Array = (() => {
+    const lut = new Float32Array(64);
+    for (let phase = 0; phase < 8; phase++) {
+      for (let s = 0; s < 8; s++) {
+        lut[phase * 8 + s] =
+          Math.sin((s + phase) * 1.15) * 0.5 +
+          Math.cos((s * 2 - phase) * 0.9) * 0.5;
+      }
+    }
+    return lut;
+  })();
+
   /**
    * Returns the representative ground color and soft transition color for a tile `(tx, ty)`
    * so neighboring cells can blend organically across both biome borders and sub-zone shifts.
@@ -1542,11 +1732,15 @@ export class GameRenderer {
     tx: number,
     ty: number,
     biome: BiomeType,
-    subZone?: number
+    subZone?: number,
+    knownCoastalBeach?: boolean
   ): { solid: string; mid: string; soft: string } {
     const isCoastalBeach =
-      biome !== BiomeType.OCEAN &&
-      world.getEcologicalZoneAtTile(tx, ty) === EcologicalZone.COASTAL_TROPICS;
+      knownCoastalBeach !== undefined
+        ? knownCoastalBeach
+        : biome !== BiomeType.OCEAN &&
+          world.getEcologicalZoneAtTile(tx, ty) ===
+            EcologicalZone.COASTAL_TROPICS;
     const z = isCoastalBeach
       ? 1
       : subZone !== undefined
@@ -1557,72 +1751,29 @@ export class GameRenderer {
       biome === BiomeType.DESERT ||
       (biome === BiomeType.ISLAND && z === 1)
     ) {
-      if (z === 0) {
-        return {
-          solid: '#cfa95e',
-          mid: 'rgba(207, 169, 94, 0.72)',
-          soft: 'rgba(207, 169, 94, 0.35)',
-        };
-      }
-      if (z === 2) {
-        return {
-          solid: '#d4a459',
-          mid: 'rgba(212, 164, 89, 0.72)',
-          soft: 'rgba(212, 164, 89, 0.35)',
-        };
-      }
-      return {
-        solid: '#dfc072',
-        mid: 'rgba(223, 192, 114, 0.72)',
-        soft: 'rgba(223, 192, 114, 0.35)',
-      };
+      if (z === 0) return GameRenderer.BLEND_PALETTES.SAND_0;
+      if (z === 2) return GameRenderer.BLEND_PALETTES.SAND_2;
+      return GameRenderer.BLEND_PALETTES.SAND_1;
     }
     if (biome === BiomeType.TEMPERATE_FOREST) {
-      return {
-        solid: '#275332',
-        mid: 'rgba(39, 83, 50, 0.72)',
-        soft: 'rgba(39, 83, 50, 0.36)',
-      };
+      return GameRenderer.BLEND_PALETTES.TEMPERATE_FOREST;
     }
     if (biome === BiomeType.TAIGA_FOREST) {
-      return {
-        solid: '#2d574c',
-        mid: 'rgba(45, 87, 76, 0.72)',
-        soft: 'rgba(45, 87, 76, 0.36)',
-      };
+      return GameRenderer.BLEND_PALETTES.TAIGA_FOREST;
     }
     if (biome === BiomeType.FOREST) {
-      return {
-        solid: '#3d7a37',
-        mid: 'rgba(61, 122, 55, 0.72)',
-        soft: 'rgba(61, 122, 55, 0.36)',
-      };
+      return GameRenderer.BLEND_PALETTES.FOREST;
     }
     // PLAINS / ISLAND interior
-    if (z === 0) {
-      return {
-        solid: '#34783d',
-        mid: 'rgba(52, 120, 61, 0.68)',
-        soft: 'rgba(52, 120, 61, 0.32)',
-      };
-    }
-    if (z === 2) {
-      return {
-        solid: '#618a39',
-        mid: 'rgba(97, 138, 57, 0.68)',
-        soft: 'rgba(97, 138, 57, 0.32)',
-      };
-    }
-    return {
-      solid: '#41853c',
-      mid: 'rgba(65, 133, 60, 0.68)',
-      soft: 'rgba(65, 133, 60, 0.32)',
-    };
+    if (z === 0) return GameRenderer.BLEND_PALETTES.PLAINS_0;
+    if (z === 2) return GameRenderer.BLEND_PALETTES.PLAINS_2;
+    return GameRenderer.BLEND_PALETTES.PLAINS_1;
   }
 
   /**
    * Draws an organic, scalloped, multi-layered transition along one edge of a 32x32 tile
    * so cell X and cell Y blend with natural curved tufts/lobes rather than a hard straight line.
+   * Batches fillStyle changes to 3 total per edge (instead of 24) and uses precomputed LUT waves.
    */
   private drawOrganicEdgeLobes(
     ctx: CanvasRenderingContext2D,
@@ -1634,45 +1785,72 @@ export class GameRenderer {
     colors: { solid: string; mid: string; soft: string },
     depthScale = 1.0
   ): void {
-    const phase = (tx * 7 + ty * 13) & 7;
-    // 8 segments of 4px along the 32px edge with deterministic organic wave depth
-    for (let s = 0; s < 8; s++) {
-      const wave =
-        Math.sin((s + phase) * 1.15) * 0.5 +
-        Math.cos((s * 2 - phase) * 0.9) * 0.5;
-      const dSolid = Math.max(1, Math.round((2.6 + wave * 1.6) * depthScale));
-      const dMid = Math.max(2, Math.round((5.2 + wave * 2.4) * depthScale));
-      const dSoft = Math.max(4, Math.round((8.4 + wave * 3.0) * depthScale));
-      const offset = s * 4;
+    const baseIdx = ((tx * 7 + ty * 13) & 7) * 8;
+    const lut = GameRenderer.ORGANIC_WAVE_LUT;
 
-      if (side === 'N') {
-        ctx.fillStyle = colors.soft;
-        ctx.fillRect(wx + offset, wy, 4, dSoft);
-        ctx.fillStyle = colors.mid;
-        ctx.fillRect(wx + offset, wy, 4, dMid);
-        ctx.fillStyle = colors.solid;
-        ctx.fillRect(wx + offset, wy, 4, dSolid);
-      } else if (side === 'S') {
-        ctx.fillStyle = colors.soft;
-        ctx.fillRect(wx + offset, wy + TILE_SIZE - dSoft, 4, dSoft);
-        ctx.fillStyle = colors.mid;
-        ctx.fillRect(wx + offset, wy + TILE_SIZE - dMid, 4, dMid);
-        ctx.fillStyle = colors.solid;
-        ctx.fillRect(wx + offset, wy + TILE_SIZE - dSolid, 4, dSolid);
-      } else if (side === 'W') {
-        ctx.fillStyle = colors.soft;
-        ctx.fillRect(wx, wy + offset, dSoft, 4);
-        ctx.fillStyle = colors.mid;
-        ctx.fillRect(wx, wy + offset, dMid, 4);
-        ctx.fillStyle = colors.solid;
-        ctx.fillRect(wx, wy + offset, dSolid, 4);
-      } else {
-        ctx.fillStyle = colors.soft;
-        ctx.fillRect(wx + TILE_SIZE - dSoft, wy + offset, dSoft, 4);
-        ctx.fillStyle = colors.mid;
-        ctx.fillRect(wx + TILE_SIZE - dMid, wy + offset, dMid, 4);
-        ctx.fillStyle = colors.solid;
-        ctx.fillRect(wx + TILE_SIZE - dSolid, wy + offset, dSolid, 4);
+    if (side === 'N') {
+      ctx.fillStyle = colors.soft;
+      for (let s = 0; s < 8; s++) {
+        const dSoft = Math.max(4, Math.round((8.4 + lut[baseIdx + s] * 3.0) * depthScale));
+        ctx.fillRect(wx + s * 4, wy, 4, dSoft);
+      }
+      ctx.fillStyle = colors.mid;
+      for (let s = 0; s < 8; s++) {
+        const dMid = Math.max(2, Math.round((5.2 + lut[baseIdx + s] * 2.4) * depthScale));
+        ctx.fillRect(wx + s * 4, wy, 4, dMid);
+      }
+      ctx.fillStyle = colors.solid;
+      for (let s = 0; s < 8; s++) {
+        const dSolid = Math.max(1, Math.round((2.6 + lut[baseIdx + s] * 1.6) * depthScale));
+        ctx.fillRect(wx + s * 4, wy, 4, dSolid);
+      }
+    } else if (side === 'S') {
+      ctx.fillStyle = colors.soft;
+      for (let s = 0; s < 8; s++) {
+        const dSoft = Math.max(4, Math.round((8.4 + lut[baseIdx + s] * 3.0) * depthScale));
+        ctx.fillRect(wx + s * 4, wy + TILE_SIZE - dSoft, 4, dSoft);
+      }
+      ctx.fillStyle = colors.mid;
+      for (let s = 0; s < 8; s++) {
+        const dMid = Math.max(2, Math.round((5.2 + lut[baseIdx + s] * 2.4) * depthScale));
+        ctx.fillRect(wx + s * 4, wy + TILE_SIZE - dMid, 4, dMid);
+      }
+      ctx.fillStyle = colors.solid;
+      for (let s = 0; s < 8; s++) {
+        const dSolid = Math.max(1, Math.round((2.6 + lut[baseIdx + s] * 1.6) * depthScale));
+        ctx.fillRect(wx + s * 4, wy + TILE_SIZE - dSolid, 4, dSolid);
+      }
+    } else if (side === 'W') {
+      ctx.fillStyle = colors.soft;
+      for (let s = 0; s < 8; s++) {
+        const dSoft = Math.max(4, Math.round((8.4 + lut[baseIdx + s] * 3.0) * depthScale));
+        ctx.fillRect(wx, wy + s * 4, dSoft, 4);
+      }
+      ctx.fillStyle = colors.mid;
+      for (let s = 0; s < 8; s++) {
+        const dMid = Math.max(2, Math.round((5.2 + lut[baseIdx + s] * 2.4) * depthScale));
+        ctx.fillRect(wx, wy + s * 4, dMid, 4);
+      }
+      ctx.fillStyle = colors.solid;
+      for (let s = 0; s < 8; s++) {
+        const dSolid = Math.max(1, Math.round((2.6 + lut[baseIdx + s] * 1.6) * depthScale));
+        ctx.fillRect(wx, wy + s * 4, dSolid, 4);
+      }
+    } else {
+      ctx.fillStyle = colors.soft;
+      for (let s = 0; s < 8; s++) {
+        const dSoft = Math.max(4, Math.round((8.4 + lut[baseIdx + s] * 3.0) * depthScale));
+        ctx.fillRect(wx + TILE_SIZE - dSoft, wy + s * 4, dSoft, 4);
+      }
+      ctx.fillStyle = colors.mid;
+      for (let s = 0; s < 8; s++) {
+        const dMid = Math.max(2, Math.round((5.2 + lut[baseIdx + s] * 2.4) * depthScale));
+        ctx.fillRect(wx + TILE_SIZE - dMid, wy + s * 4, dMid, 4);
+      }
+      ctx.fillStyle = colors.solid;
+      for (let s = 0; s < 8; s++) {
+        const dSolid = Math.max(1, Math.round((2.6 + lut[baseIdx + s] * 1.6) * depthScale));
+        ctx.fillRect(wx + TILE_SIZE - dSolid, wy + s * 4, dSolid, 4);
       }
     }
   }
@@ -1728,7 +1906,9 @@ export class GameRenderer {
     wx: number,
     wy: number,
     biome: BiomeType,
-    globalTime: number
+    globalTime: number,
+    precomputedZone?: EcologicalZone,
+    precomputedSubZone?: number
   ): void {
     const n = world.getTileBiomeFast(tx, ty - 1);
     const s = world.getTileBiomeFast(tx, ty + 1);
@@ -1753,11 +1933,7 @@ export class GameRenderer {
       const swLand = sw !== BiomeType.OCEAN;
       const seLand = se !== BiomeType.OCEAN;
 
-      const shelfColors = {
-        solid: '#d6b065',
-        mid: 'rgba(217, 169, 92, 0.58)',
-        soft: 'rgba(217, 169, 92, 0.28)',
-      };
+      const shelfColors = GameRenderer.BLEND_PALETTES.OCEAN_SHELF;
 
       if (nLand || sLand || eLand || wLand) {
         const waveOffset = Math.round(
@@ -1842,12 +2018,10 @@ export class GameRenderer {
       if (!sLand && !eLand && seLand) {
         this.drawOrganicCornerPatch(ctx, wx, wy, 'SE', shelfColors, 9);
       }
-    }
 
-    // =========================================================================
-    // A2. RIVER CURRENT STREAKS & COASTAL SURF WAVES PUSHING TOWARD BEACH
-    // =========================================================================
-    if (biome === BiomeType.OCEAN) {
+      // =========================================================================
+      // A2. RIVER CURRENT STREAKS & COASTAL SURF WAVES PUSHING TOWARD BEACH
+      // =========================================================================
       const current = world.getWaterCurrentAtTile(tx, ty, globalTime);
       if (current.kind === 'river') {
         const cMag = Math.hypot(current.vx, current.vy);
@@ -1905,9 +2079,17 @@ export class GameRenderer {
     // =========================================================================
     // B. TERRESTRIAL CELL-TO-CELL ORGANIC BLENDING (Biomes & Sub-Zones)
     // =========================================================================
-    const myIsBeach =
-      world.getEcologicalZoneAtTile(tx, ty) === EcologicalZone.COASTAL_TROPICS;
-    const mySub = myIsBeach ? 1 : world.getTileSubZone(tx, ty, biome);
+    const myZone =
+      precomputedZone !== undefined
+        ? precomputedZone
+        : world.getEcologicalZoneAtTile(tx, ty);
+    const myIsBeach = myZone === EcologicalZone.COASTAL_TROPICS;
+    const mySub =
+      precomputedSubZone !== undefined
+        ? precomputedSubZone
+        : myIsBeach
+        ? 1
+        : world.getTileSubZone(tx, ty, biome);
 
     // Priority order so lush vegetation/forests/grass naturally overlap onto drier/flatter ground and beach sand
     const getVisualBlendRank = (
@@ -1938,7 +2120,10 @@ export class GameRenderer {
       nx: number,
       ny: number,
       nb: BiomeType
-    ): { solid: string; mid: string; soft: string; isBiomeChange: boolean } | null => {
+    ): {
+      colors: { solid: string; mid: string; soft: string };
+      isBiomeChange: boolean;
+    } | null => {
       if (nb === BiomeType.OCEAN) return null;
       const nIsBeach =
         world.getEcologicalZoneAtTile(nx, ny) === EcologicalZone.COASTAL_TROPICS;
@@ -1946,8 +2131,15 @@ export class GameRenderer {
       if (nb === biome && nSub === mySub && nIsBeach === myIsBeach) return null;
       const nRank = getVisualBlendRank(nb, nSub, nIsBeach);
       if (nRank <= myRank) return null;
-      const cols = this.getTileOrganicBlendColors(world, nx, ny, nb, nSub);
-      return { ...cols, isBiomeChange: nb !== biome || nIsBeach !== myIsBeach };
+      const colors = this.getTileOrganicBlendColors(
+        world,
+        nx,
+        ny,
+        nb,
+        nSub,
+        nIsBeach
+      );
+      return { colors, isBiomeChange: nb !== biome || nIsBeach !== myIsBeach };
     };
 
     const nBlend = checkNeighborBlend(tx, ty - 1, n);
@@ -1963,7 +2155,7 @@ export class GameRenderer {
         tx,
         ty,
         'N',
-        nBlend,
+        nBlend.colors,
         nBlend.isBiomeChange ? 1.05 : 0.72
       );
     }
@@ -1975,7 +2167,7 @@ export class GameRenderer {
         tx,
         ty,
         'S',
-        sBlend,
+        sBlend.colors,
         sBlend.isBiomeChange ? 1.05 : 0.72
       );
     }
@@ -1987,7 +2179,7 @@ export class GameRenderer {
         tx,
         ty,
         'W',
-        wBlend,
+        wBlend.colors,
         wBlend.isBiomeChange ? 1.05 : 0.72
       );
     }
@@ -1999,49 +2191,49 @@ export class GameRenderer {
         tx,
         ty,
         'E',
-        eBlend,
+        eBlend.colors,
         eBlend.isBiomeChange ? 1.05 : 0.72
       );
     }
 
     // Inner & outer diagonal corner rounding so biome and sub-zone transitions curve organically
     if (nBlend && wBlend) {
-      this.drawOrganicCornerPatch(ctx, wx, wy, 'NW', nBlend, 11);
+      this.drawOrganicCornerPatch(ctx, wx, wy, 'NW', nBlend.colors, 11);
     } else if (!nBlend && !wBlend) {
       const nw = world.getTileBiomeFast(tx - 1, ty - 1);
       const nwBlend = checkNeighborBlend(tx - 1, ty - 1, nw);
       if (nwBlend) {
-        this.drawOrganicCornerPatch(ctx, wx, wy, 'NW', nwBlend, 7);
+        this.drawOrganicCornerPatch(ctx, wx, wy, 'NW', nwBlend.colors, 7);
       }
     }
 
     if (nBlend && eBlend) {
-      this.drawOrganicCornerPatch(ctx, wx, wy, 'NE', nBlend, 11);
+      this.drawOrganicCornerPatch(ctx, wx, wy, 'NE', nBlend.colors, 11);
     } else if (!nBlend && !eBlend) {
       const ne = world.getTileBiomeFast(tx + 1, ty - 1);
       const neBlend = checkNeighborBlend(tx + 1, ty - 1, ne);
       if (neBlend) {
-        this.drawOrganicCornerPatch(ctx, wx, wy, 'NE', neBlend, 7);
+        this.drawOrganicCornerPatch(ctx, wx, wy, 'NE', neBlend.colors, 7);
       }
     }
 
     if (sBlend && wBlend) {
-      this.drawOrganicCornerPatch(ctx, wx, wy, 'SW', sBlend, 11);
+      this.drawOrganicCornerPatch(ctx, wx, wy, 'SW', sBlend.colors, 11);
     } else if (!sBlend && !wBlend) {
       const sw = world.getTileBiomeFast(tx - 1, ty + 1);
       const swBlend = checkNeighborBlend(tx - 1, ty + 1, sw);
       if (swBlend) {
-        this.drawOrganicCornerPatch(ctx, wx, wy, 'SW', swBlend, 7);
+        this.drawOrganicCornerPatch(ctx, wx, wy, 'SW', swBlend.colors, 7);
       }
     }
 
     if (sBlend && eBlend) {
-      this.drawOrganicCornerPatch(ctx, wx, wy, 'SE', sBlend, 11);
+      this.drawOrganicCornerPatch(ctx, wx, wy, 'SE', sBlend.colors, 11);
     } else if (!sBlend && !eBlend) {
       const se = world.getTileBiomeFast(tx + 1, ty + 1);
       const seBlend = checkNeighborBlend(tx + 1, ty + 1, se);
       if (seBlend) {
-        this.drawOrganicCornerPatch(ctx, wx, wy, 'SE', seBlend, 7);
+        this.drawOrganicCornerPatch(ctx, wx, wy, 'SE', seBlend.colors, 7);
       }
     }
   }
@@ -2059,7 +2251,8 @@ export class GameRenderer {
     wy: number,
     biome: BiomeType,
     subZone: number,
-    globalTime: number
+    globalTime: number,
+    precomputedZone?: EcologicalZone
   ): void {
     const h = world.getTileDetailHash(tx, ty, 313);
     // Minimalist density: >92% of tiles have zero extra micro-clutter
@@ -2070,7 +2263,10 @@ export class GameRenderer {
     const sway = Math.round(Math.sin(globalTime * 2.4 + tx + ty) * 1);
 
     if (biome === BiomeType.PLAINS || biome === BiomeType.ISLAND) {
-      const zone = world.getEcologicalZoneAtTile(tx, ty);
+      const zone =
+        precomputedZone !== undefined
+          ? precomputedZone
+          : world.getEcologicalZoneAtTile(tx, ty);
       if (zone === EcologicalZone.COASTAL_TROPICS) {
         // Subtle beach seashell
         ctx.fillStyle = '#fef3c7';
@@ -2097,14 +2293,169 @@ export class GameRenderer {
     }
   }
 
+  private drawUndergroundFloorTile(
+    ctx: CanvasRenderingContext2D,
+    tx: number,
+    ty: number,
+    wx: number,
+    wy: number
+  ): void {
+    const h =
+      (((tx * 374761393 + ty * 668265263) ^ 0x5bf03635) >>> 0) % 100;
+    ctx.fillStyle = h < 35 ? '#261a12' : h < 70 ? '#2b1d14' : '#2f2017';
+    ctx.fillRect(wx, wy, TILE_SIZE + 0.35, TILE_SIZE + 0.35);
+
+    // Subtle earthen pebbles & soil grain
+    const p1x = (h * 7) % 24;
+    const p1y = (h * 13) % 24;
+    ctx.fillStyle = '#1f140d';
+    ctx.fillRect(wx + 3 + p1x, wy + 3 + p1y, 3, 2);
+    if (h % 3 === 0) {
+      ctx.fillStyle = '#3a281c';
+      ctx.fillRect(wx + 24 - p1x, wy + 6 + (p1y % 18), 2, 2);
+    }
+  }
+
+  private drawUndergroundBlockNode(
+    ctx: CanvasRenderingContext2D,
+    world: WorldManager | undefined,
+    node: NatureNode,
+    wx: number,
+    wy: number,
+    isAimed: boolean
+  ): void {
+    const tx = node.tileX;
+    const ty = node.tileY;
+    const h =
+      (((tx * 374761393 + ty * 668265263) ^ 0x27d4eb2d) >>> 0) % 1000;
+
+    ctx.save();
+    if (node.hitFlashTimer > 0) {
+      ctx.filter = 'brightness(1.65)';
+    }
+
+    // Full 32x32 compacted subterranean dirt wall block
+    ctx.fillStyle = '#4a3121';
+    ctx.fillRect(wx, wy, TILE_SIZE, TILE_SIZE);
+
+    // Darker lower geological strata & border bevel
+    ctx.fillStyle = '#3b2518';
+    ctx.fillRect(wx, wy + 22, TILE_SIZE, 10);
+    ctx.fillStyle = '#5c3d28';
+    ctx.fillRect(wx, wy, TILE_SIZE, 5);
+
+    // Earthen clods & rocky texture
+    const ox1 = (h % 17) + 3;
+    const oy1 = ((h >> 3) % 15) + 5;
+    ctx.fillStyle = '#332014';
+    ctx.fillRect(wx + ox1, wy + oy1, 5, 4);
+    ctx.fillRect(wx + ((ox1 + 11) % 24) + 2, wy + ((oy1 + 9) % 20) + 4, 4, 3);
+    ctx.fillStyle = '#694730';
+    ctx.fillRect(wx + ((ox1 + 5) % 22) + 3, wy + ((oy1 + 3) % 18) + 4, 4, 2);
+
+    // Check adjacent open floor edges to draw subtle 3D rock lip/shadow
+    if (world) {
+      const openNorth = !world.hasUndergroundDirtBlockAtTile(tx, ty - 1);
+      const openSouth = !world.hasUndergroundDirtBlockAtTile(tx, ty + 1);
+      const openWest = !world.hasUndergroundDirtBlockAtTile(tx - 1, ty);
+      const openEast = !world.hasUndergroundDirtBlockAtTile(tx + 1, ty);
+      if (openNorth) {
+        ctx.fillStyle = '#734f36';
+        ctx.fillRect(wx, wy, TILE_SIZE, 3);
+      }
+      if (openSouth) {
+        ctx.fillStyle = '#24160e';
+        ctx.fillRect(wx, wy + TILE_SIZE - 4, TILE_SIZE, 4);
+      }
+      if (openWest) {
+        ctx.fillStyle = '#5e402b';
+        ctx.fillRect(wx, wy, 2, TILE_SIZE);
+      }
+      if (openEast) {
+        ctx.fillStyle = '#2c1b11';
+        ctx.fillRect(wx + TILE_SIZE - 2, wy, 2, TILE_SIZE);
+      }
+    }
+
+    // Embedded Ore Veins: Carvão (Coal) or Minério de Ferro (Iron)
+    if (node.type === NatureNodeType.UNDERGROUND_COAL) {
+      // Rich dark glossy coal seams embedded in the dirt block
+      ctx.fillStyle = '#090d16';
+      ctx.fillRect(wx + 5, wy + 6, 8, 6);
+      ctx.fillRect(wx + 17, wy + 13, 9, 7);
+      ctx.fillRect(wx + 8, wy + 20, 7, 5);
+      ctx.fillStyle = '#1e293b';
+      ctx.fillRect(wx + 6, wy + 7, 5, 4);
+      ctx.fillRect(wx + 18, wy + 14, 6, 4);
+      ctx.fillRect(wx + 9, wy + 21, 4, 3);
+      ctx.fillStyle = '#475569';
+      ctx.fillRect(wx + 7, wy + 7, 2, 2);
+      ctx.fillRect(wx + 19, wy + 15, 2, 2);
+    } else if (node.type === NatureNodeType.UNDERGROUND_IRON) {
+      // Rust-ochre & metallic silver-iron veins embedded in the dirt block
+      ctx.fillStyle = '#7c2d12';
+      ctx.fillRect(wx + 5, wy + 5, 9, 7);
+      ctx.fillRect(wx + 16, wy + 13, 10, 7);
+      ctx.fillRect(wx + 7, wy + 19, 8, 6);
+      ctx.fillStyle = '#d97706';
+      ctx.fillRect(wx + 6, wy + 6, 7, 5);
+      ctx.fillRect(wx + 17, wy + 14, 7, 5);
+      ctx.fillRect(wx + 8, wy + 20, 6, 4);
+      ctx.fillStyle = '#cbd5e1';
+      ctx.fillRect(wx + 7, wy + 7, 4, 3);
+      ctx.fillRect(wx + 18, wy + 15, 4, 3);
+      ctx.fillRect(wx + 9, wy + 21, 3, 2);
+      ctx.fillStyle = '#f8fafc';
+      ctx.fillRect(wx + 8, wy + 7, 2, 1);
+      ctx.fillRect(wx + 19, wy + 15, 2, 1);
+    }
+
+    // Progressive excavation cracks when damaged
+    if (node.hp < node.maxHp) {
+      const dmgRatio = 1 - Math.max(0, node.hp / Math.max(1, node.maxHp));
+      ctx.fillStyle = '#170e09';
+      ctx.fillRect(wx + 14, wy + 8, 2, 14);
+      ctx.fillRect(wx + 10, wy + 14, 10, 2);
+      if (dmgRatio > 0.45) {
+        ctx.fillRect(wx + 6, wy + 6, 6, 2);
+        ctx.fillRect(wx + 18, wy + 20, 7, 2);
+      }
+      if (dmgRatio > 0.72) {
+        ctx.fillRect(wx + 5, wy + 22, 8, 2);
+        ctx.fillRect(wx + 20, wy + 7, 6, 2);
+      }
+    }
+
+    ctx.restore();
+
+    if (node.hp < node.maxHp && !isAimed) {
+      this.drawMiniBar(
+        ctx,
+        wx + TILE_SIZE / 2,
+        wy - 5,
+        node.hp / node.maxHp,
+        '#22c55e'
+      );
+    }
+  }
+
   private drawNatureNode(
     ctx: CanvasRenderingContext2D,
     node: NatureNode,
     globalTime: number,
     shadowDx: number,
     player?: PlayerState,
-    isAimed = false
+    isAimed = false,
+    world?: WorldManager
   ): void {
+    const wx = node.tileX * TILE_SIZE;
+    const wy = node.tileY * TILE_SIZE;
+
+    if (WorldManager.isUndergroundBlockNode(node.type)) {
+      this.drawUndergroundBlockNode(ctx, world, node, wx, wy, isAimed);
+      return;
+    }
+
     // Deterministic spatial hashes for natural morphological variety, width variation, height variation & mirror flip
     const hVar =
       (((node.tileX * 374761393 + node.tileY * 668265263) ^ 0x5bf03635) >>> 0) % 1000;
@@ -2120,9 +2471,6 @@ export class GameRenderer {
     const wNorm = wHash / 999; // 0.0 .. 1.0 independent width factor
     const hNorm = hHash / 999; // 0.0 .. 1.0 independent height factor
     const mirrorX = (hVar & 1) === 1;
-
-    const wx = node.tileX * TILE_SIZE;
-    const wy = node.tileY * TILE_SIZE;
 
     if (
       node.type === NatureNodeType.FLOWER_TULIP ||
@@ -3569,10 +3917,13 @@ export class GameRenderer {
       return;
     }
 
-    // Wall-mounted torch (sconce attached to a wall on the same tile)
+    // Wall-mounted torch (sconce attached to a wall or underground dirt block on the same tile)
     if (
       st.type === PlaceableType.TORCH &&
-      (st.attachedToWall || world.hasWallStructureAtTile(st.tileX, st.tileY))
+      (st.attachedToWall ||
+        world.hasWallStructureAtTile(st.tileX, st.tileY) ||
+        (world.isUnderground &&
+          world.hasUndergroundDirtBlockAtTile(st.tileX, st.tileY)))
     ) {
       ctx.save();
       if (st.hitFlashTimer > 0) {
@@ -3583,6 +3934,32 @@ export class GameRenderer {
       if (st.hp < st.maxHp && !isAimed) {
         this.drawMiniBar(ctx, wx + TILE_SIZE / 2, wy - 14, st.hp / st.maxHp, '#38bdf8');
       }
+      return;
+    }
+
+    // Estaca de Perfuração (Drilling Stake)
+    if (st.type === PlaceableType.DRILLING_STAKE) {
+      ctx.save();
+      if (st.hitFlashTimer > 0) {
+        ctx.filter = 'brightness(1.7)';
+      }
+      this.drawDrillingStake(ctx, wx, wy, shadowDx);
+      ctx.restore();
+      if (st.hp < st.maxHp && !isAimed) {
+        this.drawMiniBar(
+          ctx,
+          wx + TILE_SIZE / 2,
+          wy - 6,
+          st.hp / st.maxHp,
+          '#38bdf8'
+        );
+      }
+      return;
+    }
+
+    // Escada de Nível (Level Stairs: hole with ladder down on Surface; ladder leading up in Underground)
+    if (st.type === PlaceableType.LEVEL_STAIRS) {
+      this.drawLevelStairs(ctx, world.isUnderground, wx, wy);
       return;
     }
 
@@ -4627,6 +5004,126 @@ export class GameRenderer {
     }
   }
 
+  private drawDrillingStake(
+    ctx: CanvasRenderingContext2D,
+    wx: number,
+    wy: number,
+    shadowDx: number
+  ): void {
+    // Ground shadow
+    ctx.fillStyle = 'rgba(8, 12, 18, 0.35)';
+    ctx.fillRect(Math.round(wx + 4 + shadowDx * 0.4), wy + 25, 24, 5);
+
+    // Stone collar base
+    ctx.fillStyle = '#1e293b';
+    ctx.fillRect(wx + 4, wy + 21, 24, 8);
+    ctx.fillStyle = '#64748b';
+    ctx.fillRect(wx + 5, wy + 22, 22, 6);
+    ctx.fillStyle = '#94a3b8';
+    ctx.fillRect(wx + 6, wy + 22, 20, 2);
+
+    // Timber A-frame supports
+    ctx.fillStyle = '#451a03';
+    ctx.fillRect(wx + 6, wy + 6, 4, 17);
+    ctx.fillRect(wx + 22, wy + 6, 4, 17);
+    ctx.fillRect(wx + 4, wy + 4, 24, 4);
+    ctx.fillStyle = '#9a602d';
+    ctx.fillRect(wx + 7, wy + 7, 2, 15);
+    ctx.fillRect(wx + 23, wy + 7, 2, 15);
+    ctx.fillRect(wx + 5, wy + 5, 22, 2);
+
+    // Heavy iron drill auger & tip driven into the earth
+    ctx.fillStyle = '#0f172a';
+    ctx.fillRect(wx + 12, wy + 2, 8, 26);
+    ctx.fillStyle = '#cbd5e1';
+    ctx.fillRect(wx + 13, wy + 3, 6, 22);
+    ctx.fillStyle = '#f8fafc';
+    ctx.fillRect(wx + 14, wy + 3, 2, 20);
+    // Spiral auger threads
+    ctx.fillStyle = '#334155';
+    ctx.fillRect(wx + 11, wy + 10, 10, 2);
+    ctx.fillRect(wx + 11, wy + 15, 10, 2);
+    ctx.fillRect(wx + 11, wy + 20, 10, 2);
+    // Golden top cap bolt
+    ctx.fillStyle = '#facc15';
+    ctx.fillRect(wx + 14, wy + 1, 4, 2);
+  }
+
+  private drawLevelStairs(
+    ctx: CanvasRenderingContext2D,
+    isUnderground: boolean,
+    wx: number,
+    wy: number
+  ): void {
+    if (!isUnderground) {
+      // SURFACE APPEARANCE: A dark excavated hole in the ground with a wooden ladder descending into the underground
+      // Outer stone/earth rim
+      ctx.fillStyle = '#1e293b';
+      ctx.fillRect(wx + 2, wy + 3, 28, 26);
+      ctx.fillStyle = '#64748b';
+      ctx.fillRect(wx + 3, wy + 4, 26, 24);
+      ctx.fillStyle = '#94a3b8';
+      ctx.fillRect(wx + 4, wy + 4, 24, 3);
+
+      // Inner earthen shaft wall & deep black pit
+      ctx.fillStyle = '#4a3121';
+      ctx.fillRect(wx + 5, wy + 7, 22, 19);
+      ctx.fillStyle = '#05070b';
+      ctx.fillRect(wx + 6, wy + 9, 20, 16);
+
+      // Wooden ladder rails descending into the dark hole
+      ctx.fillStyle = '#5c3416';
+      ctx.fillRect(wx + 9, wy + 5, 3, 20);
+      ctx.fillRect(wx + 20, wy + 5, 3, 20);
+      ctx.fillStyle = '#b47236';
+      ctx.fillRect(wx + 10, wy + 5, 1, 18);
+      ctx.fillRect(wx + 21, wy + 5, 1, 18);
+
+      // Ladder rungs
+      ctx.fillStyle = '#9a602d';
+      ctx.fillRect(wx + 11, wy + 8, 10, 2);
+      ctx.fillRect(wx + 11, wy + 13, 10, 2);
+      ctx.fillRect(wx + 11, wy + 18, 10, 2);
+      ctx.fillStyle = '#5c3416';
+      ctx.fillRect(wx + 11, wy + 22, 10, 2);
+    } else {
+      // UNDERGROUND APPEARANCE: A staircase/ladder rising upward toward a shaft leading to the level above (no hitbox!)
+      // Subtle shaft of daylight/moonlight on the floor below the ladder
+      ctx.fillStyle = 'rgba(254, 240, 138, 0.14)';
+      ctx.beginPath();
+      ctx.ellipse(wx + 16, wy + 22, 13, 7, 0, 0, Math.PI * 2);
+      ctx.fill();
+
+      // Stone base platform on cave floor
+      ctx.fillStyle = '#334155';
+      ctx.fillRect(wx + 5, wy + 22, 22, 6);
+      ctx.fillStyle = '#64748b';
+      ctx.fillRect(wx + 6, wy + 23, 20, 4);
+
+      // Bright ceiling opening rim at top of tile
+      ctx.fillStyle = '#1e293b';
+      ctx.fillRect(wx + 6, wy - 4, 20, 7);
+      ctx.fillStyle = '#fef08a';
+      ctx.fillRect(wx + 8, wy - 2, 16, 4);
+
+      // Tall wooden ladder rising from floor to ceiling opening
+      ctx.fillStyle = '#451a03';
+      ctx.fillRect(wx + 9, wy - 2, 3, 28);
+      ctx.fillRect(wx + 20, wy - 2, 3, 28);
+      ctx.fillStyle = '#c27d38';
+      ctx.fillRect(wx + 10, wy - 2, 1, 27);
+      ctx.fillRect(wx + 21, wy - 2, 1, 27);
+
+      // Ladder rungs going up
+      for (let ry = wy + 2; ry <= wy + 22; ry += 5) {
+        ctx.fillStyle = '#78350f';
+        ctx.fillRect(wx + 11, ry + 1, 10, 2);
+        ctx.fillStyle = '#d97706';
+        ctx.fillRect(wx + 11, ry, 10, 1);
+      }
+    }
+  }
+
   /**
    * Renders a Torch mounted directly onto a wall (either on the thin side profile of a vertical wall or on the front face of a horizontal wall).
    */
@@ -4639,7 +5136,12 @@ export class GameRenderer {
     globalTime: number
   ): void {
     const wallSt = world.getStructureAtTile(st.tileX, st.tileY) || st;
-    const isSideWall = world.isWallOrDoorSideProfileAt(st.tileX, st.tileY, wallSt);
+    const isOnUndergroundDirt =
+      world.isUnderground &&
+      world.hasUndergroundDirtBlockAtTile(st.tileX, st.tileY);
+    const isSideWall = isOnUndergroundDirt
+      ? false
+      : world.isWallOrDoorSideProfileAt(st.tileX, st.tileY, wallSt);
     const flicker = Math.sin(globalTime * 14 + st.tileX * 5 + st.tileY * 3);
     const flickerY = Math.round(flicker);
 
@@ -8405,22 +8907,22 @@ export class GameRenderer {
       yellowTint?: boolean;
     }[],
     playerHpRatio = 1.0,
-    localRainIntensity = 0
+    localRainIntensity = 0,
+    isUnderground = false
   ): void {
     const w = ctx.canvas.width;
     const h = ctx.canvas.height;
 
     // 1. Night / Dusk / Dawn Darkness Layer & Progressive Luminosity Mask
-    // Light is never drawn as a bright/cloudy overlay on top of the game view;
-    // instead, darkness is a layer over the world, and each light source acts as a
-    // subtractive luminosity mask (100% clear at the center point of light, progressively
-    // losing luminosity until full ambient darkness at the outer radius).
+    // In the Underground: it is always pitch dark (darkness = 0.94), and the player only illuminates 60px around themselves with 33% strength!
     let darkness = 0;
-    const tintR = 6;
-    const tintG = 10;
-    const tintB = 24;
+    const tintR = isUnderground ? 2 : 6;
+    const tintG = isUnderground ? 2 : 10;
+    const tintB = isUnderground ? 4 : 24;
 
-    if (timeOfDay >= 20 || timeOfDay < 5) {
+    if (isUnderground) {
+      darkness = 0.94;
+    } else if (timeOfDay >= 20 || timeOfDay < 5) {
       darkness = 0.78;
     } else if (timeOfDay >= 17.5 && timeOfDay < 20) {
       const t = (timeOfDay - 17.5) / 2.5;
@@ -8432,15 +8934,15 @@ export class GameRenderer {
 
     // De dia: a chuva deixa o dia mais azulado e ligeiramente mais escuro,
     // exatamente como se o efeito da sombra da nuvem (rgba(14, 28, 56)) fosse aplicado em tudo.
-    const dayRatio = Math.max(0, 1 - darkness / 0.78);
-    if (localRainIntensity > 0.01 && dayRatio > 0.01) {
+    const dayRatio = isUnderground ? 0 : Math.max(0, 1 - darkness / 0.78);
+    if (!isUnderground && localRainIntensity > 0.01 && dayRatio > 0.01) {
       const rainDayAlpha = localRainIntensity * dayRatio * 0.24;
       ctx.fillStyle = `rgba(14, 28, 56, ${rainDayAlpha.toFixed(3)})`;
       ctx.fillRect(0, 0, w, h);
     }
 
     // De noite: a chuva também deixa a noite ligeiramente mais escura um pouquinho
-    if (localRainIntensity > 0.01 && darkness > 0.01) {
+    if (!isUnderground && localRainIntensity > 0.01 && darkness > 0.01) {
       const nightRatio = Math.min(1, darkness / 0.78);
       darkness = Math.min(
         0.86,

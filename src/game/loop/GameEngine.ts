@@ -352,15 +352,18 @@ export class GameEngine {
     this.world = new WorldManager(
       this.metadata.seed,
       saveData.chunks,
-      this.metadata.createdWorldGenVersion ?? this.metadata.worldGenVersion ?? 2
+      this.metadata.createdWorldGenVersion ?? this.metadata.worldGenVersion ?? 2,
+      saveData.undergroundChunks
+    );
+    this.world.setActiveLayer(
+      this.player.isUnderground ? 'underground' : 'surface'
     );
     if (!this.player.swimSpeed || this.player.swimSpeed <= 0) {
       this.player.swimSpeed = 58;
     }
-    this.player.isSwimming = this.world.isWorldPosInWater(
-      this.player.x,
-      this.player.y
-    );
+    this.player.isSwimming = this.world.isUnderground
+      ? false
+      : this.world.isWorldPosInWater(this.player.x, this.player.y);
     // Ensure the player never spawns trapped inside a newly built structure or solid hitbox
     this.pushPlayerOutOfHitbox(0, true);
     this.entities = new EntityManager(saveData.creatures);
@@ -827,6 +830,7 @@ export class GameEngine {
    * Biomes like Desert (`BiomeType.DESERT`) never receive rain.
    */
   public getLocalRainIntensityAtWorld(wx: number, wy: number): number {
+    if (this.world.isUnderground) return 0;
     const globalRain = this.metadata.rainIntensity ?? 0;
     if (globalRain <= 0.005) return 0;
 
@@ -1562,6 +1566,10 @@ export class GameEngine {
     );
   }
 
+  private revealedTileRadiusCache = new Map<number, number>();
+  private lastRevealUnderground = false;
+  private lastRevealSeed = Number.NaN;
+
   /**
    * Reveals fog-of-war around `(wx, wy)` and triggers one-time discovery creature spawning
    * (+30% spawn chance) for any newly discovered Island (`BiomeType.ISLAND`) chunks.
@@ -1571,6 +1579,48 @@ export class GameEngine {
     wy: number,
     radiusTiles: number
   ): void {
+    const tile = this.world.worldToTile(wx, wy);
+    const isUnder = this.world.isUnderground;
+    if (
+      isUnder !== this.lastRevealUnderground ||
+      this.world.seed !== this.lastRevealSeed
+    ) {
+      this.revealedTileRadiusCache.clear();
+      this.lastRevealUnderground = isUnder;
+      this.lastRevealSeed = this.world.seed;
+    }
+    const tileKey =
+      (tile.tx + 524288) * 1048576 + (tile.ty + 524288);
+    const prevRadius = this.revealedTileRadiusCache.get(tileKey);
+    if (prevRadius !== undefined && prevRadius >= radiusTiles) {
+      return;
+    }
+    if (this.revealedTileRadiusCache.size > 8192) {
+      this.revealedTileRadiusCache.clear();
+    }
+    this.revealedTileRadiusCache.set(tileKey, radiusTiles);
+
+    if (isUnder) {
+      if (!this.world.hasUndergroundDirtBlockAtTile(tile.tx, tile.ty)) {
+        const newlyDiscoveredUnderground = this.world.revealUndergroundFromTile(
+          tile.tx,
+          tile.ty
+        );
+        if (
+          newlyDiscoveredUnderground.length > 0 &&
+          (!this.multiplayer?.isOnline || this.multiplayer.role !== 'GUEST') &&
+          this.entities
+        ) {
+          for (const uChunk of newlyDiscoveredUnderground) {
+            this.entities.populateUndergroundAirPocketMobs(this.world, uChunk);
+          }
+          if (this.multiplayer?.isOnline && this.multiplayer.role === 'HOST') {
+            this.multiplayer.sendCreaturesSync(this.entities.creatures);
+          }
+        }
+      }
+      return;
+    }
     const newlyDiscoveredIslandChunks = this.world.revealAround(
       wx,
       wy,
@@ -4179,6 +4229,14 @@ export class GameEngine {
     for (let i = this.entities.creatures.length - 1; i >= 0; i--) {
       const cr = this.entities.creatures[i];
       if (!cr || cr.hp <= 0) continue;
+      if (Boolean(cr.isUnderground) !== Boolean(this.world.isUnderground)) {
+        cr.vx = 0;
+        cr.vy = 0;
+        if (cr.hitFlashTimer > 0) {
+          cr.hitFlashTimer = Math.max(0, cr.hitFlashTimer - dt);
+        }
+        continue;
+      }
 
       const distToPlayer = Math.hypot(
         this.player.x - cr.x,
@@ -6906,6 +6964,9 @@ export class GameEngine {
         drop.pickupDelay -= dt;
         continue;
       }
+      if (Boolean(drop.isUnderground) !== Boolean(this.player.isUnderground)) {
+        continue;
+      }
 
       // Se o inventário do jogador estiver cheio, ele não coleta (nem puxa) o item
       if (!this.canFitItemInInventory(drop.itemId, drop.count)) {
@@ -7316,6 +7377,7 @@ export class GameEngine {
           (c) =>
             c.id === this.preferredTargetCreatureId &&
             c.hp > 0 &&
+            Boolean(c.isUnderground) === Boolean(this.player.isUnderground) &&
             c.kind !== CreatureKind.BOAT &&
             (!c.tamed || this.innocentFireEnabled) &&
             !c.isInsideHouse
@@ -7335,7 +7397,14 @@ export class GameEngine {
       if (!priorityLockTarget) {
         let bestHostileScore = Infinity;
         for (const cr of this.entities.creatures) {
-          if (cr.hp <= 0 || cr.tamed || cr.isInsideHouse) continue;
+          if (
+            cr.hp <= 0 ||
+            cr.tamed ||
+            cr.isInsideHouse ||
+            Boolean(cr.isUnderground) !== Boolean(this.player.isUnderground)
+          ) {
+            continue;
+          }
           const isHostileEnemy = EntityManager.isMonsterKind(cr.kind) || cr.isHostile;
           if (!isHostileEnemy) continue;
 
@@ -7390,7 +7459,14 @@ export class GameEngine {
 
       for (let i = this.entities.creatures.length - 1; i >= 0; i--) {
         const cr = this.entities.creatures[i];
-        if (cr.hp <= 0 || cr.isInsideHouse || cr.kind === CreatureKind.BOAT) continue;
+        if (
+          cr.hp <= 0 ||
+          cr.isInsideHouse ||
+          cr.kind === CreatureKind.BOAT ||
+          Boolean(cr.isUnderground) !== Boolean(this.player.isUnderground)
+        ) {
+          continue;
+        }
         // Skip mounts currently being ridden by any player
         if (
           cr.id === this.player.mountedEntityId ||
@@ -7931,6 +8007,44 @@ export class GameEngine {
             const sx = st.tileX * TILE_SIZE + TILE_SIZE / 2;
             const sy = st.tileY * TILE_SIZE + TILE_SIZE / 2;
 
+            // Escada de Nível is 100% indestructible!
+            if (st.type === PlaceableType.LEVEL_STAIRS) {
+              this.resetInterruptedBreakingTargets(null);
+              soundManager.playHitStone();
+              this.addFloatingText(
+                '🪜 Escada de Nível é indestrutível!',
+                sx,
+                sy - 16,
+                '#94a3b8'
+              );
+              return;
+            }
+
+            // Estaca de Perfuração: when attacked with a Pickaxe, first query the underground at (tileX, tileY)
+            // to ensure there is no ore, structure, or dropped item obstructing that coordinate!
+            if (
+              st.type === PlaceableType.DRILLING_STAKE &&
+              equippedTool === ToolType.PICKAXE
+            ) {
+              const drillCheck = this.world.canDrillAtCoordinate(
+                st.tileX,
+                st.tileY,
+                this.droppedItems
+              );
+              if (!drillCheck.canDrill) {
+                this.resetInterruptedBreakingTargets(null);
+                soundManager.playHitStone();
+                this.renderer.spawnRipple(sx, sy, '#f43f5e', 20, 0.35);
+                this.addFloatingText(
+                  `⚠️ ${drillCheck.reason || 'Subsolo obstruído nesta coordenada!'}`,
+                  sx,
+                  sy - 18,
+                  '#f43f5e'
+                );
+                return;
+              }
+            }
+
             const req = getStructureBreakRequirement(st.type);
             const evalBreak = evaluateMaterialBreak(
               heldItem?.id || null,
@@ -7963,7 +8077,11 @@ export class GameEngine {
               this.player.swingDuration + 0.85
             );
             st.breakUpdatedAt = Date.now();
-            if (req.requiredTool === ToolType.PICKAXE) {
+            if (
+              req.requiredTool === ToolType.PICKAXE ||
+              (st.type === PlaceableType.DRILLING_STAKE &&
+                equippedTool === ToolType.PICKAXE)
+            ) {
               soundManager.playHitStone();
               this.renderer.spawnBurst(sx, sy, 'STONE', st.hp <= 0 ? 14 : 7);
               this.renderer.spawnBurst(sx, sy, 'SPARK', 4);
@@ -8090,6 +8208,54 @@ export class GameEngine {
                   sy - 16,
                   '#a16207'
                 );
+              } else if (
+                st.type === PlaceableType.DRILLING_STAKE &&
+                equippedTool === ToolType.PICKAXE
+              ) {
+                // Drilling Stake broken with a Pickaxe: NOT collectable! Creates an indestructible Level Stairs hole to the Underground!
+                const drillCheck = this.world.canDrillAtCoordinate(
+                  st.tileX,
+                  st.tileY,
+                  this.droppedItems
+                );
+                if (!drillCheck.canDrill) {
+                  st.hp = 10;
+                  soundManager.playHitStone();
+                  this.addFloatingText(
+                    `⚠️ ${drillCheck.reason || 'Subsolo obstruído nesta coordenada!'}`,
+                    sx,
+                    sy - 18,
+                    '#f43f5e'
+                  );
+                  this.emitUiSnapshot();
+                  return;
+                }
+                const { newlyDiscoveredUndergroundChunks } =
+                  this.world.createLevelStairsAt(st.tileX, st.tileY);
+                if (
+                  !this.multiplayer?.isOnline ||
+                  this.multiplayer.role !== 'GUEST'
+                ) {
+                  for (const uChunk of newlyDiscoveredUndergroundChunks) {
+                    this.entities.populateUndergroundAirPocketMobs(
+                      this.world,
+                      uChunk
+                    );
+                  }
+                }
+                soundManager.playLevelUp();
+                this.renderer.spawnBurst(sx, sy, 'STONE', 18);
+                this.renderer.spawnBurst(sx, sy, 'SPARK', 10);
+                this.renderer.spawnRipple(sx, sy, '#fbbf24', 28, 0.5);
+                this.addFloatingText(
+                  '🪜 Escada de Nível criada! (Interaja para Descer ao Subsolo)',
+                  sx,
+                  sy - 20,
+                  '#fde047'
+                );
+                this.syncChunkAtTile(st.tileX, st.tileY);
+                this.emitUiSnapshot();
+                return;
               } else if (
                 st.type === PlaceableType.HEALING_FOUNTAIN ||
                 st.type === PlaceableType.VILLAGE_WELL
@@ -8990,6 +9156,126 @@ export class GameEngine {
           }
           this.emitUiSnapshot();
         }
+        return;
+      }
+
+      if (target.stationType === PlaceableType.LEVEL_STAIRS) {
+        const { tx, ty } = this.world.worldToTile(target.worldX, target.worldY);
+        if (!this.world.isUnderground) {
+          // DESCER PARA O SUBSOLO
+          if (
+            this.player.mountedEntityId ||
+            Boolean(this.player.mountedCreatureData)
+          ) {
+            soundManager.playHitWood();
+            this.renderer.spawnRipple(
+              this.player.x,
+              this.player.y,
+              '#f43f5e',
+              22,
+              0.38
+            );
+            this.addFloatingText(
+              '🐾 Não é possível descer para o subsolo com nenhum pet!',
+              this.player.x,
+              this.player.y - 22,
+              '#f43f5e'
+            );
+            this.emitUiSnapshot();
+            return;
+          }
+
+          const { newlyDiscoveredUndergroundChunks } =
+            this.world.createLevelStairsAt(tx, ty);
+          if (
+            !this.multiplayer?.isOnline ||
+            this.multiplayer.role !== 'GUEST'
+          ) {
+            for (const uChunk of newlyDiscoveredUndergroundChunks) {
+              this.entities.populateUndergroundAirPocketMobs(
+                this.world,
+                uChunk
+              );
+            }
+          }
+
+          this.player.isUnderground = true;
+          this.world.setActiveLayer('underground');
+          // Player spawns on the exact same cell as the underground Level Stairs (which has no hitbox)
+          this.player.x = tx * TILE_SIZE + TILE_SIZE / 2;
+          this.player.y = ty * TILE_SIZE + TILE_SIZE / 2;
+          this.player.vx = 0;
+          this.player.vy = 0;
+          this.player.isSwimming = false;
+          this.camera.x = this.player.x;
+          this.camera.y = this.player.y;
+
+          soundManager.playPickup();
+          this.renderer.spawnBurst(this.player.x, this.player.y, 'STONE', 10);
+          this.renderer.spawnRipple(
+            this.player.x,
+            this.player.y,
+            '#fbbf24',
+            24,
+            0.45
+          );
+          this.addFloatingText(
+            '🪜 Desceu para o Subsolo!',
+            this.player.x,
+            this.player.y - 22,
+            '#fde047'
+          );
+          this.emitUiSnapshot();
+        } else {
+          // SUBIR PARA A SUPERFÍCIE
+          this.player.isUnderground = false;
+          this.world.setActiveLayer('surface');
+          // Surface Level Stairs has a hitbox, so place the player on the nearest safe adjacent position
+          const safePos = this.world.findNearestSafePosition(
+            tx * TILE_SIZE + TILE_SIZE / 2,
+            (ty + 1) * TILE_SIZE + TILE_SIZE / 2,
+            6.2,
+            true
+          );
+          this.player.x = safePos.x;
+          this.player.y = safePos.y;
+          this.player.vx = 0;
+          this.player.vy = 0;
+          this.player.isSwimming = this.world.isWorldPosInWater(
+            this.player.x,
+            this.player.y
+          );
+          this.camera.x = this.player.x;
+          this.camera.y = this.player.y;
+
+          soundManager.playPickup();
+          this.renderer.spawnBurst(this.player.x, this.player.y, 'LEAF', 10);
+          this.renderer.spawnRipple(
+            this.player.x,
+            this.player.y,
+            '#4ade80',
+            24,
+            0.45
+          );
+          this.addFloatingText(
+            '🪜 Subiu para a Superfície!',
+            this.player.x,
+            this.player.y - 22,
+            '#4ade80'
+          );
+          this.emitUiSnapshot();
+        }
+        return;
+      }
+
+      if (target.stationType === PlaceableType.DRILLING_STAKE) {
+        soundManager.playHitStone();
+        this.addFloatingText(
+          '⛏️ Quebre com Picareta para abrir Escada de Nível, ou com outro item/mão para coletar de volta!',
+          target.worldX,
+          target.worldY - 20,
+          '#fde047'
+        );
         return;
       }
     }
@@ -10078,6 +10364,9 @@ export class GameEngine {
 
     // 0A. Check nearby Interactive Death Bag ("Bolsinha de Espólios")
     for (const bag of this.deathBags) {
+      if (Boolean(bag.isUnderground) !== Boolean(this.player.isUnderground)) {
+        continue;
+      }
       const d = Math.hypot(bag.x - this.player.x, bag.y - this.player.y);
       if (d <= 76) {
         candidates.push({
@@ -10097,6 +10386,9 @@ export class GameEngine {
 
     // 0B. Check nearby Village NPC or Wanderer
     for (const cr of this.entities.creatures) {
+      if (Boolean(cr.isUnderground) !== Boolean(this.player.isUnderground)) {
+        continue;
+      }
       if (
         (cr.kind === CreatureKind.VILLAGER ||
           cr.kind === CreatureKind.WANDERER) &&
@@ -10340,6 +10632,54 @@ export class GameEngine {
             continue;
           }
 
+          if (st.type === PlaceableType.LEVEL_STAIRS) {
+            if (distPlayer <= TILE_SIZE * 2.4) {
+              const isStandingOnStairs = distPlayer <= 16;
+              const stairsScore = isStandingOnStairs
+                ? -30
+                : computeDirectionalScore(sx, sy, -15);
+              if (Number.isFinite(stairsScore)) {
+                candidates.push({
+                  score: stairsScore,
+                  info: {
+                    kind: 'station',
+                    label: 'Escada de Nível',
+                    actionHint: this.world.isUnderground ? 'Subir' : 'Descer',
+                    worldX: sx,
+                    worldY: sy,
+                    stationType: PlaceableType.LEVEL_STAIRS,
+                    iconItemId: 'level_stairs',
+                    structureId: st.id,
+                  },
+                });
+              }
+            }
+            continue;
+          }
+
+          if (st.type === PlaceableType.DRILLING_STAKE) {
+            if (distPlayer <= TILE_SIZE * 2.2) {
+              const heldDef = heldSlot ? ITEMS[heldSlot.itemId] : null;
+              const isPickaxe = heldDef?.toolType === ToolType.PICKAXE;
+              candidates.push({
+                score: computeDirectionalScore(sx, sy, 2),
+                info: {
+                  kind: 'station',
+                  label: 'Estaca de Perfuração',
+                  actionHint: isPickaxe
+                    ? 'Perfurar c/ Picareta (Cria Escada de Nível) ⛏️'
+                    : 'Quebre p/ Coletar ou use Picareta p/ Perfurar',
+                  worldX: sx,
+                  worldY: sy,
+                  stationType: PlaceableType.DRILLING_STAKE,
+                  iconItemId: 'drilling_stake',
+                  structureId: st.id,
+                },
+              });
+            }
+            continue;
+          }
+
           if (
             st.type !== PlaceableType.WORKBENCH &&
             st.type !== PlaceableType.WEAVING_TABLE &&
@@ -10565,7 +10905,13 @@ export class GameEngine {
     const isHoldingSaddle = Boolean(heldSlot && heldSlot.itemId === 'saddle');
 
     for (const cr of this.entities.creatures) {
-      if (cr.hp <= 0 || cr.isInsideHouse) continue;
+      if (
+        cr.hp <= 0 ||
+        cr.isInsideHouse ||
+        Boolean(cr.isUnderground) !== Boolean(this.player.isUnderground)
+      ) {
+        continue;
+      }
       // Skip the mount the player is currently riding so the selector can target objects around the player while mounted
       if (this.player.mountedEntityId === cr.id) continue;
 
@@ -11037,8 +11383,57 @@ export class GameEngine {
       if (bp.xpReward > 0) {
         this.gainXp(bp.xpReward);
       }
+      const brokenNodeType = node.type;
+      const brokenTx = node.tileX;
+      const brokenTy = node.tileY;
       chunk.nodes.splice(nodeIndex, 1);
-      this.syncChunkAtTile(node.tileX, node.tileY);
+
+      // If an underground dirt/ore block was excavated:
+      // 1. Drop and remove any wall-mounted Torch that was attached to this dirt block
+      // 2. Reveal newly exposed adjacent underground tiles (and any connected Air Pocket + its mobs!)
+      if (WorldManager.isUndergroundBlockNode(brokenNodeType)) {
+        const uChunk = this.world.getOrCreateChunk(
+          Math.floor(brokenTx / 16),
+          Math.floor(brokenTy / 16)
+        );
+        for (let ti = uChunk.structures.length - 1; ti >= 0; ti--) {
+          const st = uChunk.structures[ti];
+          if (
+            st.tileX === brokenTx &&
+            st.tileY === brokenTy &&
+            st.type === PlaceableType.TORCH
+          ) {
+            this.recentlyRemovedWorldObjectIds.set(st.id, Date.now());
+            this.spawnDrop(
+              st.itemId || 'torch',
+              1,
+              nx,
+              ny,
+              0.25,
+              undefined,
+              `drop_struct_${st.id}_torch`
+            );
+            uChunk.structures.splice(ti, 1);
+          }
+        }
+        const newlyDiscoveredChunks = this.world.revealUndergroundFromTile(
+          brokenTx,
+          brokenTy
+        );
+        if (
+          !this.multiplayer?.isOnline ||
+          this.multiplayer.role !== 'GUEST'
+        ) {
+          for (const discChunk of newlyDiscoveredChunks) {
+            this.entities.populateUndergroundAirPocketMobs(
+              this.world,
+              discChunk
+            );
+          }
+        }
+      }
+
+      this.syncChunkAtTile(brokenTx, brokenTy);
     }
     this.emitUiSnapshot();
   }
@@ -12162,6 +12557,7 @@ export class GameEngine {
           'Aventureiro',
         x: deathX,
         y: deathY,
+        isUnderground: Boolean(this.world.isUnderground),
         items: bagItems,
         goldCoins: droppedGold,
         createdAt: Date.now(),
@@ -12184,7 +12580,11 @@ export class GameEngine {
       this.renderer.spawnRipple(deathX, deathY, '#f43f5e', 30, 0.6);
     }
 
-    // Respawn at the last rest point the player interacted with or used
+    // Respawn on the surface at the last rest point the player interacted with or used
+    if (this.world.isUnderground || this.player.isUnderground) {
+      this.player.isUnderground = false;
+      this.world.setActiveLayer('surface');
+    }
     const targetRespawnX =
       typeof this.player.respawnX === 'number' &&
       Number.isFinite(this.player.respawnX)
@@ -13209,6 +13609,17 @@ export class GameEngine {
         tx * TILE_SIZE + 16,
         ty * TILE_SIZE,
         '#f43f5e'
+      );
+      return false;
+    }
+
+    if (st.type === PlaceableType.LEVEL_STAIRS) {
+      soundManager.playHitStone();
+      this.addFloatingText(
+        '🪜 Escada de Nível é indestrutível!',
+        tx * TILE_SIZE + 16,
+        ty * TILE_SIZE,
+        '#94a3b8'
       );
       return false;
     }
@@ -17140,6 +17551,7 @@ export class GameEngine {
       flowerColor: resolvedFlowerColor,
       x,
       y,
+      isUnderground: Boolean(this.world.isUnderground),
       bobTimer: Math.random() * 5,
       pickupDelay,
       expiresTimer: 120,
@@ -20935,7 +21347,11 @@ export class GameEngine {
         Object.keys(this.guestPlayers).length > 0
           ? JSON.parse(JSON.stringify(this.guestPlayers))
           : undefined,
-      chunks: this.world.chunks,
+      chunks: this.world.surfaceChunks,
+      undergroundChunks:
+        Object.keys(this.world.undergroundChunks).length > 0
+          ? this.world.undergroundChunks
+          : undefined,
       creatures: this.entities.creatures,
       droppedItems: this.droppedItems,
       waypoints: this.waypoints,

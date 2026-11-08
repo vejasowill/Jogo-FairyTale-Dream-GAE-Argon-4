@@ -82,6 +82,9 @@ const COMPACT_NODE_TYPE_LIST: NatureNodeType[] = [
   NatureNodeType.FLOWER_LILY,
   NatureNodeType.FLOWER_SUNFLOWER,
   NatureNodeType.FLOWER_SOLAR_DROP,
+  NatureNodeType.UNDERGROUND_DIRT,
+  NatureNodeType.UNDERGROUND_COAL,
+  NatureNodeType.UNDERGROUND_IRON,
 ];
 
 const COMPACT_FLOWER_COLOR_LIST: ClothingColorId[] = [
@@ -212,8 +215,57 @@ export class WorldManager {
    * that predate compact terrain snapshots (`compactTiles`).
    */
   public legacyChunkGenVersion: number;
+  public surfaceChunks: Record<string, ChunkData> = {};
+  public undergroundChunks: Record<string, ChunkData> = {};
+  public isUnderground = false;
   public chunks: Record<string, ChunkData> = {};
   public activeAgricultureChunkKeys = new Set<string>();
+
+  private static readonly NO_WATER_CURRENT: {
+    vx: number;
+    vy: number;
+    kind: 'none' | 'river' | 'ocean_shore';
+  } = { vx: 0, vy: 0, kind: 'none' };
+
+  private rawWaterCache = new Map<
+    number,
+    {
+      waterKind: 'none' | 'ocean' | 'river' | 'lake';
+      isIslandLand: boolean;
+      continentalElev: number;
+      riverMeander: number;
+      climate: number;
+    }
+  >();
+  private tileSubZoneCache = new Map<number, number>();
+  private unloadedBiomeCache = new Map<number, BiomeType>();
+  private unloadedZoneCache = new Map<number, EcologicalZone>();
+  private waterCurrentBaseCache = new Map<
+    number,
+    {
+      kind: 'none' | 'river' | 'ocean_shore';
+      dirX: number;
+      dirY: number;
+      minDist: number;
+    }
+  >();
+
+  public static packTileCoord(tx: number, ty: number): number {
+    return (tx + 500000) * 1048576 + (ty + 500000);
+  }
+
+  public setActiveLayer(layer: 'surface' | 'underground'): void {
+    this.isUnderground = layer === 'underground';
+    this.chunks = this.isUnderground ? this.undergroundChunks : this.surfaceChunks;
+  }
+
+  public static isUndergroundBlockNode(type: NatureNodeType): boolean {
+    return (
+      type === NatureNodeType.UNDERGROUND_DIRT ||
+      type === NatureNodeType.UNDERGROUND_COAL ||
+      type === NatureNodeType.UNDERGROUND_IRON
+    );
+  }
 
   public markChunkDirty(chunk: ChunkData | undefined | null): void {
     if (!chunk) return;
@@ -288,14 +340,19 @@ export class WorldManager {
   constructor(
     seed: number,
     existingChunks?: Record<string, ChunkData>,
-    legacyWorldGenVersion = CURRENT_WORLD_GEN_VERSION
+    legacyWorldGenVersion = CURRENT_WORLD_GEN_VERSION,
+    existingUndergroundChunks?: Record<string, ChunkData>
   ) {
     this.seed = seed;
     this.legacyChunkGenVersion = legacyWorldGenVersion;
     this.worldGenVersion = CURRENT_WORLD_GEN_VERSION;
+    this.surfaceChunks = {};
+    this.undergroundChunks = {};
+    this.isUnderground = false;
+    this.chunks = this.surfaceChunks;
 
     if (existingChunks) {
-      // Pass 1: Decode compact terrain & explored snapshots and register all preserved chunks in this.chunks
+      // Pass 1: Decode compact terrain & explored snapshots and register all preserved chunks in this.surfaceChunks
       // so neighbor lookups during Pass 2 hydration see all preserved chunks immediately.
       const keysToHydrate: string[] = [];
       for (const [key, chunk] of Object.entries(existingChunks)) {
@@ -326,13 +383,25 @@ export class WorldManager {
             chunk.ecologicalZones = decodedZones;
           }
         }
-        this.chunks[key] = chunk;
+        this.surfaceChunks[key] = chunk;
         keysToHydrate.push(key);
       }
 
       // Pass 2: Full hydration of each preserved chunk
       for (const key of keysToHydrate) {
-        this.chunks[key] = this.hydrateChunk(this.chunks[key]);
+        this.surfaceChunks[key] = this.hydrateChunk(this.surfaceChunks[key]);
+      }
+    }
+
+    if (existingUndergroundChunks) {
+      for (const [key, chunk] of Object.entries(existingUndergroundChunks)) {
+        if (!chunk) continue;
+        if (!WorldManager.isChunkExploredOrModified(chunk)) {
+          continue;
+        }
+        chunk.isUnderground = true;
+        chunk.preserved = true;
+        this.undergroundChunks[key] = this.hydrateChunk(chunk);
       }
     }
   }
@@ -363,6 +432,8 @@ export class WorldManager {
       chunk.structures.some(
         (s) =>
           s.ownerType === 'PLAYER' ||
+          s.type === PlaceableType.DRILLING_STAKE ||
+          s.type === PlaceableType.LEVEL_STAIRS ||
           Boolean(s.cropType) ||
           s.type === PlaceableType.TILLED_SOIL ||
           (Array.isArray(s.storageSlots) && s.storageSlots.some(Boolean)) ||
@@ -765,6 +836,24 @@ export class WorldManager {
           }
         }
       }
+    } else if (!chunk.isUnderground && chunk.ecologicalZones) {
+      // One-time upgrade for legacy saved chunks so ocean coasts always have beach (COASTAL_TROPICS)
+      // without ever running getHydrologyAtTile during per-frame rendering
+      for (let ly = 0; ly < CHUNK_SIZE; ly++) {
+        for (let lx = 0; lx < CHUNK_SIZE; lx++) {
+          const idx = ly * CHUNK_SIZE + lx;
+          if (
+            chunk.tiles[idx] !== BiomeType.OCEAN &&
+            chunk.ecologicalZones[idx] !== EcologicalZone.COASTAL_TROPICS
+          ) {
+            const tx = chunk.cx * CHUNK_SIZE + lx;
+            const ty = chunk.cy * CHUNK_SIZE + ly;
+            if (this.getHydrologyAtTile(tx, ty, chunkGenVer).isOceanBeach) {
+              chunk.ecologicalZones[idx] = EcologicalZone.COASTAL_TROPICS;
+            }
+          }
+        }
+      }
     }
 
     // Restore 256-tile explored array from compactExplored or legacy explored array
@@ -890,11 +979,13 @@ export class WorldManager {
     return { cx, cy, lx, ly };
   }
 
-  public getOrCreateChunk(cx: number, cy: number): ChunkData {
+  public getOrCreateSurfaceChunk(cx: number, cy: number): ChunkData {
     const key = WorldManager.chunkKey(cx, cy);
-    if (!this.chunks[key]) {
-      // Unexplored chunk: generate fresh using the current latest worldGenVersion for this seed!
+    if (!this.surfaceChunks[key]) {
+      const prevChunks = this.chunks;
+      this.chunks = this.surfaceChunks;
       const generated = this.generateChunkV2(cx, cy);
+      this.chunks = prevChunks;
       generated.genVersion = this.worldGenVersion;
       generated.generatedGameVersion = GAME_VERSION;
       generated.compactTiles = WorldManager.encodeCompactTiles(generated.tiles);
@@ -905,15 +996,603 @@ export class WorldManager {
         generated.tileVariants
       );
       generated.dirtyRev = 1;
-      this.chunks[key] = generated;
+      this.surfaceChunks[key] = generated;
       this.syncChunkAgricultureIndex(generated);
     } else if (
-      !Array.isArray(this.chunks[key].tiles) ||
-      this.chunks[key].tiles.length !== CHUNK_SIZE * CHUNK_SIZE
+      !Array.isArray(this.surfaceChunks[key].tiles) ||
+      this.surfaceChunks[key].tiles.length !== CHUNK_SIZE * CHUNK_SIZE
     ) {
-      this.hydrateChunk(this.chunks[key]);
+      this.hydrateChunk(this.surfaceChunks[key]);
     }
-    return this.chunks[key];
+    return this.surfaceChunks[key];
+  }
+
+  public getOrCreateUndergroundChunk(cx: number, cy: number): ChunkData {
+    const key = WorldManager.chunkKey(cx, cy);
+    if (!this.undergroundChunks[key]) {
+      const generated = this.generateUndergroundChunk(cx, cy);
+      generated.isUnderground = true;
+      generated.genVersion = this.worldGenVersion;
+      generated.generatedGameVersion = GAME_VERSION;
+      generated.compactTiles = WorldManager.encodeCompactTiles(generated.tiles);
+      generated.compactVariants = WorldManager.encodeCompactVariants(
+        generated.tileVariants
+      );
+      generated.dirtyRev = 1;
+      this.undergroundChunks[key] = generated;
+    } else if (
+      !Array.isArray(this.undergroundChunks[key].tiles) ||
+      this.undergroundChunks[key].tiles.length !== CHUNK_SIZE * CHUNK_SIZE
+    ) {
+      this.undergroundChunks[key].isUnderground = true;
+      this.hydrateChunk(this.undergroundChunks[key]);
+    }
+    return this.undergroundChunks[key];
+  }
+
+  public getOrCreateChunk(cx: number, cy: number): ChunkData {
+    if (this.isUnderground) {
+      return this.getOrCreateUndergroundChunk(cx, cy);
+    }
+    return this.getOrCreateSurfaceChunk(cx, cy);
+  }
+
+  /**
+   * Generates a procedural Underground (Subsolo) chunk at `(cx, cy)`.
+   * - Completely filled with solid `UNDERGROUND_DIRT` blocks except inside rare organic Air Pockets (`Bolsões de Ar`).
+   * - Embeds Coal (`UNDERGROUND_COAL`) and Iron (`UNDERGROUND_IRON`) single blocks and clusters with strict cluster size caps.
+   * - Inside Air Pockets: spawns a Chest with cave loot and mounts Torches onto the surrounding dirt walls.
+   * - All tiles start with `explored[idx] = 0` (completely dark/undiscovered) until discovered by the player.
+   */
+  private generateUndergroundChunk(cx: number, cy: number): ChunkData {
+    const totalTiles = CHUNK_SIZE * CHUNK_SIZE;
+    const tiles: BiomeType[] = new Array(totalTiles).fill(BiomeType.PLAINS);
+    const tileVariants: number[] = new Array(totalTiles);
+    const explored: number[] = new Array(totalTiles).fill(0);
+    const nodes: NatureNode[] = [];
+    const structures: PlacedStructure[] = [];
+
+    const baseTx = cx * CHUNK_SIZE;
+    const baseTy = cy * CHUNK_SIZE;
+
+    for (let ly = 0; ly < CHUNK_SIZE; ly++) {
+      for (let lx = 0; lx < CHUNK_SIZE; lx++) {
+        const idx = ly * CHUNK_SIZE + lx;
+        const r = hash2D(baseTx + lx, baseTy + ly, this.seed + 7001);
+        tileVariants[idx] = Math.floor(r * 4);
+      }
+    }
+
+    // Track which local tiles (0..255) are open air pocket vs solid block type
+    const blockGrid: (NatureNodeType | null)[] = new Array(totalTiles).fill(
+      NatureNodeType.UNDERGROUND_DIRT
+    );
+
+    // 1. Air Pocket (Bolsão de Ar) generation (~26% chance per underground chunk)
+    const pocketRoll = hash2D(cx, cy, this.seed + 7109);
+    const hasAirPocket = pocketRoll < 0.26;
+    let pocketCenterLx = 8;
+    let pocketCenterLy = 8;
+    const pocketOpenSet = new Set<number>();
+
+    if (hasAirPocket) {
+      pocketCenterLx =
+        6 + Math.floor(hash2D(cx, cy, this.seed + 7121) * 4); // 6..9
+      pocketCenterLy =
+        6 + Math.floor(hash2D(cx, cy, this.seed + 7127) * 4); // 6..9
+      const rx = 2.6 + hash2D(cx, cy, this.seed + 7151) * 1.1; // 2.6..3.7
+      const ry = 2.4 + hash2D(cx, cy, this.seed + 7159) * 1.1; // 2.4..3.5
+
+      for (let ly = 2; ly < CHUNK_SIZE - 2; ly++) {
+        for (let lx = 2; lx < CHUNK_SIZE - 2; lx++) {
+          const dx = (lx - pocketCenterLx) / rx;
+          const dy = (ly - pocketCenterLy) / ry;
+          const wobble =
+            (hash2D(baseTx + lx, baseTy + ly, this.seed + 7177) - 0.5) * 0.28;
+          if (dx * dx + dy * dy + wobble <= 1.0) {
+            const idx = ly * CHUNK_SIZE + lx;
+            blockGrid[idx] = null;
+            pocketOpenSet.add(idx);
+          }
+        }
+      }
+    }
+
+    // 2. Mineral Veins: Coal (Carvão) and Iron (Ferro) — avulsos (1) or agrupamentos (clusters with strict max limit)
+    // Helper to grow a cluster of size `maxClusterSize` (1..limit) inside dirt tiles
+    const placeMineralVein = (
+      mineralType: NatureNodeType,
+      seedLx: number,
+      seedLy: number,
+      targetSize: number,
+      salt: number
+    ) => {
+      const startIdx = seedLy * CHUNK_SIZE + seedLx;
+      if (blockGrid[startIdx] !== NatureNodeType.UNDERGROUND_DIRT) return;
+
+      // Keep a minimum 2-tile separation from existing veins of the same mineral so clusters never merge past the cap
+      for (let dy = -1; dy <= 1; dy++) {
+        for (let dx = -1; dx <= 1; dx++) {
+          const nx = seedLx + dx;
+          const ny = seedLy + dy;
+          if (nx >= 0 && nx < CHUNK_SIZE && ny >= 0 && ny < CHUNK_SIZE) {
+            if (blockGrid[ny * CHUNK_SIZE + nx] === mineralType) {
+              return;
+            }
+          }
+        }
+      }
+
+      const clusterIndices: number[] = [startIdx];
+      blockGrid[startIdx] = mineralType;
+
+      const dirs: [number, number][] = [
+        [1, 0],
+        [-1, 0],
+        [0, 1],
+        [0, -1],
+      ];
+
+      let attempts = 0;
+      while (clusterIndices.length < targetSize && attempts < 16) {
+        attempts++;
+        const pickIdx =
+          clusterIndices[
+            Math.floor(
+              hash2D(cx * 31 + attempts, cy * 17 + salt, this.seed + salt) *
+                clusterIndices.length
+            )
+          ];
+        const curLx = pickIdx % CHUNK_SIZE;
+        const curLy = Math.floor(pickIdx / CHUNK_SIZE);
+        const dirOffset = Math.floor(
+          hash2D(curLx + attempts, curLy + salt, this.seed + salt + 19) * 4
+        );
+
+        let added = false;
+        for (let d = 0; d < 4; d++) {
+          const [dx, dy] = dirs[(dirOffset + d) % 4];
+          const nx = curLx + dx;
+          const ny = curLy + dy;
+          if (nx < 1 || nx >= CHUNK_SIZE - 1 || ny < 1 || ny >= CHUNK_SIZE - 1) {
+            continue;
+          }
+          const nIdx = ny * CHUNK_SIZE + nx;
+          if (blockGrid[nIdx] === NatureNodeType.UNDERGROUND_DIRT) {
+            blockGrid[nIdx] = mineralType;
+            clusterIndices.push(nIdx);
+            added = true;
+            break;
+          }
+        }
+        if (!added) break;
+      }
+    };
+
+    // 2A. Carvão (UNDERGROUND_COAL): Common — 5 to 7 veins per chunk; avulso (1 tile, 40%) or cluster of 2..5 tiles max (60%)
+    const coalVeinCount =
+      5 + Math.floor(hash2D(cx, cy, this.seed + 7307) * 3); // 5..7
+    for (let v = 0; v < coalVeinCount; v++) {
+      const salt = 7331 + v * 97;
+      const lx = 1 + Math.floor(hash2D(cx, cy, this.seed + salt) * (CHUNK_SIZE - 2));
+      const ly =
+        1 + Math.floor(hash2D(cx, cy, this.seed + salt + 13) * (CHUNK_SIZE - 2));
+      const sizeRoll = hash2D(cx, cy, this.seed + salt + 29);
+      // 40% avulso (1), 60% agrupamento limitado (2 a 5 blocos no máximo)
+      const clusterSize =
+        sizeRoll < 0.40
+          ? 1
+          : 2 + Math.floor(hash2D(cx, cy, this.seed + salt + 43) * 4); // 2..5
+      placeMineralVein(NatureNodeType.UNDERGROUND_COAL, lx, ly, clusterSize, salt);
+    }
+
+    // 2B. Ferro (UNDERGROUND_IRON): Rarer — 2 to 4 veins per chunk; avulso (1 tile, 45%) or cluster of 2..4 tiles max (55%)
+    const ironVeinCount =
+      2 + Math.floor(hash2D(cx, cy, this.seed + 7603) * 3); // 2..4
+    for (let v = 0; v < ironVeinCount; v++) {
+      const salt = 7639 + v * 109;
+      const lx = 1 + Math.floor(hash2D(cx, cy, this.seed + salt) * (CHUNK_SIZE - 2));
+      const ly =
+        1 + Math.floor(hash2D(cx, cy, this.seed + salt + 17) * (CHUNK_SIZE - 2));
+      const sizeRoll = hash2D(cx, cy, this.seed + salt + 31);
+      // 45% avulso (1), 55% agrupamento limitado (2 a 4 blocos no máximo)
+      const clusterSize =
+        sizeRoll < 0.45
+          ? 1
+          : 2 + Math.floor(hash2D(cx, cy, this.seed + salt + 53) * 3); // 2..4
+      placeMineralVein(NatureNodeType.UNDERGROUND_IRON, lx, ly, clusterSize, salt);
+    }
+
+    // 3. Populate Air Pocket structures: 1 Chest in the center + 2 to 3 Torches mounted on the surrounding dirt walls
+    if (hasAirPocket && pocketOpenSet.size >= 9) {
+      const chestTx = baseTx + pocketCenterLx;
+      const chestTy = baseTy + pocketCenterLy;
+      const lootRoll = hash2D(cx, cy, this.seed + 7817);
+      const lootItems: { itemId: string; count: number }[] = [
+        { itemId: 'charcoal', count: 6 + Math.floor(lootRoll * 7) },
+        { itemId: 'iron_ore', count: 3 + Math.floor(lootRoll * 5) },
+        { itemId: 'torch', count: 4 + Math.floor(lootRoll * 5) },
+        { itemId: 'gold_coin', count: 18 + Math.floor(lootRoll * 30) },
+      ];
+      if (lootRoll > 0.45) {
+        lootItems.push({ itemId: 'iron_bar', count: 2 + Math.floor(lootRoll * 3) });
+      }
+      if (lootRoll > 0.72) {
+        lootItems.push({ itemId: 'wool_bandage', count: 2 });
+      }
+
+      const storageSlots = new Array(CHEST_STORAGE_SIZE).fill(null);
+      for (let i = 0; i < lootItems.length && i < CHEST_STORAGE_SIZE; i++) {
+        storageSlots[i] = {
+          itemId: lootItems[i].itemId,
+          count: lootItems[i].count,
+        };
+      }
+
+      structures.push({
+        id: `ug_chest_${chestTx}_${chestTy}`,
+        type: PlaceableType.CHEST,
+        itemId: 'chest',
+        tileX: chestTx,
+        tileY: chestTy,
+        hp: 150,
+        maxHp: 150,
+        solid: true,
+        isOpen: false,
+        orientation: 'horizontal',
+        lightRadius: 0,
+        hitFlashTimer: 0,
+        customName: 'Baú do Subsolo',
+        lootItems,
+        storageSlots,
+      });
+
+      // Find dirt wall tiles immediately bordering the air pocket to mount 2..3 Torches
+      const wallCandidates: { lx: number; ly: number }[] = [];
+      for (let ly = 1; ly < CHUNK_SIZE - 1; ly++) {
+        for (let lx = 1; lx < CHUNK_SIZE - 1; lx++) {
+          const idx = ly * CHUNK_SIZE + lx;
+          if (blockGrid[idx] === null) continue;
+          const touchesPocket =
+            pocketOpenSet.has((ly - 1) * CHUNK_SIZE + lx) ||
+            pocketOpenSet.has((ly + 1) * CHUNK_SIZE + lx) ||
+            pocketOpenSet.has(ly * CHUNK_SIZE + (lx - 1)) ||
+            pocketOpenSet.has(ly * CHUNK_SIZE + (lx + 1));
+          if (touchesPocket) {
+            wallCandidates.push({ lx, ly });
+          }
+        }
+      }
+
+      if (wallCandidates.length > 0) {
+        const torchCount = Math.min(
+          wallCandidates.length,
+          2 + (hash2D(cx, cy, this.seed + 7853) > 0.45 ? 1 : 0)
+        );
+        const step = Math.max(1, Math.floor(wallCandidates.length / torchCount));
+        for (let t = 0; t < torchCount; t++) {
+          const cand = wallCandidates[(t * step) % wallCandidates.length];
+          const tTx = baseTx + cand.lx;
+          const tTy = baseTy + cand.ly;
+          structures.push({
+            id: `ug_torch_${tTx}_${tTy}`,
+            type: PlaceableType.TORCH,
+            itemId: 'torch',
+            tileX: tTx,
+            tileY: tTy,
+            hp: 40,
+            maxHp: 40,
+            solid: false,
+            isOpen: false,
+            orientation: 'auto',
+            lightRadius: 140,
+            hitFlashTimer: 0,
+            attachedToWall: true,
+          });
+        }
+      }
+    }
+
+    // 4. Create NatureNodes for all non-open tiles in blockGrid
+    for (let ly = 0; ly < CHUNK_SIZE; ly++) {
+      for (let lx = 0; lx < CHUNK_SIZE; lx++) {
+        const idx = ly * CHUNK_SIZE + lx;
+        const nodeType = blockGrid[idx];
+        if (!nodeType) continue;
+        const tx = baseTx + lx;
+        const ty = baseTy + ly;
+        const r = hash2D(tx, ty, this.seed + 7901);
+        nodes.push(this.createNatureNode(nodeType, tx, ty, r, undefined, tileVariants[idx]));
+      }
+    }
+
+    return {
+      cx,
+      cy,
+      isUnderground: true,
+      tiles,
+      tileVariants,
+      explored,
+      nodes,
+      structures,
+    };
+  }
+
+  /**
+   * Returns the living underground dirt/ore block (`UNDERGROUND_DIRT`, `UNDERGROUND_COAL`, `UNDERGROUND_IRON`)
+   * at tile `(tx, ty)` in the underground layer, if any.
+   */
+  public getUndergroundBlockNodeAtTile(
+    tx: number,
+    ty: number,
+    chunkOverride?: ChunkData
+  ): NatureNode | undefined {
+    const { cx, cy } = this.tileToChunk(tx, ty);
+    const chunk = chunkOverride || this.getOrCreateUndergroundChunk(cx, cy);
+    return chunk.nodes.find(
+      (n) =>
+        n.tileX === tx &&
+        n.tileY === ty &&
+        n.hp > 0 &&
+        WorldManager.isUndergroundBlockNode(n.type)
+    );
+  }
+
+  /**
+   * Returns true if tile `(tx, ty)` in the underground currently has an unexcavated dirt/ore block.
+   */
+  public hasUndergroundDirtBlockAtTile(
+    tx: number,
+    ty: number,
+    chunkOverride?: ChunkData
+  ): boolean {
+    return Boolean(this.getUndergroundBlockNodeAtTile(tx, ty, chunkOverride));
+  }
+
+  /**
+   * Returns true if tile `(tx, ty)` in the underground has been discovered (`explored[idx] === 1`).
+   */
+  public isUndergroundTileDiscovered(tx: number, ty: number): boolean {
+    const { cx, cy, lx, ly } = this.tileToChunk(tx, ty);
+    const chunk = this.undergroundChunks[WorldManager.chunkKey(cx, cy)];
+    if (!chunk || !Array.isArray(chunk.explored)) return false;
+    return chunk.explored[ly * CHUNK_SIZE + lx] === 1;
+  }
+
+  /**
+   * Flood-fills discovery in the underground starting from an open (non-dirt) tile `(startTx, startTy)`.
+   * - Marks all contiguous open tiles reachable from `(startTx, startTy)` as `explored = 1` (including Air Pockets when broken into!).
+   * - Marks the 1-tile layer of adjacent dirt/ore blocks around those open tiles as `explored = 1` so only adjacent blocks are visible.
+   * - Returns any underground chunks whose Air Pockets were newly discovered so cave enemies can be populated.
+   */
+  public revealUndergroundFromTile(
+    startTx: number,
+    startTy: number
+  ): ChunkData[] {
+    const queue: [number, number][] = [[startTx, startTy]];
+    const visitedOpen = new Set<string>([`${startTx},${startTy}`]);
+    const touchedChunks = new Set<ChunkData>();
+    const newlyDiscoveredChunks = new Set<ChunkData>();
+
+    let processed = 0;
+    const maxFloodTiles = 512;
+
+    while (queue.length > 0 && processed < maxFloodTiles) {
+      const [tx, ty] = queue.shift()!;
+      processed++;
+
+      const { cx, cy, lx, ly } = this.tileToChunk(tx, ty);
+      const chunk = this.getOrCreateUndergroundChunk(cx, cy);
+      const idx = ly * CHUNK_SIZE + lx;
+      if (chunk.explored[idx] !== 1) {
+        chunk.explored[idx] = 1;
+        touchedChunks.add(chunk);
+        newlyDiscoveredChunks.add(chunk);
+      }
+
+      // If this tile itself still has a solid dirt/ore block, do not expand beyond it
+      if (this.getUndergroundBlockNodeAtTile(tx, ty, chunk)) {
+        continue;
+      }
+
+      // Reveal all 8 immediate neighbors (orthogonal + diagonal walls) and enqueue open neighbors
+      for (let dy = -1; dy <= 1; dy++) {
+        for (let dx = -1; dx <= 1; dx++) {
+          if (dx === 0 && dy === 0) continue;
+          const ntx = tx + dx;
+          const nty = ty + dy;
+          const nCoords = this.tileToChunk(ntx, nty);
+          const nChunk = this.getOrCreateUndergroundChunk(nCoords.cx, nCoords.cy);
+          const nIdx = nCoords.ly * CHUNK_SIZE + nCoords.lx;
+
+          if (nChunk.explored[nIdx] !== 1) {
+            nChunk.explored[nIdx] = 1;
+            touchedChunks.add(nChunk);
+            newlyDiscoveredChunks.add(nChunk);
+          }
+
+          // Flood-fill continues through orthogonal open (non-dirt) tiles
+          if (Math.abs(dx) + Math.abs(dy) === 1) {
+            const key = `${ntx},${nty}`;
+            if (!visitedOpen.has(key)) {
+              const blockingNode = this.getUndergroundBlockNodeAtTile(
+                ntx,
+                nty,
+                nChunk
+              );
+              if (!blockingNode) {
+                visitedOpen.add(key);
+                queue.push([ntx, nty]);
+              }
+            }
+          }
+        }
+      }
+    }
+
+    for (const chunk of touchedChunks) {
+      chunk.dirtyRev = (chunk.dirtyRev || 0) + 1;
+      WorldManager.lockChunkTerrainSnapshot(
+        chunk,
+        chunk.genVersion ?? this.worldGenVersion,
+        chunk.generatedGameVersion ?? GAME_VERSION
+      );
+    }
+
+    return Array.from(newlyDiscoveredChunks);
+  }
+
+  /**
+   * Queries coordinate `(tx, ty)` in the underground BEFORE allowing a Drilling Stake to drill into a Level Stairs.
+   * Blocks drilling if there is an ore (`UNDERGROUND_COAL` or `UNDERGROUND_IRON`), a structure, or a dropped item at `(tx, ty)`.
+   */
+  public canDrillAtCoordinate(
+    tx: number,
+    ty: number,
+    droppedItems?: Array<{ x: number; y: number; isUnderground?: boolean }>
+  ): { canDrill: boolean; reason?: string } {
+    const { cx, cy } = this.tileToChunk(tx, ty);
+    const ugChunk = this.getOrCreateUndergroundChunk(cx, cy);
+
+    // 1. Check if there is an ore vein (Coal or Iron) at (tx, ty) in the underground
+    const ugNode = ugChunk.nodes.find(
+      (n) => n.tileX === tx && n.tileY === ty && n.hp > 0
+    );
+    if (
+      ugNode &&
+      (ugNode.type === NatureNodeType.UNDERGROUND_COAL ||
+        ugNode.type === NatureNodeType.UNDERGROUND_IRON)
+    ) {
+      return {
+        canDrill: false,
+        reason:
+          '⚠️ Não é possível perfurar aqui: há um veio de minério exatamente abaixo no subsolo!',
+      };
+    }
+
+    // 2. Check if there is any structure (e.g., Chest, Torch, or existing Stairs) at (tx, ty) in the underground
+    const ugStruct = ugChunk.structures.find(
+      (s) => s.tileX === tx && s.tileY === ty && s.hp > 0
+    );
+    if (ugStruct) {
+      return {
+        canDrill: false,
+        reason:
+          '⚠️ Não é possível perfurar aqui: há uma estrutura exatamente abaixo no subsolo!',
+      };
+    }
+
+    // 3. Check if there is any dropped item at (tx, ty) in the underground
+    if (Array.isArray(droppedItems)) {
+      const hasItemBelow = droppedItems.some((item) => {
+        if (!item.isUnderground) return false;
+        const itx = Math.floor(item.x / TILE_SIZE);
+        const ity = Math.floor(item.y / TILE_SIZE);
+        return itx === tx && ity === ty;
+      });
+      if (hasItemBelow) {
+        return {
+          canDrill: false,
+          reason:
+            '⚠️ Não é possível perfurar aqui: há um item no chão nesta coordenada do subsolo!',
+        };
+      }
+    }
+
+    return { canDrill: true };
+  }
+
+  /**
+   * Creates the paired indestructible "Escada de Nível" (`PlaceableType.LEVEL_STAIRS`) at `(tx, ty)`
+   * on both the surface (`solid: true`, action "Descer") and the underground (`solid: false`, action "Subir"),
+   * clearing the underground dirt block at `(tx, ty)` and revealing the adjacent underground walls.
+   */
+  public createLevelStairsAt(
+    tx: number,
+    ty: number
+  ): {
+    surfaceStairs: PlacedStructure;
+    undergroundStairs: PlacedStructure;
+    newlyDiscoveredUndergroundChunks: ChunkData[];
+  } {
+    const { cx, cy } = this.tileToChunk(tx, ty);
+    const surfChunk = this.getOrCreateSurfaceChunk(cx, cy);
+    const ugChunk = this.getOrCreateUndergroundChunk(cx, cy);
+
+    // Remove Drilling Stake (or any existing furniture) at (tx, ty) on the surface
+    for (let i = surfChunk.structures.length - 1; i >= 0; i--) {
+      const s = surfChunk.structures[i];
+      if (
+        s.tileX === tx &&
+        s.tileY === ty &&
+        (s.type === PlaceableType.DRILLING_STAKE ||
+          s.type === PlaceableType.LEVEL_STAIRS)
+      ) {
+        surfChunk.structures.splice(i, 1);
+      }
+    }
+
+    const surfaceStairs: PlacedStructure = {
+      id: `stairs_surf_${tx}_${ty}`,
+      type: PlaceableType.LEVEL_STAIRS,
+      itemId: 'level_stairs',
+      tileX: tx,
+      tileY: ty,
+      hp: 999999,
+      maxHp: 999999,
+      solid: true, // Surface Level Stairs (Descer) HAS hitbox
+      isOpen: false,
+      orientation: 'horizontal',
+      lightRadius: 0,
+      hitFlashTimer: 0,
+    };
+    surfChunk.structures.push(surfaceStairs);
+    surfChunk.dirtyRev = (surfChunk.dirtyRev || 0) + 1;
+    WorldManager.lockChunkTerrainSnapshot(
+      surfChunk,
+      surfChunk.genVersion ?? this.worldGenVersion,
+      surfChunk.generatedGameVersion ?? GAME_VERSION
+    );
+
+    // Clear the underground dirt block at (tx, ty) so the player stands on open ground at the stairs
+    for (let i = ugChunk.nodes.length - 1; i >= 0; i--) {
+      const n = ugChunk.nodes[i];
+      if (n.tileX === tx && n.tileY === ty) {
+        ugChunk.nodes.splice(i, 1);
+      }
+    }
+
+    // Remove any duplicate stairs at (tx, ty) in the underground
+    for (let i = ugChunk.structures.length - 1; i >= 0; i--) {
+      const s = ugChunk.structures[i];
+      if (s.tileX === tx && s.tileY === ty && s.type === PlaceableType.LEVEL_STAIRS) {
+        ugChunk.structures.splice(i, 1);
+      }
+    }
+
+    const undergroundStairs: PlacedStructure = {
+      id: `stairs_ug_${tx}_${ty}`,
+      type: PlaceableType.LEVEL_STAIRS,
+      itemId: 'level_stairs',
+      tileX: tx,
+      tileY: ty,
+      hp: 999999,
+      maxHp: 999999,
+      solid: false, // Underground Level Stairs (Subir) DOES NOT have hitbox
+      isOpen: true,
+      orientation: 'horizontal',
+      lightRadius: 0,
+      hitFlashTimer: 0,
+    };
+    ugChunk.structures.push(undergroundStairs);
+    ugChunk.dirtyRev = (ugChunk.dirtyRev || 0) + 1;
+
+    const newlyDiscoveredUndergroundChunks = this.revealUndergroundFromTile(tx, ty);
+    return {
+      surfaceStairs,
+      undergroundStairs,
+      newlyDiscoveredUndergroundChunks,
+    };
   }
 
   /**
@@ -1015,8 +1694,20 @@ export class WorldManager {
     riverMeander: number;
     climate: number;
   } {
-    const distFromOrigin = Math.hypot(tx, ty);
+    const useCache = version === this.worldGenVersion;
+    const packedKey = useCache ? WorldManager.packTileCoord(tx, ty) : 0;
+    if (useCache) {
+      const cached = this.rawWaterCache.get(packedKey);
+      if (cached !== undefined) {
+        return cached;
+      }
+      if (this.rawWaterCache.size > 32768) {
+        this.rawWaterCache.clear();
+      }
+    }
+
     const useLegacyOriginCircle = version <= 4;
+    const distFromOrigin = useLegacyOriginCircle ? Math.hypot(tx, ty) : 0;
 
     // Smooth low-frequency domain warping for sweeping, organic coastlines and biome contours
     const warpX =
@@ -1053,33 +1744,34 @@ export class WorldManager {
 
     // 1. Immense Ocean Basins & Medium/Large Organic Oceanic Islands
     if (continentalElev < OCEAN_LEVEL) {
-      if (this.isOceanicIslandAtTile(tx, ty, continentalElev, OCEAN_LEVEL)) {
-        return {
-          waterKind: 'none',
-          isIslandLand: true,
-          continentalElev,
-          riverMeander,
-          climate,
-        };
-      }
-      return {
-        waterKind: 'ocean',
-        isIslandLand: false,
+      const isIsland = this.isOceanicIslandAtTile(
+        tx,
+        ty,
+        continentalElev,
+        OCEAN_LEVEL
+      );
+      const res = {
+        waterKind: (isIsland ? 'none' : 'ocean') as 'none' | 'ocean',
+        isIslandLand: isIsland,
         continentalElev,
         riverMeander,
         climate,
       };
+      if (useCache) this.rawWaterCache.set(packedKey, res);
+      return res;
     }
 
     // Legacy v2-v4 only: starter heartland around (0, 0) forced dry
     if (useLegacyOriginCircle && distFromOrigin < 18) {
-      return {
-        waterKind: 'none',
+      const res = {
+        waterKind: 'none' as const,
         isIslandLand: false,
         continentalElev,
         riverMeander,
         climate,
       };
+      if (useCache) this.rawWaterCache.set(packedKey, res);
+      return res;
     }
 
     // 2. Rare Winding Rivers that empty into the Ocean
@@ -1097,13 +1789,15 @@ export class WorldManager {
       // Widens at the estuary mouth where it meets the ocean, tapers at inland headwaters
       const halfWidth = 0.0155 * (1 - 0.48 * riverProgress);
       if (Math.abs(riverMeander) < halfWidth) {
-        return {
-          waterKind: 'river',
+        const res = {
+          waterKind: 'river' as const,
           isIslandLand: false,
           continentalElev,
           riverMeander,
           climate,
         };
+        if (useCache) this.rawWaterCache.set(packedKey, res);
+        return res;
       }
     }
 
@@ -1115,22 +1809,26 @@ export class WorldManager {
       climate >= 0.32 &&
       lakeNoise > 0.875
     ) {
-      return {
-        waterKind: 'lake',
+      const res = {
+        waterKind: 'lake' as const,
         isIslandLand: false,
         continentalElev,
         riverMeander,
         climate,
       };
+      if (useCache) this.rawWaterCache.set(packedKey, res);
+      return res;
     }
 
-    return {
-      waterKind: 'none',
+    const res = {
+      waterKind: 'none' as const,
       isIslandLand: false,
       continentalElev,
       riverMeander,
       climate,
     };
+    if (useCache) this.rawWaterCache.set(packedKey, res);
+    return res;
   }
 
   /**
@@ -1651,29 +2349,29 @@ export class WorldManager {
   public getEcologicalZoneAtTile(tx: number, ty: number): EcologicalZone {
     const cx = Math.floor(tx / CHUNK_SIZE);
     const cy = Math.floor(ty / CHUNK_SIZE);
-    const chunk = this.chunks[`${cx},${cy}`];
+    const chunk = this.surfaceChunks[`${cx},${cy}`] ?? this.chunks[`${cx},${cy}`];
     if (chunk && chunk.ecologicalZones) {
       const lx = ((tx % CHUNK_SIZE) + CHUNK_SIZE) % CHUNK_SIZE;
       const ly = ((ty % CHUNK_SIZE) + CHUNK_SIZE) % CHUNK_SIZE;
-      const idx = ly * CHUNK_SIZE + lx;
-      const existingZone = chunk.ecologicalZones[idx];
-      if (
-        existingZone !== EcologicalZone.COASTAL_TROPICS &&
-        chunk.tiles[idx] !== BiomeType.OCEAN &&
-        this.getHydrologyAtTile(tx, ty).isOceanBeach
-      ) {
-        chunk.ecologicalZones[idx] = EcologicalZone.COASTAL_TROPICS;
-        return EcologicalZone.COASTAL_TROPICS;
-      }
-      return existingZone;
+      return chunk.ecologicalZones[ly * CHUNK_SIZE + lx];
+    }
+    const packedKey = WorldManager.packTileCoord(tx, ty);
+    const cached = this.unloadedZoneCache.get(packedKey);
+    if (cached !== undefined) {
+      return cached;
+    }
+    if (this.unloadedZoneCache.size > 16384) {
+      this.unloadedZoneCache.clear();
     }
     const biome = chunk
       ? chunk.tiles[
           (((ty % CHUNK_SIZE) + CHUNK_SIZE) % CHUNK_SIZE) * CHUNK_SIZE +
             (((tx % CHUNK_SIZE) + CHUNK_SIZE) % CHUNK_SIZE)
         ]
-      : this.computeBiomeAtTile(tx, ty);
-    return this.computeEcologicalZoneAtTile(tx, ty, biome);
+      : this.getTileBiomeFast(tx, ty);
+    const computed = this.computeEcologicalZoneAtTile(tx, ty, biome);
+    this.unloadedZoneCache.set(packedKey, computed);
+    return computed;
   }
 
   public getEcologicalZoneAtWorld(wx: number, wy: number): EcologicalZone {
@@ -1693,7 +2391,17 @@ export class WorldManager {
       const ly = ((ty % CHUNK_SIZE) + CHUNK_SIZE) % CHUNK_SIZE;
       return chunk.tiles[ly * CHUNK_SIZE + lx];
     }
-    return this.computeBiomeAtTile(tx, ty);
+    const packedKey = WorldManager.packTileCoord(tx, ty);
+    const cached = this.unloadedBiomeCache.get(packedKey);
+    if (cached !== undefined) {
+      return cached;
+    }
+    if (this.unloadedBiomeCache.size > 16384) {
+      this.unloadedBiomeCache.clear();
+    }
+    const computed = this.computeBiomeAtTile(tx, ty);
+    this.unloadedBiomeCache.set(packedKey, computed);
+    return computed;
   }
 
   /**
@@ -1706,8 +2414,28 @@ export class WorldManager {
   /**
    * Computes a progressive visual sub-zone (0, 1, or 2) within a biome so terrain
    * transitions smoothly and progressively across elevation, moisture, and coastlines.
+   * Cached per tile in O(1) so rendering never repeats neighbor/noise evaluations.
    */
   public getTileSubZone(tx: number, ty: number, biome: BiomeType): number {
+    const packedKey = WorldManager.packTileCoord(tx, ty);
+    const cached = this.tileSubZoneCache.get(packedKey);
+    if (cached !== undefined) {
+      return cached;
+    }
+    if (this.tileSubZoneCache.size > 32768) {
+      this.tileSubZoneCache.clear();
+    }
+
+    const subZone = this.computeTileSubZoneUncached(tx, ty, biome);
+    this.tileSubZoneCache.set(packedKey, subZone);
+    return subZone;
+  }
+
+  private computeTileSubZoneUncached(
+    tx: number,
+    ty: number,
+    biome: BiomeType
+  ): number {
     const n = this.getTileBiomeFast(tx, ty - 1);
     const s = this.getTileBiomeFast(tx, ty + 1);
     const e = this.getTileBiomeFast(tx + 1, ty);
@@ -4114,13 +4842,11 @@ export class WorldManager {
             ) {
               newlyDiscoveredIslandChunks.add(chunk);
             }
-          } else if (!chunk.preserved) {
-            touchedChunks.add(chunk);
           }
         }
       }
     }
-    // Lock terrain snapshot and update compactExplored bitmask on all newly revealed chunks
+    // Lock terrain snapshot and update compactExplored bitmask ONLY on chunks that actually had new tiles revealed
     for (const chunk of touchedChunks) {
       chunk.dirtyRev = (chunk.dirtyRev || 0) + 1;
       if (!chunk.preserved) {
@@ -4262,6 +4988,9 @@ export class WorldManager {
     st: PlacedStructure,
     isHumanEntity = false
   ): boolean {
+    if (st.type === PlaceableType.LEVEL_STAIRS) {
+      return Boolean(st.solid);
+    }
     const bp = CONSTRUCTION_BLUEPRINTS[st.type];
     if (!bp) return Boolean(st.solid);
     if (!bp.hasHitbox) return false;
@@ -4497,61 +5226,90 @@ export class WorldManager {
     ty: number,
     globalTime = 0
   ): { vx: number; vy: number; kind: 'none' | 'river' | 'ocean_shore' } {
-    if (!this.isTileSwimmableWater(tx, ty)) {
-      return { vx: 0, vy: 0, kind: 'none' };
+    if (this.isUnderground || this.getTileBiomeFast(tx, ty) !== BiomeType.OCEAN) {
+      return WorldManager.NO_WATER_CURRENT;
     }
 
-    const raw = this.getRawWaterAtTile(tx, ty);
-
-    // 1. River Current: ONLY rivers connected to the Ocean have a current, flowing along the river's path to the sea
-    if (raw.waterKind === 'river') {
-      const flow = this.getConnectedRiverFlowAtTile(tx, ty);
-      if (!flow.connectedToOcean) {
-        return { vx: 0, vy: 0, kind: 'none' };
+    const packedKey = WorldManager.packTileCoord(tx, ty);
+    let base = this.waterCurrentBaseCache.get(packedKey);
+    if (!base) {
+      if (this.waterCurrentBaseCache.size > 16384) {
+        this.waterCurrentBaseCache.clear();
       }
+      const raw = this.getRawWaterAtTile(tx, ty);
+      if (raw.waterKind === 'river') {
+        const flow = this.getConnectedRiverFlowAtTile(tx, ty);
+        base = flow.connectedToOcean
+          ? {
+              kind: 'river',
+              dirX: flow.dirX,
+              dirY: flow.dirY,
+              minDist: 0,
+            }
+          : { kind: 'none', dirX: 0, dirY: 0, minDist: Infinity };
+      } else if (raw.waterKind === 'ocean') {
+        let pushX = 0;
+        let pushY = 0;
+        let minDist = Infinity;
+
+        for (let dy = -4; dy <= 4; dy++) {
+          for (let dx = -4; dx <= 4; dx++) {
+            if (dx === 0 && dy === 0) continue;
+            const dSq = dx * dx + dy * dy;
+            if (dSq > 17.64) continue;
+            if (this.getTileBiomeFast(tx + dx, ty + dy) !== BiomeType.OCEAN) {
+              const d = Math.sqrt(dSq);
+              const weight = (4.6 - d) / d;
+              pushX += dx * weight;
+              pushY += dy * weight;
+              if (d < minDist) minDist = d;
+            }
+          }
+        }
+
+        const pMag = Math.hypot(pushX, pushY);
+        if (pMag > 0.01 && minDist <= 4.2) {
+          base = {
+            kind: 'ocean_shore',
+            dirX: pushX / pMag,
+            dirY: pushY / pMag,
+            minDist,
+          };
+        } else {
+          base = { kind: 'none', dirX: 0, dirY: 0, minDist: Infinity };
+        }
+      } else {
+        base = { kind: 'none', dirX: 0, dirY: 0, minDist: Infinity };
+      }
+      this.waterCurrentBaseCache.set(packedKey, base);
+    }
+
+    if (base.kind === 'none') {
+      return WorldManager.NO_WATER_CURRENT;
+    }
+
+    if (!this.isTileSwimmableWater(tx, ty)) {
+      return WorldManager.NO_WATER_CURRENT;
+    }
+
+    if (base.kind === 'river') {
       const riverSpeed = 28;
       return {
-        vx: flow.dirX * riverSpeed,
-        vy: flow.dirY * riverSpeed,
+        vx: base.dirX * riverSpeed,
+        vy: base.dirY * riverSpeed,
         kind: 'river',
       };
     }
 
-    // 2. Ocean Coast Current: the sea pushes swimmers toward the adjacent sandy beach
-    if (raw.waterKind === 'ocean') {
-      let pushX = 0;
-      let pushY = 0;
-      let minDist = Infinity;
-
-      for (let dy = -4; dy <= 4; dy++) {
-        for (let dx = -4; dx <= 4; dx++) {
-          if (dx === 0 && dy === 0) continue;
-          const d = Math.hypot(dx, dy);
-          if (d > 4.2) continue;
-          if (this.getTileBiomeFast(tx + dx, ty + dy) !== BiomeType.OCEAN) {
-            const weight = (4.6 - d) / d;
-            pushX += dx * weight;
-            pushY += dy * weight;
-            if (d < minDist) minDist = d;
-          }
-        }
-      }
-
-      const pMag = Math.hypot(pushX, pushY);
-      if (pMag > 0.01 && minDist <= 4.2) {
-        const waveSurge =
-          0.84 + 0.26 * Math.sin(globalTime * 2.6 + (tx * 0.6 + ty * 0.5));
-        const proximityFactor = 0.55 + Math.max(0, (4.2 - minDist) / 4.2) * 0.45;
-        const shoreSpeed = 26 * waveSurge * proximityFactor;
-        return {
-          vx: (pushX / pMag) * shoreSpeed,
-          vy: (pushY / pMag) * shoreSpeed,
-          kind: 'ocean_shore',
-        };
-      }
-    }
-
-    return { vx: 0, vy: 0, kind: 'none' };
+    const waveSurge =
+      0.84 + 0.26 * Math.sin(globalTime * 2.6 + (tx * 0.6 + ty * 0.5));
+    const proximityFactor = 0.55 + Math.max(0, (4.2 - base.minDist) / 4.2) * 0.45;
+    const shoreSpeed = 26 * waveSurge * proximityFactor;
+    return {
+      vx: base.dirX * shoreSpeed,
+      vy: base.dirY * shoreSpeed,
+      kind: 'ocean_shore',
+    };
   }
 
   /**
@@ -4651,7 +5409,19 @@ export class WorldManager {
 
         // Check Nature Nodes on (tx, ty)
         for (const node of chunk.nodes) {
-          if (node.tileX !== tx || node.tileY !== ty) continue;
+          if (node.tileX !== tx || node.tileY !== ty || node.hp <= 0) continue;
+          if (WorldManager.isUndergroundBlockNode(node.type)) {
+            const boxMinX = tx * TILE_SIZE;
+            const boxMaxX = (tx + 1) * TILE_SIZE;
+            const boxMinY = ty * TILE_SIZE;
+            const boxMaxY = (ty + 1) * TILE_SIZE;
+            const closestX = Math.max(boxMinX, Math.min(wx, boxMaxX));
+            const closestY = Math.max(boxMinY, Math.min(wy, boxMaxY));
+            if (Math.hypot(wx - closestX, wy - closestY) < entityRadius) {
+              return false;
+            }
+            continue;
+          }
           const nbp = NATURE_BLUEPRINTS[node.type];
           if (!nbp || !nbp.hasHitbox || nbp.hitboxRadius <= 0) {
             continue; // e.g., BERRY_BUSH / SHORT_GRASS / TALL_GRASS have no hitbox!
@@ -5065,8 +5835,54 @@ export class WorldManager {
     const bp = CONSTRUCTION_BLUEPRINTS[placeableType];
     if (!bp) return false;
 
+    const existingOnTile = chunk.structures.filter(
+      (s) => s.tileX === tx && s.tileY === ty
+    );
+
+    // Escada de Nível is indestructible and cannot be built over or replaced
+    if (existingOnTile.some((s) => s.type === PlaceableType.LEVEL_STAIRS)) {
+      return false;
+    }
+
+    // === UNDERGROUND BUILDING RULES ===
+    if (this.isUnderground) {
+      // Cannot build in undiscovered pitch-black tiles
+      if (chunk.explored[ly * CHUNK_SIZE + lx] !== 1) {
+        return false;
+      }
+      // No walls of any kind (nor drilling stakes / saplings) can be placed in the underground
+      if (
+        bp.layer === 'WALL' ||
+        placeableType === PlaceableType.DRILLING_STAKE ||
+        placeableType === PlaceableType.LEVEL_STAIRS ||
+        WorldManager.isSaplingStructure(placeableType)
+      ) {
+        return false;
+      }
+      // Check if there is an underground dirt/ore block on this tile
+      const ugBlock = chunk.nodes.find(
+        (n) =>
+          n.tileX === tx &&
+          n.tileY === ty &&
+          n.hp > 0 &&
+          WorldManager.isUndergroundBlockNode(n.type)
+      );
+      if (ugBlock) {
+        // ONLY Torches can be placed onto dirt/ore blocks in the underground!
+        if (placeableType === PlaceableType.TORCH) {
+          return !existingOnTile.some((s) => s.type === PlaceableType.TORCH);
+        }
+        return false;
+      }
+    } else {
+      // On surface: LEVEL_STAIRS is only created by drilling a DRILLING_STAKE with a pickaxe
+      if (placeableType === PlaceableType.LEVEL_STAIRS) {
+        return false;
+      }
+    }
+
     // Rain puddles on empty soil make the soil unusable until the puddle evaporates
-    if (this.hasRainPuddleAtTile(tx, ty)) {
+    if (!this.isUnderground && this.hasRainPuddleAtTile(tx, ty)) {
       return false;
     }
 
@@ -5075,15 +5891,13 @@ export class WorldManager {
       (n) =>
         n.tileX === tx &&
         n.tileY === ty &&
-        !WorldManager.isPassableGroundNode(n.type)
+        n.hp > 0 &&
+        !WorldManager.isPassableGroundNode(n.type) &&
+        !(this.isUnderground && placeableType === PlaceableType.TORCH)
     );
     if (hasBlockingNode) {
       return false;
     }
-
-    const existingOnTile = chunk.structures.filter(
-      (s) => s.tileX === tx && s.tileY === ty
-    );
 
     // 0. Sapling non-overlapping rules:
     // - Nothing can be placed on top of an existing Sapling (no floor, wall, furniture, or trap)
@@ -5419,8 +6233,18 @@ export class WorldManager {
 
     let replacedItemId: string | undefined;
     const wallOnTile = this.hasWallStructureAtTile(tx, ty);
+    const ugDirtOnTile =
+      this.isUnderground &&
+      chunk.nodes.some(
+        (n) =>
+          n.tileX === tx &&
+          n.tileY === ty &&
+          n.hp > 0 &&
+          WorldManager.isUndergroundBlockNode(n.type)
+      );
     const isMountingTorchOnWall =
-      placeableType === PlaceableType.TORCH && Boolean(wallOnTile);
+      placeableType === PlaceableType.TORCH &&
+      (Boolean(wallOnTile) || Boolean(ugDirtOnTile));
 
     if (bp.layer === 'GROUND') {
       const existingFloorIdx = chunk.structures.findIndex((s) => {

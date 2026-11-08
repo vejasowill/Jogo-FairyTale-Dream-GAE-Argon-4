@@ -594,6 +594,7 @@ export class EntityManager {
       nameIndex?: number;
       ignoreNaturalChunkCap?: boolean;
       forceWalkable?: boolean;
+      isUnderground?: boolean;
     }
   ): CreatureEntity | null {
     const { tx, ty } = world.worldToTile(wx, wy);
@@ -899,6 +900,7 @@ export class EntityManager {
       tameProgress: kind === CreatureKind.BOAT ? 100 : 0,
       produceTimer: 35,
       isElite,
+      isUnderground: options?.isUnderground ?? Boolean(world.isUnderground),
       homeX: options?.homeX,
       homeY: options?.homeY,
       homeHouseId: options?.homeHouseId,
@@ -1325,6 +1327,13 @@ export class EntityManager {
         if (!chunk) continue;
         if (!chunk.explored.some((e) => e === 1)) continue;
 
+        if (world.isUnderground || chunk.isUnderground) {
+          if (!chunk.mobsPopulated) {
+            this.populateUndergroundAirPocketMobs(world, chunk);
+          }
+          continue;
+        }
+
         const isVillage = EntityManager.isVillageLandmarkChunk(chunk);
         if (!chunk.mobsPopulated) {
           chunk.mobsPopulated = true;
@@ -1356,6 +1365,75 @@ export class EntityManager {
           }
         }
       }
+    }
+  }
+
+  /**
+   * Populates an underground Air Pocket (Bolsão de Ar) with cave enemies:
+   * ONLY Spider (`CreatureKind.FOREST_STALKER`) and Zombie (`CreatureKind.ZOMBIE`).
+   * Triggered when the air pocket is discovered by the player.
+   */
+  public populateUndergroundAirPocketMobs(
+    world: WorldManager,
+    chunk: ChunkData
+  ): void {
+    if (!chunk || chunk.mobsPopulated) return;
+    const chest = chunk.structures.find(
+      (s) => s.type === PlaceableType.CHEST && s.id.startsWith('ug_chest_')
+    );
+    if (!chest) {
+      chunk.mobsPopulated = true;
+      return;
+    }
+
+    // Only spawn once the air pocket itself has been discovered (explored === 1 at or near the chest)
+    const { lx: chestLx, ly: chestLy } = world.tileToChunk(
+      chest.tileX,
+      chest.tileY
+    );
+    if (chunk.explored[chestLy * CHUNK_SIZE + chestLx] !== 1) {
+      return;
+    }
+
+    chunk.mobsPopulated = true;
+    chunk.dirtyRev = (chunk.dirtyRev || 0) + 1;
+
+    const centerWx = chest.tileX * TILE_SIZE + TILE_SIZE / 2;
+    const centerWy = chest.tileY * TILE_SIZE + TILE_SIZE / 2;
+
+    // Collect open tiles inside the air pocket around the chest
+    const openSpots: Array<{ wx: number; wy: number }> = [];
+    for (let dy = -3; dy <= 3; dy++) {
+      for (let dx = -3; dx <= 3; dx++) {
+        if (dx === 0 && dy === 0) continue;
+        const tx = chest.tileX + dx;
+        const ty = chest.tileY + dy;
+        if (!world.getUndergroundBlockNodeAtTile(tx, ty, chunk)) {
+          openSpots.push({
+            wx: tx * TILE_SIZE + TILE_SIZE / 2,
+            wy: ty * TILE_SIZE + TILE_SIZE / 2,
+          });
+        }
+      }
+    }
+
+    if (openSpots.length === 0) return;
+
+    // Spawn 1 Aranha (FOREST_STALKER) and 1 Zumbi (ZOMBIE) inside the air pocket
+    const kinds: CreatureKind[] = [
+      CreatureKind.FOREST_STALKER,
+      CreatureKind.ZOMBIE,
+    ];
+    for (let i = 0; i < kinds.length; i++) {
+      const spot =
+        openSpots[(i * 3 + Math.abs(chunk.cx + chunk.cy)) % openSpots.length];
+      this.trySpawnCreatureAt(world, kinds[i], spot.wx, spot.wy, {
+        homeX: centerWx,
+        homeY: centerWy,
+        ignoreNaturalChunkCap: true,
+        forceWalkable: true,
+        isUnderground: true,
+      });
     }
   }
 
@@ -1765,19 +1843,25 @@ export class EntityManager {
     this.landmarkCheckTimer -= dt;
     if (this.landmarkCheckTimer <= 0) {
       this.landmarkCheckTimer = 0.45;
-      // Populate any newly revealed Landmark/Village chunks near any active player
+      // Populate any newly revealed Landmark/Village/AirPocket chunks near any active player
       for (const pPos of activePlayers) {
         this.populateNearbyLandmarkChunks(world, pPos.x, pPos.y);
       }
+    }
+
+    // In the underground, ONLY Air Pocket enemies (Spider & Zombie) exist — no random surface wildlife or surface monsters spawn!
+    if (world.isUnderground) {
+      return;
     }
 
     this.spawnTimer -= dt;
     if (this.spawnTimer > 0) return;
     this.spawnTimer = isNight ? 2.8 : 3.5;
 
-    // Despawn untamed non-villager creatures very far from ALL active players to keep memory low
+    // Despawn untamed non-villager surface creatures very far from ALL active players to keep memory low
     this.creatures = this.creatures.filter((c) => {
       if (
+        c.isUnderground ||
         c.tamed ||
         c.kind === CreatureKind.VILLAGER ||
         c.kind === CreatureKind.BOAT
@@ -1791,6 +1875,7 @@ export class EntityManager {
 
     const wildCount = this.creatures.filter(
       (c) =>
+        !c.isUnderground &&
         !c.tamed &&
         c.kind !== CreatureKind.VILLAGER &&
         c.kind !== CreatureKind.BOAT

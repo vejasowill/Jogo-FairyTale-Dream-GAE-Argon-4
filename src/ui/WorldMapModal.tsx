@@ -635,6 +635,22 @@ export const WorldMapModal: React.FC<WorldMapModalProps> = ({
             continue;
           }
 
+          if (world.isUnderground) {
+            const uNode = chunk.nodes.find(
+              (n) => n.tileX === tx && n.tileY === ty && n.hp > 0
+            );
+            ctx.fillStyle =
+              uNode?.type === NatureNodeType.UNDERGROUND_IRON
+                ? '#d97706'
+                : uNode?.type === NatureNodeType.UNDERGROUND_COAL
+                ? '#1e293b'
+                : uNode?.type === NatureNodeType.UNDERGROUND_DIRT
+                ? '#4a3121'
+                : '#2b1d14';
+            ctx.fillRect(sx, sy, cellSize, cellSize);
+            continue;
+          }
+
           const biome = chunk.tiles[idx];
           const zone = chunk.ecologicalZones?.[idx];
           const sub = world.getTileSubZone(tx, ty, biome);

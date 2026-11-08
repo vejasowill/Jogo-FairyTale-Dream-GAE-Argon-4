@@ -220,6 +220,10 @@ export enum NatureNodeType {
   FLOWER_LILY = 'FLOWER_LILY',
   FLOWER_SUNFLOWER = 'FLOWER_SUNFLOWER',
   FLOWER_SOLAR_DROP = 'FLOWER_SOLAR_DROP',
+  // Underground Excavation Blocks & Veins
+  UNDERGROUND_DIRT = 'UNDERGROUND_DIRT',
+  UNDERGROUND_COAL = 'UNDERGROUND_COAL',
+  UNDERGROUND_IRON = 'UNDERGROUND_IRON',
 }
 
 export enum PlaceableType {
@@ -276,6 +280,8 @@ export enum PlaceableType {
   FLOWER_LILY = 'FLOWER_LILY',
   FLOWER_SUNFLOWER = 'FLOWER_SUNFLOWER',
   FLOWER_SOLAR_DROP = 'FLOWER_SOLAR_DROP',
+  DRILLING_STAKE = 'DRILLING_STAKE',
+  LEVEL_STAIRS = 'LEVEL_STAIRS',
 }
 
 export interface NatureNode {
@@ -384,6 +390,7 @@ export interface RainPuddle {
 export interface ChunkData {
   cx: number;
   cy: number;
+  isUnderground?: boolean;
   tiles: BiomeType[]; // 16 x 16 = 256
   tileVariants: number[]; // visual sub-variant 0..3
   explored: number[]; // 256 flags (0 = unexplored, 1 = explored by player)
@@ -454,6 +461,7 @@ export interface CreatureEntity {
   kind: CreatureKind;
   name: string;
   isHostile: boolean;
+  isUnderground?: boolean;
   faction?: CreatureFaction;
   x: number;
   y: number;
@@ -644,6 +652,7 @@ export interface DroppedItem {
   count: number;
   x: number;
   y: number;
+  isUnderground?: boolean;
   bobTimer: number;
   pickupDelay: number;
   expiresTimer?: number;
@@ -712,6 +721,7 @@ export interface DeathBag {
   ownerName: string;
   x: number;
   y: number;
+  isUnderground?: boolean;
   items: InventorySlot[];
   goldCoins: number;
   createdAt: number;
@@ -725,6 +735,7 @@ export interface MapWaypoint {
   label: string;
   tileX: number;
   tileY: number;
+  isUnderground?: boolean;
   color: string;
   isDeathBag?: boolean;
   expiresTimer?: number;
@@ -861,6 +872,7 @@ export interface PlayerState {
   sleepingPrevX?: number;
   sleepingPrevY?: number;
   // Animation state
+  isUnderground?: boolean;
   isMoving: boolean;
   isSwimming?: boolean;
   swimSpeed?: number;
@@ -886,6 +898,7 @@ export interface RemotePlayerState {
   hp: number;
   maxHp: number;
   level: number;
+  isUnderground?: boolean;
   isMoving: boolean;
   isSwimming?: boolean;
   mountedEntityId?: string | null;
@@ -922,7 +935,7 @@ export interface OnlineActivationStep {
 }
 
 // REGRA PERMANENTE: A cada nova atualização do jogo, incremente a versão para o número seguinte da beta (ex: 0.4.4-beta -> 0.4.5-beta).
-export const GAME_VERSION = '0.7.8-beta';
+export const GAME_VERSION = '0.7.9-beta';
 export const CURRENT_WORLD_GEN_VERSION = 5;
 
 export interface OnlineSessionInfo {
@@ -978,6 +991,7 @@ export interface WorldSaveData {
   metadata: WorldMetadata;
   player: PlayerState;
   chunks: Record<string, ChunkData>;
+  undergroundChunks?: Record<string, ChunkData>;
   creatures: CreatureEntity[];
   droppedItems: DroppedItem[];
   waypoints?: MapWaypoint[];

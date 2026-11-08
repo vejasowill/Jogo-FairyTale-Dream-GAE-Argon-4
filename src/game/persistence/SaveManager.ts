@@ -312,7 +312,8 @@ export function migrateSaveData(rawSave: WorldSaveData): WorldSaveData {
     const hydrationMgr = new WorldManager(
       migrated.metadata?.seed || 123456,
       migrated.chunks,
-      originalWorldGenVersion
+      originalWorldGenVersion,
+      migrated.undergroundChunks
     );
     const preservedChunks: Record<string, ChunkData> = {};
 
@@ -398,6 +399,12 @@ export function migrateSaveData(rawSave: WorldSaveData): WorldSaveData {
     }
 
     migrated.chunks = preservedChunks;
+    if (
+      hydrationMgr.undergroundChunks &&
+      Object.keys(hydrationMgr.undergroundChunks).length > 0
+    ) {
+      migrated.undergroundChunks = hydrationMgr.undergroundChunks;
+    }
   }
 
   // Migrate any legacy generic sapling item IDs in inventories, mounts, death bags, or dropped items to oak_sapling (Muda de Carvalho)
@@ -1214,6 +1221,67 @@ export class SaveManager {
         interactingPlayerName: undefined,
       }));
 
+    let compactUndergroundChunks: Record<string, ChunkData> | undefined;
+    if (
+      saveData.undergroundChunks &&
+      typeof saveData.undergroundChunks === 'object'
+    ) {
+      compactUndergroundChunks = {};
+      for (const [key, uChunk] of Object.entries(saveData.undergroundChunks)) {
+        if (!uChunk) continue;
+        const hasExploredArray =
+          Array.isArray(uChunk.explored) && uChunk.explored.some((v) => v > 0);
+        const hasCompactExplored =
+          typeof uChunk.compactExplored === 'string' &&
+          uChunk.compactExplored.length > 0 &&
+          !/^0+$/.test(uChunk.compactExplored);
+        const hasStairsOrPlayerStruct =
+          Array.isArray(uChunk.structures) &&
+          uChunk.structures.some(
+            (s) =>
+              s.type === PlaceableType.LEVEL_STAIRS ||
+              Boolean(s.placedAt) ||
+              s.ownerType === 'PLAYER'
+          );
+        if (!hasExploredArray && !hasCompactExplored && !hasStairsOrPlayerStruct) {
+          continue;
+        }
+        const compactExplored = hasExploredArray
+          ? WorldManager.encodeCompactExplored(uChunk.explored)
+          : uChunk.compactExplored;
+        const compactNodesStr =
+          Array.isArray(uChunk.nodes) && uChunk.nodes.length > 0
+            ? WorldManager.encodeCompactNodes(uChunk.nodes, uChunk.cx, uChunk.cy)
+            : typeof uChunk.compactNodes === 'string'
+            ? uChunk.compactNodes
+            : '';
+        compactUndergroundChunks[key] = {
+          cx: uChunk.cx,
+          cy: uChunk.cy,
+          isUnderground: true,
+          ...(uChunk.mobsPopulated ? { mobsPopulated: true } : {}),
+          genVersion: uChunk.genVersion || CURRENT_WORLD_GEN_VERSION,
+          generatedGameVersion: uChunk.generatedGameVersion || GAME_VERSION,
+          preserved: true,
+          dirtyRev: uChunk.dirtyRev || 1,
+          ...(compactExplored ? { compactExplored } : {}),
+          ...(typeof compactNodesStr === 'string'
+            ? { compactNodes: compactNodesStr }
+            : {}),
+          tiles: [] as unknown as BiomeType[],
+          tileVariants: [],
+          explored: [],
+          nodes: [],
+          structures: Array.isArray(uChunk.structures)
+            ? JSON.parse(JSON.stringify(uChunk.structures))
+            : [],
+        };
+      }
+      if (Object.keys(compactUndergroundChunks).length === 0) {
+        compactUndergroundChunks = undefined;
+      }
+    }
+
     return {
       ...saveData,
       metadata: { ...saveData.metadata },
@@ -1222,6 +1290,7 @@ export class SaveManager {
         ? JSON.parse(JSON.stringify(saveData.guestPlayers))
         : undefined,
       chunks: compactChunks,
+      undergroundChunks: compactUndergroundChunks,
       creatures: JSON.parse(JSON.stringify(compactCreatures)),
       droppedItems: Array.isArray(saveData.droppedItems)
         ? JSON.parse(JSON.stringify(saveData.droppedItems))

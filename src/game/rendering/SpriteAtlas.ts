@@ -2479,6 +2479,66 @@ class SpriteAtlasManager {
       { y: '#f59e0b', w: '#fef08a', g: '#d97706', c: '#0284c7' }
     );
 
+    registerItem(
+      'drilling_stake',
+      [
+        '....oooooooo....',
+        '...owwwbwwwwbo..',
+        '...oooooooooo...',
+        '..oowbbssbbwoo..',
+        '..owbboiiobbwo..',
+        '..owb.oiiio.bwo.',
+        '...oo.oiiio.oo..',
+        '.....ooiiioo....',
+        '....odsssssdo...',
+        '...odssiiissdo..',
+        '....odsssssdo...',
+        '.....ooiiioo....',
+        '......oiiio.....',
+        '.......oio......',
+        '........o.......',
+        '................',
+      ],
+      {
+        o: '#0f172a',
+        w: '#b45309',
+        b: '#78350f',
+        s: '#64748b',
+        d: '#334155',
+        i: '#cbd5e1',
+      }
+    );
+
+    registerItem(
+      'level_stairs',
+      [
+        '..oooooooooooo..',
+        '.osssssssssssso.',
+        'ossddddddddddsso',
+        'osdkkwwkkkkwwdso',
+        'osdkkbbbbbbbbdso',
+        'osdkkwwkkkkwwdso',
+        'osdkkbbbbbbbbdso',
+        'osdkkwwkkkkwwdso',
+        'osdkkbbbbbbbbdso',
+        'osdkkwwkkkkwwdso',
+        'ossddddddddddsso',
+        '.osssssssssssso.',
+        '..oooooooooooo..',
+        '................',
+        '................',
+        '................',
+      ],
+      {
+        o: '#0f172a',
+        s: '#64748b',
+        d: '#1e293b',
+        k: '#020617',
+        w: '#d97706',
+        b: '#92400e',
+      }
+    );
+
     // Parede de Carvalho (Warm golden oak planks with iron straps)
     registerItem(
       'wood_wall',
