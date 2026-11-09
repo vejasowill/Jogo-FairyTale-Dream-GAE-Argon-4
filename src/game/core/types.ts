@@ -224,6 +224,7 @@ export enum NatureNodeType {
   UNDERGROUND_DIRT = 'UNDERGROUND_DIRT',
   UNDERGROUND_COAL = 'UNDERGROUND_COAL',
   UNDERGROUND_IRON = 'UNDERGROUND_IRON',
+  UNDERGROUND_GOLD = 'UNDERGROUND_GOLD',
 }
 
 export enum PlaceableType {
@@ -372,6 +373,7 @@ export interface PlacedStructure {
   thermalUpdatedAt?: number; // Timestamp of last thermal/weaving station modification
   // Wall-mounted attachment (exclusively for PlaceableType.TORCH)
   attachedToWall?: boolean;
+  wallMountSide?: Direction;
   // Flower color variant when placed on the ground
   flowerColor?: ClothingColorId;
   // Village Well community management (segregates which houses and residents in radius belong to the village)
@@ -745,7 +747,7 @@ export interface MapWaypoint {
 
 export interface PlayerAttributes {
   vitality: number; // +18 Max HP per point
-  strength: number; // +12% Melee & Harvest Damage per point
+  strength: number; // +12% Attack Damage per point (does not sum with harvestPower)
   agility: number; // +6% Move Speed per point
   survival: number; // -8% Hunger drain & +10% resource bonus chance per point
   attackSpeed: number; // +8% Attack & Harvest Speed per point

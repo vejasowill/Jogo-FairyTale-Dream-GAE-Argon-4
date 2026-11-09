@@ -30,6 +30,7 @@ import {
   CreatureEntity,
   CreatureKind,
   DeathBag,
+  Direction,
   DroppedItem,
   EcologicalZone,
   EquipmentSlot,
@@ -7428,10 +7429,11 @@ export class GameEngine {
       this.player.strengthBuffTimer && this.player.strengthBuffTimer > 0
         ? 1.35
         : 1.0;
-    const strengthMult =
-      (1 + Math.max(0, this.player.attributes.strength || 0) * 0.12) *
-      strengthBuff;
-    const baseAttack = (heldItem?.attackDamage || 4) * strengthMult;
+    const playerStrengthAttack = Math.round(
+      4 * (1 + Math.max(0, this.player.attributes.strength || 0) * 0.12)
+    );
+    const baseAttack =
+      (playerStrengthAttack + (heldItem?.attackDamage || 0)) * strengthBuff;
     const equippedTool = heldItem?.toolType || ToolType.NONE;
     const equippedTier = heldItem?.toolTier || 0;
     const knockbackMult = heldItem?.knockbackMult || 1.0;
@@ -8008,7 +8010,7 @@ export class GameEngine {
               heldItem?.id || null,
               equippedTool,
               equippedTier,
-              strengthMult
+              1.0
             );
             return;
           }
@@ -8133,7 +8135,7 @@ export class GameEngine {
               heldItem?.id || null,
               equippedTool,
               equippedTier,
-              strengthMult,
+              1.0,
               req.materialKind,
               req.requiredTool,
               req.requiredTier
@@ -9927,6 +9929,18 @@ export class GameEngine {
           'branco'
         : undefined;
 
+      const torchMountSide: Direction | undefined =
+        heldItem.placeableType === PlaceableType.TORCH &&
+        this.world.isUnderground &&
+        this.world.hasUndergroundDirtBlockAtTile(target.tx, target.ty)
+          ? this.world.resolveUndergroundTorchMountSide(
+              target.tx,
+              target.ty,
+              this.player.x,
+              this.player.y
+            )
+          : undefined;
+
       const result = this.world.placeStructureWithUpgrade(
         target.tx,
         target.ty,
@@ -9934,7 +9948,8 @@ export class GameEngine {
         heldItem.id,
         this.buildOrientation,
         placedFlowerColor,
-        this.buildRotation
+        this.buildRotation,
+        torchMountSide
       );
       if (result.placed) {
         const placedSt = this.world.getStructureAtTile(target.tx, target.ty);
@@ -11282,24 +11297,17 @@ export class GameEngine {
       const bp = NATURE_BLUEPRINTS[node.type];
       const req = getNatureBreakRequirement(node.type);
       const heldItem = heldSlot ? ITEMS[heldSlot.itemId] : null;
-      const strengthBuff =
-        this.player.strengthBuffTimer && this.player.strengthBuffTimer > 0
-          ? 1.35
-          : 1.0;
-      const strengthMult =
-        (1 + Math.max(0, this.player.attributes.strength || 0) * 0.12) *
-        strengthBuff;
       const evalBreak = evaluateMaterialBreak(
         heldItem?.id || null,
         heldItem?.toolType || ToolType.NONE,
         heldItem?.toolTier || 0,
-        strengthMult,
+        1.0,
         req.materialKind,
         bp.requiredTool,
         bp.requiredTier
       );
       const forceHint = evalBreak.canBreak
-        ? `Força: ${evalBreak.force} (${evalBreak.actorLabel})`
+        ? `Coleta: ${evalBreak.force} (${evalBreak.actorLabel})`
         : `🔒 ${evalBreak.blockReason}`;
       const nx = node.tileX * TILE_SIZE + TILE_SIZE / 2;
       const ny = node.tileY * TILE_SIZE + TILE_SIZE / 2;

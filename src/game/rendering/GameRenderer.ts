@@ -5,6 +5,7 @@ import {
   CreatureEntity,
   CreatureKind,
   DeathBag,
+  Direction,
   DroppedItem,
   EcologicalZone,
   FloatingText,
@@ -16,6 +17,7 @@ import {
   PlayerState,
   RainPuddle,
   RemotePlayerState,
+  ToolType,
   WeatherState,
   getTransportSeatOffset,
 } from '../core/types';
@@ -2435,6 +2437,23 @@ export class GameRenderer {
       ctx.fillRect(wx + 18, wy + 15, 4, 3);
       ctx.fillRect(wx + 9, wy + 21, 3, 2);
       ctx.fillStyle = '#f8fafc';
+      ctx.fillRect(wx + 8, wy + 7, 2, 1);
+      ctx.fillRect(wx + 19, wy + 15, 2, 1);
+    } else if (node.type === NatureNodeType.UNDERGROUND_GOLD) {
+      // Gleaming royal gold nuggets & veins embedded in the subterranean dirt block
+      ctx.fillStyle = '#78350f';
+      ctx.fillRect(wx + 5, wy + 5, 9, 7);
+      ctx.fillRect(wx + 16, wy + 13, 10, 7);
+      ctx.fillRect(wx + 7, wy + 19, 8, 6);
+      ctx.fillStyle = '#d97706';
+      ctx.fillRect(wx + 6, wy + 6, 7, 5);
+      ctx.fillRect(wx + 17, wy + 14, 7, 5);
+      ctx.fillRect(wx + 8, wy + 20, 6, 4);
+      ctx.fillStyle = '#facc15';
+      ctx.fillRect(wx + 7, wy + 7, 4, 3);
+      ctx.fillRect(wx + 18, wy + 15, 4, 3);
+      ctx.fillRect(wx + 9, wy + 21, 3, 2);
+      ctx.fillStyle = '#fef9c3';
       ctx.fillRect(wx + 8, wy + 7, 2, 1);
       ctx.fillRect(wx + 19, wy + 15, 2, 1);
     }
@@ -5187,7 +5206,8 @@ export class GameRenderer {
   }
 
   /**
-   * Renders a Torch mounted directly onto a wall (either on the thin side profile of a vertical wall or on the front face of a horizontal wall).
+   * Renders a Torch mounted directly onto a wall (either on the thin side profile of a vertical wall,
+   * on the front face of a horizontal wall, or on the specific placed face of an underground dirt block).
    */
   private drawWallMountedTorch(
     ctx: CanvasRenderingContext2D,
@@ -5201,11 +5221,139 @@ export class GameRenderer {
     const isOnUndergroundDirt =
       world.isUnderground &&
       world.hasUndergroundDirtBlockAtTile(st.tileX, st.tileY);
-    const isSideWall = isOnUndergroundDirt
-      ? false
-      : world.isWallOrDoorSideProfileAt(st.tileX, st.tileY, wallSt);
     const flicker = Math.sin(globalTime * 14 + st.tileX * 5 + st.tileY * 3);
     const flickerY = Math.round(flicker);
+
+    if (isOnUndergroundDirt) {
+      // Determine which side ('left' | 'right' | 'up' | 'down') of the underground dirt block the torch is mounted on
+      let side = st.wallMountSide || wallSt.wallMountSide;
+      if (!side) {
+        const openDown = !world.hasUndergroundDirtBlockAtTile(st.tileX, st.tileY + 1);
+        const openLeft = !world.hasUndergroundDirtBlockAtTile(st.tileX - 1, st.tileY);
+        const openRight = !world.hasUndergroundDirtBlockAtTile(st.tileX + 1, st.tileY);
+        const openUp = !world.hasUndergroundDirtBlockAtTile(st.tileX, st.tileY - 1);
+        side = openDown
+          ? 'down'
+          : openLeft
+          ? 'left'
+          : openRight
+          ? 'right'
+          : openUp
+          ? 'up'
+          : 'down';
+      }
+
+      if (side === 'left') {
+        // Mounted on the LEFT (West) side of the dirt block
+        const bx = wx + 2;
+        const by = wy + 15;
+        // Iron sconce bracket anchored into the left dirt wall edge
+        ctx.fillStyle = '#1e293b';
+        ctx.fillRect(bx - 1, by + 2, 6, 3);
+        ctx.fillRect(bx + 3, by, 2, 6);
+        ctx.fillStyle = '#64748b';
+        ctx.fillRect(bx, by + 2, 4, 1);
+        ctx.fillStyle = '#facc15';
+        ctx.fillRect(bx + 3, by + 1, 1, 1);
+        // Wooden handle angling outward to the left
+        ctx.fillStyle = '#5c3416';
+        ctx.fillRect(bx - 3, by - 4, 3, 8);
+        ctx.fillStyle = '#8c5327';
+        ctx.fillRect(bx - 2, by - 3, 2, 6);
+        // Pitch collar
+        ctx.fillStyle = '#18181b';
+        ctx.fillRect(bx - 4, by - 6, 5, 2);
+        // Warm glow aura
+        ctx.fillStyle = 'rgba(255, 165, 35, 0.35)';
+        ctx.beginPath();
+        ctx.arc(bx - 1.5, by - 8, 12 + flicker * 1.8, 0, Math.PI * 2);
+        ctx.fill();
+        // Flame
+        ctx.fillStyle = '#ea580c';
+        ctx.fillRect(bx - 4, by - 10 + flickerY, 5, 4);
+        ctx.fillRect(bx - 3, by - 12 + flickerY, 3, 2);
+        ctx.fillStyle = '#facc15';
+        ctx.fillRect(bx - 3, by - 9 + flickerY, 3, 3);
+        ctx.fillStyle = '#fef9c3';
+        ctx.fillRect(bx - 2, by - 8 + flickerY, 1, 2);
+        return;
+      }
+
+      if (side === 'right') {
+        // Mounted on the RIGHT (East) side of the dirt block
+        const bx = wx + TILE_SIZE - 2;
+        const by = wy + 15;
+        // Iron sconce bracket anchored into the right dirt wall edge
+        ctx.fillStyle = '#1e293b';
+        ctx.fillRect(bx - 5, by + 2, 6, 3);
+        ctx.fillRect(bx - 5, by, 2, 6);
+        ctx.fillStyle = '#64748b';
+        ctx.fillRect(bx - 4, by + 2, 4, 1);
+        ctx.fillStyle = '#facc15';
+        ctx.fillRect(bx - 4, by + 1, 1, 1);
+        // Wooden handle angling outward to the right
+        ctx.fillStyle = '#5c3416';
+        ctx.fillRect(bx, by - 4, 3, 8);
+        ctx.fillStyle = '#8c5327';
+        ctx.fillRect(bx, by - 3, 2, 6);
+        // Pitch collar
+        ctx.fillStyle = '#18181b';
+        ctx.fillRect(bx - 1, by - 6, 5, 2);
+        // Warm glow aura
+        ctx.fillStyle = 'rgba(255, 165, 35, 0.35)';
+        ctx.beginPath();
+        ctx.arc(bx + 1.5, by - 8, 12 + flicker * 1.8, 0, Math.PI * 2);
+        ctx.fill();
+        // Flame
+        ctx.fillStyle = '#ea580c';
+        ctx.fillRect(bx - 1, by - 10 + flickerY, 5, 4);
+        ctx.fillRect(bx, by - 12 + flickerY, 3, 2);
+        ctx.fillStyle = '#facc15';
+        ctx.fillRect(bx, by - 9 + flickerY, 3, 3);
+        ctx.fillStyle = '#fef9c3';
+        ctx.fillRect(bx + 1, by - 8 + flickerY, 1, 2);
+        return;
+      }
+
+      // Mounted on either the SOUTH ('down', bottom face) or NORTH ('up', top face) of the dirt block
+      const cx = wx + 16;
+      const cy = side === 'down' ? wy + 24 : wy + 4;
+
+      ctx.fillStyle = 'rgba(0, 0, 0, 0.38)';
+      ctx.fillRect(cx - 4, cy + 2, 8, 8);
+
+      ctx.fillStyle = '#1e293b';
+      ctx.fillRect(cx - 3, cy + 2, 6, 7);
+      ctx.fillStyle = '#64748b';
+      ctx.fillRect(cx - 2, cy + 3, 4, 1);
+      ctx.fillRect(cx - 2, cy + 7, 4, 1);
+      ctx.fillStyle = '#facc15';
+      ctx.fillRect(cx - 2, cy + 3, 1, 1);
+      ctx.fillRect(cx + 1, cy + 3, 1, 1);
+
+      ctx.fillStyle = '#5c3416';
+      ctx.fillRect(cx - 2, cy - 2, 4, 8);
+      ctx.fillStyle = '#9a602d';
+      ctx.fillRect(cx - 1, cy - 1, 2, 6);
+
+      ctx.fillStyle = '#18181b';
+      ctx.fillRect(cx - 3, cy - 4, 6, 2);
+
+      ctx.fillStyle = 'rgba(255, 165, 35, 0.36)';
+      ctx.beginPath();
+      ctx.arc(cx, cy - 6, 13 + flicker * 1.8, 0, Math.PI * 2);
+      ctx.fill();
+
+      ctx.fillStyle = '#ea580c';
+      ctx.fillRect(cx - 3, cy - 8 + flickerY, 6, 4);
+      ctx.fillStyle = '#facc15';
+      ctx.fillRect(cx - 2, cy - 10 + flickerY, 4, 5);
+      ctx.fillStyle = '#fef9c3';
+      ctx.fillRect(cx - 1, cy - 7 + flickerY, 2, 3);
+      return;
+    }
+
+    const isSideWall = world.isWallOrDoorSideProfileAt(st.tileX, st.tileY, wallSt);
 
     if (isSideWall) {
       // Mounted on the slender vertical wall (wx + 12..20)
@@ -6335,10 +6483,18 @@ export class GameRenderer {
       targetBuildTile.tx,
       targetBuildTile.ty
     );
+    const hasUgDirtAtTarget =
+      world.isUnderground &&
+      world.hasUndergroundDirtBlockAtTile(
+        targetBuildTile.tx,
+        targetBuildTile.ty
+      );
     const isWallMountTorch =
-      placeableType === PlaceableType.TORCH && hasWallAtTarget && canPlace;
+      placeableType === PlaceableType.TORCH &&
+      (Boolean(hasWallAtTarget) || hasUgDirtAtTarget) &&
+      canPlace;
     const isBlockedByWallForNonTorch =
-      hasWallAtTarget &&
+      (hasWallAtTarget || hasUgDirtAtTarget) &&
       placeableType !== PlaceableType.TORCH &&
       !WorldManager.isWallMountableStructure(placeableType) &&
       !canPlace;
@@ -6357,6 +6513,15 @@ export class GameRenderer {
         : placeableType === PlaceableType.FLOWER_SOLAR_DROP
         ? 'flower_solar_drop'
         : '');
+    const ghostMountSide =
+      isWallMountTorch && hasUgDirtAtTarget
+        ? world.resolveUndergroundTorchMountSide(
+            targetBuildTile.tx,
+            targetBuildTile.ty,
+            player.x,
+            player.y
+          )
+        : undefined;
     const ghostSt: PlacedStructure = {
       id: 'ghost_preview',
       type: placeableType,
@@ -6371,6 +6536,7 @@ export class GameRenderer {
       rotation: buildOptions?.rotation ?? 0,
       isOpen: false,
       attachedToWall: isWallMountTorch,
+      wallMountSide: ghostMountSide,
       flowerColor: heldSlot?.selectedColor || 'amarelo',
     };
 
@@ -7856,112 +8022,28 @@ export class GameRenderer {
 
     const slot = player.inventory[player.selectedHotbarIndex];
     if (slot) {
-      const itemCanvas = spriteAtlas.getItemCanvas(
-        slot.itemId,
-        slot.selectedColor
-      );
       const isSwinging = player.swingTimer > 0;
       const swingProgress = isSwinging
         ? 1 - player.swingTimer / player.swingDuration
         : 0;
-
-      // Exact hand anchor coordinates synced with 1.5x body arms & walking arm swing
       const stepL = frame === 1 ? -2 : frame === 3 ? 2 : 0;
       const stepR = -stepL;
       const swimItemOffsetY = isSwimming ? 5 : isBoatMount ? 2 : 0;
 
-      let baseAngle = 0;
-      let handOffsetX = 0;
-      let handOffsetY = 0;
-      if (player.direction === 'up') {
-        baseAngle = -Math.PI / 2;
-        handOffsetX = 6.5;
-        handOffsetY = -1.5 + stepR * 1.1;
-      } else if (player.direction === 'down') {
-        baseAngle = Math.PI / 2;
-        handOffsetX = -6.5;
-        handOffsetY = -1.0 + stepL * 1.1;
-      } else if (player.direction === 'left') {
-        baseAngle = Math.PI;
-        handOffsetX = -2.2 - stepL * 0.6;
-        handOffsetY = -1.0 + stepL * 1.1;
-      } else {
-        baseAngle = 0;
-        handOffsetX = 2.2 + stepR * 0.6;
-        handOffsetY = -1.0 + stepR * 1.1;
-      }
-
-      ctx.save();
-      ctx.translate(
-        drawX + hurtShakeX + handOffsetX,
-        drawY - walkHop + handOffsetY + swimItemOffsetY
+      this.drawHeldItemInHand(
+        ctx,
+        slot.itemId,
+        slot.selectedColor,
+        drawX + hurtShakeX,
+        drawY - walkHop + swimItemOffsetY,
+        player.direction,
+        stepL,
+        stepR,
+        isSwinging,
+        swingProgress,
+        player.appearance?.skinColor || '#f1c27d',
+        true
       );
-
-      if (isSwinging) {
-        const swingArc = (swingProgress - 0.5) * 2.2;
-        ctx.rotate(baseAngle + swingArc);
-
-        const outerColor =
-          slot.itemId === 'astral_sword' ||
-          slot.itemId === 'primordial_axe' ||
-          slot.itemId === 'primordial_pickaxe'
-            ? 'rgba(250, 204, 21, 0.55)'
-            : slot.itemId === 'shadow_blade'
-            ? 'rgba(192, 132, 252, 0.55)'
-            : slot.itemId === 'abyssal_trident'
-            ? 'rgba(56, 189, 248, 0.55)'
-            : 'rgba(226, 232, 240, 0.42)';
-
-        const coreColor =
-          slot.itemId === 'astral_sword' ||
-          slot.itemId === 'primordial_axe' ||
-          slot.itemId === 'primordial_pickaxe'
-            ? '#fef08a'
-            : slot.itemId === 'shadow_blade'
-            ? '#e9d5ff'
-            : slot.itemId === 'abyssal_trident'
-            ? '#bae6fd'
-            : '#ffffff';
-
-        // Outer Elemental Slash Ribbon
-        ctx.strokeStyle = outerColor;
-        ctx.lineWidth = 5.5;
-        ctx.beginPath();
-        ctx.arc(0, 0, 20, -0.75, 0.65);
-        ctx.stroke();
-
-        // Inner Razor Core Arc
-        ctx.strokeStyle = coreColor;
-        ctx.lineWidth = 2.2;
-        ctx.beginPath();
-        ctx.arc(0, 0, 21, -0.6, 0.6);
-        ctx.stroke();
-
-        // Draw item anchored by its handle at the hand origin (0, 0)
-        ctx.drawImage(itemCanvas, -3, -17, 20, 20);
-      } else {
-        // Anchor the held item directly to the character's hand in all 4 directions (never floating)
-        if (player.direction === 'left') {
-          ctx.scale(-1, 1);
-          ctx.rotate(-0.12);
-          ctx.drawImage(itemCanvas, -3, -11, 14, 14);
-        } else if (player.direction === 'right') {
-          ctx.rotate(-0.12);
-          ctx.drawImage(itemCanvas, -3, -11, 14, 14);
-        } else if (player.direction === 'down') {
-          ctx.scale(-1, 1);
-          ctx.rotate(0.35);
-          ctx.drawImage(itemCanvas, -3, -11, 14, 14);
-        } else {
-          // facing up
-          ctx.rotate(-0.25);
-          ctx.drawImage(itemCanvas, -3, -11, 14, 14);
-        }
-        // Subtle hand-grip clasp over item handle so the hand visibly holds the item
-        ctx.fillStyle = player.appearance?.skinColor || '#f1c27d';
-        ctx.fillRect(-1.5, -1.5, 3, 3);
-      }
-      ctx.restore();
     }
 
     // Active Fishing Line & Floating Bobber on Water
@@ -8033,6 +8115,253 @@ export class GameRenderer {
       }
       ctx.restore();
     }
+  }
+
+  private heldItemScaledCache = new Map<string, HTMLCanvasElement>();
+
+  /**
+   * Returns a cached, distortion-free canvas at the exact target hand size (`size x size`).
+   * - Native 16x16 equipment uses the 1:1 pixel-art canvas directly.
+   * - Miniature items (8x8..12x12) are downsampled once into a crisp offscreen canvas so nearest-neighbor never drops outlines unevenly.
+   */
+  private getHeldItemHandCanvas(
+    itemId: string,
+    selectedColor: ClothingColorId | undefined,
+    size: number
+  ): HTMLCanvasElement {
+    const baseCanvas = spriteAtlas.getItemCanvas(itemId, selectedColor);
+    if (size === 16) return baseCanvas;
+    const key = `${itemId}_${selectedColor || ''}_${size}`;
+    let cached = this.heldItemScaledCache.get(key);
+    if (!cached) {
+      cached = document.createElement('canvas');
+      cached.width = size;
+      cached.height = size;
+      const cctx = cached.getContext('2d');
+      if (cctx) {
+        cctx.imageSmoothingEnabled = true;
+        cctx.imageSmoothingQuality = 'high';
+        cctx.drawImage(baseCanvas, 0, 0, size, size);
+      }
+      this.heldItemScaledCache.set(key, cached);
+    }
+    return cached;
+  }
+
+  /**
+   * Renders the item held in a character's hand without pixel distortion and with realistic relative proportions:
+   * - Weapons & Harvesting Tools (`WEAPON` / `TOOL`): Proportional 1:1 native 16x16 size (12x12 for compact watering can / shears), held by the grip with 0 idle rotation.
+   * - Giant Items (`PLACEABLE` structures/buildings/stations/walls, `wood_boat`, `saddle`): Miniature (8x8..9x9) held upright in the palm.
+   * - Small Resources, Seeds, Ores & Consumables: Compact (9x9..10x10) held upright in the palm.
+   */
+  private drawHeldItemInHand(
+    ctx: CanvasRenderingContext2D,
+    itemId: string,
+    selectedColor: ClothingColorId | undefined,
+    anchorBaseX: number,
+    anchorBaseY: number,
+    direction: Direction,
+    stepL: number,
+    stepR: number,
+    isSwinging: boolean,
+    swingProgress: number,
+    skinColor: string,
+    fancySlashRibbon: boolean
+  ): void {
+    const def = ITEMS[itemId];
+    if (!def) return;
+
+    const isEquipment =
+      def.category === ItemCategory.WEAPON || def.category === ItemCategory.TOOL;
+    const isCompactTool =
+      isEquipment &&
+      (def.toolType === ToolType.WATERING_CAN ||
+        def.toolType === ToolType.SHEARS);
+    const isGiantMiniature =
+      def.category === ItemCategory.PLACEABLE ||
+      itemId === 'wood_boat' ||
+      itemId === 'saddle';
+    const isHugeStructure =
+      isGiantMiniature &&
+      (itemId === 'village_house' ||
+        itemId === 'market_stall' ||
+        itemId === 'village_well' ||
+        itemId === 'healing_fountain' ||
+        itemId === 'guardian_totem' ||
+        itemId === 'solar_altar' ||
+        itemId === 'explorer_tent' ||
+        itemId === 'furnace' ||
+        itemId === 'workbench' ||
+        itemId === 'weaving_table' ||
+        itemId === 'wood_boat' ||
+        itemId === 'level_stairs' ||
+        itemId === 'drilling_stake' ||
+        itemId === 'bed');
+    const isTinyResource =
+      !isEquipment &&
+      !isGiantMiniature &&
+      (Boolean(def.seedCropType) ||
+        Boolean(def.isFlower) ||
+        itemId === 'berry' ||
+        itemId === 'gold_coin' ||
+        itemId === 'wheat_seeds' ||
+        itemId === 'herb_seeds' ||
+        itemId === 'solar_seeds');
+
+    // Relative proportional size in hand (px)
+    const handSize = isEquipment
+      ? isCompactTool
+        ? 12
+        : 16
+      : isHugeStructure
+      ? 8
+      : isGiantMiniature
+      ? 9
+      : isTinyResource
+      ? 9
+      : 10;
+
+    const handCanvas = this.getHeldItemHandCanvas(
+      itemId,
+      selectedColor,
+      handSize
+    );
+
+    let baseAngle = 0;
+    let handOffsetX = 0;
+    let handOffsetY = 0;
+    if (direction === 'up') {
+      baseAngle = -Math.PI / 2;
+      handOffsetX = 7;
+      handOffsetY = Math.round(-1.5 + stepR);
+    } else if (direction === 'down') {
+      baseAngle = Math.PI / 2;
+      handOffsetX = -7;
+      handOffsetY = Math.round(-1 + stepL);
+    } else if (direction === 'left') {
+      baseAngle = Math.PI;
+      handOffsetX = Math.round(-2.5 - stepL * 0.5);
+      handOffsetY = Math.round(-1 + stepL);
+    } else {
+      baseAngle = 0;
+      handOffsetX = Math.round(2.5 + stepR * 0.5);
+      handOffsetY = Math.round(-1 + stepR);
+    }
+
+    const handX = Math.round(anchorBaseX + handOffsetX);
+    const handY = Math.round(anchorBaseY + handOffsetY);
+
+    ctx.save();
+    ctx.translate(handX, handY);
+
+    if (isSwinging) {
+      const swingArc = (swingProgress - 0.5) * 2.2;
+      if (isEquipment && !isCompactTool) {
+        ctx.rotate(baseAngle + swingArc);
+
+        if (fancySlashRibbon) {
+          const outerColor =
+            itemId === 'astral_sword' ||
+            itemId === 'gold_sword' ||
+            itemId === 'gold_axe' ||
+            itemId === 'gold_pickaxe' ||
+            itemId === 'primordial_axe' ||
+            itemId === 'primordial_pickaxe'
+              ? 'rgba(250, 204, 21, 0.55)'
+              : itemId === 'shadow_blade'
+              ? 'rgba(192, 132, 252, 0.55)'
+              : itemId === 'abyssal_trident'
+              ? 'rgba(56, 189, 248, 0.55)'
+              : 'rgba(226, 232, 240, 0.42)';
+
+          const coreColor =
+            itemId === 'astral_sword' ||
+            itemId === 'gold_sword' ||
+            itemId === 'gold_axe' ||
+            itemId === 'gold_pickaxe' ||
+            itemId === 'primordial_axe' ||
+            itemId === 'primordial_pickaxe'
+              ? '#fef08a'
+              : itemId === 'shadow_blade'
+              ? '#e9d5ff'
+              : itemId === 'abyssal_trident'
+              ? '#bae6fd'
+              : '#ffffff';
+
+          ctx.strokeStyle = outerColor;
+          ctx.lineWidth = 5;
+          ctx.beginPath();
+          ctx.arc(0, 0, 18, -0.75, 0.65);
+          ctx.stroke();
+
+          ctx.strokeStyle = coreColor;
+          ctx.lineWidth = 2;
+          ctx.beginPath();
+          ctx.arc(0, 0, 19, -0.6, 0.6);
+          ctx.stroke();
+        } else {
+          ctx.strokeStyle = 'rgba(226, 232, 240, 0.45)';
+          ctx.lineWidth = 4;
+          ctx.beginPath();
+          ctx.arc(0, 0, 18, -0.75, 0.65);
+          ctx.stroke();
+        }
+
+        // Draw 1:1 16x16 weapon/tool anchored by its handle at (0, 0) without stretching to 20x20
+        ctx.drawImage(handCanvas, -3, -13, handSize, handSize);
+      } else {
+        // Non-weapon or compact tool swing: slight forward nudge in facing direction, keeping item upright & undistorted
+        const reachPush = Math.round(Math.sin(swingProgress * Math.PI) * 4);
+        const pushX =
+          direction === 'left'
+            ? -reachPush
+            : direction === 'right'
+            ? reachPush
+            : 0;
+        const pushY =
+          direction === 'up'
+            ? -reachPush
+            : direction === 'down'
+            ? reachPush
+            : 0;
+        const half = Math.floor(handSize / 2);
+        ctx.drawImage(
+          handCanvas,
+          pushX - half,
+          pushY - half - 2,
+          handSize,
+          handSize
+        );
+        ctx.fillStyle = skinColor;
+        ctx.fillRect(-1, -1, 3, 3);
+      }
+    } else if (isEquipment && !isCompactTool) {
+      // Proportional 16x16 Equipment held by its handle with 0 diagonal rotation (100% undistorted pixel art)
+      if (direction === 'left' || direction === 'down') {
+        ctx.scale(-1, 1);
+      }
+      ctx.drawImage(handCanvas, -3, -13, handSize, handSize);
+      ctx.fillStyle = skinColor;
+      ctx.fillRect(-1, -1, 3, 3);
+    } else {
+      // Miniature giant item, compact tool, or small resource/consumable held upright in the palm (0 rotation)
+      const half = Math.floor(handSize / 2);
+      const offsetX =
+        direction === 'left'
+          ? -half - 2
+          : direction === 'right'
+          ? -half + 2
+          : -half;
+      const offsetY = -half - 2;
+      if (isCompactTool && direction === 'left') {
+        ctx.scale(-1, 1);
+      }
+      ctx.drawImage(handCanvas, offsetX, offsetY, handSize, handSize);
+      ctx.fillStyle = skinColor;
+      ctx.fillRect(-1, -1, 3, 3);
+    }
+
+    ctx.restore();
   }
 
   private drawRemotePlayer(
@@ -8253,72 +8582,28 @@ export class GameRenderer {
     }
 
     if (rp.heldItemId && ITEMS[rp.heldItemId]) {
-      const itemCanvas = spriteAtlas.getItemCanvas(rp.heldItemId);
       const isSwinging = rp.swingTimer > 0;
       const swingProgress = isSwinging
         ? 1 - rp.swingTimer / Math.max(0.1, rp.swingDuration)
         : 0;
-
       const stepL = frame === 1 ? -2 : frame === 3 ? 2 : 0;
       const stepR = -stepL;
       const swimItemOffsetY = isSwimming ? 5 : isBoatMount ? 2 : 0;
 
-      let baseAngle = 0;
-      let handOffsetX = 0;
-      let handOffsetY = 0;
-      if (rp.direction === 'up') {
-        baseAngle = -Math.PI / 2;
-        handOffsetX = 6.5;
-        handOffsetY = -1.5 + stepR * 1.1;
-      } else if (rp.direction === 'down') {
-        baseAngle = Math.PI / 2;
-        handOffsetX = -6.5;
-        handOffsetY = -1.0 + stepL * 1.1;
-      } else if (rp.direction === 'left') {
-        baseAngle = Math.PI;
-        handOffsetX = -2.2 - stepL * 0.6;
-        handOffsetY = -1.0 + stepL * 1.1;
-      } else {
-        baseAngle = 0;
-        handOffsetX = 2.2 + stepR * 0.6;
-        handOffsetY = -1.0 + stepR * 1.1;
-      }
-
-      ctx.save();
-      ctx.translate(
-        drawX + rpHurtShakeX + handOffsetX,
-        drawY - walkHop + handOffsetY + swimItemOffsetY
+      this.drawHeldItemInHand(
+        ctx,
+        rp.heldItemId,
+        undefined,
+        drawX + rpHurtShakeX,
+        drawY - walkHop + swimItemOffsetY,
+        rp.direction,
+        stepL,
+        stepR,
+        isSwinging,
+        swingProgress,
+        rp.appearance?.skinColor || '#f1c27d',
+        false
       );
-
-      if (isSwinging) {
-        const swingArc = (swingProgress - 0.5) * 2.2;
-        ctx.rotate(baseAngle + swingArc);
-        ctx.strokeStyle = 'rgba(226, 232, 240, 0.45)';
-        ctx.lineWidth = 4.5;
-        ctx.beginPath();
-        ctx.arc(0, 0, 20, -0.75, 0.65);
-        ctx.stroke();
-        ctx.drawImage(itemCanvas, -3, -17, 20, 20);
-      } else {
-        if (rp.direction === 'left') {
-          ctx.scale(-1, 1);
-          ctx.rotate(-0.12);
-          ctx.drawImage(itemCanvas, -3, -11, 14, 14);
-        } else if (rp.direction === 'right') {
-          ctx.rotate(-0.12);
-          ctx.drawImage(itemCanvas, -3, -11, 14, 14);
-        } else if (rp.direction === 'down') {
-          ctx.scale(-1, 1);
-          ctx.rotate(0.35);
-          ctx.drawImage(itemCanvas, -3, -11, 14, 14);
-        } else {
-          ctx.rotate(-0.25);
-          ctx.drawImage(itemCanvas, -3, -11, 14, 14);
-        }
-        ctx.fillStyle = rp.appearance?.skinColor || '#f1c27d';
-        ctx.fillRect(-1.5, -1.5, 3, 3);
-      }
-      ctx.restore();
     }
 
     // Overhead Name Tag, Role Badge, Boat Seat Tag, HP Bar & Chat Bubble

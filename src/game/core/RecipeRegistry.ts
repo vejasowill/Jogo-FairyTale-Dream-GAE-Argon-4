@@ -288,6 +288,32 @@ export const RECIPES: CraftingRecipe[] = [
     ],
   },
   {
+    id: 'craft_gold_axe',
+    resultItemId: 'gold_axe',
+    resultCount: 1,
+    requiredStation: PlaceableType.WORKBENCH,
+    craftTimeSec: 0,
+    rarity: RarityTier.RARE,
+    ingredients: [
+      { itemId: 'gold_bar', count: 3 },
+      { itemId: 'hardwood', count: 2 },
+      { itemId: 'fiber', count: 2 },
+    ],
+  },
+  {
+    id: 'craft_gold_pickaxe',
+    resultItemId: 'gold_pickaxe',
+    resultCount: 1,
+    requiredStation: PlaceableType.WORKBENCH,
+    craftTimeSec: 0,
+    rarity: RarityTier.RARE,
+    ingredients: [
+      { itemId: 'gold_bar', count: 4 },
+      { itemId: 'hardwood', count: 2 },
+      { itemId: 'fiber', count: 2 },
+    ],
+  },
+  {
     id: 'craft_iron_hoe',
     resultItemId: 'iron_hoe',
     resultCount: 1,
@@ -363,6 +389,19 @@ export const RECIPES: CraftingRecipe[] = [
     rarity: RarityTier.RARE,
     ingredients: [
       { itemId: 'iron_bar', count: 4 },
+      { itemId: 'hardwood', count: 2 },
+      { itemId: 'solar_crystal', count: 1 },
+    ],
+  },
+  {
+    id: 'craft_gold_sword',
+    resultItemId: 'gold_sword',
+    resultCount: 1,
+    requiredStation: PlaceableType.WORKBENCH,
+    craftTimeSec: 0,
+    rarity: RarityTier.RARE,
+    ingredients: [
+      { itemId: 'gold_bar', count: 4 },
       { itemId: 'hardwood', count: 2 },
       { itemId: 'solar_crystal', count: 1 },
     ],
@@ -1415,6 +1454,15 @@ export const RECIPES: CraftingRecipe[] = [
     craftTimeSec: 8,
     rarity: RarityTier.RARE,
     ingredients: [{ itemId: 'iron_ore', count: 1 }],
+  },
+  {
+    id: 'smelt_gold_bar',
+    resultItemId: 'gold_bar',
+    resultCount: 1,
+    requiredStation: PlaceableType.FURNACE,
+    craftTimeSec: 10,
+    rarity: RarityTier.RARE,
+    ingredients: [{ itemId: 'gold_ore', count: 1 }],
   },
   {
     id: 'cook_lamb_furnace',

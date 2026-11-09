@@ -297,7 +297,8 @@ export const CharacterPetsModal: React.FC<CharacterPetsModalProps> = ({
   const heldItem = heldSlot ? ITEMS[heldSlot.itemId] : null;
   const strengthMult = 1 + strengthLv * 0.12;
   const statusBaseAttack = Math.round(4 * strengthMult);
-  const totalAttack = Math.round((heldItem?.attackDamage || 4) * strengthMult);
+  const equipAttack = heldItem?.attackDamage || 0;
+  const totalAttack = statusBaseAttack + equipAttack;
 
   const attributesList: {
     key: keyof PlayerAttributes;
@@ -318,7 +319,7 @@ export const CharacterPetsModal: React.FC<CharacterPetsModalProps> = ({
     {
       key: 'strength',
       name: 'Força',
-      desc: '+12% Dano/Coleta',
+      desc: '+12% Ataque (Soma em ATQ)',
       bonusText: `ATQ Base: ${statusBaseAttack} (+${Math.round(
         strengthLv * 12
       )}%)`,
@@ -1096,9 +1097,9 @@ export const CharacterPetsModal: React.FC<CharacterPetsModalProps> = ({
               <div className="mc-slot p-1.5">
                 <div className="text-[9px] text-[#c4ab7d]">Ataque</div>
                 <div className="font-mono-tabular text-[11px] text-rose-400 font-bold">
-                  {statusBaseAttack} ATQ
-                  {heldItem?.attackDamage
-                    ? ` (${totalAttack} Arma)`
+                  {totalAttack} ATQ
+                  {equipAttack > 0
+                    ? ` (${statusBaseAttack}+${equipAttack})`
                     : ''}
                 </div>
               </div>
@@ -1339,7 +1340,7 @@ export const CharacterPetsModal: React.FC<CharacterPetsModalProps> = ({
             },
             {
               title: '2. Atributos RPG (Nv. 0+)',
-              body: 'Ao subir de nível você ganha Pontos de Atributo para evoluir Vitalidade (+Vida), Força (+Dano/Coleta, iniciando com 4 de ATQ no Nv. 0), Vel. ATK (+Velocidade de Ataque/Quebra), Defesa (+Redução de Dano), Agilidade (+Velocidade de Movimento) ou Sobrevivência (-Fome/+Drop).',
+              body: 'Ao subir de nível você ganha Pontos de Atributo para evoluir Vitalidade (+Vida), Força (+Ataque, somando ao ATQ da arma sem alterar o poder de coleta), Vel. ATK (+Velocidade de Ataque/Quebra), Defesa (+Redução de Dano), Agilidade (+Velocidade de Movimento) ou Sobrevivência (-Fome/+Drop).',
             },
             {
               title: '3. Estados dos Pets (Base, Seguindo e Pastar)',

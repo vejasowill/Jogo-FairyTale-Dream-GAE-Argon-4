@@ -297,9 +297,9 @@ export const ITEMS: Record<string, ItemDefinition> = {
     id: 'warrior_feast',
     name: 'Banquete Real do Guerreiro',
     description:
-      'Refeição revigorante assada na Fornalha com Maçã Dourada, Coco e Couro/Essência. Concede Fúria de Combate (+35% Dano e Coleta por 50s).',
+      'Refeição revigorante assada na Fornalha com Maçã Dourada, Coco e Couro/Essência. Concede Fúria de Combate (+35% Dano de Ataque por 50s).',
     purposeSummary:
-      'Restaura +75 Fome, +45 HP, +60 Energia e aumenta seu Dano e Coleta em +35% por 50 segundos!',
+      'Restaura +75 Fome, +45 HP, +60 Energia e aumenta seu Dano de Ataque em +35% por 50 segundos!',
     category: ItemCategory.CONSUMABLE,
     rarity: RarityTier.RARE,
     maxStack: 20,
@@ -803,6 +803,28 @@ export const ITEMS: Record<string, ItemDefinition> = {
     rarity: RarityTier.RARE,
     maxStack: 99,
   },
+  gold_ore: {
+    id: 'gold_ore',
+    name: 'Minério de Ouro Bruto',
+    description:
+      'Minério nobre e reluzente extraído de veios raros nas profundezas do subsolo (mais raro que o ferro e o carvão).',
+    purposeSummary:
+      'Funda na Fornalha de Pedra com combustível para produzir Barras de Ouro Refinado.',
+    category: ItemCategory.RESOURCE,
+    rarity: RarityTier.RARE,
+    maxStack: 99,
+  },
+  gold_bar: {
+    id: 'gold_bar',
+    name: 'Barra de Ouro Refinado',
+    description:
+      'Lingote dourado de alta pureza refinado na Fornalha a partir do Minério de Ouro.',
+    purposeSummary:
+      'Material nobre usado na Bancada para forjar Machado, Picareta e Espada de Ouro.',
+    category: ItemCategory.RESOURCE,
+    rarity: RarityTier.RARE,
+    maxStack: 99,
+  },
   hardwood: {
     id: 'hardwood',
     name: 'Madeira Nobre Ancestral',
@@ -1029,6 +1051,60 @@ export const ITEMS: Record<string, ItemDefinition> = {
     attackTargetScope: 'single',
     attackRange: 55,
     harvestPower: 12,
+  },
+  gold_axe: {
+    id: 'gold_axe',
+    name: 'Machado de Ouro Real',
+    description:
+      'Machado forjado com ouro refinado e cabo de madeira nobre. Mais veloz e potente que o de ferro.',
+    purposeSummary:
+      'Ferramenta Nv.2 (Corpo-a-corpo · Individual): Corta árvores comuns, nobres e primordiais com Coleta 25 e 18 de Dano.',
+    category: ItemCategory.TOOL,
+    rarity: RarityTier.RARE,
+    maxStack: 1,
+    toolType: ToolType.AXE,
+    toolTier: 2,
+    attackDamage: 18,
+    attackDelivery: 'melee',
+    attackTargetScope: 'single',
+    attackRange: 33,
+    harvestPower: 25,
+  },
+  gold_pickaxe: {
+    id: 'gold_pickaxe',
+    name: 'Picareta de Ouro Real',
+    description:
+      'Picareta reforçada com liga de ouro refinado. Superior à picareta de ferro na escavação de rochas e minérios.',
+    purposeSummary:
+      'Ferramenta Nv.2 (Corpo-a-corpo · Individual): Minera rochas, carvão, ferro, ouro e cristais com Coleta 25 e 15 de Dano.',
+    category: ItemCategory.TOOL,
+    rarity: RarityTier.RARE,
+    maxStack: 1,
+    toolType: ToolType.PICKAXE,
+    toolTier: 2,
+    attackDamage: 15,
+    attackDelivery: 'melee',
+    attackTargetScope: 'single',
+    attackRange: 33,
+    harvestPower: 25,
+  },
+  gold_sword: {
+    id: 'gold_sword',
+    name: 'Espada Real de Ouro',
+    description:
+      'Lâmina reluzente de ouro temperado. Mais letal e de maior alcance que a Espada de Ferro.',
+    purposeSummary:
+      'Arma Nv.2 (Corpo-a-corpo · Individual): Causa 35 de dano base com alcance de 58px.',
+    category: ItemCategory.WEAPON,
+    rarity: RarityTier.RARE,
+    maxStack: 1,
+    toolType: ToolType.SWORD,
+    toolTier: 2,
+    attackDamage: 35,
+    attackDelivery: 'melee',
+    attackTargetScope: 'single',
+    attackRange: 58,
+    harvestPower: 18,
   },
   shadow_blade: {
     id: 'shadow_blade',
@@ -4233,6 +4309,22 @@ export const NATURE_BLUEPRINTS: Record<NatureNodeType, NatureNodeBlueprint> = {
       { itemId: 'stone', min: 1, max: 1, chance: 0.7 },
     ],
   },
+  [NatureNodeType.UNDERGROUND_GOLD]: {
+    type: NatureNodeType.UNDERGROUND_GOLD,
+    name: 'Veio de Ouro Subterrâneo',
+    rarity: RarityTier.RARE,
+    maxHp: 145,
+    materialKind: 'IRON_MINERAL',
+    requiredTool: ToolType.PICKAXE,
+    requiredTier: 1,
+    xpReward: 40,
+    hasHitbox: true,
+    hitboxRadius: 15,
+    drops: [
+      { itemId: 'gold_ore', min: 1, max: 2, chance: 1.0 },
+      { itemId: 'stone', min: 1, max: 1, chance: 0.7 },
+    ],
+  },
 };
 
 /**
@@ -4394,6 +4486,8 @@ export const ITEM_BASE_PRICES: Record<string, number> = {
   solar_bloom: 35,
   solar_crystal: 45,
   iron_bar: 48, // 2x Minério de Ferro (40) + 1x Madeira (1) + Fundição na Fornalha
+  gold_ore: 42,
+  gold_bar: 92,
   scorpion_stinger: 55,
   ogre_hide: 75,
 
@@ -4424,14 +4518,17 @@ export const ITEM_BASE_PRICES: Record<string, number> = {
   level_stairs: 525,
   solar_altar: 540, // 4x Barra de Ferro (192) + 4x Cristal Solar (180) + 4x Madeira Nobre (72) + Consagração
 
-  // Ferramentas & Armas Nv.2 (Ferro Forjado & Monstros)
+  // Ferramentas & Armas Nv.2 (Ferro Forjado, Ouro Real & Monstros)
   iron_hoe: 160,
   iron_shovel: 155,
   shears: 115,
   iron_axe: 220,
   iron_pickaxe: 275,
+  gold_axe: 340,
+  gold_pickaxe: 410,
   ogre_club: 290,
   iron_sword: 330,
+  gold_sword: 460,
   shadow_blade: 360,
   scorpion_dagger: 420,
 
@@ -5032,6 +5129,20 @@ export const HAND_AND_TOOL_MATERIAL_STRENGTH: Record<
       ASTRAL_MINERAL: 0,
     },
   },
+  gold_axe: {
+    label: 'Machado de Ouro Real (Nv.2)',
+    toolType: ToolType.AXE,
+    toolTier: 2,
+    forceByMaterial: {
+      FIBER_FOLIAGE: 25,
+      SOFT_WOOD: 25,
+      ROUGH_STONE: 9,
+      HARDWOOD: 25,
+      IRON_MINERAL: 0,
+      PRIMORDIAL_WOOD: 25,
+      ASTRAL_MINERAL: 0,
+    },
+  },
   primordial_axe: {
     label: 'Machado Primordial do Bosque (Nv.3)',
     toolType: ToolType.AXE,
@@ -5074,6 +5185,20 @@ export const HAND_AND_TOOL_MATERIAL_STRENGTH: Record<
       IRON_MINERAL: 20, // Poder de coleta 20 (Minério de Ferro 110 HP -> 6 golpes)
       PRIMORDIAL_WOOD: 0,
       ASTRAL_MINERAL: 20, // Desbloqueia Obelisco Astral (220 HP -> 11 golpes) e Ostra Abissal (160 HP -> 8 golpes)
+    },
+  },
+  gold_pickaxe: {
+    label: 'Picareta de Ouro Real (Nv.2)',
+    toolType: ToolType.PICKAXE,
+    toolTier: 2,
+    forceByMaterial: {
+      FIBER_FOLIAGE: 12,
+      SOFT_WOOD: 9,
+      ROUGH_STONE: 25,
+      HARDWOOD: 0,
+      IRON_MINERAL: 25,
+      PRIMORDIAL_WOOD: 0,
+      ASTRAL_MINERAL: 25,
     },
   },
   primordial_pickaxe: {
@@ -5200,6 +5325,20 @@ export const HAND_AND_TOOL_MATERIAL_STRENGTH: Record<
       FIBER_FOLIAGE: 28,
       SOFT_WOOD: 15,
       ROUGH_STONE: 9,
+      HARDWOOD: 0,
+      IRON_MINERAL: 0,
+      PRIMORDIAL_WOOD: 0,
+      ASTRAL_MINERAL: 0,
+    },
+  },
+  gold_sword: {
+    label: 'Espada Real de Ouro (Nv.2)',
+    toolType: ToolType.SWORD,
+    toolTier: 2,
+    forceByMaterial: {
+      FIBER_FOLIAGE: 34,
+      SOFT_WOOD: 18,
+      ROUGH_STONE: 12,
       HARDWOOD: 0,
       IRON_MINERAL: 0,
       PRIMORDIAL_WOOD: 0,
@@ -5429,10 +5568,9 @@ export function evaluateMaterialBreak(
     };
   }
 
-  const finalForce = Math.max(
-    1,
-    Math.round(baseMaterialForce * Math.max(1, playerStrengthMult))
-  );
+  // Harvest power is strictly the equipment's own material force (never summed/multiplied with player Strength attribute)
+  void playerStrengthMult;
+  const finalForce = Math.max(1, Math.round(baseMaterialForce));
 
   return {
     canBreak: true,

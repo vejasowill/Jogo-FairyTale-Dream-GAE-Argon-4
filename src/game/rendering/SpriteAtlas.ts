@@ -1693,6 +1693,54 @@ class SpriteAtlasManager {
       { d: '#1e293b', f: '#f8fafc', l: '#cbd5e1', m: '#64748b' }
     );
 
+    // Gold Ore (Minério de Ouro Bruto — rock chunk with gleaming golden nuggets)
+    registerItem(
+      'gold_ore',
+      [
+        '................',
+        '....dddddddd....',
+        '..ddssggyggssdd.',
+        '.ddssggwwwggssdd',
+        '.dsssggsssyggsd.',
+        '.dssssssggysssd.',
+        '..ddssssggssdd..',
+        '....dddddddd....',
+        '................',
+        '................',
+        '................',
+        '................',
+        '................',
+        '................',
+        '................',
+        '................',
+      ],
+      { d: '#1e293b', s: '#64748b', g: '#f59e0b', y: '#facc15', w: '#fef9c3' }
+    );
+
+    // Gold Bar (Barra de Ouro Refinado — gleaming royal gold ingot)
+    registerItem(
+      'gold_bar',
+      [
+        '................',
+        '................',
+        '.....dddddddd...',
+        '...ddffffffffdd.',
+        '..dffllllllllffd',
+        '.dffllllllllllfd',
+        '.dmmmmmmmmmmmmmd',
+        '..dddddddddddddd',
+        '................',
+        '................',
+        '................',
+        '................',
+        '................',
+        '................',
+        '................',
+        '................',
+      ],
+      { d: '#78350f', f: '#fef9c3', l: '#facc15', m: '#d97706' }
+    );
+
     // Charcoal (Carvão Vegetal — dark carbon chunks with warm glowing ember cracks)
     registerItem(
       'charcoal',
@@ -1939,14 +1987,17 @@ class SpriteAtlasManager {
 
     buildAxe('stone_axe', '#64748b', '#cbd5e1', '#8b5a2b');
     buildAxe('iron_axe', '#cbd5e1', '#ffffff', '#92400e');
+    buildAxe('gold_axe', '#f59e0b', '#fef08a', '#78350f');
     buildAxe('primordial_axe', '#10b981', '#a7f3d0', '#fbbf24');
 
     buildPickaxe('stone_pickaxe', '#64748b', '#94a3b8', '#8b5a2b');
     buildPickaxe('iron_pickaxe', '#e2e8f0', '#38bdf8', '#92400e');
+    buildPickaxe('gold_pickaxe', '#f59e0b', '#facc15', '#78350f');
     buildPickaxe('primordial_pickaxe', '#f59e0b', '#fef08a', '#0284c7');
 
     buildSword('wood_sword', '#94a3b8', '#cbd5e1', '#8b5a2b');
     buildSword('iron_sword', '#e2e8f0', '#ffffff', '#f59e0b');
+    buildSword('gold_sword', '#f59e0b', '#fef08a', '#b45309');
     buildSword('astral_sword', '#38bdf8', '#fef08a', '#d97706');
 
     // Tesoura (Shears — hinged steel blades with wooden/leather handles)

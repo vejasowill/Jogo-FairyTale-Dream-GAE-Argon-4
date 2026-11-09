@@ -9,6 +9,7 @@ import {
   ChunkData,
   ClothingColorId,
   CURRENT_WORLD_GEN_VERSION,
+  Direction,
   EcologicalZone,
   GAME_VERSION,
   InventorySlot,
@@ -85,6 +86,7 @@ const COMPACT_NODE_TYPE_LIST: NatureNodeType[] = [
   NatureNodeType.UNDERGROUND_DIRT,
   NatureNodeType.UNDERGROUND_COAL,
   NatureNodeType.UNDERGROUND_IRON,
+  NatureNodeType.UNDERGROUND_GOLD,
 ];
 
 const COMPACT_FLOWER_COLOR_LIST: ClothingColorId[] = [
@@ -263,7 +265,8 @@ export class WorldManager {
     return (
       type === NatureNodeType.UNDERGROUND_DIRT ||
       type === NatureNodeType.UNDERGROUND_COAL ||
-      type === NatureNodeType.UNDERGROUND_IRON
+      type === NatureNodeType.UNDERGROUND_IRON ||
+      type === NatureNodeType.UNDERGROUND_GOLD
     );
   }
 
@@ -1202,6 +1205,23 @@ export class WorldManager {
       placeMineralVein(NatureNodeType.UNDERGROUND_IRON, lx, ly, clusterSize, salt);
     }
 
+    // 2C. Ouro (UNDERGROUND_GOLD): Rarest (ouro > ferro > carvão) — 1 to 2 veins per chunk; avulso (1 tile, 65%) or small cluster of 2..3 tiles max (35%)
+    const goldVeinCount =
+      1 + (hash2D(cx, cy, this.seed + 7717) > 0.55 ? 1 : 0); // 1..2
+    for (let v = 0; v < goldVeinCount; v++) {
+      const salt = 7741 + v * 127;
+      const lx = 1 + Math.floor(hash2D(cx, cy, this.seed + salt) * (CHUNK_SIZE - 2));
+      const ly =
+        1 + Math.floor(hash2D(cx, cy, this.seed + salt + 19) * (CHUNK_SIZE - 2));
+      const sizeRoll = hash2D(cx, cy, this.seed + salt + 37);
+      // 65% avulso (1), 35% agrupamento raro (2 a 3 blocos no máximo)
+      const clusterSize =
+        sizeRoll < 0.65
+          ? 1
+          : 2 + Math.floor(hash2D(cx, cy, this.seed + salt + 59) * 2); // 2..3
+      placeMineralVein(NatureNodeType.UNDERGROUND_GOLD, lx, ly, clusterSize, salt);
+    }
+
     // 3. Populate Air Pocket structures: 1 Chest in the center + 2 to 3 Torches mounted on the surrounding dirt walls
     if (hasAirPocket && pocketOpenSet.size >= 9) {
       const chestTx = baseTx + pocketCenterLx;
@@ -1215,6 +1235,9 @@ export class WorldManager {
       ];
       if (lootRoll > 0.45) {
         lootItems.push({ itemId: 'iron_bar', count: 2 + Math.floor(lootRoll * 3) });
+      }
+      if (lootRoll > 0.58) {
+        lootItems.push({ itemId: 'gold_ore', count: 1 + Math.floor(lootRoll * 2) });
       }
       if (lootRoll > 0.72) {
         lootItems.push({ itemId: 'wool_bandage', count: 2 });
@@ -1247,18 +1270,24 @@ export class WorldManager {
       });
 
       // Find dirt wall tiles immediately bordering the air pocket to mount 2..3 Torches
-      const wallCandidates: { lx: number; ly: number }[] = [];
+      const wallCandidates: { lx: number; ly: number; mountSide: Direction }[] = [];
       for (let ly = 1; ly < CHUNK_SIZE - 1; ly++) {
         for (let lx = 1; lx < CHUNK_SIZE - 1; lx++) {
           const idx = ly * CHUNK_SIZE + lx;
           if (blockGrid[idx] === null) continue;
-          const touchesPocket =
-            pocketOpenSet.has((ly - 1) * CHUNK_SIZE + lx) ||
-            pocketOpenSet.has((ly + 1) * CHUNK_SIZE + lx) ||
-            pocketOpenSet.has(ly * CHUNK_SIZE + (lx - 1)) ||
-            pocketOpenSet.has(ly * CHUNK_SIZE + (lx + 1));
-          if (touchesPocket) {
-            wallCandidates.push({ lx, ly });
+          const openS = pocketOpenSet.has((ly + 1) * CHUNK_SIZE + lx);
+          const openN = pocketOpenSet.has((ly - 1) * CHUNK_SIZE + lx);
+          const openW = pocketOpenSet.has(ly * CHUNK_SIZE + (lx - 1));
+          const openE = pocketOpenSet.has(ly * CHUNK_SIZE + (lx + 1));
+          if (openS || openN || openW || openE) {
+            const mountSide: Direction = openS
+              ? 'down'
+              : openW
+              ? 'left'
+              : openE
+              ? 'right'
+              : 'up';
+            wallCandidates.push({ lx, ly, mountSide });
           }
         }
       }
@@ -1287,6 +1316,7 @@ export class WorldManager {
             lightRadius: 140,
             hitFlashTimer: 0,
             attachedToWall: true,
+            wallMountSide: cand.mountSide,
           });
         }
       }
@@ -1460,7 +1490,8 @@ export class WorldManager {
     if (
       ugNode &&
       (ugNode.type === NatureNodeType.UNDERGROUND_COAL ||
-        ugNode.type === NatureNodeType.UNDERGROUND_IRON)
+        ugNode.type === NatureNodeType.UNDERGROUND_IRON ||
+        ugNode.type === NatureNodeType.UNDERGROUND_GOLD)
     ) {
       return {
         canDrill: false,
@@ -6381,6 +6412,43 @@ export class WorldManager {
   }
 
   /**
+   * Determines which face ('left' | 'right' | 'up' | 'down') of an underground dirt block at `(tx, ty)`
+   * a Torch should mount on when placed by an actor at `(actorX, actorY)`.
+   * Prioritizes open adjacent faces closest to the actor's side.
+   */
+  public resolveUndergroundTorchMountSide(
+    tx: number,
+    ty: number,
+    actorX: number,
+    actorY: number
+  ): Direction {
+    const centerX = tx * TILE_SIZE + TILE_SIZE * 0.5;
+    const centerY = ty * TILE_SIZE + TILE_SIZE * 0.5;
+    const dx = actorX - centerX;
+    const dy = actorY - centerY;
+
+    const candidates: Array<{
+      side: Direction;
+      nx: number;
+      ny: number;
+      score: number;
+    }> = [
+      { side: 'left', nx: -1, ny: 0, score: -dx },
+      { side: 'right', nx: 1, ny: 0, score: dx },
+      { side: 'up', nx: 0, ny: -1, score: -dy },
+      { side: 'down', nx: 0, ny: 1, score: dy },
+    ];
+    candidates.sort((a, b) => b.score - a.score);
+
+    for (const c of candidates) {
+      if (!this.hasUndergroundDirtBlockAtTile(tx + c.nx, ty + c.ny)) {
+        return c.side;
+      }
+    }
+    return candidates[0].side;
+  }
+
+  /**
    * Places or upgrades a structure at (tx, ty).
    * Returns `{ placed: boolean; replacedItemId?: string; attachedToWall?: boolean }` so in-place upgrades refund the old piece.
    */
@@ -6391,7 +6459,8 @@ export class WorldManager {
     itemId: string,
     orientation: 'auto' | 'horizontal' | 'vertical' = 'auto',
     flowerColor?: ClothingColorId,
-    rotation?: 0 | 1 | 2 | 3
+    rotation?: 0 | 1 | 2 | 3,
+    wallMountSide?: Direction
   ): { placed: boolean; replacedItemId?: string; attachedToWall?: boolean } {
     if (!this.canPlaceStructureAt(tx, ty, placeableType)) {
       return { placed: false };
@@ -6490,6 +6559,7 @@ export class WorldManager {
       lightRadius: bp.lightRadius,
       hitFlashTimer: 0,
       attachedToWall: isMountingTorchOnWall ? true : undefined,
+      wallMountSide: isMountingTorchOnWall ? wallMountSide : undefined,
       flowerColor,
       growthStage: WorldManager.isSaplingStructure(placeableType)
         ? 0
