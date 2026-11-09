@@ -74,8 +74,8 @@ function getBiomeDisplayName(biome?: BiomeType, zone?: EcologicalZone): string {
   if (biome === BiomeType.FOREST) return 'Floresta Comum';
   if (biome === BiomeType.DESERT) {
     if (zone === EcologicalZone.DESERT_OASIS) return 'Oásis do Deserto';
-    if (zone === EcologicalZone.CRYSTAL_BADLANDS) return ' Terras Cristalinas';
-    return 'Deserto Solar';
+    if (zone === EcologicalZone.CRYSTAL_BADLANDS) return 'Cânion Rochoso';
+    return 'Deserto';
   }
   if (biome === BiomeType.ISLAND) return 'Ilha Oceânica';
   if (biome === BiomeType.PLAINS) {
@@ -663,7 +663,9 @@ export const WorldMapModal: React.FC<WorldMapModalProps> = ({
               (n) => n.tileX === tx && n.tileY === ty && n.hp > 0
             );
             ctx.fillStyle =
-              uNode?.type === NatureNodeType.UNDERGROUND_IRON
+              uNode?.type === NatureNodeType.UNDERGROUND_GOLD
+                ? '#facc15'
+                : uNode?.type === NatureNodeType.UNDERGROUND_IRON
                 ? '#d97706'
                 : uNode?.type === NatureNodeType.UNDERGROUND_COAL
                 ? '#1e293b'
@@ -852,8 +854,6 @@ export const WorldMapModal: React.FC<WorldMapModalProps> = ({
                   ? '#f97316'
                   : gst.cropType === 'medic_herb'
                   ? '#2dd4bf'
-                  : gst.cropType === 'solar_bloom'
-                  ? '#fde047'
                   : '#ef4444';
               ctx.fillRect(sx + off, sy + off, cropDot, cropDot);
             }
@@ -969,14 +969,9 @@ export const WorldMapModal: React.FC<WorldMapModalProps> = ({
               Math.max(1, s - 2),
               Math.max(1, s - 2)
             );
-          } else if (
-            node.type === NatureNodeType.DESERT_CRYSTAL ||
-            node.type === NatureNodeType.SUNSTONE_OBELISK ||
-            node.type === NatureNodeType.PEARL_CLAM
-          ) {
+          } else if (node.type === NatureNodeType.PEARL_CLAM) {
             const s = Math.max(3, Math.round(zoom * 0.68));
-            ctx.fillStyle =
-              node.type === NatureNodeType.DESERT_CRYSTAL ? '#f59e0b' : '#0284c7';
+            ctx.fillStyle = '#0284c7';
             ctx.fillRect(cx - Math.floor(s / 2), cy - Math.floor(s / 2), s, s);
             ctx.fillStyle = '#fef08a';
             ctx.fillRect(cx, cy, Math.max(1, Math.floor(s * 0.4)), Math.max(1, Math.floor(s * 0.4)));
@@ -1266,17 +1261,13 @@ export const WorldMapModal: React.FC<WorldMapModalProps> = ({
               break;
             }
 
-            case PlaceableType.HEALING_FOUNTAIN:
-            case PlaceableType.SOLAR_ALTAR:
             case PlaceableType.GUARDIAN_TOTEM: {
               const sw = Math.max(4, Math.round(cellSize * 1.25));
               const ox = sx - Math.floor((sw - cellSize) / 2);
               const oy = sy - Math.floor((sw - cellSize) / 2);
-              ctx.fillStyle =
-                st.type === PlaceableType.HEALING_FOUNTAIN ? '#cbd5e1' : '#b45309';
+              ctx.fillStyle = '#b45309';
               ctx.fillRect(ox, oy, sw, sw);
-              ctx.fillStyle =
-                st.type === PlaceableType.SOLAR_ALTAR ? '#fde047' : '#38bdf8';
+              ctx.fillStyle = '#38bdf8';
               ctx.fillRect(ox + 1, oy + 1, Math.max(1, sw - 2), Math.max(1, sw - 2));
               break;
             }

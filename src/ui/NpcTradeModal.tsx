@@ -37,7 +37,6 @@ interface NpcTradeModalProps {
 const GIFT_OPTIONS: { itemId: string; affinityGain: number }[] = [
   { itemId: 'gold_coin', affinityGain: 18 },
   { itemId: 'warrior_feast', affinityGain: 20 },
-  { itemId: 'solar_crystal', affinityGain: 14 },
   { itemId: 'apple', affinityGain: 10 },
   { itemId: 'coconut', affinityGain: 8 },
 ];

@@ -6781,8 +6781,7 @@ export class GameEngine {
             if (
               st.type === PlaceableType.VILLAGE_WELL ||
               st.type === PlaceableType.MARKET_STALL ||
-              st.type === PlaceableType.CAMPFIRE ||
-              st.type === PlaceableType.HEALING_FOUNTAIN
+              st.type === PlaceableType.CAMPFIRE
             ) {
               const sx = st.tileX * TILE_SIZE + TILE_SIZE / 2;
               const sy = st.tileY * TILE_SIZE + TILE_SIZE / 2 + 22;
@@ -7274,7 +7273,7 @@ export class GameEngine {
                 this.renderer.spawnLightningBolt(sx, sy - 8, cr.x, cr.y, '#fde047');
                 this.renderer.spawnBurst(cr.x, cr.y, 'SPARK', 10);
                 this.damageCreature(cr, 25, sx, sy);
-                this.addFloatingText('Raio Solar!', cr.x, cr.y - 22, '#fde047');
+                this.addFloatingText('Raio!', cr.x, cr.y - 22, '#fde047');
                 break;
               }
             }
@@ -8345,15 +8344,10 @@ export class GameEngine {
                 }
                 this.emitUiSnapshot();
                 return;
-              } else if (
-                st.type === PlaceableType.HEALING_FOUNTAIN ||
-                st.type === PlaceableType.VILLAGE_WELL
-              ) {
-                // Fonte de Cura e Poço: se quebrados, não são coletáveis — são destruídos!
+              } else if (st.type === PlaceableType.VILLAGE_WELL) {
+                // Poço: se quebrado, não é coletável — é destruído!
                 this.addFloatingText(
-                  st.type === PlaceableType.HEALING_FOUNTAIN
-                    ? '💥 Fonte de Cura destruída!'
-                    : '💥 Poço destruído!',
+                  '💥 Poço destruído!',
                   sx,
                   sy - 18,
                   '#f43f5e'
@@ -8446,9 +8440,7 @@ export class GameEngine {
     const structAtTile = this.world.getStructureAtTile(tile.tx, tile.ty);
     const isWaterSource =
       target?.stationType === PlaceableType.VILLAGE_WELL ||
-      target?.stationType === PlaceableType.HEALING_FOUNTAIN ||
-      structAtTile?.type === PlaceableType.VILLAGE_WELL ||
-      structAtTile?.type === PlaceableType.HEALING_FOUNTAIN;
+      structAtTile?.type === PlaceableType.VILLAGE_WELL;
 
     if (isWaterTile || isWaterSource) {
       this.player.swingDuration = 0.22;
@@ -8797,12 +8789,6 @@ export class GameEngine {
             seedItem = 'herb_seeds';
             produceCount = 1 + Math.floor(Math.random() * 2);
             xpGain = 24;
-          } else if (crop === 'solar_bloom') {
-            harvestItem = 'solar_bloom';
-            seedItem = 'solar_seeds';
-            produceCount = 1 + (Math.random() < 0.4 ? 1 : 0);
-            seedCount = 1;
-            xpGain = 32;
           } else if (crop === 'berry') {
             harvestItem = 'berry';
             seedItem = 'berry_seeds';
@@ -8976,7 +8962,6 @@ export class GameEngine {
       if (
         target.stationType === PlaceableType.WORKBENCH ||
         target.stationType === PlaceableType.FURNACE ||
-        target.stationType === PlaceableType.SOLAR_ALTAR ||
         target.stationType === PlaceableType.WEAVING_TABLE
       ) {
         const { tx, ty } = this.world.worldToTile(target.worldX, target.worldY);
@@ -8991,7 +8976,7 @@ export class GameEngine {
         this.renderer.spawnRipple(
           target.worldX,
           target.worldY,
-          target.stationType === PlaceableType.SOLAR_ALTAR ? '#38bdf8' : '#fbbf24',
+          '#fbbf24',
           22,
           0.4
         );
@@ -9120,44 +9105,6 @@ export class GameEngine {
           target.worldX,
           target.worldY
         );
-        return;
-      }
-
-      if (target.stationType === PlaceableType.HEALING_FOUNTAIN) {
-        // Fonte de Cura: recupera 100% de HP dos animais domesticados;
-        // para o jogador, recupera 100% de HP, Energia e Fome disponível apenas 1 vez por dia!
-        for (const pet of this.entities.creatures) {
-          if (pet.tamed) pet.hp = pet.maxHp;
-        }
-
-        if (this.player.lastFountainUseDay === this.metadata.dayCount) {
-          soundManager.playHitStone();
-          this.renderer.spawnRipple(target.worldX, target.worldY, '#38bdf8', 24, 0.45);
-          this.addFloatingText(
-            '⏳ Fonte de Cura já usada hoje! (1x por dia · Pets curados)',
-            this.player.x,
-            this.player.y - 24,
-            '#38bdf8'
-          );
-          this.emitUiSnapshot();
-          return;
-        }
-
-        this.player.lastFountainUseDay = this.metadata.dayCount;
-        this.player.hp = this.player.maxHp;
-        this.player.stamina = this.player.maxStamina;
-        this.player.hunger = this.player.maxHunger;
-        soundManager.playTameSuccess();
-        this.renderer.spawnBurst(target.worldX, target.worldY - 6, 'WATER', 14);
-        this.renderer.spawnBurst(this.player.x, this.player.y, 'HEAL', 16);
-        this.renderer.spawnRipple(target.worldX, target.worldY, '#38bdf8', 34, 0.65);
-        this.addFloatingText(
-          'Bênção das Águas Abissais (100% HP, Energia, Fome & Pets!)',
-          this.player.x,
-          this.player.y - 24,
-          '#38bdf8'
-        );
-        this.emitUiSnapshot();
         return;
       }
 
@@ -10804,12 +10751,10 @@ export class GameEngine {
             st.type !== PlaceableType.WORKBENCH &&
             st.type !== PlaceableType.WEAVING_TABLE &&
             st.type !== PlaceableType.FURNACE &&
-            st.type !== PlaceableType.SOLAR_ALTAR &&
             st.type !== PlaceableType.CAMPFIRE &&
             st.type !== PlaceableType.BED &&
             st.type !== PlaceableType.EXPLORER_TENT &&
             st.type !== PlaceableType.VILLAGE_HOUSE &&
-            st.type !== PlaceableType.HEALING_FOUNTAIN &&
             st.type !== PlaceableType.CHEST &&
             st.type !== PlaceableType.VILLAGE_WELL &&
             st.type !== PlaceableType.MARKET_STALL &&
@@ -10922,9 +10867,7 @@ export class GameEngine {
               : baseElementLabel;
 
             const actionHint =
-              isHoldingWateringCan &&
-              (st.type === PlaceableType.VILLAGE_WELL ||
-                st.type === PlaceableType.HEALING_FOUNTAIN)
+              isHoldingWateringCan && st.type === PlaceableType.VILLAGE_WELL
                 ? 'Encher Regador (12/12) 💧'
                 : insideResidents.length > 0 &&
                   (st.type === PlaceableType.BED ||
@@ -10982,10 +10925,6 @@ export class GameEngine {
                   : st.cookingInputCount && st.cookingInputCount > 0
                   ? 'Cozinhando na Fogueira... 🔥'
                   : 'Abrir Fogueira 🔥'
-                : st.type === PlaceableType.HEALING_FOUNTAIN
-                ? this.player.lastFountainUseDay === this.metadata.dayCount
-                  ? 'Fonte de Cura (Já usado hoje · 1x/dia)'
-                  : 'Bênção de Cura (1x por dia)'
                 : st.type === PlaceableType.WORKBENCH
                 ? 'Abrir Bancada 🔨'
                 : st.type === PlaceableType.WEAVING_TABLE
@@ -11004,7 +10943,7 @@ export class GameEngine {
                   : st.cookingInputCount && st.cookingInputCount > 0
                   ? 'Fundindo na Fornalha... 🔥'
                   : 'Abrir Fornalha 🔥'
-                : 'Abrir Altar Solar ✦';
+                : 'Interagir';
 
             candidates.push({
               score: stationScore,
@@ -11459,7 +11398,6 @@ export class GameEngine {
           'wheat_seeds',
           'carrot_seeds',
           'herb_seeds',
-          'solar_seeds',
           'berry_seeds',
         ];
         const randomSeedId =
@@ -11474,13 +11412,12 @@ export class GameEngine {
           `drop_node_${node.id}_seed`
         );
       }
-      // Arbusto de Frutas: 50% de chance de 1 a 2 sementes aleatórias (trigo, cenoura, erva, solar, amora)
+      // Arbusto de Frutas: 50% de chance de 1 a 2 sementes aleatórias (trigo, cenoura, erva, amora)
       if (node.type === NatureNodeType.BERRY_BUSH && Math.random() <= 0.5) {
         const seedPool = [
           'wheat_seeds',
           'carrot_seeds',
           'herb_seeds',
-          'solar_seeds',
           'berry_seeds',
         ];
         const randomSeedId =
@@ -11900,15 +11837,11 @@ export class GameEngine {
         grantPlayerXp(Math.round(48 * eliteMult));
       } else if (cr.kind === CreatureKind.DESERT_SCORPION) {
         if (cr.isElite) {
-          // Escorpião Imperador Dourado — elite (2 ferrões de escorpião; 1 cristal solar)
+          // Escorpião Imperador Dourado — elite (2 ferrões de escorpião)
           spawnMobLoot('scorpion_stinger', 2, cr.x, cr.y);
-          spawnMobLoot('solar_crystal', 1, cr.x + 6, cr.y);
         } else {
-          // Escorpião Rei da Areia (1 ferrão de escorpião; 20% de chance de 1 cristal solar)
+          // Escorpião Rei da Areia (1 ferrão de escorpião)
           spawnMobLoot('scorpion_stinger', 1, cr.x, cr.y);
-          if (nextLootRand() < 0.2) {
-            spawnMobLoot('solar_crystal', 1, cr.x + 6, cr.y);
-          }
         }
         grantPlayerXp(Math.round(62 * eliteMult));
       } else if (cr.kind === CreatureKind.STONE_GOLEM) {
@@ -12011,7 +11944,7 @@ export class GameEngine {
         else if (
           npcName === 'Capitão Thorne' ||
           npcName === 'Sentinela Garrick' ||
-          npcName === 'Valéria Escudo-Solar' ||
+          npcName === 'Valéria Escudo de Ouro' ||
           npcName === 'Comandante Roland' ||
           cr.npcRole === 'guardiao'
         ) {
@@ -12309,7 +12242,6 @@ export class GameEngine {
     const gainMap: Record<string, number> = {
       gold_coin: 18,
       warrior_feast: 20,
-      solar_crystal: 14,
       apple: 10,
       coconut: 8,
     };
@@ -12924,7 +12856,7 @@ export class GameEngine {
       const by = this.player.y + dirVec.y * 28;
 
       this.addFloatingText(
-        '💥 EXPLOSÃO SOLAR! (65 Dano)',
+        'EXPLOSÃO!',
         bx,
         by - 20,
         '#f97316'
@@ -13016,7 +12948,7 @@ export class GameEngine {
 
       soundManager.playLevelUp();
       this.addFloatingText(
-        '✦ Teleporte Astral para a Base! (+50 HP)',
+        '✦ Teleporte para a Base! (+50 HP)',
         destX,
         destY - 24,
         '#38bdf8'
@@ -13822,10 +13754,7 @@ export class GameEngine {
       return false;
     }
 
-    if (
-      st.type === PlaceableType.HEALING_FOUNTAIN ||
-      st.type === PlaceableType.VILLAGE_WELL
-    ) {
+    if (st.type === PlaceableType.VILLAGE_WELL) {
       soundManager.playHitStone();
       this.addFloatingText(
         'Não é coletável! Só pode ser destruído atacando com picareta.',
@@ -17801,21 +17730,26 @@ export class GameEngine {
           if (processedChunks.has(cKey)) continue;
           processedChunks.add(cKey);
 
-          const chunk = this.world.chunks[cKey];
-          if (!chunk || !Array.isArray(chunk.structures)) continue;
-          for (const st of chunk.structures) {
-            if (
-              st.type === PlaceableType.CAMPFIRE ||
-              st.type === PlaceableType.FURNACE ||
-              st.type === PlaceableType.WEAVING_TABLE
-            ) {
+          const candidateChunks = [
+            this.world.surfaceChunks[cKey],
+            this.world.undergroundChunks[cKey],
+          ];
+          for (const chunk of candidateChunks) {
+            if (!chunk || !Array.isArray(chunk.structures)) continue;
+            for (const st of chunk.structures) {
               if (
-                (st.fuelBurnRemaining || 0) > 0 ||
-                (st.cookingInputCount || 0) > 0
+                st.type === PlaceableType.CAMPFIRE ||
+                st.type === PlaceableType.FURNACE ||
+                st.type === PlaceableType.WEAVING_TABLE
               ) {
-                if (this.tickSingleThermalStation(st, dt)) {
-                  this.world.markChunkDirty(chunk);
-                  anyChanged = true;
+                if (
+                  (st.fuelBurnRemaining || 0) > 0 ||
+                  (st.cookingInputCount || 0) > 0
+                ) {
+                  if (this.tickSingleThermalStation(st, dt)) {
+                    this.world.markChunkDirty(chunk);
+                    anyChanged = true;
+                  }
                 }
               }
             }
@@ -21567,7 +21501,7 @@ export class GameEngine {
           if (kind === CreatureKind.CAMEL) return ['cactus_fruit', 'coconut', 'taming_treat'];
           if (kind === CreatureKind.HORSE) return ['apple', 'taming_treat'];
           if (kind === CreatureKind.VILLAGER || kind === CreatureKind.WANDERER) {
-            return ['gold_coin', 'apple', 'solar_crystal', 'warrior_feast'];
+            return ['gold_coin', 'apple', 'warrior_feast'];
           }
           return [];
         };

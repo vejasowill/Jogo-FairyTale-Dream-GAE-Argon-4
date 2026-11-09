@@ -1224,9 +1224,7 @@ export const MobileHud: React.FC<MobileHudProps> = ({
                     snapshot.aimedTarget
                   ? snapshot.aimedTarget.kind === 'water_source' ||
                     snapshot.aimedTarget.stationType ===
-                      PlaceableType.VILLAGE_WELL ||
-                    snapshot.aimedTarget.stationType ===
-                      PlaceableType.HEALING_FOUNTAIN
+                      PlaceableType.VILLAGE_WELL
                     ? 'Encher'
                     : snapshot.aimedTarget.kind === 'crop' &&
                       snapshot.aimedTarget.cropStage !== 3

@@ -1765,30 +1765,6 @@ class SpriteAtlasManager {
       { d: '#09090b', c: '#27272a', s: '#52525b', r: '#ea580c', y: '#facc15' }
     );
 
-    // Solar Crystal
-    registerItem(
-      'solar_crystal',
-      [
-        '.......yy.......',
-        '......yyyy......',
-        '.....yywwyy.....',
-        '....yywwwwyy....',
-        '...yywwwwwwyy...',
-        '....yywwwwyy....',
-        '.....yyyyyy.....',
-        '......yyyy......',
-        '.......yy.......',
-        '................',
-        '................',
-        '................',
-        '................',
-        '................',
-        '................',
-        '................',
-      ],
-      { y: '#f59e0b', w: '#fef08a' }
-    );
-
     // Dark Essence
     registerItem(
       'dark_essence',
@@ -1835,30 +1811,6 @@ class SpriteAtlasManager {
         '................',
       ],
       { g: '#14532d', l: '#4d7c0f' }
-    );
-
-    // Astral Shard
-    registerItem(
-      'astral_shard',
-      [
-        '.......cc.......',
-        '......cwwc......',
-        '.....cwwwwc.....',
-        '...ccwwyywwcc...',
-        '..cwwwwyywwwwc..',
-        '...ccwwyywwcc...',
-        '.....cwwwwc.....',
-        '......cwwc......',
-        '.......cc.......',
-        '................',
-        '................',
-        '................',
-        '................',
-        '................',
-        '................',
-        '................',
-      ],
-      { c: '#0284c7', w: '#7dd3fc', y: '#fef08a' }
     );
 
     // Abyssal Pearl
@@ -1987,17 +1939,14 @@ class SpriteAtlasManager {
 
     buildAxe('stone_axe', '#64748b', '#cbd5e1', '#8b5a2b');
     buildAxe('iron_axe', '#cbd5e1', '#ffffff', '#92400e');
-    buildAxe('gold_axe', '#f59e0b', '#fef08a', '#78350f');
     buildAxe('primordial_axe', '#10b981', '#a7f3d0', '#fbbf24');
 
     buildPickaxe('stone_pickaxe', '#64748b', '#94a3b8', '#8b5a2b');
     buildPickaxe('iron_pickaxe', '#e2e8f0', '#38bdf8', '#92400e');
-    buildPickaxe('gold_pickaxe', '#f59e0b', '#facc15', '#78350f');
     buildPickaxe('primordial_pickaxe', '#f59e0b', '#fef08a', '#0284c7');
 
     buildSword('wood_sword', '#94a3b8', '#cbd5e1', '#8b5a2b');
     buildSword('iron_sword', '#e2e8f0', '#ffffff', '#f59e0b');
-    buildSword('gold_sword', '#f59e0b', '#fef08a', '#b45309');
     buildSword('astral_sword', '#38bdf8', '#fef08a', '#d97706');
 
     // Tesoura (Shears — hinged steel blades with wooden/leather handles)
@@ -2509,29 +2458,6 @@ class SpriteAtlasManager {
         '................',
       ],
       { d: '#1e293b', s: '#64748b', r: '#ea580c', y: '#fde047' }
-    );
-
-    registerItem(
-      'solar_altar',
-      [
-        '......yyyy......',
-        '.....ywwwwy.....',
-        '......yyyy......',
-        '..gggggggggggg..',
-        '...gccccccccg...',
-        '....gccccccg....',
-        '..gggggggggggg..',
-        '................',
-        '................',
-        '................',
-        '................',
-        '................',
-        '................',
-        '................',
-        '................',
-        '................',
-      ],
-      { y: '#f59e0b', w: '#fef08a', g: '#d97706', c: '#0284c7' }
     );
 
     registerItem(
@@ -3226,30 +3152,6 @@ class SpriteAtlasManager {
         '................',
       ],
       { y: '#f59e0b', w: '#f8fafc', l: '#cbd5e1', b: '#451a03' }
-    );
-
-    // Healing Fountain Icon
-    registerItem(
-      'healing_fountain',
-      [
-        '......wwww......',
-        '.....cccccc.....',
-        '....ccwwwwcc....',
-        '..ssssssssssss..',
-        '.ssccccccccccss.',
-        '..ssssssssssss..',
-        '....ssssssss....',
-        '................',
-        '................',
-        '................',
-        '................',
-        '................',
-        '................',
-        '................',
-        '................',
-        '................',
-      ],
-      { w: '#e0f2fe', c: '#38bdf8', s: '#94a3b8' }
     );
 
     // Chest Icon
@@ -4157,30 +4059,6 @@ class SpriteAtlasManager {
       { g: '#059669', c: '#67e8f9' }
     );
 
-    // Solar Bloom Icon
-    registerItem(
-      'solar_bloom',
-      [
-        '................',
-        '.....rr..rr.....',
-        '....rooo..oor...',
-        '...rooyyyyroor..',
-        '...rooywwwyoor..',
-        '...rooyyyyroor..',
-        '....rooo..oor...',
-        '.....rr..rr.....',
-        '.......gg.......',
-        '.......gg.......',
-        '......gggg......',
-        '................',
-        '................',
-        '................',
-        '................',
-        '................',
-      ],
-      { r: '#b91c1c', o: '#ea580c', y: '#fde047', w: '#ffffff', g: '#15803d' }
-    );
-
     // Distinct Custom Seed Icons (each seed has its own unique botanical silhouette & colors)
     // 1. Sementes de Trigo: Golden wheat grains with an awned wheat ear sprig
     registerItem(
@@ -4275,38 +4153,7 @@ class SpriteAtlasManager {
       }
     );
 
-    // 4. Sementes de Flor Solar: Radiant striped sunflower-like teardrop seeds in a sun-star pattern
-    registerItem(
-      'solar_seeds',
-      [
-        '.......dd.......',
-        '......dyyd......',
-        '.....dywwyd.....',
-        '..dd.dyssyd.dd..',
-        '.dyyd.dddd.dyyd.',
-        'dywwyddoooodywwyd',
-        '.dyssyokkkoyssyd.',
-        '..ddddokwkodddd..',
-        '.dyssyokkkoyssyd.',
-        'dywwyddoooodywwyd',
-        '.dyyd.dddd.dyyd.',
-        '..dd.dyssyd.dd..',
-        '.....dywwyd.....',
-        '......dyyd......',
-        '.......dd.......',
-        '................',
-      ],
-      {
-        d: '#451a03',
-        k: '#78350f',
-        o: '#d97706',
-        s: '#f59e0b',
-        y: '#facc15',
-        w: '#fef08a',
-      }
-    );
-
-    // 5. Sementes de Frutas Vermelhas: Ruby-crimson berry pips & split wild-berry cluster on green calyx
+    // 4. Sementes de Frutas Vermelhas: Ruby-crimson berry pips & split wild-berry cluster on green calyx
     registerItem(
       'berry_seeds',
       [
@@ -5740,74 +5587,6 @@ class SpriteAtlasManager {
       }
     });
 
-    // 9. DESERT CRYSTAL (Rare — 48x56 canvas) — Towering Translucent Solar Quartz Spire Cluster
-    registerNatureVariants(NatureNodeType.DESERT_CRYSTAL, 48, 56, (ctx, f, v) => {
-      const glint = f % 2 === 0;
-      ctx.fillStyle = 'rgba(245, 158, 11, 0.34)';
-      ctx.fillRect(8, 47, 32, 6);
-
-      const drawSpire = (sx: number, sy: number, sw: number, sh: number) => {
-        ctx.fillStyle = '#451a03';
-        ctx.fillRect(sx - 1, sy, sw + 2, sh);
-        ctx.fillStyle = '#b45309';
-        ctx.fillRect(sx, sy + 1, sw, sh - 2);
-        ctx.fillStyle = '#f59e0b';
-        ctx.fillRect(sx + 1, sy + 1, sw - 2, sh - 3);
-        ctx.fillStyle = '#fde047';
-        ctx.fillRect(sx + 2, sy + 2, Math.max(2, sw - 4), sh - 6);
-        ctx.fillStyle = glint ? '#ffffff' : '#fef9c3';
-        ctx.fillRect(sx + 2, sy + 3, Math.max(1, Math.floor(sw * 0.35)), sh - 10);
-      };
-
-      drawSpire(10, 22, 9, 28);
-      drawSpire(29, 19, 10, 31);
-      drawSpire(18, v === 1 ? 6 : 9, 12, v === 1 ? 44 : 41);
-      if (v === 2) {
-        drawSpire(6, 30, 7, 20);
-        drawSpire(36, 28, 7, 22);
-      }
-    });
-
-    // 10. SUNSTONE OBELISK (Very Rare — 48x72 canvas) — Monumental Levitating Celestial Monolith
-    registerNatureVariants(NatureNodeType.SUNSTONE_OBELISK, 48, 72, (ctx, f) => {
-      const hover = f === 1 || f === 2 ? -2 : 0;
-      ctx.fillStyle = 'rgba(56, 189, 248, 0.38)';
-      ctx.fillRect(8, 62, 32, 6);
-
-      // Stepped Ancient Stone Pedestal
-      ctx.fillStyle = '#0f172a';
-      ctx.fillRect(8, 52, 32, 13);
-      ctx.fillRect(11, 48, 26, 6);
-      ctx.fillStyle = '#475569';
-      ctx.fillRect(9, 53, 30, 11);
-      ctx.fillStyle = '#94a3b8';
-      ctx.fillRect(12, 49, 24, 4);
-      ctx.fillRect(10, 53, 28, 2);
-
-      // Towering Levitating Azure-Gold Monolith
-      const oy = 6 + hover;
-      ctx.fillStyle = '#082f49';
-      ctx.fillRect(15, oy, 18, 40);
-      ctx.fillRect(17, oy - 3, 14, 4);
-      ctx.fillStyle = '#0284c7';
-      ctx.fillRect(16, oy + 1, 16, 38);
-      ctx.fillStyle = '#38bdf8';
-      ctx.fillRect(18, oy + 2, 12, 35);
-      ctx.fillStyle = '#7dd3fc';
-      ctx.fillRect(20, oy + 3, 8, 32);
-
-      // Glowing Solar Rune Conduit
-      ctx.fillStyle = f % 2 === 0 ? '#ffffff' : '#fde047';
-      ctx.fillRect(23, oy + 6, 2, 26);
-      ctx.fillRect(19, oy + 13, 10, 2);
-      ctx.fillRect(20, oy + 23, 8, 2);
-
-      // Orbiting Celestial Rings / Motes
-      ctx.fillStyle = '#fde047';
-      ctx.fillRect(10, oy + 12 + (f % 3) * 4, 3, 3);
-      ctx.fillRect(35, oy + 24 - (f % 3) * 4, 3, 3);
-    });
-
     // 11. PEARL CLAM (Very Rare — 48x40 canvas) — Giant Iridescent Reef Clam
     registerNatureVariants(NatureNodeType.PEARL_CLAM, 48, 40, (ctx, f) => {
       const open = f === 1 || f === 2 ? 2 : 0;
@@ -6231,46 +6010,6 @@ class SpriteAtlasManager {
       })
     );
 
-    // SOLAR ALTAR (48x52 — Grand stepped golden sanctuary dais with twin obelisk pillars & levitating sun-prism)
-    this.structureSprites.set(
-      PlaceableType.SOLAR_ALTAR,
-      createFrames(48, 52, (ctx, f) => {
-        const bob = f % 2 === 0 ? 0 : -2;
-        ctx.fillStyle = 'rgba(245, 158, 11, 0.36)';
-        ctx.fillRect(4, 44, 40, 6);
-        // Stepped Golden Temple Pedestal
-        ctx.fillStyle = '#451a03';
-        ctx.fillRect(4, 34, 40, 14);
-        ctx.fillRect(9, 26, 30, 10);
-        ctx.fillStyle = '#b45309';
-        ctx.fillRect(5, 35, 38, 12);
-        ctx.fillStyle = '#d97706';
-        ctx.fillRect(10, 27, 28, 8);
-        ctx.fillStyle = '#fde047';
-        ctx.fillRect(6, 35, 36, 2);
-        ctx.fillRect(11, 27, 26, 2);
-        // Side Runic Pillars
-        ctx.fillStyle = '#78350f';
-        ctx.fillRect(7, 16, 6, 19);
-        ctx.fillRect(35, 16, 6, 19);
-        ctx.fillStyle = '#fbbf24';
-        ctx.fillRect(8, 17, 4, 16);
-        ctx.fillRect(36, 17, 4, 16);
-        // Azure Astral Altar Drape
-        ctx.fillStyle = '#0369a1';
-        ctx.fillRect(16, 27, 16, 17);
-        ctx.fillStyle = '#38bdf8';
-        ctx.fillRect(18, 28, 12, 14);
-        // Levitating Radiant Sun-Prism
-        ctx.fillStyle = '#f59e0b';
-        ctx.fillRect(17, 6 + bob, 14, 14);
-        ctx.fillStyle = '#fde047';
-        ctx.fillRect(19, 8 + bob, 10, 10);
-        ctx.fillStyle = '#ffffff';
-        ctx.fillRect(22, 10 + bob, 4, 6);
-      })
-    );
-
     // WOOD WALL (Parede de Carvalho — Warm golden oak beams & forged iron straps)
     this.structureSprites.set(
       PlaceableType.WOOD_WALL,
@@ -6650,44 +6389,6 @@ class SpriteAtlasManager {
         ctx.fillRect(23, 14, 3, 4);
         ctx.fillStyle = '#ffffff';
         ctx.fillRect(24, 15, 1, 2);
-      })
-    );
-
-    // HEALING FOUNTAIN (48x56 — Grand two-tier marble sanctuary fountain with cascading crystal water)
-    this.structureSprites.set(
-      PlaceableType.HEALING_FOUNTAIN,
-      createFrames(48, 56, (ctx, f) => {
-        const ripple = f % 2;
-        ctx.fillStyle = 'rgba(56, 189, 248, 0.35)';
-        ctx.fillRect(4, 47, 40, 6);
-        // Wide Octagonal Marble Lower Basin
-        ctx.fillStyle = '#1e293b';
-        ctx.fillRect(4, 32, 40, 18);
-        ctx.fillStyle = '#94a3b8';
-        ctx.fillRect(5, 33, 38, 15);
-        ctx.fillStyle = '#e2e8f0';
-        ctx.fillRect(6, 33, 36, 4);
-        // Luminous Healing Pool Water
-        ctx.fillStyle = '#0284c7';
-        ctx.fillRect(8, 37, 32, 9);
-        ctx.fillStyle = '#38bdf8';
-        ctx.fillRect(10 + ripple, 38, 28, 6);
-        // Sculpted Central Pedestal & Upper Bowl
-        ctx.fillStyle = '#64748b';
-        ctx.fillRect(19, 17, 10, 21);
-        ctx.fillRect(12, 20, 24, 6);
-        ctx.fillStyle = '#f1f5f9';
-        ctx.fillRect(21, 17, 6, 19);
-        ctx.fillRect(13, 20, 22, 3);
-        // High Cascading Water Spout & Falling Sheets
-        ctx.fillStyle = '#38bdf8';
-        ctx.fillRect(20, 5 + ripple, 8, 15);
-        ctx.fillRect(14, 23, 3, 14);
-        ctx.fillRect(31, 23, 3, 14);
-        ctx.fillStyle = ripple ? '#ffffff' : '#bae6fd';
-        ctx.fillRect(22, 3 + ripple, 4, 16);
-        ctx.fillRect(15, 24 + ripple, 2, 11);
-        ctx.fillRect(31, 25 - ripple, 2, 11);
       })
     );
 

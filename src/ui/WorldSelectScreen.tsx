@@ -46,8 +46,8 @@ interface WorldSelectScreenProps {
 
 const SEED_PRESETS = [
   { label: 'Vale dos Carvalhos', seed: '774120' },
-  { label: 'Deserto de Hélio', seed: '902418' },
-  { label: 'Arquipélago Abissal', seed: '318509' },
+  { label: 'Deserto', seed: '902418' },
+  { label: 'Arquipélago Oceânico', seed: '318509' },
 ];
 
 export const WorldSelectScreen: React.FC<WorldSelectScreenProps> = ({
@@ -363,7 +363,7 @@ export const WorldSelectScreen: React.FC<WorldSelectScreenProps> = ({
               Forje seu Destino em Terras Procedurais
             </h1>
             <p className="text-[11px] sm:text-xs text-[#e5d5b5] leading-relaxed">
-              Explore Planícies, Desertos e Oceanos. Construa sua Bancada, Fornalha e Altar Solar, domestique animais e customize sua HUD e controles em tempo real.
+              Explore Planícies, Desertos e Oceanos. Construa sua Bancada e Fornalha, domestique animais e customize sua HUD e controles em tempo real.
             </p>
           </div>
 

@@ -153,26 +153,6 @@ function getStationTheme(station: PlaceableType | null): StationThemeConfig {
         emptyHint:
           'A Fornalha funde exclusivamente minérios, Carvão Vegetal, muralhas e artefatos térmicos.',
       };
-    case PlaceableType.SOLAR_ALTAR:
-      return {
-        id: 'SOLAR_ALTAR',
-        title: 'ALTAR ALQUÍMICO SOLAR & ASTRAL',
-        subtitle:
-          'Santuário Cósmico de Hélio · Consagra Relíquias Muito Raras, Armas Primordiais, Armaduras Astrais e Santuários Divinos',
-        badgeText: 'CONSAGRAÇÃO SOLAR & ITENS RAROS',
-        outerPanelClass:
-          'bg-[#090d1e] border-2 border-cyan-400/85 shadow-[0_0_42px_rgba(56,189,248,0.38)]',
-        headerBgClass:
-          'bg-gradient-to-r from-[#0f172a] via-[#1e1b4b] to-[#083344] border-b-2 border-cyan-400/70',
-        accentTextClass: 'text-cyan-300',
-        accentBorderClass: 'border-cyan-400/55',
-        slotActiveClass:
-          'bg-[#0f2942] border-2 border-cyan-300 shadow-[0_0_14px_rgba(34,211,238,0.5)]',
-        primaryBtnClass: 'medieval-btn-emerald',
-        matrixTitle: 'CÍRCULO RÚNICO DE TRANSMUTAÇÃO SOLAR',
-        emptyHint:
-          'O Altar Solar cria apenas relíquias astrais, equipamentos primordiais e santuários sagrados.',
-      };
     case PlaceableType.WEAVING_TABLE:
       return {
         id: 'WEAVING_TABLE',
@@ -302,7 +282,6 @@ export const CraftingDrawer: React.FC<CraftingDrawerProps> = ({
       PlaceableType.WEAVING_TABLE,
       PlaceableType.CAMPFIRE,
       PlaceableType.FURNACE,
-      PlaceableType.SOLAR_ALTAR,
     ];
     for (const st of order) {
       if (nearbyStations.includes(st) || stationContext === st) {
@@ -493,7 +472,6 @@ export const CraftingDrawer: React.FC<CraftingDrawerProps> = ({
     if (st === PlaceableType.WEAVING_TABLE) return 'Mesa de Tecelagem';
     if (st === PlaceableType.CAMPFIRE) return 'Fogueira';
     if (st === PlaceableType.FURNACE) return 'Fornalha';
-    if (st === PlaceableType.SOLAR_ALTAR) return 'Altar Solar';
     return 'Estação';
   };
 
@@ -636,12 +614,6 @@ export const CraftingDrawer: React.FC<CraftingDrawerProps> = ({
                     alt="Fornalha"
                     className="w-6 h-6 pixelated"
                   />
-                ) : activeStation === PlaceableType.SOLAR_ALTAR ? (
-                  <img
-                    src={spriteAtlas.getItemIconUrl('solar_altar')}
-                    alt="Altar Solar"
-                    className="w-6 h-6 pixelated"
-                  />
                 ) : activeStation === PlaceableType.WEAVING_TABLE ? (
                   <img
                     src={spriteAtlas.getItemIconUrl('weaving_table')}
@@ -682,8 +654,6 @@ export const CraftingDrawer: React.FC<CraftingDrawerProps> = ({
                   <Flame className="w-3.5 h-3.5" />
                 ) : activeStation === PlaceableType.FURNACE ? (
                   <Anvil className="w-3.5 h-3.5" />
-                ) : activeStation === PlaceableType.SOLAR_ALTAR ? (
-                  <Sparkles className="w-3.5 h-3.5" />
                 ) : activeStation === PlaceableType.WEAVING_TABLE ? (
                   <Scissors className="w-3.5 h-3.5" />
                 ) : activeStation === PlaceableType.WORKBENCH ? (
@@ -738,7 +708,7 @@ export const CraftingDrawer: React.FC<CraftingDrawerProps> = ({
                     ? '🔥 Fogueira'
                     : st === PlaceableType.FURNACE
                     ? '🧱 Fornalha'
-                    : '✦ Altar';
+                    : '🔨 Bancada';
                 return (
                   <button
                     key={st || 'HAND'}
@@ -2265,7 +2235,7 @@ export const CraftingDrawer: React.FC<CraftingDrawerProps> = ({
                     </div>
                   </div>
 
-                  {/* Unique Visual Crafting Diagram for Non-Thermal Stations (2x2 Hand, 3x3 Workbench, Runic Solar Altar) */}
+                  {/* Unique Visual Crafting Diagram for Non-Thermal Stations (2x2 Hand, 3x3 Workbench) */}
                   {!isThermalStation && (
                     <div className="bg-black/45 p-2 border border-white/10 rounded-sm flex items-center justify-between gap-2">
                       <div className="flex items-center gap-2">
@@ -2298,7 +2268,7 @@ export const CraftingDrawer: React.FC<CraftingDrawerProps> = ({
                               );
                             })}
                           </div>
-                        ) : activeStation === PlaceableType.WORKBENCH ? (
+                        ) : (
                           /* 3x3 Workbench Blueprint Grid */
                           <div className="grid grid-cols-3 gap-0.5 p-1 bg-[#0f172a] border border-amber-500/60 rounded-sm">
                             {[0, 1, 2, 3, 4, 5, 6, 7, 8].map((slotIdx) => {
@@ -2327,28 +2297,6 @@ export const CraftingDrawer: React.FC<CraftingDrawerProps> = ({
                               );
                             })}
                           </div>
-                        ) : (
-                          /* Solar Altar Runic Matrix */
-                          <div className="flex items-center gap-1 p-1.5 bg-[#091526] border border-cyan-400/60 rounded-sm">
-                            {activeRecipeIngredients.map((ing, i) => (
-                              <div
-                                key={i}
-                                className="w-7 h-7 bg-[#0c2540] border border-cyan-400/50 rounded-full flex items-center justify-center relative"
-                              >
-                                <img
-                                  src={spriteAtlas.getItemIconUrl(
-                                    ing.itemId,
-                                    ing.flowerColor
-                                  )}
-                                  alt=""
-                                  className="w-4 h-4 pixelated"
-                                />
-                                <span className="absolute -bottom-0.5 right-0 text-[7px] font-mono font-bold text-cyan-200">
-                                  {ing.count}
-                                </span>
-                              </div>
-                            ))}
-                          </div>
                         )}
                         <div className="text-[9px] text-[#c4ab7d]">
                           <div
@@ -2359,9 +2307,7 @@ export const CraftingDrawer: React.FC<CraftingDrawerProps> = ({
                           <div>
                             {activeStation === null
                               ? 'Criação rápida na palma da mão'
-                              : activeStation === PlaceableType.WORKBENCH
-                              ? 'Montagem imediata sem gasto de lenha'
-                              : 'Transmutação astral imediata'}
+                              : 'Montagem imediata sem gasto de lenha'}
                           </div>
                         </div>
                       </div>
@@ -3256,15 +3202,11 @@ export const CraftingDrawer: React.FC<CraftingDrawerProps> = ({
             },
             {
               title: '2. Bancada de Trabalho (3x3 Instantâneo)',
-              body: 'Aproxime-se de uma Bancada posicionada para criar instantaneamente Ferramentas, Armas, Armaduras, Baús, Botes, Selas, Fornalha e Altar Solar.',
+              body: 'Aproxime-se de uma Bancada posicionada para criar instantaneamente Ferramentas, Armas, Armaduras, Baús, Botes, Selas e Fornalha.',
             },
             {
               title: '3. Fogueira & Fornalha (3 Campos Interativos)',
-              body: 'Na esquerda fica seu Inventário e na direita ficam os 3 campos: (1) Campo superior esquerdo: Item a ser processado (alimentos crus ou madeira na Fogueira; minério de ferro, areia ou madeira na Fornalha); (2) Campo inferior esquerdo (com ícone de fogo): Combustível (Madeiras ou Carvão Vegetal); (3) Campo da direita: Produto pronto — clique nele para coletar o item quando houver espaço no inventário.',
-            },
-            {
-              title: '4. Altar Solar (Itens Raros)',
-              body: 'Canaliza cristais solares, fragmentos astrais e pérolas para forjar equipamentos lendários.',
+              body: 'Na esquerda fica seu Inventário e na direita ficam os 3 campos: (1) Campo superior esquerdo: Item a ser processado (alimentos crus ou madeira na Fogueira; minérios, areia ou madeira na Fornalha); (2) Campo inferior esquerdo (com ícone de fogo): Combustível (Madeiras ou Carvão Vegetal); (3) Campo da direita: Produto pronto — clique nele para coletar o item quando houver espaço no inventário.',
             },
           ]}
         />

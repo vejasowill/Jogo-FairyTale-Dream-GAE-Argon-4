@@ -62,7 +62,39 @@ const COMPACT_ZONE_LIST: EcologicalZone[] = [
   EcologicalZone.DEEP_OCEAN,
 ];
 
-const COMPACT_NODE_TYPE_LIST: NatureNodeType[] = [
+// CRITICAL: Never remove or shift indices in COMPACT_NODE_TYPE_LIST!
+// Saved worlds encode NatureNodeType as base-36 indices (0..23 -> '0'..'N') in compactNodes.
+// Indices 8 (legacy DESERT_CRYSTAL) and 11 (legacy SUNSTONE_OBELISK) are kept as `null` placeholders
+// so all existing saved worlds keep exact index alignment for trees, grass, flowers, and underground blocks.
+const COMPACT_NODE_TYPE_LIST: (NatureNodeType | null)[] = [
+  NatureNodeType.OAK_TREE, // 0 ('0')
+  NatureNodeType.BERRY_BUSH, // 1 ('1')
+  NatureNodeType.SAND_DUNE, // 2 ('2')
+  NatureNodeType.BOULDER, // 3 ('3')
+  NatureNodeType.CACTUS, // 4 ('4')
+  NatureNodeType.PALM_TREE, // 5 ('5')
+  NatureNodeType.IRON_OUTCROP, // 6 ('6')
+  NatureNodeType.HARDWOOD_TREE, // 7 ('7')
+  null, // 8 ('8') - legacy DESERT_CRYSTAL (removed)
+  NatureNodeType.PEARL_CLAM, // 9 ('9')
+  NatureNodeType.ANCIENT_WORLD_TREE, // 10 ('A')
+  null, // 11 ('B') - legacy SUNSTONE_OBELISK (removed)
+  NatureNodeType.TEMPERATE_TREE, // 12 ('C')
+  NatureNodeType.PINE_TREE, // 13 ('D')
+  NatureNodeType.SHORT_GRASS, // 14 ('E')
+  NatureNodeType.TALL_GRASS, // 15 ('F')
+  NatureNodeType.FLOWER_TULIP, // 16 ('G')
+  NatureNodeType.FLOWER_LILY, // 17 ('H')
+  NatureNodeType.FLOWER_SUNFLOWER, // 18 ('I')
+  NatureNodeType.FLOWER_SOLAR_DROP, // 19 ('J')
+  NatureNodeType.UNDERGROUND_DIRT, // 20 ('K')
+  NatureNodeType.UNDERGROUND_COAL, // 21 ('L')
+  NatureNodeType.UNDERGROUND_IRON, // 22 ('M')
+  NatureNodeType.UNDERGROUND_GOLD, // 23 ('N')
+];
+
+// Used only to decode chunks that were newly generated during 0.8.1-beta (`chunk.generatedGameVersion === '0.8.1-beta'`)
+const LEGACY_081_COMPACT_NODE_TYPE_LIST: NatureNodeType[] = [
   NatureNodeType.OAK_TREE,
   NatureNodeType.BERRY_BUSH,
   NatureNodeType.SAND_DUNE,
@@ -71,8 +103,6 @@ const COMPACT_NODE_TYPE_LIST: NatureNodeType[] = [
   NatureNodeType.PALM_TREE,
   NatureNodeType.IRON_OUTCROP,
   NatureNodeType.HARDWOOD_TREE,
-  NatureNodeType.DESERT_CRYSTAL,
-  NatureNodeType.SUNSTONE_OBELISK,
   NatureNodeType.PEARL_CLAM,
   NatureNodeType.ANCIENT_WORLD_TREE,
   NatureNodeType.TEMPERATE_TREE,
@@ -198,7 +228,7 @@ export const ECOLOGICAL_ZONE_LABELS: Record<EcologicalZone, string> = {
   [EcologicalZone.ROCKY_HIGHLANDS]: 'Colinas Rochosas',
   [EcologicalZone.OPEN_SAND_DUNES]: 'Dunas Abertas',
   [EcologicalZone.CACTUS_SCRUBLAND]: 'Caatinga de Cactos',
-  [EcologicalZone.CRYSTAL_BADLANDS]: 'Cânion de Cristais',
+  [EcologicalZone.CRYSTAL_BADLANDS]: 'Cânion Rochoso',
   [EcologicalZone.DESERT_OASIS]: 'Oásis do Deserto',
   [EcologicalZone.COASTAL_TROPICS]: 'Costa de Coqueiros',
   [EcologicalZone.SHALLOW_REEF]: 'Lagoa & Recife Raso',
@@ -629,7 +659,8 @@ export class WorldManager {
   public static decodeCompactNodes(
     compact: string | undefined,
     cx: number,
-    cy: number
+    cy: number,
+    useLegacy081Table = false
   ): NatureNode[] | null {
     if (typeof compact !== 'string') return null;
     if (compact.length === 0) return [];
@@ -637,25 +668,33 @@ export class WorldManager {
     const baseTy = cy * CHUNK_SIZE;
     const tokens = compact.split(';');
     const out: NatureNode[] = [];
+    const lookupTable = useLegacy081Table
+      ? LEGACY_081_COMPACT_NODE_TYPE_LIST
+      : COMPACT_NODE_TYPE_LIST;
     for (let i = 0; i < tokens.length; i++) {
       const tok = tokens[i];
       if (!tok) continue;
       const fields = tok.split(':');
       if (fields.length < 2) continue;
       const [typeField, posField, varField, hpField, colorField] = fields;
-      let nodeType: NatureNodeType = NatureNodeType.OAK_TREE;
+      let nodeType: NatureNodeType | null = NatureNodeType.OAK_TREE;
       if (typeField.length === 1) {
         const tIdx = parseInt(typeField, 36);
-        if (
-          !Number.isNaN(tIdx) &&
-          tIdx >= 0 &&
-          tIdx < COMPACT_NODE_TYPE_LIST.length
-        ) {
-          nodeType = COMPACT_NODE_TYPE_LIST[tIdx];
+        if (!Number.isNaN(tIdx) && tIdx >= 0 && tIdx < lookupTable.length) {
+          nodeType = lookupTable[tIdx];
+        } else {
+          continue;
         }
       } else {
+        if (
+          typeField === 'DESERT_CRYSTAL' ||
+          typeField === 'SUNSTONE_OBELISK'
+        ) {
+          continue;
+        }
         nodeType = typeField as NatureNodeType;
       }
+      if (!nodeType) continue;
 
       let tileX = baseTx;
       let tileY = baseTy;
@@ -673,14 +712,21 @@ export class WorldManager {
 
       const variant = varField ? parseInt(varField, 10) || 0 : 0;
       const bp = NATURE_BLUEPRINTS[nodeType];
-      const maxHp = bp ? bp.maxHp : 40;
+      if (!bp) continue;
+      const maxHp = bp.maxHp;
       const hp =
         hpField && hpField.length > 0
           ? Math.min(maxHp, Math.max(1, parseInt(hpField, 10) || maxHp))
           : maxHp;
 
+      const isFlowerNode =
+        nodeType === NatureNodeType.FLOWER_TULIP ||
+        nodeType === NatureNodeType.FLOWER_LILY ||
+        nodeType === NatureNodeType.FLOWER_SUNFLOWER ||
+        nodeType === NatureNodeType.FLOWER_SOLAR_DROP;
+
       let flowerColor: ClothingColorId | undefined;
-      if (colorField && colorField.length > 0) {
+      if (isFlowerNode && colorField && colorField.length > 0) {
         if (colorField.length === 1) {
           const cIdx = parseInt(colorField, 36);
           if (
@@ -890,53 +936,135 @@ export class WorldManager {
       (!Array.isArray(chunk.nodes) || chunk.nodes.length === 0) &&
       typeof chunk.compactNodes === 'string'
     ) {
+      const wasGeneratedIn081 = chunk.generatedGameVersion === '0.8.1-beta';
       const decodedNodes = WorldManager.decodeCompactNodes(
         chunk.compactNodes,
         chunk.cx,
-        chunk.cy
+        chunk.cy,
+        wasGeneratedIn081
       );
       if (decodedNodes) {
         chunk.nodes = decodedNodes;
+      }
+      if (wasGeneratedIn081) {
+        chunk.generatedGameVersion = GAME_VERSION;
       }
       // Clear compactNodes on the live hydrated chunk so in-game node harvesting/chopping is always authoritative
       delete chunk.compactNodes;
     }
 
-    // Restore static blueprint properties on NatureNodes WITHOUT deleting or altering existing nodes!
+    // Restore static blueprint properties on NatureNodes WITHOUT deleting or altering valid existing nodes,
+    // while repairing any nodes that were shifted if the world was loaded & saved during 0.8.1-beta.
     if (Array.isArray(chunk.nodes)) {
+      let refUndergroundNodes: Map<string, NatureNodeType> | null = null;
+      const filteredNodes: NatureNode[] = [];
+
       for (let i = 0; i < chunk.nodes.length; i++) {
         const n = chunk.nodes[i];
+        if (!n) continue;
+        const rawType = n.type as string;
+        if (rawType === 'DESERT_CRYSTAL' || rawType === 'SUNSTONE_OBELISK') {
+          continue;
+        }
+
+        // Repair underground nodes if an UNDERGROUND_IRON ('M') or UNDERGROUND_GOLD ('N') overflowed to OAK_TREE in 0.8.1-beta
+        if (chunk.isUnderground) {
+          if (
+            n.type !== NatureNodeType.UNDERGROUND_DIRT &&
+            n.type !== NatureNodeType.UNDERGROUND_COAL &&
+            n.type !== NatureNodeType.UNDERGROUND_IRON &&
+            n.type !== NatureNodeType.UNDERGROUND_GOLD
+          ) {
+            if (!refUndergroundNodes) {
+              refUndergroundNodes = new Map<string, NatureNodeType>();
+              const refChunk = this.generateUndergroundChunk(chunk.cx, chunk.cy);
+              for (const rn of refChunk.nodes) {
+                refUndergroundNodes.set(`${rn.tileX},${rn.tileY}`, rn.type);
+              }
+            }
+            const expectedType = refUndergroundNodes.get(`${n.tileX},${n.tileY}`);
+            n.type =
+              expectedType === NatureNodeType.UNDERGROUND_GOLD
+                ? NatureNodeType.UNDERGROUND_GOLD
+                : NatureNodeType.UNDERGROUND_IRON;
+            const fixedBp = NATURE_BLUEPRINTS[n.type];
+            if (fixedBp) {
+              n.maxHp = fixedBp.maxHp;
+              n.hp = fixedBp.maxHp;
+              n.rarity = fixedBp.rarity;
+              n.requiredTool = fixedBp.requiredTool;
+              n.requiredTier = fixedBp.requiredTier;
+            }
+          }
+        } else {
+          // Repair surface nodes if FLOWER_SUNFLOWER ('I') or FLOWER_SOLAR_DROP ('J') was shifted to UNDERGROUND_DIRT / UNDERGROUND_COAL in 0.8.1-beta
+          if (n.type === NatureNodeType.UNDERGROUND_DIRT) {
+            n.type = NatureNodeType.FLOWER_SUNFLOWER;
+            const fixedBp = NATURE_BLUEPRINTS[n.type];
+            if (fixedBp) {
+              n.maxHp = fixedBp.maxHp;
+              n.hp = fixedBp.maxHp;
+              n.rarity = fixedBp.rarity;
+              n.requiredTool = fixedBp.requiredTool;
+              n.requiredTier = fixedBp.requiredTier;
+            }
+          } else if (n.type === NatureNodeType.UNDERGROUND_COAL) {
+            n.type = NatureNodeType.FLOWER_SOLAR_DROP;
+            const fixedBp = NATURE_BLUEPRINTS[n.type];
+            if (fixedBp) {
+              n.maxHp = fixedBp.maxHp;
+              n.hp = fixedBp.maxHp;
+              n.rarity = fixedBp.rarity;
+              n.requiredTool = fixedBp.requiredTool;
+              n.requiredTier = fixedBp.requiredTier;
+            }
+          } else if (
+            n.type === NatureNodeType.UNDERGROUND_IRON ||
+            n.type === NatureNodeType.UNDERGROUND_GOLD
+          ) {
+            continue;
+          }
+        }
+
         if (!n.id) {
           n.id = `node_${n.tileX}_${n.tileY}`;
         }
         const bp = NATURE_BLUEPRINTS[n.type];
-        if (bp) {
-          if (typeof n.maxHp !== 'number') n.maxHp = bp.maxHp;
-          if (typeof n.hp !== 'number') n.hp = bp.maxHp;
-          if (!n.rarity) n.rarity = bp.rarity;
-          if (!n.requiredTool) n.requiredTool = bp.requiredTool;
-          if (typeof n.requiredTier !== 'number')
-            n.requiredTier = bp.requiredTier;
-          if (typeof n.hitFlashTimer !== 'number') n.hitFlashTimer = 0;
-          if (typeof n.animOffset !== 'number') {
-            const r = hash2D(n.tileX, n.tileY, this.seed + 31);
-            n.animOffset = Math.floor(r * 10);
-          }
-          if (
-            (n.type === NatureNodeType.FLOWER_TULIP ||
-              n.type === NatureNodeType.FLOWER_LILY ||
-              n.type === NatureNodeType.FLOWER_SUNFLOWER ||
-              n.type === NatureNodeType.FLOWER_SOLAR_DROP) &&
-            !n.flowerColor
-          ) {
+        if (!bp) continue;
+
+        if (typeof n.maxHp !== 'number' || n.maxHp !== bp.maxHp) {
+          const wasFull = typeof n.hp !== 'number' || n.hp >= (n.maxHp || bp.maxHp);
+          n.maxHp = bp.maxHp;
+          n.hp = wasFull ? bp.maxHp : Math.min(bp.maxHp, Math.max(1, n.hp));
+        }
+        if (typeof n.hp !== 'number') n.hp = bp.maxHp;
+        n.rarity = bp.rarity;
+        n.requiredTool = bp.requiredTool;
+        n.requiredTier = bp.requiredTier;
+        if (typeof n.hitFlashTimer !== 'number') n.hitFlashTimer = 0;
+        if (typeof n.animOffset !== 'number') {
+          const r = hash2D(n.tileX, n.tileY, this.seed + 31);
+          n.animOffset = Math.floor(r * 10);
+        }
+        const isFlower =
+          n.type === NatureNodeType.FLOWER_TULIP ||
+          n.type === NatureNodeType.FLOWER_LILY ||
+          n.type === NatureNodeType.FLOWER_SUNFLOWER ||
+          n.type === NatureNodeType.FLOWER_SOLAR_DROP;
+        if (isFlower) {
+          if (!n.flowerColor) {
             n.flowerColor = this.resolveFlowerColorForSpecies(
               n.type,
               n.tileX,
               n.tileY
             );
           }
+        } else if (n.flowerColor) {
+          delete n.flowerColor;
         }
+        filteredNodes.push(n);
       }
+      chunk.nodes = filteredNodes;
     } else {
       chunk.nodes = [];
     }
@@ -2843,13 +2971,8 @@ export class WorldManager {
           }
         } else if (biome === BiomeType.DESERT) {
           if (spawnRoll < 0.085) {
-            if (distFromSpawn > 24 && rarityRoll < 0.055) {
-              nodeType = NatureNodeType.SUNSTONE_OBELISK;
-            } else if (distFromSpawn > 12 && rarityRoll < 0.24) {
-              nodeType =
-                rarityRoll < 0.13
-                  ? NatureNodeType.DESERT_CRYSTAL
-                  : NatureNodeType.IRON_OUTCROP;
+            if (distFromSpawn > 12 && rarityRoll < 0.24) {
+              nodeType = NatureNodeType.IRON_OUTCROP;
             } else if (rarityRoll < 0.65) {
               nodeType = NatureNodeType.CACTUS;
             } else {
@@ -3129,29 +3252,14 @@ export class WorldManager {
           }
 
           case EcologicalZone.CRYSTAL_BADLANDS: {
-            // Red-gold sandstone canyon with Solar Crystals, Iron veins, and rare Sunstone Obelisks
-            if (
-              !relicSpawnedInChunk &&
-              chunkCenterDist > 36 &&
-              chunkRelicRoll < 0.18 &&
-              lx >= 5 &&
-              lx <= 10 &&
-              ly >= 5 &&
-              ly <= 10 &&
-              spawnRoll < 0.16
-            ) {
-              nodeType = NatureNodeType.SUNSTONE_OBELISK;
-              relicSpawnedInChunk = true;
-            } else if (spawnRoll < 0.13) {
+            // Red-gold sandstone canyon with Iron veins, weathered boulders, and desert cacti
+            if (spawnRoll < 0.13) {
               if (
                 distFromSpawn > 18 &&
                 rareCountInChunk < 3 &&
                 rarityRoll < 0.26
               ) {
-                nodeType =
-                  rarityRoll < 0.15
-                    ? NatureNodeType.DESERT_CRYSTAL
-                    : NatureNodeType.IRON_OUTCROP;
+                nodeType = NatureNodeType.IRON_OUTCROP;
                 rareCountInChunk++;
               } else if (rarityRoll < 0.72) {
                 nodeType = NatureNodeType.BOULDER;
@@ -3711,7 +3819,7 @@ export class WorldManager {
         guardiao: [
           'Capitão Thorne',
           'Sentinela Garrick',
-          'Valéria Escudo-Solar',
+          'Valéria Escudo de Ouro',
           'Comandante Roland',
         ],
         andarilho: [
@@ -4350,7 +4458,6 @@ export class WorldManager {
       addStruct(10, 6, PlaceableType.STONE_WALL, 'stone_wall');
       addStruct(7, 6, PlaceableType.IRON_LANTERN, 'iron_lantern');
       addStruct(9, 6, PlaceableType.IRON_LANTERN, 'iron_lantern');
-      addStruct(6, 10, PlaceableType.HEALING_FOUNTAIN, 'healing_fountain');
       addStruct(
         10,
         10,
@@ -4410,7 +4517,7 @@ export class WorldManager {
         [
           { itemId: 'golem_core', count: 2 },
           { itemId: 'iron_bar', count: 3 },
-          { itemId: 'solar_crystal', count: 2 },
+          { itemId: 'gold_ore', count: 2 },
           { itemId: 'gold_coin', count: 3 },
         ],
         'Arca Monolítica dos Golens'
@@ -4583,51 +4690,7 @@ export class WorldManager {
       return;
     }
 
-    // 5. DESERT SUN SHRINE (Santuário Solar Antigo) — Rare Desert Badlands / Deep Desert
-    if (
-      centerBiome === BiomeType.DESERT &&
-      chunkDist >= 2.6 &&
-      typeRoll < 0.38
-    ) {
-      clearNodesInBox(5, 5, 11, 11);
-      chunk.landmarkName = 'Santuário Solar Antigo';
-      for (let ly = 6; ly <= 10; ly++) {
-        for (let lx = 6; lx <= 10; lx++) {
-          if (lx >= 7 && lx <= 9 && ly >= 7 && ly >= 9) {
-            addStruct(lx, ly, PlaceableType.BRICK_FLOOR, 'brick_floor');
-          } else {
-            addStruct(lx, ly, PlaceableType.STONE_FLOOR, 'stone_floor');
-          }
-        }
-      }
-      addStruct(8, 8, PlaceableType.ROYAL_CARPET, 'royal_carpet');
-      addStruct(8, 9, PlaceableType.ROYAL_CARPET, 'royal_carpet');
-      addStruct(6, 6, PlaceableType.BRICK_WALL, 'brick_wall');
-      addStruct(10, 6, PlaceableType.BRICK_WALL, 'brick_wall');
-      addStruct(6, 10, PlaceableType.BRICK_WALL, 'brick_wall');
-      addStruct(10, 10, PlaceableType.BRICK_WALL, 'brick_wall');
-      addStruct(6, 8, PlaceableType.STONE_WINDOW, 'stone_window');
-      addStruct(10, 8, PlaceableType.STONE_WINDOW, 'stone_window');
-      addStruct(7, 6, PlaceableType.IRON_LANTERN, 'iron_lantern');
-      addStruct(9, 6, PlaceableType.IRON_LANTERN, 'iron_lantern');
-      addStruct(8, 7, PlaceableType.SOLAR_ALTAR, 'solar_altar');
-      addStruct(
-        8,
-        9,
-        PlaceableType.CHEST,
-        'chest',
-        [
-          { itemId: 'solar_crystal', count: 3 },
-          { itemId: 'fire_bomb', count: 2 },
-          { itemId: 'coconut_elixir', count: 2 },
-          ...(chunkDist >= 2.8 ? [{ itemId: 'astral_shard', count: 1 }] : []),
-        ],
-        'Relicário do Templo Solar'
-      );
-      return;
-    }
-
-    // 6. DESERT CARAVAN POST (Posto de Caravana do Deserto — rare inland desert outpost)
+    // 5. DESERT CARAVAN POST (Posto de Caravana do Deserto — rare inland desert outpost)
     if (
       centerBiome === BiomeType.DESERT &&
       centerZone !== EcologicalZone.COASTAL_TROPICS &&
@@ -6253,7 +6316,6 @@ export class WorldManager {
     // - Lighting/Banners: Torch <-> Iron Lantern <-> Royal Banner
     // - Shelters: Explorer Tent <-> Village House
     // - Crafting/Commerce: Workbench <-> Market Stall
-    // - Water/Sanctuary: Village Well <-> Healing Fountain
     if (bp.layer === 'FURNITURE' && existingUpperBp?.layer === 'FURNITURE') {
       const lightingGroup = [
         PlaceableType.TORCH,
@@ -6268,10 +6330,6 @@ export class WorldManager {
         PlaceableType.WORKBENCH,
         PlaceableType.MARKET_STALL,
       ];
-      const fountainGroup = [
-        PlaceableType.VILLAGE_WELL,
-        PlaceableType.HEALING_FOUNTAIN,
-      ];
 
       if (
         (lightingGroup.includes(placeableType) &&
@@ -6279,9 +6337,7 @@ export class WorldManager {
         (shelterGroup.includes(placeableType) &&
           shelterGroup.includes(existingUpper.type)) ||
         (workshopGroup.includes(placeableType) &&
-          workshopGroup.includes(existingUpper.type)) ||
-        (fountainGroup.includes(placeableType) &&
-          fountainGroup.includes(existingUpper.type))
+          workshopGroup.includes(existingUpper.type))
       ) {
         return true;
       }
@@ -6683,11 +6739,7 @@ export class WorldManager {
           return true;
         }
         const st = this.getStructureAtTile(nx, ny);
-        if (
-          st &&
-          (st.type === PlaceableType.VILLAGE_WELL ||
-            st.type === PlaceableType.HEALING_FOUNTAIN)
-        ) {
+        if (st && st.type === PlaceableType.VILLAGE_WELL) {
           return true;
         }
       }

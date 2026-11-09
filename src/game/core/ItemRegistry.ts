@@ -95,9 +95,9 @@ export const ITEMS: Record<string, ItemDefinition> = {
     id: 'stone',
     name: 'Pedra Bruta',
     description:
-      'Fragmento de rocha resistente das planícies e desertos. Essencial para alvenaria, fornalhas, calçadas de velocidade e fontes.',
+      'Fragmento de rocha resistente das planícies e desertos. Essencial para alvenaria, fornalhas, calçadas de velocidade e poços.',
     purposeSummary:
-      'Cria Machado/Picareta de Pedra, Fogueira, Fornalha de Fundição, Calçada de Pedra Real (+22% Velocidade), Muralhas e Fonte Abissal.',
+      'Cria Machado/Picareta de Pedra, Fogueira, Fornalha de Fundição, Calçada de Pedra Real (+22% Velocidade), Muralhas e Poço da Vila.',
     category: ItemCategory.RESOURCE,
     rarity: RarityTier.BASIC,
     maxStack: 99,
@@ -117,9 +117,9 @@ export const ITEMS: Record<string, ItemDefinition> = {
     id: 'flint',
     name: 'Sílex Afiado',
     description:
-      'Lasca mineral pontiaguda e inflamável extraída de rochas e drusas. Usada em lâminas perfurantes, armadilhas e explosivos.',
+      'Lasca mineral pontiaguda e inflamável extraída de rochas. Usada em lâminas perfurantes, armadilhas e explosivos.',
     purposeSummary:
-      'Cria Espada de Sílex, Lança de Sílex (Longo Alcance), Armadilha de Espinhos, Fornalha de Fundição e Bomba Solar Explosiva.',
+      'Cria Espada de Sílex, Lança de Sílex (Longo Alcance), Armadilha de Espinhos, Fornalha de Fundição e Bomba de Sílex.',
     category: ItemCategory.RESOURCE,
     rarity: RarityTier.BASIC,
     maxStack: 99,
@@ -141,7 +141,7 @@ export const ITEMS: Record<string, ItemDefinition> = {
     description:
       'Minério energético extraído de veios no subsolo ou obtido ao queimar madeira na Fogueira ou Fornalha. Possui 5x mais eficiência energética que a madeira comum como lenha!',
     purposeSummary:
-      'Combustível Nobre (60s de queima no Slot de Lenha — 5x mais eficiente que Madeira!), além de criar Tochas em lote e Bombas Solares.',
+      'Combustível Nobre (60s de queima no Slot de Lenha — 5x mais eficiente que Madeira!), além de criar Tochas, Lampiões e Bombas de Sílex.',
     category: ItemCategory.RESOURCE,
     rarity: RarityTier.BASIC,
     maxStack: 99,
@@ -283,7 +283,7 @@ export const ITEMS: Record<string, ItemDefinition> = {
     id: 'healing_salve',
     name: 'Elixir de Ervas & Âmbar',
     description:
-      'Bálsamo regenerador destilado na Fornalha com Cristal Solar e frutas medicinais. Remove todos os efeitos aplicados sobre o personagem.',
+      'Bálsamo regenerador preparado na Bancada de Trabalho com Folha de Erva-da-Vida e frutas medicinais. Remove todos os efeitos aplicados sobre o personagem.',
     purposeSummary:
       'Restaura +65 Vida, +40 Energia, +15 Fome e remove todos os efeitos aplicados sobre o personagem.',
     category: ItemCategory.CONSUMABLE,
@@ -297,7 +297,7 @@ export const ITEMS: Record<string, ItemDefinition> = {
     id: 'warrior_feast',
     name: 'Banquete Real do Guerreiro',
     description:
-      'Refeição revigorante assada na Fornalha com Maçã Dourada, Coco e Couro/Essência. Concede Fúria de Combate (+35% Dano de Ataque por 50s).',
+      'Refeição revigorante preparada na Bancada com Maçã Dourada, Coco e Couro. Concede Fúria de Combate (+35% Dano de Ataque por 50s).',
     purposeSummary:
       'Restaura +75 Fome, +45 HP, +60 Energia e aumenta seu Dano de Ataque em +35% por 50 segundos!',
     category: ItemCategory.CONSUMABLE,
@@ -327,9 +327,9 @@ export const ITEMS: Record<string, ItemDefinition> = {
   },
   fire_bomb: {
     id: 'fire_bomb',
-    name: 'Bomba Solar de Sílex',
+    name: 'Bomba de Sílex',
     description:
-      'Carga explosiva de Sílex Afiado, Minério de Ferro e Cristal Solar. Detona ao redor do herói causando 65 de dano em área e quebrando rochas!',
+      'Carga explosiva de Sílex Afiado, Minério de Ferro e Carvão. Detona ao redor do herói causando 65 de dano em área e quebrando rochas!',
     purposeSummary:
       'Segure na mão e aperte Consumir/Usar para detonar uma explosão que causa 65 de dano a inimigos e 90 de dano a recursos próximos!',
     category: ItemCategory.CONSUMABLE,
@@ -339,9 +339,9 @@ export const ITEMS: Record<string, ItemDefinition> = {
   },
   recall_crystal: {
     id: 'recall_crystal',
-    name: 'Cristal Astral de Retorno',
+    name: 'Cristal de Retorno',
     description:
-      'Artefato dimensional forjado com Fragmento Astral. Teletransporta instantaneamente você e seus pets de volta ao Acampamento Inicial e cura +50 HP.',
+      'Artefato de retorno forjado com Ouro e Essência Sombria. Teletransporta instantaneamente você e seus pets de volta ao Acampamento Inicial e cura +50 HP.',
     purposeSummary:
       'Segure na mão e aperte Consumir/Usar para se teletransportar de volta à Base Inicial com seus animais e restaurar +50 HP!',
     category: ItemCategory.CONSUMABLE,
@@ -353,9 +353,9 @@ export const ITEMS: Record<string, ItemDefinition> = {
   },
   primordial_ambrosia: {
     id: 'primordial_ambrosia',
-    name: 'Ambrosia da Árvore-Coração',
+    name: 'Essência da Vida',
     description:
-      'Néctar divino preparado no Altar Solar com Essência Primordial, Pérola Abissal e Maçã Dourada. Aumenta PERMANENTEMENTE sua Vida Máxima em +20 HP!',
+      'Elixir concentrado preparado na Bancada de Trabalho com Essência da Árvore-Coração, Pérola Abissal, Maçã Dourada e Coco. Aumenta PERMANENTEMENTE sua Vida Máxima em +20 HP!',
     purposeSummary:
       'Concede +20 de Vida Máxima PERMANENTE ao seu herói e restaura 100% da Vida, Fome e Energia!',
     category: ItemCategory.CONSUMABLE,
@@ -404,24 +404,13 @@ export const ITEMS: Record<string, ItemDefinition> = {
     rarity: RarityTier.RARE,
     maxStack: 99,
   },
-  solar_bloom: {
-    id: 'solar_bloom',
-    name: 'Flor Solar Flamejante',
-    description:
-      'Flor radiante que absorve calor do sol nos canteiros da fronteira. Usada para sintetizar essências de calor, bombas e elixires solares.',
-    purposeSummary:
-      'Reagente alquímico avançado para o Altar Solar, Bombas Solares e Elixires de Calor.',
-    category: ItemCategory.RESOURCE,
-    rarity: RarityTier.RARE,
-    maxStack: 50,
-  },
   wheat_seeds: {
     id: 'wheat_seeds',
     name: 'Sementes de Trigo Dourado',
     description:
-      'Grãos selecionados para plantio em terra arada. Cresce em 4 fases sob luz solar e solo irrigado.',
+      'Grãos selecionados para plantio em terra arada. Cresce em 4 fases sob luz natural e solo irrigado.',
     purposeSummary:
-      'Plante em Canteiro de Terra Arada (botão Usar). Requer água e sol para produzir Trigo Dourado.',
+      'Plante em Canteiro de Terra Arada (botão Usar). Requer água para produzir Trigo Dourado.',
     category: ItemCategory.PLACEABLE,
     rarity: RarityTier.BASIC,
     maxStack: 50,
@@ -450,18 +439,6 @@ export const ITEMS: Record<string, ItemDefinition> = {
     rarity: RarityTier.RARE,
     maxStack: 50,
     seedCropType: 'medic_herb',
-  },
-  solar_seeds: {
-    id: 'solar_seeds',
-    name: 'Sementes da Flor Solar',
-    description:
-      'Sementes térmicas que prosperam sob calor intenso do sol. Produz a Flor Solar Flamejante.',
-    purposeSummary:
-      'Plante em Canteiro de Terra Arada (botão Usar). Necessita de sol pleno para florescer.',
-    category: ItemCategory.PLACEABLE,
-    rarity: RarityTier.RARE,
-    maxStack: 50,
-    seedCropType: 'solar_bloom',
   },
   berry_seeds: {
     id: 'berry_seeds',
@@ -614,7 +591,7 @@ export const ITEMS: Record<string, ItemDefinition> = {
     id: 'tilled_soil',
     name: 'Canteiro de Terra Arada',
     description:
-      'Solo fofo e arejado preparado para receber sementes de trigo, cenoura, ervas medicinais ou flores solares.',
+      'Solo fofo e arejado preparado para receber sementes de trigo, cenoura, ervas medicinais ou bagas.',
     purposeSummary:
       'Canteiro agrícola onde plantas crescem através de 4 fases (Semente -> Broto -> Crescimento -> Madura).',
     category: ItemCategory.PLACEABLE,
@@ -715,9 +692,9 @@ export const ITEMS: Record<string, ItemDefinition> = {
   },
   fish_golden: {
     id: 'fish_golden',
-    name: 'Peixe-Sol Dourado',
+    name: 'Peixe Dourado',
     description:
-      'Espécie rara de escamas reluzentes como ouro solar. Concede vigor extraordinário e velocidade ao ser consumido.',
+      'Espécie rara de escamas reluzentes como ouro. Concede vigor extraordinário e velocidade ao ser consumido.',
     purposeSummary:
       'Consumir (+55 Fome, +45 HP, +60 Energia e +30% Velocidade por 35s) ou vender por alto valor em moedas.',
     category: ItemCategory.CONSUMABLE,
@@ -787,7 +764,7 @@ export const ITEMS: Record<string, ItemDefinition> = {
     description:
       'Metal bruto extraído de veios ferrosos com picareta de pedra ou superior, ou saqueado de Ogros derrotados.',
     purposeSummary:
-      'Funda na Fornalha para criar Barras de Ferro Forjado ou combine com Sílex para fabricar Bombas Solares Explosivas.',
+      'Funda na Fornalha para criar Barras de Ferro Forjado ou combine com Sílex para fabricar Bombas de Sílex.',
     category: ItemCategory.RESOURCE,
     rarity: RarityTier.RARE,
     maxStack: 99,
@@ -798,29 +775,29 @@ export const ITEMS: Record<string, ItemDefinition> = {
     description:
       'Lingote metálico purificado na Fornalha. Base de todas as armas, ferramentas e armaduras de nível médio e avançado.',
     purposeSummary:
-      'Forja Espada/Machado/Picareta de Ferro, Foice Sombria, Tridente Abissal, Couraça de Ferro, Muralhas, Altar Solar e Lâmina Astral.',
+      'Forja Espada/Machado/Picareta de Ferro, Foice Sombria, Tridente Abissal, Couraça de Ferro, Muralhas, Picareta de Ouro e Espada de Ouro.',
     category: ItemCategory.RESOURCE,
     rarity: RarityTier.RARE,
     maxStack: 99,
   },
   gold_ore: {
     id: 'gold_ore',
-    name: 'Minério de Ouro Bruto',
+    name: 'Minério de Ouro',
     description:
       'Minério nobre e reluzente extraído de veios raros nas profundezas do subsolo (mais raro que o ferro e o carvão).',
     purposeSummary:
-      'Funda na Fornalha de Pedra com combustível para produzir Barras de Ouro Refinado.',
+      'Funda na Fornalha de Pedra com combustível para produzir Ouro.',
     category: ItemCategory.RESOURCE,
     rarity: RarityTier.RARE,
     maxStack: 99,
   },
   gold_bar: {
     id: 'gold_bar',
-    name: 'Barra de Ouro Refinado',
+    name: 'Ouro',
     description:
-      'Lingote dourado de alta pureza refinado na Fornalha a partir do Minério de Ouro.',
+      'Ouro de alta pureza refinado na Fornalha a partir do Minério de Ouro.',
     purposeSummary:
-      'Material nobre usado na Bancada para forjar Machado, Picareta e Espada de Ouro.',
+      'Material nobre de fabricação usado na Bancada de Trabalho e na Mesa de Tecelagem para equipamentos, armaduras e estruturas especiais.',
     category: ItemCategory.RESOURCE,
     rarity: RarityTier.RARE,
     maxStack: 99,
@@ -831,18 +808,7 @@ export const ITEMS: Record<string, ItemDefinition> = {
     description:
       'Madeira densa de fibras douradas colhida de Árvores Ancestrais e Árvores-Coração com Machado de Pedra+.',
     purposeSummary:
-      'Cria Equipamentos de Ferro, Clava Brutal de Ogro, Tridente Abissal, Tenda do Aventureiro, Altar Solar, Machado Primordial e Totem Guardião.',
-    category: ItemCategory.RESOURCE,
-    rarity: RarityTier.RARE,
-    maxStack: 99,
-  },
-  solar_crystal: {
-    id: 'solar_crystal',
-    name: 'Cristal Solar',
-    description:
-      'Gema luminosa que armazena energia térmica do deserto. Catalisador para alquimia, explosivos, fontes mágicas e armas.',
-    purposeSummary:
-      'Cria Espada de Ferro, Elixir de Ervas, Bomba Solar, Fonte Abissal de Cura, Cristal de Retorno, Altar Solar e Totem Guardião.',
+      'Cria Equipamentos de Ferro, Clava Brutal de Ogro, Tridente Abissal, Tenda do Aventureiro, Machado Primordial e Totem de Defesa.',
     category: ItemCategory.RESOURCE,
     rarity: RarityTier.RARE,
     maxStack: 99,
@@ -851,9 +817,9 @@ export const ITEMS: Record<string, ItemDefinition> = {
     id: 'dark_essence',
     name: 'Essência Sombria',
     description:
-      'Núcleo místico deixado por Zumbis derrotados. Essencial para armas vampíricas, elixires de velocidade noturna e transmutação astral.',
+      'Núcleo sombrio deixado por Zumbis derrotados. Essencial para armas vampíricas, elixires de velocidade noturna, Cristal de Retorno e armaduras de ouro.',
     purposeSummary:
-      'Forja a Foice Sombria (Dreno de Vida por golpe), prepara Elixir da Sombra Noturna (+Velocidade), Armadura Astral e Transmutação Astral.',
+      'Forja a Foice Sombria (Dreno de Vida por golpe), prepara Elixir da Sombra Noturna (+Velocidade), Cristal de Retorno e Armadura de Ouro.',
     category: ItemCategory.RESOURCE,
     rarity: RarityTier.RARE,
     maxStack: 99,
@@ -864,31 +830,20 @@ export const ITEMS: Record<string, ItemDefinition> = {
     description:
       'Pele colossal obtida ao derrotar Ogros Brutamontes. Proporciona resistência extrema para armaduras, clavas pesadas e tendas.',
     purposeSummary:
-      'Cria Clava Brutal de Ogro (Alto Dano + Empurrão), Couraça de Ferro & Ogro, Tenda de Lã & Couro, Banquete do Guerreiro e Armadura Astral.',
+      'Cria Clava Brutal de Ogro (Alto Dano + Empurrão), Couraça de Ferro & Ogro, Tenda de Lã & Couro, Banquete do Guerreiro e Armadura de Ouro.',
     category: ItemCategory.RESOURCE,
     rarity: RarityTier.RARE,
     maxStack: 50,
   },
 
   // === VERY RARE RESOURCES ===
-  astral_shard: {
-    id: 'astral_shard',
-    name: 'Fragmento Astral de Hélio',
-    description:
-      'Relíquia muito rara extraída de Obeliscos Solares no deserto profundo com Picareta de Ferro+ (ou transmutada no Altar Solar).',
-    purposeSummary:
-      'Forja Lâmina Astral do Hélio, Picareta Astral, Armadura Soberana Astral, Totem do Guardião Solar e Cristal Astral de Retorno.',
-    category: ItemCategory.RESOURCE,
-    rarity: RarityTier.VERY_RARE,
-    maxStack: 50,
-  },
   abyssal_pearl: {
     id: 'abyssal_pearl',
     name: 'Pérola Abissal',
     description:
       'Jóia iridescente muito rara colhida de Ostras Gigantes no Oceano usando Pontes Costeiras e Picareta de Ferro+.',
     purposeSummary:
-      'Forja Tridente Abissal dos Mares, Fonte Abissal de Cura, Ambrosia da Árvore-Coração (+20 HP Máx), Lâmina Astral e Armadura Astral.',
+      'Forja Tridente Abissal dos Mares, Essência da Vida (+20 HP Máx), Picareta de Ouro, Espada de Ouro e Armadura de Ouro.',
     category: ItemCategory.RESOURCE,
     rarity: RarityTier.VERY_RARE,
     maxStack: 50,
@@ -897,9 +852,9 @@ export const ITEMS: Record<string, ItemDefinition> = {
     id: 'primordial_essence',
     name: 'Essência da Árvore-Coração',
     description:
-      'Seiva sagrada muito rara extraída das Árvores-Coração Primordiais da planície com Machado de Ferro+.',
+      'Seiva ancestral muito rara extraída das Árvores-Coração Primordiais da planície com Machado de Ferro+.',
     purposeSummary:
-      'Cria Ambrosia da Árvore-Coração (+20 HP Máx Permanente), Machado Primordial, Lâmina Astral, Fonte Abissal de Cura e Totem Guardião.',
+      'Cria Essência da Vida (+20 HP Máx Permanente), Machado Primordial, Espada de Ouro e Totem de Defesa.',
     category: ItemCategory.RESOURCE,
     rarity: RarityTier.VERY_RARE,
     maxStack: 50,
@@ -928,7 +883,7 @@ export const ITEMS: Record<string, ItemDefinition> = {
     id: 'stone_pickaxe',
     name: 'Picareta de Pedra',
     description:
-      'Quebra rochas comuns rapidamente e desbloqueia a mineração de Minério de Ferro e Cristais Solares.',
+      'Quebra rochas comuns rapidamente e desbloqueia a mineração de Minério de Carvão, Minério de Ferro e Minério de Ouro.',
     purposeSummary:
       'Ferramenta Nv.1 (Corpo-a-corpo · Individual): 8 de dano, alcance de 33px e poder de coleta 10.',
     category: ItemCategory.TOOL,
@@ -1002,7 +957,7 @@ export const ITEMS: Record<string, ItemDefinition> = {
     id: 'iron_pickaxe',
     name: 'Picareta de Ferro Forjado',
     description:
-      'Capaz de minerar Cristais Solares e desbloquear a extração de Ostras Abissais e Obeliscos Astrais.',
+      'Minera rochas e veios subterrâneos rapidamente e desbloqueia a extração de Ostras Abissais.',
     purposeSummary:
       'Ferramenta Nv.2 (Corpo-a-corpo · Individual): 12 de dano, alcance de 33px e poder de coleta 20.',
     category: ItemCategory.TOOL,
@@ -1038,7 +993,7 @@ export const ITEMS: Record<string, ItemDefinition> = {
     id: 'iron_sword',
     name: 'Espada Longa de Ferro',
     description:
-      'Lâmina balanceada de alto impacto forjada com Cristal Solar para enfrentar Zumbis e Ogros.',
+      'Lâmina balanceada de alto impacto forjada com Ferro Forjado, Madeira Nobre e Ouro para enfrentar Zumbis e Ogros.',
     purposeSummary:
       'Arma Nv.2 (Corpo-a-corpo · Individual): Causa 25 de dano base com alcance de 55px.',
     category: ItemCategory.WEAPON,
@@ -1051,60 +1006,6 @@ export const ITEMS: Record<string, ItemDefinition> = {
     attackTargetScope: 'single',
     attackRange: 55,
     harvestPower: 12,
-  },
-  gold_axe: {
-    id: 'gold_axe',
-    name: 'Machado de Ouro Real',
-    description:
-      'Machado forjado com ouro refinado e cabo de madeira nobre. Mais veloz e potente que o de ferro.',
-    purposeSummary:
-      'Ferramenta Nv.2 (Corpo-a-corpo · Individual): Corta árvores comuns, nobres e primordiais com Coleta 25 e 18 de Dano.',
-    category: ItemCategory.TOOL,
-    rarity: RarityTier.RARE,
-    maxStack: 1,
-    toolType: ToolType.AXE,
-    toolTier: 2,
-    attackDamage: 18,
-    attackDelivery: 'melee',
-    attackTargetScope: 'single',
-    attackRange: 33,
-    harvestPower: 25,
-  },
-  gold_pickaxe: {
-    id: 'gold_pickaxe',
-    name: 'Picareta de Ouro Real',
-    description:
-      'Picareta reforçada com liga de ouro refinado. Superior à picareta de ferro na escavação de rochas e minérios.',
-    purposeSummary:
-      'Ferramenta Nv.2 (Corpo-a-corpo · Individual): Minera rochas, carvão, ferro, ouro e cristais com Coleta 25 e 15 de Dano.',
-    category: ItemCategory.TOOL,
-    rarity: RarityTier.RARE,
-    maxStack: 1,
-    toolType: ToolType.PICKAXE,
-    toolTier: 2,
-    attackDamage: 15,
-    attackDelivery: 'melee',
-    attackTargetScope: 'single',
-    attackRange: 33,
-    harvestPower: 25,
-  },
-  gold_sword: {
-    id: 'gold_sword',
-    name: 'Espada Real de Ouro',
-    description:
-      'Lâmina reluzente de ouro temperado. Mais letal e de maior alcance que a Espada de Ferro.',
-    purposeSummary:
-      'Arma Nv.2 (Corpo-a-corpo · Individual): Causa 35 de dano base com alcance de 58px.',
-    category: ItemCategory.WEAPON,
-    rarity: RarityTier.RARE,
-    maxStack: 1,
-    toolType: ToolType.SWORD,
-    toolTier: 2,
-    attackDamage: 35,
-    attackDelivery: 'melee',
-    attackTargetScope: 'single',
-    attackRange: 58,
-    harvestPower: 18,
   },
   shadow_blade: {
     id: 'shadow_blade',
@@ -1151,7 +1052,7 @@ export const ITEMS: Record<string, ItemDefinition> = {
     id: 'primordial_axe',
     name: 'Machado Primordial do Bosque',
     description:
-      'Obra-prima imbuída com Essência Primordial. Corta qualquer árvore rapidamente e serve como arma confiável.',
+      'Obra-prima imbuída com Essência da Árvore-Coração, Madeira Nobre e Ouro. Corta qualquer árvore rapidamente e serve como arma confiável.',
     purposeSummary:
       'Ferramenta Nv.3 (Corpo-a-corpo · Individual): 20 de dano, alcance de 33px e poder de coleta 30.',
     category: ItemCategory.TOOL,
@@ -1167,9 +1068,9 @@ export const ITEMS: Record<string, ItemDefinition> = {
   },
   primordial_pickaxe: {
     id: 'primordial_pickaxe',
-    name: 'Picareta Astral de Hélio',
+    name: 'Picareta de Ouro',
     description:
-      'Perfura até os Obeliscos mais antigos e Ostras Abissais com energia solar concentrada.',
+      'Picareta de alta resistência forjada com Ouro, Pérolas Abissais e Ferro Forjado. Escava rochas, veios profundos e Ostras Abissais com máxima eficiência.',
     purposeSummary:
       'Ferramenta Nv.3 (Corpo-a-corpo · Individual): 18 de dano, alcance de 33px e poder de coleta 30.',
     category: ItemCategory.TOOL,
@@ -1187,7 +1088,7 @@ export const ITEMS: Record<string, ItemDefinition> = {
     id: 'abyssal_trident',
     name: 'Tridente Abissal dos Mares',
     description:
-      'Relíquia oceânica forjada com Pérolas Abissais. Possui longo alcance (77px), recupera +4 HP por golpe e concede bônus de velocidade na costa.',
+      'Relíquia oceânica forjada com Pérolas Abissais, Ferro Forjado e Madeira Nobre. Possui longo alcance (77px), recupera +4 HP por golpe e concede bônus de velocidade na costa.',
     purposeSummary:
       'Arma Nv.3 (Corpo-a-corpo · Individual): 40 de dano, alcance de 77px, recupera +4 HP por golpe e bônus de velocidade na costa.',
     category: ItemCategory.WEAPON,
@@ -1205,9 +1106,9 @@ export const ITEMS: Record<string, ItemDefinition> = {
   },
   astral_sword: {
     id: 'astral_sword',
-    name: 'Lâmina Astral do Hélio',
+    name: 'Espada de Ouro',
     description:
-      'Espada lendária forjada com Fragmento Astral, Pérola Abissal e Essência Primordial. Causa 45 de dano (alcance 66px) e recupera +8 HP por golpe.',
+      'Espada de elite forjada com Ouro, Pérola Abissal, Essência da Árvore-Coração e Ferro Forjado. Causa 45 de dano (alcance 66px) e recupera +8 HP por golpe.',
     purposeSummary:
       'Arma Suprema Nv.3 (Corpo-a-corpo · Individual): 45 de dano base, alcance de 66px e recupera +8 HP por golpe.',
     category: ItemCategory.WEAPON,
@@ -1229,7 +1130,7 @@ export const ITEMS: Record<string, ItemDefinition> = {
     id: 'fiber_hat',
     name: 'Chapéu de Fibras',
     description:
-      'Chapéu trançado artesanalmente com fibras vegetais secas ao sol. Leve e arejado para caminhadas no campo e no deserto. Não pode ser tingido.',
+      'Chapéu trançado artesanalmente com fibras vegetais secas. Leve e arejado para caminhadas no campo e no deserto. Não pode ser tingido.',
     purposeSummary:
       'Slot: Cabeça · Roupa de customização (-1% Dano sofrido · Cor natural fixa).',
     category: ItemCategory.ARMOR,
@@ -1263,11 +1164,11 @@ export const ITEMS: Record<string, ItemDefinition> = {
   },
   solar_necklace: {
     id: 'solar_necklace',
-    name: 'Colar Solar',
+    name: 'Colar Dourado',
     description:
-      'Adorno místico entrelaçado com fibras e Cristais Solares lapidados que repousa sobre o colarinho. Não pode ser tingido.',
+      'Adorno elegante entrelaçado com fibras e Ouro que repousa sobre o colarinho. Não pode ser tingido.',
     purposeSummary:
-      'Slot: Cabeça · Adorno solar de customização (-1% Dano sofrido · Cor natural fixa).',
+      'Slot: Cabeça · Adorno dourado de customização (-1% Dano sofrido · Cor natural fixa).',
     category: ItemCategory.ARMOR,
     rarity: RarityTier.RARE,
     maxStack: 1,
@@ -1590,7 +1491,7 @@ export const ITEMS: Record<string, ItemDefinition> = {
     id: 'elder_mitre',
     name: 'Tiara do Ancião',
     description:
-      'Diadema cerimonial tecido com fios dourados e insígnia solar central. Símbolo de sabedoria usado pelos Anciões das vilas, tingível na Mesa de Tecelagem.',
+      'Diadema cerimonial tecido com fios dourados e insígnia central. Símbolo de sabedoria usado pelos Anciões das vilas, tingível na Mesa de Tecelagem.',
     purposeSummary:
       'Slot: Cabeça · Roupa de Ancião tingível (-1% Dano sofrido · Padrão: Amarelo).',
     category: ItemCategory.ARMOR,
@@ -1740,7 +1641,7 @@ export const ITEMS: Record<string, ItemDefinition> = {
     speedBonus: 0.08,
   },
 
-  // --- CONJUNTO Nv.2: FERRO FORJADO & OGRO (FORNALHA) ---
+  // --- CONJUNTO Nv.2: FERRO FORJADO & OGRO (BANCADA) ---
   iron_helmet: {
     id: 'iron_helmet',
     name: 'Elmo de Ferro & Presas',
@@ -1798,12 +1699,12 @@ export const ITEMS: Record<string, ItemDefinition> = {
     speedBonus: 0.1,
   },
 
-  // --- CONJUNTO Nv.3: SOBERANO ASTRAL (ALTAR SOLAR) ---
+  // --- CONJUNTO Nv.3: ARMADURA DE OURO (BANCADA) ---
   astral_crown: {
     id: 'astral_crown',
-    name: 'Diadema Soberano Astral',
+    name: 'Capacete de Ouro',
     description:
-      'Coroa radiante cravejada com Fragmento Astral de Hélio e Pérola Abissal. Reduz o dano em 15% e ilumina o portador.',
+      'Capacete reluzente forjado com Ouro e Pérola Abissal. Reduz o dano em 15%, concede +35 Vida Máxima e ilumina o portador.',
     purposeSummary:
       'Slot: Cabeça · Reduz o dano em 15% e concede +35 Vida Máxima.',
     category: ItemCategory.ARMOR,
@@ -1815,9 +1716,9 @@ export const ITEMS: Record<string, ItemDefinition> = {
   },
   astral_armor: {
     id: 'astral_armor',
-    name: 'Peitoral Soberano Astral',
+    name: 'Peitoral de Ouro',
     description:
-      'Relíquia suprema da Fronteira forjada para o torso com manto real astral. Reduz o dano em 26% e concede +50 Vida Máxima.',
+      'Armadura pesada de elite forjada em Ouro, Pérola Abissal, Couro de Ogro e Essência Sombria. Reduz o dano em 26% e concede +50 Vida Máxima.',
     purposeSummary:
       'Slot: Parte Superior · Reduz o dano sofrido em 26% e concede +50 Vida Máxima.',
     category: ItemCategory.ARMOR,
@@ -1829,9 +1730,9 @@ export const ITEMS: Record<string, ItemDefinition> = {
   },
   astral_leggings: {
     id: 'astral_leggings',
-    name: 'Perneiras Astrais de Hélio',
+    name: 'Calças de Ouro',
     description:
-      'Grevas celestiais imbuídas com Essência Sombria e Pérola Abissal. Reduzem o dano recebido em 16%.',
+      'Proteção articulada para as pernas forjada com Ouro, Pérola Abissal e Couro de Ogro. Reduz o dano recebido em 16% e concede +25 Vida Máxima.',
     purposeSummary:
       'Slot: Parte Inferior · Reduz o dano sofrido em 16% e concede +25 Vida Máxima.',
     category: ItemCategory.ARMOR,
@@ -1843,9 +1744,9 @@ export const ITEMS: Record<string, ItemDefinition> = {
   },
   astral_boots: {
     id: 'astral_boots',
-    name: 'Botas Aladas Astrais',
+    name: 'Botas de Ouro',
     description:
-      'Botas reluzentes que deixam um rastro luminoso ao caminhar. Reduzem o dano em 13% e aumentam a Velocidade em +18%!',
+      'Botas reluzentes forjadas com Ouro, Essência Sombria e Lã Macia. Reduzem o dano em 13% e aumentam a Velocidade em +18%!',
     purposeSummary:
       'Slot: Pés · Reduz o dano em 13% e aumenta a Velocidade de Movimento em +18%.',
     category: ItemCategory.ARMOR,
@@ -1861,9 +1762,9 @@ export const ITEMS: Record<string, ItemDefinition> = {
     id: 'workbench',
     name: 'Bancada de Artesão',
     description:
-      'Estação de carpintaria com base arquitetônica adaptativa e rotação de eixo (H/V). Interaja para criar armas táticas, pisos, muros, portas, janelas, cercas e a Fornalha.',
+      'Estação de carpintaria e forja com base arquitetônica adaptativa e rotação de eixo (H/V). Interaja para criar ferramentas, armas, armaduras, estruturas, relíquias e a Fornalha.',
     purposeSummary:
-      'Estação Nv.1 (Hitbox Compacta 9px · Rotacionável): Desbloqueia toda a arquitetura de madeira/pedra e equipamentos básicos.',
+      'Estação de Criação (Hitbox Compacta 9px · Rotacionável): Desbloqueia toda a arquitetura, equipamentos e itens especiais.',
     category: ItemCategory.PLACEABLE,
     rarity: RarityTier.BASIC,
     maxStack: 10,
@@ -1873,9 +1774,9 @@ export const ITEMS: Record<string, ItemDefinition> = {
     id: 'campfire',
     name: 'Fogueira de Acampamento',
     description:
-      'Estação culinária de acampamento (Luz 200px · 100%). Interaja para abrir a Grelha da Fogueira: adicione lenha (Madeira ou Carvão Vegetal) para assar alimentos, pães, ensopados, rações, elixires e Carvão Vegetal com tempo de preparo.',
+      'Estação culinária de acampamento (Luz 200px · 100%). Interaja para abrir a Grelha da Fogueira: adicione lenha (Madeira ou Carvão) para assar alimentos, pães e produzir Carvão.',
     purposeSummary:
-      'Estação Culinária (Sem Hitbox · Luz 200px 100%): Prepara comidas e ingredientes no fogo com Slot de Lenha.',
+      'Estação Culinária (Sem Hitbox · Luz 200px 100%): Prepara comidas e ingredientes no fogo com Slot de Combustível.',
     category: ItemCategory.PLACEABLE,
     rarity: RarityTier.BASIC,
     maxStack: 20,
@@ -1885,25 +1786,13 @@ export const ITEMS: Record<string, ItemDefinition> = {
     id: 'furnace',
     name: 'Fornalha de Fundição',
     description:
-      'Alto-forno metalúrgico de pedra e sílex (emite Luz 80px · 50% apenas quando em uso). Interaja para abastecer o Slot de Lenha e fundir Minério de Ferro, queimar madeira em Carvão Vegetal e forjar tijolos e equipamentos pesados.',
+      'Alto-forno metalúrgico de pedra e sílex (emite Luz 80px · 50% apenas quando em uso). Interaja para abastecer o combustível e fundir Minério de Ferro, Minério de Ouro, Areia em Vidro e queimar madeira em Carvão.',
     purposeSummary:
-      'Estação de Fundição Nv.2 (Hitbox Compacta 10px · Luz 80px 50% em uso): Funde Minério de Ferro, produz Carvão Vegetal e forja metais.',
+      'Estação de Fundição Nv.2 (Hitbox Compacta 10px · Luz 80px 50% em uso): Funde Minério de Ferro, Minério de Ouro, Vidro e produz Carvão.',
     category: ItemCategory.PLACEABLE,
     rarity: RarityTier.RARE,
     maxStack: 10,
     placeableType: PlaceableType.FURNACE,
-  },
-  solar_altar: {
-    id: 'solar_altar',
-    name: 'Altar Alquímico Solar',
-    description:
-      'Santuário astral com pedestal rúnico que se integra a pisos imperiais e tapetes (Luz 180px · 100%). Interaja para forjar relíquias muito raras, armas astrais e Ambrosia Primordial.',
-    purposeSummary:
-      'Estação Nv.3 Máxima (Hitbox Compacta 10px · Luz 180px 100%): Cria equipamentos supremos, Fonte Abissal e Totem Guardião.',
-    category: ItemCategory.PLACEABLE,
-    rarity: RarityTier.VERY_RARE,
-    maxStack: 5,
-    placeableType: PlaceableType.SOLAR_ALTAR,
   },
   explorer_tent: {
     id: 'explorer_tent',
@@ -2085,25 +1974,13 @@ export const ITEMS: Record<string, ItemDefinition> = {
     maxStack: 20,
     placeableType: PlaceableType.CHEST,
   },
-  healing_fountain: {
-    id: 'healing_fountain',
-    name: 'Fonte Abissal de Cura',
-    description:
-      'Santuário cristalino monumental com pedestal octogonal (Luz 140px · 50%). Ao usar (1 vez por dia), recupera 100% de HP, 100% de Energia e 100% de Fome do jogador, além de recuperar 100% de HP de animais domesticados. Se quebrada, é destruída e não pode ser coletada.',
-    purposeSummary:
-      'Santuário de Cura (Luz 140px 50% · 1 uso/dia): Recupera 100% HP, Energia e Fome do herói + 100% HP dos pets. Destruída se quebrada.',
-    category: ItemCategory.PLACEABLE,
-    rarity: RarityTier.VERY_RARE,
-    maxStack: 10,
-    placeableType: PlaceableType.HEALING_FOUNTAIN,
-  },
   guardian_totem: {
     id: 'guardian_totem',
-    name: 'Totem do Guardião Solar',
+    name: 'Totem de Defesa',
     description:
-      'Torreta obelisco muito rara que se integra a muralhas e pátios: ilumina 300px (80% de força) e dispara Raios Solares automáticos (25 Dano) contra invasores!',
+      'Torreta defensiva muito rara que se integra a muralhas e pátios: ilumina 300px (80% de força) e dispara raios automáticos (25 Dano) contra invasores!',
     purposeSummary:
-      'Torreta Mágica Solar (Hitbox Compacta 9px · Luz 300px 80%): Dispara raios de 25 de dano contra monstros próximos.',
+      'Torreta de Defesa (Hitbox Compacta 9px · Luz 300px 80%): Dispara raios de 25 de dano contra monstros próximos.',
     category: ItemCategory.PLACEABLE,
     rarity: RarityTier.VERY_RARE,
     maxStack: 10,
@@ -2127,7 +2004,7 @@ export const ITEMS: Record<string, ItemDefinition> = {
     description:
       'Insígnia diplomática lacrada em cera carmesim e ouro pelos emissários das vilas. NÃO pode ser fabricado nem achado na natureza — só pode ser adquirido comprando de um Aldeão ou Andarilho!',
     purposeSummary:
-      'Requisito Exclusivo de Aldeão: Ingrediente obrigatório para confeccionar o Tratado da Paz Real na Bancada ou Altar Solar.',
+      'Requisito Exclusivo de Aldeão: Ingrediente obrigatório para confeccionar o Tratado da Paz Real na Bancada de Trabalho.',
     category: ItemCategory.RESOURCE,
     rarity: RarityTier.RARE,
     maxStack: 20,
@@ -2136,7 +2013,7 @@ export const ITEMS: Record<string, ItemDefinition> = {
     id: 'peace_treaty',
     name: 'Tratado da Paz Real',
     description:
-      'Pergaminho diplomático de alta nobreza tecido com Seda Sombria, Lã, Ouro, Ferro, Cristais Solares e autenticado com um Selo de Cera Real comprado de um Aldeão. Segure-o na mão para conseguir falar com aldeões de uma vila hostil, ver a cobrança em moedas e pagar pelo perdão!',
+      'Pergaminho diplomático de alta nobreza tecido com Seda Sombria, Lã, Moedas de Ouro, Ferro Forjado, Ouro e autenticado com um Selo de Cera Real comprado de um Aldeão. Segure-o na mão para conseguir falar com aldeões de uma vila hostil, ver a cobrança em moedas e pagar pelo perdão!',
     purposeSummary:
       'Item da Paz (Segure na Mão): Permite dialogar com vilas hostis e ver a cobrança em moedas. Ao pagar a dívida, as moedas são pagas e o Tratado da Paz é consumido.',
     category: ItemCategory.CONSUMABLE,
@@ -2159,9 +2036,9 @@ export const ITEMS: Record<string, ItemDefinition> = {
     id: 'scorpion_stinger',
     name: 'Ferrão Imperial Dourado',
     description:
-      'Aguilhão cristalizado extraído do Escorpião Rei do Deserto. Perfura armaduras pesadas e canaliza veneno solar.',
+      'Aguilhão cristalizado extraído do Escorpião Rei do Deserto. Perfura armaduras pesadas e concentra toxina letal.',
     purposeSummary:
-      'Forja a letal Adaga Imperial de Ferrão (62 ATQ + Dreno de Vida) ou pode ser vendido por alto valor nos Vilarejos.',
+      'Forja a letal Lâmina Imperial de Ferrão (30 ATQ + Dreno de Vida) ou pode ser vendido por alto valor nos Vilarejos.',
     category: ItemCategory.RESOURCE,
     rarity: RarityTier.RARE,
     maxStack: 50,
@@ -2172,7 +2049,7 @@ export const ITEMS: Record<string, ItemDefinition> = {
     description:
       'Coração mineral pulsante deixado por Colossos Rúnicos de Pedra nas terras altas. Irradia força telúrica ancestral.',
     purposeSummary:
-      'Cria Poço de Pedra da Vila, Totem Guardião, equipamentos rúnicos ou troca por relíquias com o Ancião da Vila.',
+      'Cria Poço de Pedra da Vila, equipamentos rúnicos ou troca por relíquias com o Ancião da Vila.',
     category: ItemCategory.RESOURCE,
     rarity: RarityTier.VERY_RARE,
     maxStack: 50,
@@ -2430,7 +2307,7 @@ export const ITEMS: Record<string, ItemDefinition> = {
     id: 'iron_lantern',
     name: 'Lampião de Ferro Forjado',
     description:
-      'Luminária suspensa de ferro e cristal solar que ilumina uma ampla área (200px · 100% de força) sem possuir hitbox física, permitindo caminhar livremente!',
+      'Luminária suspensa de ferro forjado e carvão que ilumina uma ampla área (200px · 100% de força) sem possuir hitbox física, permitindo caminhar livremente!',
     purposeSummary:
       'Luminária Real (Sem Hitbox · Luz 200px 100%): Iluminação intensa para ruas, pontes e salões sem obstruir.',
     category: ItemCategory.PLACEABLE,
@@ -2661,7 +2538,7 @@ export const ITEMS: Record<string, ItemDefinition> = {
   },
   flower_solar_drop: {
     id: 'flower_solar_drop',
-    name: 'Gota Solar',
+    name: 'Flor Gota Solar',
     description:
       'Flor rara bioluminescente em formato de gota dourada que nasce em qualquer bioma (5% de chance). Emite luz suave (66% de força num raio de 60px) e não possui hitbox!',
     purposeSummary:
@@ -3561,24 +3438,6 @@ export const CONSTRUCTION_BLUEPRINTS: Record<PlaceableType, ConstructionBlueprin
     lightRadius: 80,
     isInteractive: true,
   },
-  [PlaceableType.SOLAR_ALTAR]: {
-    type: PlaceableType.SOLAR_ALTAR,
-    role: 'ESTACAO',
-    roleLabel: 'Santuário Alquímico Nv.3',
-    layer: 'FURNITURE',
-    layerLabel: 'Camada de Estação (Sobre Chão/Terra)',
-    hasHitbox: true,
-    hitboxBehavior: 'SOLID_COMPACT',
-    hitboxLabel: 'Hitbox Compacta (10px · Contorno Fluido)',
-    hitboxRadius: 10,
-    continuityMode: 'STANDALONE',
-    continuityLabel: 'Pedestal Rúnico Integrado ao Piso',
-    connectionGroup: 'none',
-    connectsToGroups: ['carpet', 'brick_floor'],
-    maxHp: 180,
-    lightRadius: 180,
-    isInteractive: true,
-  },
   [PlaceableType.CHEST]: {
     type: PlaceableType.CHEST,
     role: 'MOBILIA',
@@ -3615,28 +3474,10 @@ export const CONSTRUCTION_BLUEPRINTS: Record<PlaceableType, ConstructionBlueprin
     lightRadius: 0,
     isInteractive: true,
   },
-  [PlaceableType.HEALING_FOUNTAIN]: {
-    type: PlaceableType.HEALING_FOUNTAIN,
-    role: 'DEFESA',
-    roleLabel: 'Santuário de Cura (1x/Dia)',
-    layer: 'FURNITURE',
-    layerLabel: 'Camada Monumental (Sobre Chão/Terra)',
-    hasHitbox: true,
-    hitboxBehavior: 'SOLID_COMPACT',
-    hitboxLabel: 'Hitbox Compacta (10px)',
-    hitboxRadius: 10,
-    continuityMode: 'STANDALONE',
-    continuityLabel: 'Bacia Octogonal Integrada à Calçada',
-    connectionGroup: 'none',
-    connectsToGroups: ['stone_floor', 'brick_floor'],
-    maxHp: 200,
-    lightRadius: 140,
-    isInteractive: true,
-  },
   [PlaceableType.GUARDIAN_TOTEM]: {
     type: PlaceableType.GUARDIAN_TOTEM,
     role: 'DEFESA',
-    roleLabel: 'Torreta Solar Automática',
+    roleLabel: 'Torreta Defensiva Automática',
     layer: 'FURNITURE',
     layerLabel: 'Camada de Defesa (Sobre Chão/Muralha)',
     hasHitbox: true,
@@ -4089,37 +3930,6 @@ export const NATURE_BLUEPRINTS: Record<NatureNodeType, NatureNodeBlueprint> = {
       { itemId: 'apple', min: 1, max: 2, chance: 0.5 },
     ],
   },
-  [NatureNodeType.DESERT_CRYSTAL]: {
-    type: NatureNodeType.DESERT_CRYSTAL,
-    name: 'Drusa de Cristal Solar',
-    rarity: RarityTier.RARE,
-    maxHp: 130,
-    materialKind: 'IRON_MINERAL',
-    requiredTool: ToolType.PICKAXE,
-    requiredTier: 1,
-    xpReward: 25,
-    hasHitbox: true,
-    hitboxRadius: 8,
-    drops: [
-      { itemId: 'solar_crystal', min: 1, max: 3, chance: 1.0 },
-    ],
-  },
-  [NatureNodeType.SUNSTONE_OBELISK]: {
-    type: NatureNodeType.SUNSTONE_OBELISK,
-    name: 'Obelisco Astral de Hélio',
-    rarity: RarityTier.VERY_RARE,
-    maxHp: 220,
-    materialKind: 'ASTRAL_MINERAL',
-    requiredTool: ToolType.PICKAXE,
-    requiredTier: 2,
-    xpReward: 70,
-    hasHitbox: true,
-    hitboxRadius: 9,
-    drops: [
-      { itemId: 'astral_shard', min: 1, max: 1, chance: 1.0 },
-      { itemId: 'solar_crystal', min: 1, max: 3, chance: 0.9 },
-    ],
-  },
   [NatureNodeType.PEARL_CLAM]: {
     type: NatureNodeType.PEARL_CLAM,
     name: 'Ostra Abissal Gigante',
@@ -4192,7 +4002,7 @@ export const NATURE_BLUEPRINTS: Record<NatureNodeType, NatureNodeBlueprint> = {
   },
   [NatureNodeType.FLOWER_SOLAR_DROP]: {
     type: NatureNodeType.FLOWER_SOLAR_DROP,
-    name: 'Gota Solar',
+    name: 'Flor Gota Solar',
     rarity: RarityTier.RARE,
     maxHp: 12,
     materialKind: 'FIBER_FOLIAGE',
@@ -4477,15 +4287,12 @@ export const ITEM_BASE_PRICES: Record<string, number> = {
 
   // === TIER 3: RECURSOS RAROS (FERRAMENTAS NV.1+, CULTIVO RARO & COMBATE A MONSTROS) ===
   herb_seeds: 12,
-  solar_seeds: 18,
   hardwood: 18,
   iron_ore: 20,
   medic_herb: 22,
   dark_essence: 28,
   spider_silk: 32,
-  solar_bloom: 35,
-  solar_crystal: 45,
-  iron_bar: 48, // 2x Minério de Ferro (40) + 1x Madeira (1) + Fundição na Fornalha
+  iron_bar: 48,
   gold_ore: 42,
   gold_bar: 92,
   scorpion_stinger: 55,
@@ -4516,50 +4323,44 @@ export const ITEM_BASE_PRICES: Record<string, number> = {
   wood_boat: 60,
   drilling_stake: 525,
   level_stairs: 525,
-  solar_altar: 540, // 4x Barra de Ferro (192) + 4x Cristal Solar (180) + 4x Madeira Nobre (72) + Consagração
 
-  // Ferramentas & Armas Nv.2 (Ferro Forjado, Ouro Real & Monstros)
+  // Ferramentas & Armas Nv.2 (Ferro Forjado & Monstros)
   iron_hoe: 160,
   iron_shovel: 155,
   shears: 115,
   iron_axe: 220,
   iron_pickaxe: 275,
-  gold_axe: 340,
-  gold_pickaxe: 410,
   ogre_club: 290,
   iron_sword: 330,
-  gold_sword: 460,
   shadow_blade: 360,
   scorpion_dagger: 420,
 
-  // Armaduras Nv.2 (Conjunto de Ferro Forjado & Ogro — Fornalha)
+  // Armaduras Nv.2 (Conjunto de Ferro Forjado & Ogro — Bancada)
   iron_helmet: 270,
   iron_boots: 270,
   iron_greaves: 325,
   iron_armor: 485,
 
-  // === TIER 4: DIPLOMACIA REAL & RELÍQUIAS MUITO RARAS (COLOSSOS, MAR ABISSAL & DESERTO PROFUNDO) ===
+  // === TIER 4: DIPLOMACIA REAL & RELÍQUIAS MUITO RARAS (COLOSSOS & MAR ABISSAL) ===
   royal_wax_seal: 180, // Exclusivo de compra com Aldeão/Andarilho
   golem_core: 220,
   abyssal_pearl: 260,
   primordial_essence: 280,
-  village_well: 290, // 10x Pedra (20) + 4x Madeira (4) + 1x Núcleo de Colosso (220) + Alvenaria
-  astral_shard: 300, // Obelisco Astral ou Transmutação (4x Essência Sombria + 3x Cristal Solar)
-  peace_treaty: 600, // 1x Selo Real (180) + 5x Ouro (5) + 3x Barra Ferro (144) + 2x Cristal Solar (90) + 2x Seda (64) + 2x Lã (16) + Diplomacia
+  village_well: 290,
+  peace_treaty: 600,
 
-  // === TIER 5: EQUIPAMENTOS SUPREMOS, SANTUÁRIOS & RELÍQUIAS DO ALTAR SOLAR (SEM TETO DE PREÇO) ===
-  recall_crystal: 270, // (1x Fragmento Astral + 2x Cristal Solar + 2x Essência Sombria) / 2 + Encantamento
-  astral_boots: 840, // 2x Fragmento Astral (600) + 2x Essência Sombria (56) + 2x Lã (16) + Forja Astral
-  healing_fountain: 1100, // 2x Pérola Abissal (520) + 1x Essência Primordial (280) + 10x Pedra (20) + 2x Cristal Solar (90) + Santuário
-  primordial_ambrosia: 1150, // 2x Essência Primordial (560) + 1x Pérola Abissal (260) + 3x Maçã (18) + 2x Coco (10) + Alquimia Divina (+20 HP Perm.)
-  astral_crown: 1180, // 2x Fragmento Astral (600) + 1x Pérola Abissal (260) + 2x Cristal Solar (90) + Forja Astral
-  abyssal_trident: 1300, // 3x Pérola Abissal (780) + 4x Barra Ferro (192) + 3x Madeira Nobre (54) + 2x Coco (10) + Forja Abissal
-  primordial_axe: 1320, // 3x Essência Primordial (840) + 5x Madeira Nobre (90) + 3x Cristal Solar (135) + Forja Primordial
-  astral_leggings: 1580, // 2x Fragmento Astral (600) + 2x Pérola Abissal (520) + 2x Couro de Ogro (150) + Forja Astral
-  guardian_totem: 1750, // 2x Essência Primordial (560) + 2x Fragmento Astral (600) + 4x Cristal Solar (180) + 4x Madeira Nobre (72) + Torreta Solar
-  primordial_pickaxe: 1980, // 3x Fragmento Astral (900) + 2x Pérola Abissal (520) + 4x Barra Ferro (192) + Forja Astral
-  astral_armor: 2150, // 3x Fragmento Astral (900) + 2x Pérola Abissal (520) + 3x Couro Ogro (225) + 3x Essência Sombria (84) + Forja Soberana
-  astral_sword: 2750, // 3x Fragmento Astral (900) + 2x Pérola Abissal (520) + 2x Essência Primordial (560) + 5x Barra Ferro (240) + Obra-Prima Suprema
+  // === TIER 5: EQUIPAMENTOS DE OURO & RELÍQUIAS SUPREMAS (SEM TETO DE PREÇO) ===
+  recall_crystal: 270,
+  astral_boots: 840,
+  primordial_ambrosia: 1150,
+  astral_crown: 1180,
+  abyssal_trident: 1300,
+  primordial_axe: 1320,
+  astral_leggings: 1580,
+  guardian_totem: 1750,
+  primordial_pickaxe: 1980,
+  astral_armor: 2150,
+  astral_sword: 2750,
 };
 
 export function getItemBasePrice(itemId: string): number {
@@ -4695,9 +4496,9 @@ export const MATERIAL_LABELS: Record<MaterialKind, string> = {
   SOFT_WOOD: 'Madeira de Carvalho / Pinheiro',
   ROUGH_STONE: 'Rocha & Alvenaria Básica',
   HARDWOOD: 'Madeira Nobre Ancestral',
-  IRON_MINERAL: 'Minério de Ferro & Cristal Solar',
+  IRON_MINERAL: 'Minério de Ferro & Ouro',
   PRIMORDIAL_WOOD: 'Madeira-Coração Primordial',
-  ASTRAL_MINERAL: 'Rocha Astral & Abissal',
+  ASTRAL_MINERAL: 'Rocha Densa & Abissal',
 };
 
 export interface ElementBreakRequirement {
@@ -5014,7 +4815,7 @@ export const STRUCTURE_MATERIAL_REQUIREMENTS: Record<
     requirementLabel: 'Requer Machado de Pedra+ (Nv.1+)',
   },
 
-  // === FERRO FORJADO & CRISTAL SOLAR ===
+  // === FERRO FORJADO ===
   [PlaceableType.IRON_GATE]: {
     materialKind: 'IRON_MINERAL',
     requiredTool: ToolType.PICKAXE,
@@ -5027,25 +4828,13 @@ export const STRUCTURE_MATERIAL_REQUIREMENTS: Record<
     requiredTier: 1,
     requirementLabel: 'Requer Picareta de Pedra+ (Nv.1+)',
   },
-  [PlaceableType.SOLAR_ALTAR]: {
-    materialKind: 'ASTRAL_MINERAL',
-    requiredTool: ToolType.PICKAXE,
-    requiredTier: 2,
-    requirementLabel: 'Requer Picareta de Ferro+ (Nv.2+)',
-  },
 
-  // === ESTRUTURAS PRIMORDIAIS & ASTRAIS ===
+  // === ESTRUTURAS PRIMORDIAIS & DEFENSIVAS ===
   [PlaceableType.GUARDIAN_TOTEM]: {
     materialKind: 'PRIMORDIAL_WOOD',
     requiredTool: ToolType.AXE,
     requiredTier: 2,
     requirementLabel: 'Requer Machado de Ferro+ (Nv.2+)',
-  },
-  [PlaceableType.HEALING_FOUNTAIN]: {
-    materialKind: 'ASTRAL_MINERAL',
-    requiredTool: ToolType.PICKAXE,
-    requiredTier: 2,
-    requirementLabel: 'Requer Picareta de Ferro+ (Nv.2+)',
   },
   [PlaceableType.DRILLING_STAKE]: {
     materialKind: 'SOFT_WOOD',
@@ -5129,20 +4918,6 @@ export const HAND_AND_TOOL_MATERIAL_STRENGTH: Record<
       ASTRAL_MINERAL: 0,
     },
   },
-  gold_axe: {
-    label: 'Machado de Ouro Real (Nv.2)',
-    toolType: ToolType.AXE,
-    toolTier: 2,
-    forceByMaterial: {
-      FIBER_FOLIAGE: 25,
-      SOFT_WOOD: 25,
-      ROUGH_STONE: 9,
-      HARDWOOD: 25,
-      IRON_MINERAL: 0,
-      PRIMORDIAL_WOOD: 25,
-      ASTRAL_MINERAL: 0,
-    },
-  },
   primordial_axe: {
     label: 'Machado Primordial do Bosque (Nv.3)',
     toolType: ToolType.AXE,
@@ -5168,7 +4943,7 @@ export const HAND_AND_TOOL_MATERIAL_STRENGTH: Record<
       SOFT_WOOD: 5, // Fraca contra madeira
       ROUGH_STONE: 10, // Poder de coleta 10 (Rocha Cinzenta 70 HP -> 7 golpes)
       HARDWOOD: 0,
-      IRON_MINERAL: 10, // Desbloqueia Minério de Ferro (110 HP -> 11 golpes) e Cristal Solar (130 HP -> 13 golpes)
+      IRON_MINERAL: 10, // Desbloqueia Minério de Ferro (110 HP -> 11 golpes)
       PRIMORDIAL_WOOD: 0,
       ASTRAL_MINERAL: 0,
     },
@@ -5184,25 +4959,11 @@ export const HAND_AND_TOOL_MATERIAL_STRENGTH: Record<
       HARDWOOD: 0,
       IRON_MINERAL: 20, // Poder de coleta 20 (Minério de Ferro 110 HP -> 6 golpes)
       PRIMORDIAL_WOOD: 0,
-      ASTRAL_MINERAL: 20, // Desbloqueia Obelisco Astral (220 HP -> 11 golpes) e Ostra Abissal (160 HP -> 8 golpes)
-    },
-  },
-  gold_pickaxe: {
-    label: 'Picareta de Ouro Real (Nv.2)',
-    toolType: ToolType.PICKAXE,
-    toolTier: 2,
-    forceByMaterial: {
-      FIBER_FOLIAGE: 12,
-      SOFT_WOOD: 9,
-      ROUGH_STONE: 25,
-      HARDWOOD: 0,
-      IRON_MINERAL: 25,
-      PRIMORDIAL_WOOD: 0,
-      ASTRAL_MINERAL: 25,
+      ASTRAL_MINERAL: 20, // Desbloqueia Ostra Abissal (160 HP -> 8 golpes)
     },
   },
   primordial_pickaxe: {
-    label: 'Picareta Astral de Hélio (Nv.3)',
+    label: 'Picareta de Ouro (Nv.3)',
     toolType: ToolType.PICKAXE,
     toolTier: 3,
     forceByMaterial: {
@@ -5212,7 +4973,7 @@ export const HAND_AND_TOOL_MATERIAL_STRENGTH: Record<
       HARDWOOD: 0,
       IRON_MINERAL: 30, // Poder de coleta 30 (Minério de Ferro 110 HP -> 4 golpes)
       PRIMORDIAL_WOOD: 0,
-      ASTRAL_MINERAL: 30, // Poder de coleta 30 (Obelisco Astral 220 HP -> 8 golpes; Ostra Abissal 160 HP -> 6 golpes)
+      ASTRAL_MINERAL: 30, // Poder de coleta 30 (Ostra Abissal 160 HP -> 6 golpes)
     },
   },
 
@@ -5331,20 +5092,6 @@ export const HAND_AND_TOOL_MATERIAL_STRENGTH: Record<
       ASTRAL_MINERAL: 0,
     },
   },
-  gold_sword: {
-    label: 'Espada Real de Ouro (Nv.2)',
-    toolType: ToolType.SWORD,
-    toolTier: 2,
-    forceByMaterial: {
-      FIBER_FOLIAGE: 34,
-      SOFT_WOOD: 18,
-      ROUGH_STONE: 12,
-      HARDWOOD: 0,
-      IRON_MINERAL: 0,
-      PRIMORDIAL_WOOD: 0,
-      ASTRAL_MINERAL: 0,
-    },
-  },
   shadow_blade: {
     label: 'Foice Sombria Vampírica (Nv.2)',
     toolType: ToolType.SWORD,
@@ -5360,7 +5107,7 @@ export const HAND_AND_TOOL_MATERIAL_STRENGTH: Record<
     },
   },
   scorpion_dagger: {
-    label: 'Adaga de Ferrão Solar (Nv.2)',
+    label: 'Adaga de Ferrão do Deserto (Nv.2)',
     toolType: ToolType.SWORD,
     toolTier: 2,
     forceByMaterial: {
@@ -5402,7 +5149,7 @@ export const HAND_AND_TOOL_MATERIAL_STRENGTH: Record<
     },
   },
   astral_sword: {
-    label: 'Lâmina Astral do Hélio (Nv.3)',
+    label: 'Espada de Ouro (Nv.3)',
     toolType: ToolType.SWORD,
     toolTier: 3,
     forceByMaterial: {
@@ -5533,7 +5280,7 @@ export function evaluateMaterialBreak(
           : 'Ferramenta';
       const tierName =
         requiredTier >= 3
-          ? 'Primordial/Astral (Nv.3)'
+          ? 'Primordial/de Ouro (Nv.3)'
           : requiredTier === 2
           ? 'de Ferro+ (Nv.2+)'
           : 'de Pedra+ (Nv.1+)';

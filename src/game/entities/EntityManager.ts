@@ -160,7 +160,7 @@ const VILLAGER_PROFILES: Record<
     ],
   },
   guardiao: {
-    names: ['Capitão Thorne', 'Sentinela Garrick', 'Valéria Escudo-Solar', 'Comandante Roland'],
+    names: ['Capitão Thorne', 'Sentinela Garrick', 'Valéria Escudo de Ouro', 'Comandante Roland'],
     professionLabel: 'Guardião Juramentado da Vila',
     dialogues: [
       'Com minha Armadura de Ferro e Espada Longa de Ferro, protegerei este vilarejo contra qualquer monstro!',
@@ -208,7 +208,7 @@ const VILLAGER_PROFILES: Record<
         receiveCount: 3,
         minAffinity: 75,
         affinityGain: 15,
-        label: 'Arsenal Solar de Aliado',
+        label: 'Arsenal do Guardião',
       },
       {
         id: 'guard_royal_wax_seal',
@@ -227,22 +227,12 @@ const VILLAGER_PROFILES: Record<
     professionLabel: 'Ancião & Guardião das Relíquias',
     dialogues: [
       'A confiança é o tesouro mais raro da Fronteira. Alcance alta afinidade conosco e compartilharei segredos ancestrais.',
-      'Núcleos de Colosso e Cristais Solares guardam a memória do mundo antigo.',
+      'Núcleos de Colosso e relíquias antigas guardam a memória do mundo.',
     ],
     hp: 145,
     attackDamage: 24,
     moveSpeed: 38,
     trades: [
-      {
-        id: 'elder_solar_coin',
-        giveItemId: 'solar_crystal',
-        giveCount: 2,
-        receiveItemId: 'gold_coin',
-        receiveCount: 90,
-        minAffinity: 0,
-        affinityGain: 10,
-        label: 'Tributo de Cristal Solar',
-      },
       {
         id: 'elder_recall_crystal',
         giveItemId: 'gold_coin',
@@ -254,16 +244,6 @@ const VILLAGER_PROFILES: Record<
         label: 'Cristal de Teleporte',
       },
       {
-        id: 'elder_golem_astral',
-        giveItemId: 'golem_core',
-        giveCount: 2,
-        receiveItemId: 'astral_shard',
-        receiveCount: 1,
-        minAffinity: 65,
-        affinityGain: 16,
-        label: 'Transmutação de Colosso',
-      },
-      {
         id: 'elder_ambrosia',
         giveItemId: 'gold_coin',
         giveCount: 1150,
@@ -271,7 +251,7 @@ const VILLAGER_PROFILES: Record<
         receiveCount: 1,
         minAffinity: 80,
         affinityGain: 20,
-        label: 'Bênção Suprema da Vila (+20 HP Máx)',
+        label: 'Essência da Vida (+20 HP Máx)',
       },
       {
         id: 'elder_royal_wax_seal',
@@ -341,7 +321,7 @@ const VILLAGER_PROFILES: Record<
         receiveCount: 1,
         minAffinity: 35,
         affinityGain: 14,
-        label: 'Bússola Astral do Viajante',
+        label: 'Bússola do Viajante',
       },
       {
         id: 'wand_royal_wax_seal',
@@ -836,7 +816,7 @@ export class EntityManager {
             attackDamage: prof.attackDamage,
             moveSpeed: prof.moveSpeed,
             swimSpeed: Math.round(prof.moveSpeed * 0.6),
-            favoriteFoodIds: ['gold_coin', 'apple', 'solar_crystal', 'warrior_feast'],
+            favoriteFoodIds: ['gold_coin', 'apple', 'warrior_feast'],
             npcRole: role,
             npcProfessionLabel: prof.professionLabel,
             affinity: 55,
@@ -861,7 +841,7 @@ export class EntityManager {
             attackDamage: prof.attackDamage,
             moveSpeed: prof.moveSpeed,
             swimSpeed: Math.round(prof.moveSpeed * 0.6),
-            favoriteFoodIds: ['gold_coin', 'apple', 'solar_crystal', 'warrior_feast'],
+            favoriteFoodIds: ['gold_coin', 'apple', 'warrior_feast'],
             npcRole: 'andarilho',
             npcProfessionLabel: prof.professionLabel,
             affinity: 55,
@@ -1257,7 +1237,6 @@ export class EntityManager {
         for (const st of chunk.structures) {
           if (
             st.type === PlaceableType.GUARDIAN_TOTEM ||
-            st.type === PlaceableType.HEALING_FOUNTAIN ||
             st.type === PlaceableType.VILLAGE_WELL ||
             st.type === PlaceableType.VILLAGE_HOUSE ||
             st.type === PlaceableType.BED ||
@@ -1738,34 +1717,6 @@ export class EntityManager {
           }
         );
       }
-      return;
-    }
-
-    if (chunk.landmarkName === 'Santuário Solar Antigo') {
-      this.trySpawnCreatureAt(
-        world,
-        CreatureKind.DESERT_SCORPION,
-        centerWx + 52,
-        centerWy + 40,
-        {
-          isElite: true,
-          customName: 'Escorpião Imperador Solar',
-          homeX: centerWx,
-          homeY: centerWy,
-        }
-      );
-      this.trySpawnCreatureAt(
-        world,
-        CreatureKind.STONE_GOLEM,
-        centerWx - 52,
-        centerWy + 36,
-        {
-          isElite: true,
-          customName: 'Colosso Solar',
-          homeX: centerWx,
-          homeY: centerWy,
-        }
-      );
       return;
     }
 

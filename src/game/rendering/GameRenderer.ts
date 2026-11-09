@@ -1574,10 +1574,6 @@ export class GameRenderer {
       case PlaceableType.FURNACE:
         if (!GameRenderer.isFurnaceInUse(st)) return null;
         return { radius: 80, strength: 0.5, color: '255, 145, 55' };
-      case PlaceableType.SOLAR_ALTAR:
-        return { radius: 180, strength: 1.0, color: '255, 220, 85' };
-      case PlaceableType.HEALING_FOUNTAIN:
-        return { radius: 140, strength: 0.5, color: '70, 205, 255' };
       case PlaceableType.GUARDIAN_TOTEM:
         return { radius: 300, strength: 0.8, color: '255, 220, 85' };
       case PlaceableType.VILLAGE_HOUSE:
@@ -1599,11 +1595,8 @@ export class GameRenderer {
     switch (type) {
       case NatureNodeType.ANCIENT_WORLD_TREE:
         return { radius: 80, strength: 0.33, color: '60, 225, 160' };
-      case NatureNodeType.DESERT_CRYSTAL:
-        return { radius: 60, strength: 0.11, color: '255, 200, 65' };
       case NatureNodeType.FLOWER_SOLAR_DROP:
         return { radius: 60, strength: 0.66, color: '255, 220, 85' };
-      case NatureNodeType.SUNSTONE_OBELISK:
       case NatureNodeType.PEARL_CLAM:
       default:
         return null;
@@ -2714,20 +2707,6 @@ export class GameRenderer {
         groundPadY = 2;
         break;
 
-      case NatureNodeType.DESERT_CRYSTAL:
-        // Towering Translucent Solar Quartz Spires
-        drawW = Math.round(34 + wNorm * 12);
-        drawH = Math.round(42 + hNorm * 16);
-        groundPadY = 3;
-        break;
-
-      case NatureNodeType.SUNSTONE_OBELISK:
-        // Monumental Levitating Astral Monolith (~2.5x player height)
-        drawW = Math.round(46 + wNorm * 10);
-        drawH = Math.round(74 + hNorm * 14);
-        groundPadY = 4;
-        break;
-
       case NatureNodeType.PEARL_CLAM:
         // Giant Reef Tridacna Clam (wider than tall)
         drawW = Math.round(40 + wNorm * 10);
@@ -2772,25 +2751,20 @@ export class GameRenderer {
       );
     }
 
-    // Sacred Ground Aura under Ancient World Tree, Sunstone Obelisk & Pearl Clam
+    // Sacred Ground Aura under Ancient World Tree & Pearl Clam
     if (
       node.type === NatureNodeType.ANCIENT_WORLD_TREE ||
-      node.type === NatureNodeType.SUNSTONE_OBELISK ||
       node.type === NatureNodeType.PEARL_CLAM
     ) {
       const auraPulse = Math.sin(globalTime * 3.2 + node.animOffset) * 2.5;
       const auraRx =
         node.type === NatureNodeType.ANCIENT_WORLD_TREE
           ? 28 + auraPulse
-          : node.type === NatureNodeType.SUNSTONE_OBELISK
-          ? 20 + auraPulse
           : 17 + auraPulse;
       ctx.save();
       ctx.strokeStyle =
         node.type === NatureNodeType.ANCIENT_WORLD_TREE
           ? 'rgba(52, 211, 153, 0.45)'
-          : node.type === NatureNodeType.SUNSTONE_OBELISK
-          ? 'rgba(251, 191, 36, 0.48)'
           : 'rgba(56, 189, 248, 0.45)';
       ctx.lineWidth = 1.4;
       ctx.beginPath();
@@ -2863,11 +2837,7 @@ export class GameRenderer {
           ? 'rgba(245, 158, 11, 0.80)'
           : 'rgba(74, 222, 128, 0.78)';
       ctx.fillRect(lx, ly, 2, 2);
-    } else if (
-      node.type === NatureNodeType.IRON_OUTCROP ||
-      node.type === NatureNodeType.DESERT_CRYSTAL ||
-      node.type === NatureNodeType.SUNSTONE_OBELISK
-    ) {
+    } else if (node.type === NatureNodeType.IRON_OUTCROP) {
       if (Math.sin(globalTime * 4.5 + node.animOffset) > 0.55) {
         ctx.fillStyle = '#fef08a';
         ctx.fillRect(centerX - 6 + (node.animOffset % 12), drawY + Math.round(drawH * 0.3), 2, 2);
@@ -3540,8 +3510,6 @@ export class GameRenderer {
           ? '#f97316'
           : crop === 'medic_herb'
           ? '#38bdf8'
-          : crop === 'solar_bloom'
-          ? '#fbbf24'
           : '#ef4444';
 
       const ridgeColor = isWatered ? '#28170c' : '#54341c';
@@ -3596,20 +3564,6 @@ export class GameRenderer {
         ctx.fillRect(cx - 4, cy - 12 - hVar, 9, 7);
         ctx.fillStyle = '#67e8f9';
         ctx.fillRect(cx, cy - 11 - hVar, 2, 10);
-      } else if (crop === 'solar_bloom') {
-        // Tall sturdy sunflower stalk
-        const stalkH = 16 + hVar;
-        ctx.fillStyle = '#854d0e';
-        ctx.fillRect(cx - 1, cy - stalkH + 6, 3, stalkH - 2);
-        ctx.fillStyle = '#15803d';
-        ctx.fillRect(cx - 6, cy - 6, 5, 3);
-        ctx.fillRect(cx + 2, cy - 8, 5, 3);
-        ctx.fillStyle = '#ca8a04';
-        ctx.fillRect(cx - 5, cy - stalkH + 1, 11, 7);
-        ctx.fillStyle = '#eab308';
-        ctx.fillRect(cx - 4, cy - stalkH - 1, 9, 6);
-        ctx.fillStyle = '#f97316';
-        ctx.fillRect(cx - 1, cy - stalkH + 1, 3, 3);
       } else if (crop === 'berry') {
         // Wide bushy berry shrub
         ctx.fillStyle = '#14532d';
@@ -3673,25 +3627,6 @@ export class GameRenderer {
         ctx.fillRect(cx + 4, cy - 12 - hVar, 2, 2);
         ctx.fillStyle = '#cffafe';
         ctx.fillRect(cx - 1, cy - 16 - hVar, 3, 4);
-      } else if (crop === 'solar_bloom') {
-        // Tall radiant Giant Sunflower (~24px tall with broad golden crown)
-        const stalkH = 21 + hVar;
-        ctx.fillStyle = '#14532d';
-        ctx.fillRect(cx - 2, cy - stalkH + 8, 4, stalkH - 4);
-        ctx.fillStyle = '#16a34a';
-        ctx.fillRect(cx - 8, cy - 7, 6, 3);
-        ctx.fillRect(cx + 2, cy - 9, 6, 3);
-
-        ctx.fillStyle = '#eab308';
-        ctx.fillRect(cx - 8 - wVar, cy - stalkH - 1, 17 + wVar * 2, 11);
-        ctx.fillStyle = '#f59e0b';
-        ctx.fillRect(cx - 6 - wVar, cy - stalkH - 3, 13 + wVar * 2, 14);
-        ctx.fillStyle = '#facc15';
-        ctx.fillRect(cx - 4, cy - stalkH - 4, 9, 16);
-        ctx.fillStyle = '#78350f';
-        ctx.fillRect(cx - 3, cy - stalkH + 1, 7, 7);
-        ctx.fillStyle = '#fef08a';
-        ctx.fillRect(cx - 1, cy - stalkH + 3, 3, 3);
       } else if (crop === 'berry') {
         // Wide, heavy-laden cultivated berry bush (22–26px wide x 16–19px tall)
         ctx.fillStyle = '#14532d';
@@ -4089,22 +4024,10 @@ export class GameRenderer {
         drawH = 58;
         groundPadY = 3;
         break;
-      case PlaceableType.HEALING_FOUNTAIN:
-        // Grand two-tier marble sanctuary fountain
-        drawW = 50;
-        drawH = 58;
-        groundPadY = 3;
-        break;
       case PlaceableType.GUARDIAN_TOTEM:
         // Towering winged sacred totem pole (~2.6x player height)
         drawW = 40;
         drawH = 68;
-        groundPadY = 3;
-        break;
-      case PlaceableType.SOLAR_ALTAR:
-        // Stepped golden sanctuary dais with levitating prism
-        drawW = 48;
-        drawH = 54;
         groundPadY = 3;
         break;
       case PlaceableType.EXPLORER_TENT:
@@ -4226,7 +4149,6 @@ export class GameRenderer {
       (st.type === PlaceableType.WORKBENCH ||
         st.type === PlaceableType.WEAVING_TABLE ||
         st.type === PlaceableType.FURNACE ||
-        st.type === PlaceableType.SOLAR_ALTAR ||
         st.type === PlaceableType.CHEST)
     ) {
       ctx.fillStyle = 'rgba(30, 41, 59, 0.45)';
@@ -4907,16 +4829,10 @@ export class GameRenderer {
       return;
     }
 
-    if (
-      st.type === PlaceableType.SOLAR_ALTAR ||
-      st.type === PlaceableType.GUARDIAN_TOTEM
-    ) {
+    if (st.type === PlaceableType.GUARDIAN_TOTEM) {
       const pulse = Math.sin(globalTime * 3.8 + seed) * 1.8;
       ctx.save();
-      ctx.strokeStyle =
-        st.type === PlaceableType.GUARDIAN_TOTEM
-          ? 'rgba(56, 189, 248, 0.48)'
-          : 'rgba(250, 204, 21, 0.48)';
+      ctx.strokeStyle = 'rgba(56, 189, 248, 0.48)';
       ctx.lineWidth = 1.3;
       ctx.beginPath();
       ctx.ellipse(
@@ -4933,10 +4849,7 @@ export class GameRenderer {
       return;
     }
 
-    if (
-      st.type === PlaceableType.HEALING_FOUNTAIN ||
-      st.type === PlaceableType.VILLAGE_WELL
-    ) {
+    if (st.type === PlaceableType.VILLAGE_WELL) {
       const dropPhase = (globalTime * 1.5 + (seed % 5) * 0.2) % 1;
       const dx = wx + 12 + Math.sin(globalTime * 4 + seed) * 7;
       const dy = wy + 8 - Math.sin(dropPhase * Math.PI) * 9;
@@ -8186,9 +8099,7 @@ export class GameRenderer {
       (itemId === 'village_house' ||
         itemId === 'market_stall' ||
         itemId === 'village_well' ||
-        itemId === 'healing_fountain' ||
         itemId === 'guardian_totem' ||
-        itemId === 'solar_altar' ||
         itemId === 'explorer_tent' ||
         itemId === 'furnace' ||
         itemId === 'workbench' ||
@@ -8205,8 +8116,7 @@ export class GameRenderer {
         itemId === 'berry' ||
         itemId === 'gold_coin' ||
         itemId === 'wheat_seeds' ||
-        itemId === 'herb_seeds' ||
-        itemId === 'solar_seeds');
+        itemId === 'herb_seeds');
 
     // Relative proportional size in hand (px)
     const handSize = isEquipment
@@ -8262,9 +8172,6 @@ export class GameRenderer {
         if (fancySlashRibbon) {
           const outerColor =
             itemId === 'astral_sword' ||
-            itemId === 'gold_sword' ||
-            itemId === 'gold_axe' ||
-            itemId === 'gold_pickaxe' ||
             itemId === 'primordial_axe' ||
             itemId === 'primordial_pickaxe'
               ? 'rgba(250, 204, 21, 0.55)'
@@ -8276,9 +8183,6 @@ export class GameRenderer {
 
           const coreColor =
             itemId === 'astral_sword' ||
-            itemId === 'gold_sword' ||
-            itemId === 'gold_axe' ||
-            itemId === 'gold_pickaxe' ||
             itemId === 'primordial_axe' ||
             itemId === 'primordial_pickaxe'
               ? '#fef08a'

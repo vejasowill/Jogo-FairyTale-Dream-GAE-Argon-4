@@ -54,7 +54,7 @@ export type Direction = 'down' | 'up' | 'left' | 'right';
 
 export type EquipmentSlot = 'head' | 'body' | 'legs' | 'feet';
 
-export type CropType = 'wheat' | 'carrot' | 'medic_herb' | 'solar_bloom' | 'berry';
+export type CropType = 'wheat' | 'carrot' | 'medic_herb' | 'berry';
 
 export type AttackDeliveryType = 'melee' | 'ranged';
 
@@ -88,7 +88,7 @@ export interface ItemDefinition {
   rarity: RarityTier;
   maxStack: number;
   toolType?: ToolType;
-  toolTier?: number; // 1 = Basic (Wood/Stone), 2 = Iron/Rare, 3 = Astral/Primordial
+  toolTier?: number; // 1 = Basic (Wood/Stone), 2 = Iron/Rare, 3 = Gold/Primordial
   attackDamage?: number;
   attackRange?: number;
   attackDelivery?: AttackDeliveryType;
@@ -204,9 +204,7 @@ export enum NatureNodeType {
   // Rare
   IRON_OUTCROP = 'IRON_OUTCROP',
   HARDWOOD_TREE = 'HARDWOOD_TREE',
-  DESERT_CRYSTAL = 'DESERT_CRYSTAL',
   // Very Rare
-  SUNSTONE_OBELISK = 'SUNSTONE_OBELISK',
   PEARL_CLAM = 'PEARL_CLAM',
   ANCIENT_WORLD_TREE = 'ANCIENT_WORLD_TREE',
   // Forest Biomes (Temperate & Taiga)
@@ -231,7 +229,6 @@ export enum PlaceableType {
   WORKBENCH = 'WORKBENCH',
   CAMPFIRE = 'CAMPFIRE',
   FURNACE = 'FURNACE',
-  SOLAR_ALTAR = 'SOLAR_ALTAR',
   WOOD_WALL = 'WOOD_WALL',
   DARK_OAK_WALL = 'DARK_OAK_WALL',
   PINE_WALL = 'PINE_WALL',
@@ -264,7 +261,6 @@ export enum PlaceableType {
   GUARDIAN_TOTEM = 'GUARDIAN_TOTEM',
   SPIKE_TRAP = 'SPIKE_TRAP',
   EXPLORER_TENT = 'EXPLORER_TENT',
-  HEALING_FOUNTAIN = 'HEALING_FOUNTAIN',
   VILLAGE_HOUSE = 'VILLAGE_HOUSE',
   MARKET_STALL = 'MARKET_STALL',
   VILLAGE_WELL = 'VILLAGE_WELL',
@@ -865,8 +861,7 @@ export interface PlayerState {
   respawnY?: number;
   respawnLabel?: string;
   respawnIsUnderground?: boolean;
-  // Daily Healing Fountain & Village Well usage & Sleep countdown state
-  lastFountainUseDay?: number;
+  // Daily Village Well usage & Sleep countdown state
   lastWellUseDay?: number;
   isSleeping?: boolean;
   sleepTimer?: number;
@@ -940,7 +935,7 @@ export interface OnlineActivationStep {
 }
 
 // REGRA PERMANENTE: A cada nova atualização do jogo, incremente a versão para o número seguinte da beta (ex: 0.4.4-beta -> 0.4.5-beta).
-export const GAME_VERSION = '0.8.0-beta';
+export const GAME_VERSION = '0.8.2-beta';
 export const CURRENT_WORLD_GEN_VERSION = 5;
 
 export interface OnlineSessionInfo {

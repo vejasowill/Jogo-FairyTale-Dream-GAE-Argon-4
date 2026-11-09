@@ -17,8 +17,8 @@ export interface CraftingRecipe {
   id: string;
   resultItemId: string;
   resultCount: number;
-  requiredStation: PlaceableType | null; // null = Mão Livre | WORKBENCH = Bancada | CAMPFIRE = Fogueira | FURNACE = Fornalha | SOLAR_ALTAR = Altar Solar
-  craftTimeSec?: number; // 0 / undefined = Instantâneo (Mão / Bancada / Altar Solar) | > 0 = Tempo de preparo com Lenha (Fogueira / Fornalha)
+  requiredStation: PlaceableType | null; // null = Mão Livre | WORKBENCH = Bancada | CAMPFIRE = Fogueira | FURNACE = Fornalha | WEAVING_TABLE = Mesa de Tecelagem
+  craftTimeSec?: number; // 0 / undefined = Instantâneo (Mão / Bancada) | > 0 = Tempo de preparo
   rarity: RarityTier;
   ingredients: RecipeIngredient[];
   materialOptions?: RecipeMaterialOption[];
@@ -288,32 +288,6 @@ export const RECIPES: CraftingRecipe[] = [
     ],
   },
   {
-    id: 'craft_gold_axe',
-    resultItemId: 'gold_axe',
-    resultCount: 1,
-    requiredStation: PlaceableType.WORKBENCH,
-    craftTimeSec: 0,
-    rarity: RarityTier.RARE,
-    ingredients: [
-      { itemId: 'gold_bar', count: 3 },
-      { itemId: 'hardwood', count: 2 },
-      { itemId: 'fiber', count: 2 },
-    ],
-  },
-  {
-    id: 'craft_gold_pickaxe',
-    resultItemId: 'gold_pickaxe',
-    resultCount: 1,
-    requiredStation: PlaceableType.WORKBENCH,
-    craftTimeSec: 0,
-    rarity: RarityTier.RARE,
-    ingredients: [
-      { itemId: 'gold_bar', count: 4 },
-      { itemId: 'hardwood', count: 2 },
-      { itemId: 'fiber', count: 2 },
-    ],
-  },
-  {
     id: 'craft_iron_hoe',
     resultItemId: 'iron_hoe',
     resultCount: 1,
@@ -390,20 +364,6 @@ export const RECIPES: CraftingRecipe[] = [
     ingredients: [
       { itemId: 'iron_bar', count: 4 },
       { itemId: 'hardwood', count: 2 },
-      { itemId: 'solar_crystal', count: 1 },
-    ],
-  },
-  {
-    id: 'craft_gold_sword',
-    resultItemId: 'gold_sword',
-    resultCount: 1,
-    requiredStation: PlaceableType.WORKBENCH,
-    craftTimeSec: 0,
-    rarity: RarityTier.RARE,
-    ingredients: [
-      { itemId: 'gold_bar', count: 4 },
-      { itemId: 'hardwood', count: 2 },
-      { itemId: 'solar_crystal', count: 1 },
     ],
   },
   {
@@ -560,19 +520,6 @@ export const RECIPES: CraftingRecipe[] = [
     ingredients: [
       { itemId: 'wood', count: 8 },
       { itemId: 'stone', count: 2 },
-    ],
-  },
-  {
-    id: 'craft_solar_altar',
-    resultItemId: 'solar_altar',
-    resultCount: 1,
-    requiredStation: PlaceableType.WORKBENCH,
-    craftTimeSec: 0,
-    rarity: RarityTier.VERY_RARE,
-    ingredients: [
-      { itemId: 'iron_bar', count: 4 },
-      { itemId: 'solar_crystal', count: 4 },
-      { itemId: 'hardwood', count: 4 },
     ],
   },
   {
@@ -914,7 +861,7 @@ export const RECIPES: CraftingRecipe[] = [
     rarity: RarityTier.RARE,
     ingredients: [
       { itemId: 'iron_bar', count: 1 },
-      { itemId: 'solar_crystal', count: 1 },
+      { itemId: 'charcoal', count: 1 },
     ],
   },
 
@@ -1296,7 +1243,7 @@ export const RECIPES: CraftingRecipe[] = [
     ingredients: [
       { itemId: 'berry', count: 3 },
       { itemId: 'cactus_fruit', count: 2 },
-      { itemId: 'solar_crystal', count: 1 },
+      { itemId: 'medic_herb', count: 1 },
     ],
   },
   {
@@ -1411,8 +1358,7 @@ export const RECIPES: CraftingRecipe[] = [
     ingredients: [
       { itemId: 'flint', count: 2 },
       { itemId: 'iron_ore', count: 1 },
-      { itemId: 'solar_crystal', count: 1 },
-      { itemId: 'charcoal', count: 1 },
+      { itemId: 'charcoal', count: 2 },
     ],
   },
 
@@ -1520,31 +1466,17 @@ export const RECIPES: CraftingRecipe[] = [
   },
 
   // ==========================================================================
-  // 5. ALTAR ALQUÍMICO SOLAR (requiredStation: SOLAR_ALTAR — Relíquias Raras & Astrais)
+  // 5. EQUIPAMENTOS DE OURO & RELÍQUIAS RARAS (requiredStation: WORKBENCH)
   // ==========================================================================
-  {
-    id: 'transmute_astral_shard',
-    resultItemId: 'astral_shard',
-    resultCount: 1,
-    requiredStation: PlaceableType.SOLAR_ALTAR,
-    craftTimeSec: 0,
-    rarity: RarityTier.VERY_RARE,
-    ingredients: [
-      { itemId: 'dark_essence', count: 4 },
-      { itemId: 'solar_crystal', count: 3 },
-      { itemId: 'solar_bloom', count: 1 },
-    ],
-  },
   {
     id: 'craft_recall_crystal',
     resultItemId: 'recall_crystal',
     resultCount: 2,
-    requiredStation: PlaceableType.SOLAR_ALTAR,
+    requiredStation: PlaceableType.WORKBENCH,
     craftTimeSec: 0,
     rarity: RarityTier.VERY_RARE,
     ingredients: [
-      { itemId: 'astral_shard', count: 1 },
-      { itemId: 'solar_crystal', count: 2 },
+      { itemId: 'gold_bar', count: 2 },
       { itemId: 'dark_essence', count: 2 },
     ],
   },
@@ -1552,7 +1484,7 @@ export const RECIPES: CraftingRecipe[] = [
     id: 'craft_primordial_ambrosia',
     resultItemId: 'primordial_ambrosia',
     resultCount: 1,
-    requiredStation: PlaceableType.SOLAR_ALTAR,
+    requiredStation: PlaceableType.WORKBENCH,
     craftTimeSec: 0,
     rarity: RarityTier.VERY_RARE,
     ingredients: [
@@ -1566,33 +1498,33 @@ export const RECIPES: CraftingRecipe[] = [
     id: 'craft_primordial_axe',
     resultItemId: 'primordial_axe',
     resultCount: 1,
-    requiredStation: PlaceableType.SOLAR_ALTAR,
+    requiredStation: PlaceableType.WORKBENCH,
     craftTimeSec: 0,
     rarity: RarityTier.VERY_RARE,
     ingredients: [
       { itemId: 'primordial_essence', count: 3 },
       { itemId: 'hardwood', count: 5 },
-      { itemId: 'solar_crystal', count: 3 },
+      { itemId: 'gold_bar', count: 3 },
     ],
   },
   {
     id: 'craft_primordial_pickaxe',
     resultItemId: 'primordial_pickaxe',
     resultCount: 1,
-    requiredStation: PlaceableType.SOLAR_ALTAR,
+    requiredStation: PlaceableType.WORKBENCH,
     craftTimeSec: 0,
     rarity: RarityTier.VERY_RARE,
     ingredients: [
-      { itemId: 'astral_shard', count: 3 },
       { itemId: 'abyssal_pearl', count: 2 },
       { itemId: 'iron_bar', count: 4 },
+      { itemId: 'gold_bar', count: 3 },
     ],
   },
   {
     id: 'craft_abyssal_trident',
     resultItemId: 'abyssal_trident',
     resultCount: 1,
-    requiredStation: PlaceableType.SOLAR_ALTAR,
+    requiredStation: PlaceableType.WORKBENCH,
     craftTimeSec: 0,
     rarity: RarityTier.VERY_RARE,
     ingredients: [
@@ -1606,94 +1538,78 @@ export const RECIPES: CraftingRecipe[] = [
     id: 'craft_astral_sword',
     resultItemId: 'astral_sword',
     resultCount: 1,
-    requiredStation: PlaceableType.SOLAR_ALTAR,
+    requiredStation: PlaceableType.WORKBENCH,
     craftTimeSec: 0,
     rarity: RarityTier.VERY_RARE,
     ingredients: [
-      { itemId: 'astral_shard', count: 3 },
       { itemId: 'abyssal_pearl', count: 2 },
       { itemId: 'primordial_essence', count: 2 },
       { itemId: 'iron_bar', count: 5 },
+      { itemId: 'gold_bar', count: 3 },
     ],
   },
   {
     id: 'craft_astral_crown',
     resultItemId: 'astral_crown',
     resultCount: 1,
-    requiredStation: PlaceableType.SOLAR_ALTAR,
+    requiredStation: PlaceableType.WORKBENCH,
     craftTimeSec: 0,
     rarity: RarityTier.VERY_RARE,
     ingredients: [
-      { itemId: 'astral_shard', count: 2 },
       { itemId: 'abyssal_pearl', count: 1 },
-      { itemId: 'solar_crystal', count: 2 },
+      { itemId: 'gold_bar', count: 2 },
     ],
   },
   {
     id: 'craft_astral_armor',
     resultItemId: 'astral_armor',
     resultCount: 1,
-    requiredStation: PlaceableType.SOLAR_ALTAR,
+    requiredStation: PlaceableType.WORKBENCH,
     craftTimeSec: 0,
     rarity: RarityTier.VERY_RARE,
     ingredients: [
-      { itemId: 'astral_shard', count: 3 },
       { itemId: 'abyssal_pearl', count: 2 },
       { itemId: 'ogre_hide', count: 3 },
       { itemId: 'dark_essence', count: 3 },
+      { itemId: 'gold_bar', count: 3 },
     ],
   },
   {
     id: 'craft_astral_leggings',
     resultItemId: 'astral_leggings',
     resultCount: 1,
-    requiredStation: PlaceableType.SOLAR_ALTAR,
+    requiredStation: PlaceableType.WORKBENCH,
     craftTimeSec: 0,
     rarity: RarityTier.VERY_RARE,
     ingredients: [
-      { itemId: 'astral_shard', count: 2 },
       { itemId: 'abyssal_pearl', count: 2 },
       { itemId: 'ogre_hide', count: 2 },
+      { itemId: 'gold_bar', count: 2 },
     ],
   },
   {
     id: 'craft_astral_boots',
     resultItemId: 'astral_boots',
     resultCount: 1,
-    requiredStation: PlaceableType.SOLAR_ALTAR,
+    requiredStation: PlaceableType.WORKBENCH,
     craftTimeSec: 0,
     rarity: RarityTier.VERY_RARE,
     ingredients: [
-      { itemId: 'astral_shard', count: 2 },
       { itemId: 'dark_essence', count: 2 },
       { itemId: 'wool', count: 2 },
-    ],
-  },
-  {
-    id: 'craft_healing_fountain',
-    resultItemId: 'healing_fountain',
-    resultCount: 1,
-    requiredStation: PlaceableType.SOLAR_ALTAR,
-    craftTimeSec: 0,
-    rarity: RarityTier.VERY_RARE,
-    ingredients: [
-      { itemId: 'abyssal_pearl', count: 2 },
-      { itemId: 'primordial_essence', count: 1 },
-      { itemId: 'stone', count: 10 },
-      { itemId: 'solar_crystal', count: 2 },
+      { itemId: 'gold_bar', count: 2 },
     ],
   },
   {
     id: 'craft_guardian_totem',
     resultItemId: 'guardian_totem',
     resultCount: 1,
-    requiredStation: PlaceableType.SOLAR_ALTAR,
+    requiredStation: PlaceableType.WORKBENCH,
     craftTimeSec: 0,
     rarity: RarityTier.VERY_RARE,
     ingredients: [
       { itemId: 'primordial_essence', count: 2 },
-      { itemId: 'astral_shard', count: 2 },
-      { itemId: 'solar_crystal', count: 4 },
+      { itemId: 'gold_bar', count: 4 },
       { itemId: 'hardwood', count: 4 },
     ],
   },
@@ -1701,14 +1617,14 @@ export const RECIPES: CraftingRecipe[] = [
     id: 'craft_peace_treaty',
     resultItemId: 'peace_treaty',
     resultCount: 1,
-    requiredStation: PlaceableType.SOLAR_ALTAR,
+    requiredStation: PlaceableType.WORKBENCH,
     craftTimeSec: 0,
     rarity: RarityTier.VERY_RARE,
     ingredients: [
       { itemId: 'royal_wax_seal', count: 1 },
       { itemId: 'gold_coin', count: 5 },
       { itemId: 'iron_bar', count: 3 },
-      { itemId: 'solar_crystal', count: 2 },
+      { itemId: 'gold_bar', count: 2 },
       { itemId: 'spider_silk', count: 2 },
       { itemId: 'wool', count: 2 },
     ],
@@ -1749,7 +1665,7 @@ export const RECIPES: CraftingRecipe[] = [
     rarity: RarityTier.RARE,
     ingredients: [
       { itemId: 'fiber', count: 3 },
-      { itemId: 'solar_crystal', count: 2 },
+      { itemId: 'gold_bar', count: 2 },
     ],
   },
   {

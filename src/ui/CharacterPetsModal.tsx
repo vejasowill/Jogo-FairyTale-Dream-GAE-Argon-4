@@ -108,9 +108,9 @@ const SKIN_TONES: {
   { label: 'Alabastro', group: 'Claríssima', color: '#fff1e6', subTone: '#f3d5c0' },
   { label: 'Porcelana', group: 'Clara Fria', color: '#ffedd5', subTone: '#e8c4a2' },
   { label: 'Marfim Rosado', group: 'Clara Rosada', color: '#fde2d2', subTone: '#e2b59e' },
-  { label: 'Claro Solar', group: 'Clara Dourada', color: '#fde68a', subTone: '#dfc05c' },
+  { label: 'Claro Dourado', group: 'Clara Dourada', color: '#fde68a', subTone: '#dfc05c' },
   { label: 'Pêssego Suave', group: 'Média Clara', color: '#fed7aa', subTone: '#dfa974' },
-  { label: 'Trigo Solar', group: 'Média Quente', color: '#fdba74', subTone: '#d98f48' },
+  { label: 'Trigo', group: 'Média Quente', color: '#fdba74', subTone: '#d98f48' },
   { label: 'Areia Dourada', group: 'Média Oliva', color: '#eab676', subTone: '#c48d4c' },
   { label: 'Amêndoa', group: 'Média Neutra', color: '#e0ac69', subTone: '#b88242' },
   { label: 'Oliva Mercante', group: 'Oliva Quente', color: '#c68642', subTone: '#9c6429' },
@@ -158,7 +158,7 @@ const HAIR_COLORS: {
   { label: 'Caramelo Tostado', group: 'Castanho Dourado', color: '#b45309', subTone: '#7c3705' },
   // Loiros
   { label: 'Loiro Mel', group: 'Loiro Escuro', color: '#ca8a04', subTone: '#966502' },
-  { label: 'Loiro Solar', group: 'Loiro Dourado', color: '#facc15', subTone: '#ca8a04' },
+  { label: 'Loiro Dourado', group: 'Loiro Dourado', color: '#facc15', subTone: '#ca8a04' },
   { label: 'Loiro Trigo', group: 'Loiro Claro', color: '#fde047', subTone: '#d4b116' },
   { label: 'Loiro Platinado', group: 'Loiro Frio', color: '#fef08a', subTone: '#d6c45c' },
   // Ruivos
@@ -171,8 +171,8 @@ const HAIR_COLORS: {
   { label: 'Prata Ancestral', group: 'Prateado', color: '#e2e8f0', subTone: '#94a3b8' },
   { label: 'Branco Sábio', group: 'Alvo', color: '#f8fafc', subTone: '#cbd5e1' },
   // Fantasia / Místicos
-  { label: 'Azul Astral', group: 'Safira', color: '#0284c7', subTone: '#03537d' },
-  { label: 'Turquesa Abissal', group: 'Turquesa', color: '#0d9488', subTone: '#085e56' },
+  { label: 'Azul Safira', group: 'Safira', color: '#0284c7', subTone: '#03537d' },
+  { label: 'Turquesa Oceânico', group: 'Turquesa', color: '#0d9488', subTone: '#085e56' },
   { label: 'Verde Bosque', group: 'Esmeralda', color: '#15803d', subTone: '#0c4f24' },
   { label: 'Violeta Místico', group: 'Ametista', color: '#7e22ce', subTone: '#4f1285' },
   { label: 'Rosa Sakura', group: 'Quartzo', color: '#db2777', subTone: '#991550' },
@@ -202,7 +202,7 @@ const EYE_COLORS: {
   { label: 'Avelã Dourado', group: 'Avelã', color: '#a16207', subTone: '#eab308' },
   // Âmbar & Ouro
   { label: 'Âmbar Quente', group: 'Âmbar', color: '#d97706', subTone: '#fbbf24' },
-  { label: 'Ouro Solar', group: 'Dourado', color: '#facc15', subTone: '#fef08a' },
+  { label: 'Ouro', group: 'Dourado', color: '#facc15', subTone: '#fef08a' },
   // Verdes
   { label: 'Verde Musgo', group: 'Verde Escuro', color: '#15803d', subTone: '#22c55e' },
   { label: 'Esmeralda Viva', group: 'Esmeralda', color: '#10b981', subTone: '#6ee7b7' },

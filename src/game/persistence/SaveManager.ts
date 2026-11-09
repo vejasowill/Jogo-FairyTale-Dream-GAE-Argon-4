@@ -7,6 +7,7 @@ import {
   GAME_VERSION,
   GameSettings,
   HOTBAR_SIZE,
+  InventorySlot,
   NatureNode,
   PlaceableType,
   PlayerAppearance,
@@ -296,32 +297,188 @@ export function migrateSaveData(rawSave: WorldSaveData): WorldSaveData {
     migrated.player.selectedHotbarIndex = 0;
   }
 
-  // Reconstruct & freeze explored chunk terrain arrays, prune untouched unexplored chunks so new updates generate them fresh,
-  // and ensure all placed/generated Chests have a 24-slot storageSlots array.
-  if (migrated.chunks && typeof migrated.chunks === 'object') {
-    for (const chunk of Object.values(migrated.chunks)) {
-      if (!chunk) continue;
-      if (typeof chunk.genVersion !== 'number') {
-        chunk.genVersion = originalWorldGenVersion;
-      }
-      if (!chunk.generatedGameVersion) {
-        chunk.generatedGameVersion = originalGameVersion;
+  // Migrate any legacy generic sapling item IDs or temporary gold tools, and purge removed narrative items
+  const REMOVED_ITEM_IDS = new Set([
+    'solar_crystal',
+    'astral_shard',
+    'solar_bloom',
+    'solar_seeds',
+    'solar_altar',
+    'healing_fountain',
+  ]);
+  const migrateLegacyItemId = (id: string | undefined | null): string | null => {
+    if (!id || typeof id !== 'string') return null;
+    if (REMOVED_ITEM_IDS.has(id)) return null;
+    if (id === 'tree_sapling' || id === 'generic_sapling' || id === 'sapling') {
+      return 'oak_sapling';
+    }
+    if (id === 'gold_pickaxe') return 'primordial_pickaxe';
+    if (id === 'gold_sword') return 'astral_sword';
+    if (id === 'gold_axe') return 'primordial_axe';
+    return id;
+  };
+
+  const cleanInventoryArray = (arr: (InventorySlot | null)[]) => {
+    for (let i = 0; i < arr.length; i++) {
+      const s = arr[i];
+      if (s && s.itemId) {
+        const mapped = migrateLegacyItemId(s.itemId);
+        if (!mapped) {
+          arr[i] = null;
+        } else {
+          s.itemId = mapped;
+        }
       }
     }
+  };
 
-    const hydrationMgr = new WorldManager(
-      migrated.metadata?.seed || 123456,
-      migrated.chunks,
-      originalWorldGenVersion,
-      migrated.undergroundChunks
-    );
-    const preservedChunks: Record<string, ChunkData> = {};
+  const sanitizeCreatureEntity = (cr: any) => {
+    if (!cr || typeof cr !== 'object') return;
+    if (
+      cr.customName === 'Escorpião Imperador Solar' ||
+      cr.customName === 'Escorpião Rei Solar'
+    ) {
+      cr.customName = 'Escorpião Rei';
+    } else if (cr.customName === 'Colosso Solar') {
+      cr.customName = 'Colosso Rúnico';
+    } else if (cr.customName === 'Valéria Escudo Solar') {
+      cr.customName = 'Valéria Escudo Dourado';
+    }
+    if (
+      typeof cr.dialogueLine === 'string' &&
+      /hélio|solar|astral|santuário/i.test(cr.dialogueLine)
+    ) {
+      cr.dialogueLine =
+        'Que os ventos guiem sua jornada pelas terras selvagens!';
+    }
+    if (Array.isArray(cr.favoriteFoodIds)) {
+      cr.favoriteFoodIds = cr.favoriteFoodIds
+        .map((id: string) =>
+          id === 'solar_bloom' || id === 'solar_seeds'
+            ? 'sunflower'
+            : migrateLegacyItemId(id)
+        )
+        .filter((id: string | null): id is string => Boolean(id));
+    }
+    if (Array.isArray(cr.mountInventory)) {
+      cleanInventoryArray(cr.mountInventory);
+    }
+    if (Array.isArray(cr.trades)) {
+      cr.trades = cr.trades
+        .map((tr: any) => {
+          if (!tr || typeof tr !== 'object') return null;
+          if (tr.costItemId === 'solar_seeds') {
+            tr.costItemId = 'herb';
+          } else if (tr.costItemId === 'solar_crystal') {
+            tr.costItemId = 'gold_bar';
+          } else if (tr.costItemId === 'astral_shard') {
+            tr.costItemId = 'gold_ore';
+          } else if (tr.costItemId) {
+            const mappedCost = migrateLegacyItemId(tr.costItemId);
+            if (!mappedCost) return null;
+            tr.costItemId = mappedCost;
+          }
 
-    for (const [key, chunk] of Object.entries(hydrationMgr.chunks)) {
+          if (tr.rewardItemId === 'solar_seeds') {
+            tr.rewardItemId = 'sunflower_seed';
+          } else if (tr.rewardItemId === 'solar_crystal') {
+            tr.rewardItemId = 'gold_bar';
+          } else if (tr.rewardItemId === 'astral_shard') {
+            tr.rewardItemId = 'gold_ore';
+          } else if (tr.rewardItemId) {
+            const mappedReward = migrateLegacyItemId(tr.rewardItemId);
+            if (!mappedReward) return null;
+            tr.rewardItemId = mappedReward;
+          }
+
+          if (typeof tr.label === 'string') {
+            tr.label = tr.label
+              .replace(/Arsenal Solar/g, 'Arsenal Real')
+              .replace(/Bússola Solar/g, 'Bússola Real')
+              .replace(/Ambrósia Primordial/g, 'Elixir Vital')
+              .replace(/Sementes Solares/g, 'Sementes de Girassol')
+              .replace(/Cristal Solar/g, 'Barra de Ouro')
+              .replace(/Fragmento Raro/g, 'Minério de Ouro');
+          }
+          return tr;
+        })
+        .filter(Boolean);
+    }
+  };
+
+  const sanitizePlayerState = (p: any) => {
+    if (!p || typeof p !== 'object') return;
+    if (Array.isArray(p.inventory)) {
+      cleanInventoryArray(p.inventory);
+    }
+    if (p.equippedArmorId) {
+      p.equippedArmorId = migrateLegacyItemId(p.equippedArmorId);
+    }
+    if (p.equippedBySlot && typeof p.equippedBySlot === 'object') {
+      for (const slotKey of ['head', 'body', 'legs', 'feet'] as const) {
+        if (p.equippedBySlot[slotKey]) {
+          p.equippedBySlot[slotKey] = migrateLegacyItemId(
+            p.equippedBySlot[slotKey]
+          );
+        }
+      }
+    }
+    if (p.mountedCreatureData) {
+      sanitizeCreatureEntity(p.mountedCreatureData);
+    }
+  };
+
+  const cleanChunkObjects = (chunksMap?: Record<string, ChunkData>) => {
+    if (!chunksMap || typeof chunksMap !== 'object') return;
+    for (const chunk of Object.values(chunksMap)) {
       if (!chunk) continue;
-      chunk.preserved = true;
+      if (Array.isArray(chunk.nodes)) {
+        chunk.nodes = chunk.nodes.filter(
+          (n) =>
+            n &&
+            (n.type as string) !== 'DESERT_CRYSTAL' &&
+            (n.type as string) !== 'SUNSTONE_OBELISK'
+        );
+      }
+      const isSolarSanctuaryChunk =
+        chunk.landmarkName === 'Santuário Solar Antigo' ||
+        (Array.isArray(chunk.structures) &&
+          chunk.structures.some(
+            (st) =>
+              st &&
+              (st.landmarkName === 'Relicário do Templo Solar' ||
+                st.customName === 'Relicário do Templo Solar' ||
+                st.landmarkName === 'Santuário Solar Antigo')
+          ));
+      if (isSolarSanctuaryChunk) {
+        delete chunk.landmarkName;
+      }
 
       if (Array.isArray(chunk.structures)) {
+        chunk.structures = chunk.structures.filter((st) => {
+          if (!st) return false;
+          if (
+            (st.type as string) === 'SOLAR_ALTAR' ||
+            (st.type as string) === 'HEALING_FOUNTAIN' ||
+            st.itemId === 'solar_altar' ||
+            st.itemId === 'healing_fountain'
+          ) {
+            return false;
+          }
+          if (isSolarSanctuaryChunk) {
+            const isPlayerBuilt =
+              Boolean(st.placedAt) || st.ownerType === 'PLAYER';
+            if (
+              !isPlayerBuilt ||
+              st.landmarkName === 'Relicário do Templo Solar' ||
+              st.customName === 'Relicário do Templo Solar'
+            ) {
+              return false;
+            }
+          }
+          return true;
+        });
+
         for (const st of chunk.structures) {
           if (
             (st.type as string) === 'TREE_SAPLING' ||
@@ -332,6 +489,20 @@ export function migrateSaveData(rawSave: WorldSaveData): WorldSaveData {
           ) {
             st.type = PlaceableType.OAK_SAPLING;
             st.itemId = 'oak_sapling';
+          }
+          if ((st.cropType as string) === 'solar_bloom') {
+            st.cropType = undefined;
+            st.growthStage = 0;
+            st.growthProgress = 0;
+          }
+          if (Array.isArray(st.lootItems)) {
+            st.lootItems = st.lootItems.filter((li) => {
+              if (!li || !li.itemId) return false;
+              const mapped = migrateLegacyItemId(li.itemId);
+              if (!mapped) return false;
+              li.itemId = mapped;
+              return true;
+            });
           }
           if (st.type === PlaceableType.CHEST) {
             if (
@@ -364,37 +535,119 @@ export function migrateSaveData(rawSave: WorldSaveData): WorldSaveData {
               }
               st.storageSlots = slots;
             }
-            if (Array.isArray(st.storageSlots)) {
-              for (const s of st.storageSlots) {
-                if (
-                  s &&
-                  (s.itemId === 'tree_sapling' ||
-                    s.itemId === 'generic_sapling' ||
-                    s.itemId === 'sapling')
-                ) {
-                  s.itemId = 'oak_sapling';
-                }
-              }
-            }
             if (!st.customName && st.landmarkName) {
               st.customName = st.landmarkName;
             }
           }
+          if (Array.isArray(st.storageSlots)) {
+            cleanInventoryArray(st.storageSlots);
+          }
           if (Array.isArray(st.stallSlots)) {
-            for (const s of st.stallSlots) {
-              if (
-                s &&
-                (s.itemId === 'tree_sapling' ||
-                  s.itemId === 'generic_sapling' ||
-                  s.itemId === 'sapling')
-              ) {
-                s.itemId = 'oak_sapling';
-              }
+            cleanInventoryArray(st.stallSlots);
+          }
+          if (st.pendingCustomerOffer && st.pendingCustomerOffer.itemId) {
+            const mappedOffer = migrateLegacyItemId(
+              st.pendingCustomerOffer.itemId
+            );
+            if (!mappedOffer) {
+              st.pendingCustomerOffer = null;
+            } else {
+              st.pendingCustomerOffer.itemId = mappedOffer;
+            }
+          }
+          if (st.cookingRecipeId) {
+            const mappedInput = migrateLegacyItemId(st.cookingRecipeId);
+            if (!mappedInput) {
+              st.cookingRecipeId = undefined;
+              st.cookingInputCount = 0;
+              st.cookingProgress = 0;
+            } else {
+              st.cookingRecipeId = mappedInput;
+            }
+          }
+          if (st.outputItemId) {
+            const mappedOut = migrateLegacyItemId(st.outputItemId);
+            if (!mappedOut) {
+              st.outputItemId = undefined;
+              st.outputCount = 0;
+            } else {
+              st.outputItemId = mappedOut;
+            }
+          }
+          if (st.fuelItemId) {
+            const mappedFuel = migrateLegacyItemId(st.fuelItemId);
+            if (!mappedFuel) {
+              st.fuelItemId = undefined;
+              st.fuelCount = 0;
+            } else {
+              st.fuelItemId = mappedFuel;
+            }
+          }
+          if (st.weavingTargetItemId) {
+            const mappedTarget = migrateLegacyItemId(st.weavingTargetItemId);
+            if (!mappedTarget) {
+              st.weavingTargetItemId = undefined;
+            } else {
+              st.weavingTargetItemId = mappedTarget;
+            }
+          }
+          if (st.weavingDyeItemId) {
+            const mappedDye = migrateLegacyItemId(st.weavingDyeItemId);
+            if (!mappedDye) {
+              st.weavingDyeItemId = undefined;
+            } else {
+              st.weavingDyeItemId = mappedDye;
             }
           }
         }
       }
+      chunk.dirtyRev = (chunk.dirtyRev || 1) + 1;
+    }
+  };
 
+  // Pre-clean raw chunks before WorldManager hydration
+  cleanChunkObjects(migrated.chunks);
+  cleanChunkObjects(migrated.undergroundChunks);
+
+  // Reconstruct & freeze explored chunk terrain arrays, prune untouched unexplored chunks so new updates generate them fresh,
+  // and ensure all placed/generated Chests have a 24-slot storageSlots array.
+  if (migrated.chunks && typeof migrated.chunks === 'object') {
+    for (const chunk of Object.values(migrated.chunks)) {
+      if (!chunk) continue;
+      if (typeof chunk.genVersion !== 'number') {
+        chunk.genVersion = originalWorldGenVersion;
+      }
+      if (!chunk.generatedGameVersion) {
+        chunk.generatedGameVersion = originalGameVersion;
+      }
+    }
+    if (
+      migrated.undergroundChunks &&
+      typeof migrated.undergroundChunks === 'object'
+    ) {
+      for (const uChunk of Object.values(migrated.undergroundChunks)) {
+        if (!uChunk) continue;
+        uChunk.isUnderground = true;
+        if (typeof uChunk.genVersion !== 'number') {
+          uChunk.genVersion = originalWorldGenVersion;
+        }
+        if (!uChunk.generatedGameVersion) {
+          uChunk.generatedGameVersion = originalGameVersion;
+        }
+      }
+    }
+
+    const hydrationMgr = new WorldManager(
+      migrated.metadata?.seed || 123456,
+      migrated.chunks,
+      originalWorldGenVersion,
+      migrated.undergroundChunks
+    );
+    const preservedChunks: Record<string, ChunkData> = {};
+
+    for (const [key, chunk] of Object.entries(hydrationMgr.chunks)) {
+      if (!chunk) continue;
+      chunk.preserved = true;
       preservedChunks[key] = chunk;
     }
 
@@ -407,46 +660,40 @@ export function migrateSaveData(rawSave: WorldSaveData): WorldSaveData {
     }
   }
 
-  // Migrate any legacy generic sapling item IDs in inventories, mounts, death bags, or dropped items to oak_sapling (Muda de Carvalho)
-  const migrateLegacyItemId = (id: string): string =>
-    id === 'tree_sapling' || id === 'generic_sapling' || id === 'sapling'
-      ? 'oak_sapling'
-      : id;
+  // Post-clean hydrated chunks & entities
+  cleanChunkObjects(migrated.chunks);
+  cleanChunkObjects(migrated.undergroundChunks);
 
-  if (Array.isArray(migrated.player?.inventory)) {
-    for (const s of migrated.player.inventory) {
-      if (s && s.itemId) s.itemId = migrateLegacyItemId(s.itemId);
-    }
-  }
+  sanitizePlayerState(migrated.player);
   if (migrated.guestPlayers && typeof migrated.guestPlayers === 'object') {
     for (const gp of Object.values(migrated.guestPlayers)) {
-      if (gp && Array.isArray(gp.inventory)) {
-        for (const s of gp.inventory) {
-          if (s && s.itemId) s.itemId = migrateLegacyItemId(s.itemId);
-        }
-      }
+      sanitizePlayerState(gp);
     }
   }
   if (Array.isArray(migrated.creatures)) {
     for (const cr of migrated.creatures) {
-      if (cr && Array.isArray(cr.mountInventory)) {
-        for (const s of cr.mountInventory) {
-          if (s && s.itemId) s.itemId = migrateLegacyItemId(s.itemId);
-        }
-      }
+      sanitizeCreatureEntity(cr);
     }
   }
   if (Array.isArray(migrated.droppedItems)) {
-    for (const d of migrated.droppedItems) {
-      if (d && d.itemId) d.itemId = migrateLegacyItemId(d.itemId);
-    }
+    migrated.droppedItems = migrated.droppedItems.filter((d) => {
+      if (!d || !d.itemId) return false;
+      const mapped = migrateLegacyItemId(d.itemId);
+      if (!mapped) return false;
+      d.itemId = mapped;
+      return true;
+    });
   }
   if (Array.isArray(migrated.deathBags)) {
     for (const db of migrated.deathBags) {
       if (db && Array.isArray(db.items)) {
-        for (const s of db.items) {
-          if (s && s.itemId) s.itemId = migrateLegacyItemId(s.itemId);
-        }
+        db.items = db.items.filter((s) => {
+          if (!s || !s.itemId) return false;
+          const mapped = migrateLegacyItemId(s.itemId);
+          if (!mapped) return false;
+          s.itemId = mapped;
+          return true;
+        });
       }
     }
   }
@@ -1555,10 +1802,15 @@ export class SaveManager {
         : null;
 
     if (!best) return null;
+    this.compactChunkCache.delete(worldId);
+    const migrated = migrateSaveData(best);
     if (!memWorld || localTs > memTs) {
-      this.memoryWorlds.set(worldId, JSON.parse(JSON.stringify(best)));
+      this.memoryWorlds.set(
+        worldId,
+        this.compactSaveDataForStorage(migrated, false)
+      );
     }
-    return migrateSaveData(best);
+    return migrated;
   }
 
   /**
@@ -1582,9 +1834,14 @@ export class SaveManager {
       (a, b) => this.getSaveTimestamp(b) - this.getSaveTimestamp(a)
     );
     const newest = JSON.parse(JSON.stringify(candidates[0])) as WorldSaveData;
-    this.memoryWorlds.set(worldId, JSON.parse(JSON.stringify(newest)));
-    this.memoryWorldIndex.set(worldId, { ...newest.metadata });
-    return migrateSaveData(newest);
+    this.compactChunkCache.delete(worldId);
+    const migrated = migrateSaveData(newest);
+    this.memoryWorlds.set(
+      worldId,
+      this.compactSaveDataForStorage(migrated, false)
+    );
+    this.memoryWorldIndex.set(worldId, { ...migrated.metadata });
+    return migrated;
   }
 
   public static updateWorldMetadata(
