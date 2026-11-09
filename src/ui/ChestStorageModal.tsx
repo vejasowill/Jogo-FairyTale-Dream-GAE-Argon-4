@@ -14,6 +14,10 @@ import {
   WindowHelpButton,
   WindowHelpModal,
 } from './UiTooltipAndHelp';
+import {
+  StackDragFloatingHud,
+  useStackQuantityGesture,
+} from './useStackQuantityGesture';
 
 interface ChestStorageModalProps {
   engine: GameEngine;
@@ -33,6 +37,7 @@ export const ChestStorageModal: React.FC<ChestStorageModalProps> = ({
   const [selectedSlot, setSelectedSlot] = useState<{
     container: 'chest' | 'player';
     index: number;
+    count?: number;
   } | null>(null);
   const [editingName, setEditingName] = useState(false);
   const [nameInput, setNameInput] = useState(
@@ -47,33 +52,16 @@ export const ChestStorageModal: React.FC<ChestStorageModalProps> = ({
     }
   }, [chest?.id, chest?.customName]);
 
-  if (!chest) {
-    return null;
-  }
-
-  const chestSlots = engine.ensureChestStorageInitialized(chest);
-  const usedChestSlots = chestSlots.filter(
-    (s) => s !== null && s.count > 0
-  ).length;
-  const usedPlayerSlots = player.inventory.filter(
-    (s) => s !== null && s.count > 0
-  ).length;
-
-  const activeSlot =
-    selectedSlot === null
-      ? null
-      : selectedSlot.container === 'chest'
-      ? chestSlots[selectedSlot.index] || null
-      : player.inventory[selectedSlot.index] || null;
-  const activeItemDef = activeSlot ? ITEMS[activeSlot.itemId] : null;
+  const chestSlots = chest ? engine.ensureChestStorageInitialized(chest) : [];
 
   const handleSlotClick = (container: 'chest' | 'player', index: number) => {
+    if (!chest) return;
     const clickedSlot =
       container === 'chest' ? chestSlots[index] : player.inventory[index];
 
     if (!selectedSlot) {
       if (clickedSlot && clickedSlot.count > 0) {
-        setSelectedSlot({ container, index });
+        setSelectedSlot({ container, index, count: clickedSlot.count });
       }
       return;
     }
@@ -93,19 +81,70 @@ export const ChestStorageModal: React.FC<ChestStorageModalProps> = ({
 
     if (!srcSlot || srcSlot.count <= 0) {
       if (clickedSlot && clickedSlot.count > 0) {
-        setSelectedSlot({ container, index });
+        setSelectedSlot({ container, index, count: clickedSlot.count });
       } else {
         setSelectedSlot(null);
       }
       return;
     }
 
-    engine.moveOrSwapChestAndPlayerSlot(chest.id, selectedSlot, {
-      container,
-      index,
-    });
+    const moveCount =
+      typeof selectedSlot.count === 'number'
+        ? Math.max(1, Math.min(srcSlot.count, selectedSlot.count))
+        : srcSlot.count;
+
+    engine.moveOrSwapChestAndPlayerSlot(
+      chest.id,
+      { container: selectedSlot.container, index: selectedSlot.index },
+      { container, index },
+      moveCount
+    );
     setSelectedSlot(null);
   };
+
+  const { activeDrag, getSlotGestureProps } = useStackQuantityGesture<string>({
+    onSelectWithCount: (slotKey, count) => {
+      const [cType, idxStr] = slotKey.split(':');
+      const container = cType === 'chest' ? 'chest' : 'player';
+      const index = Number(idxStr);
+      if (Number.isInteger(index) && index >= 0) {
+        setSelectedSlot({ container, index, count });
+      }
+    },
+    onSlotTap: (slotKey) => {
+      const [cType, idxStr] = slotKey.split(':');
+      const container = cType === 'chest' ? 'chest' : 'player';
+      const index = Number(idxStr);
+      if (Number.isInteger(index) && index >= 0) {
+        handleSlotClick(container, index);
+      }
+    },
+  });
+
+  if (!chest) {
+    return null;
+  }
+
+  const usedChestSlots = chestSlots.filter(
+    (s) => s !== null && s.count > 0
+  ).length;
+  const usedPlayerSlots = player.inventory.filter(
+    (s) => s !== null && s.count > 0
+  ).length;
+
+  const activeSlot =
+    selectedSlot === null
+      ? null
+      : selectedSlot.container === 'chest'
+      ? chestSlots[selectedSlot.index] || null
+      : player.inventory[selectedSlot.index] || null;
+  const activeItemDef = activeSlot ? ITEMS[activeSlot.itemId] : null;
+  const activeSelectedCount = activeSlot
+    ? Math.max(
+        1,
+        Math.min(activeSlot.count, selectedSlot?.count ?? activeSlot.count)
+      )
+    : 0;
 
   const handleSaveName = (e: React.FormEvent) => {
     e.preventDefault();
@@ -118,6 +157,7 @@ export const ChestStorageModal: React.FC<ChestStorageModalProps> = ({
       className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-1.5 sm:p-3"
       onClick={onClose}
     >
+      <StackDragFloatingHud drag={activeDrag} />
       <div
         className="w-full max-w-5xl medieval-panel flex flex-col max-h-[96dvh] overflow-hidden"
         onClick={(e) => e.stopPropagation()}
@@ -206,6 +246,18 @@ export const ChestStorageModal: React.FC<ChestStorageModalProps> = ({
 
             <HoldIconButton
               onClick={() => {
+                engine.quickStackToChest(chest.id);
+                setSelectedSlot(null);
+              }}
+              tooltipTitle="Semelhantes"
+              tooltipDesc="Guarda apenas os itens que já estão presentes neste baú, empilhando ou ocupando espaços livres até a capacidade máxima."
+              className="min-h-[32px] px-2 medieval-btn-emerald text-[9px] sm:text-[10px] font-pixel font-bold flex items-center gap-1"
+            >
+              <span>Semelhantes</span>
+            </HoldIconButton>
+
+            <HoldIconButton
+              onClick={() => {
                 engine.sortChestStorage(chest.id);
                 setSelectedSlot(null);
               }}
@@ -237,8 +289,8 @@ export const ChestStorageModal: React.FC<ChestStorageModalProps> = ({
               </span>
               <span className="text-[9px] text-amber-300">
                 {selectedSlot
-                  ? 'Clique no destino p/ mover ou trocar'
-                  : 'Clique no item p/ selecionar'}
+                  ? 'Clique no destino p/ mover'
+                  : 'Toque ou segure + arraste ◀ ▶'}
               </span>
             </div>
 
@@ -251,11 +303,20 @@ export const ChestStorageModal: React.FC<ChestStorageModalProps> = ({
                   const isSel =
                     selectedSlot?.container === 'player' &&
                     selectedSlot.index === idx;
+                  const canQuantize =
+                    Boolean(slot && slot.count > 1) &&
+                    (!selectedSlot || isSel);
+                  const gestureProps = getSlotGestureProps(
+                    `player:${idx}`,
+                    slot?.count || 0,
+                    canQuantize
+                  );
                   return (
                     <button
                       key={idx}
-                      onClick={() => handleSlotClick('player', idx)}
-                      className={`relative aspect-square min-h-[36px] sm:min-h-[42px] flex flex-col items-center justify-center p-0.5 ${
+                      type="button"
+                      {...gestureProps}
+                      className={`relative aspect-square min-h-[36px] sm:min-h-[42px] flex flex-col items-center justify-center p-0.5 touch-none ${
                         isSel
                           ? 'mc-slot-active ring-2 ring-amber-400'
                           : selectedSlot
@@ -266,13 +327,24 @@ export const ChestStorageModal: React.FC<ChestStorageModalProps> = ({
                       {slot && def ? (
                         <>
                           <img
-                            src={spriteAtlas.getItemIconUrl(slot.itemId)}
+                            src={spriteAtlas.getItemIconUrl(
+                              slot.itemId,
+                              slot.selectedColor
+                            )}
                             alt={def.name}
                             className="w-5 h-5 sm:w-6 sm:h-6 pixelated"
                           />
                           {slot.count > 1 && (
-                            <span className="absolute bottom-0 right-0.5 text-[8px] sm:text-[9px] font-mono-tabular font-extrabold text-[#fef08a]">
-                              {slot.count}
+                            <span
+                              className={`absolute bottom-0 right-0.5 text-[8px] sm:text-[9px] font-mono-tabular font-extrabold ${
+                                isSel && activeSelectedCount < slot.count
+                                  ? 'text-cyan-300 bg-black/80 px-0.5 rounded-sm'
+                                  : 'text-[#fef08a]'
+                              }`}
+                            >
+                              {isSel && activeSelectedCount < slot.count
+                                ? `${activeSelectedCount}/${slot.count}`
+                                : slot.count}
                             </span>
                           )}
                         </>
@@ -295,11 +367,20 @@ export const ChestStorageModal: React.FC<ChestStorageModalProps> = ({
                   const isSel =
                     selectedSlot?.container === 'player' &&
                     selectedSlot.index === idx;
+                  const canQuantize =
+                    Boolean(slot && slot.count > 1) &&
+                    (!selectedSlot || isSel);
+                  const gestureProps = getSlotGestureProps(
+                    `player:${idx}`,
+                    slot?.count || 0,
+                    canQuantize
+                  );
                   return (
                     <button
                       key={idx}
-                      onClick={() => handleSlotClick('player', idx)}
-                      className={`relative aspect-square min-h-[36px] sm:min-h-[42px] flex flex-col items-center justify-center p-0.5 ${
+                      type="button"
+                      {...gestureProps}
+                      className={`relative aspect-square min-h-[36px] sm:min-h-[42px] flex flex-col items-center justify-center p-0.5 touch-none ${
                         isSel
                           ? 'mc-slot-active ring-2 ring-amber-400'
                           : selectedSlot
@@ -313,13 +394,24 @@ export const ChestStorageModal: React.FC<ChestStorageModalProps> = ({
                       {slot && def ? (
                         <>
                           <img
-                            src={spriteAtlas.getItemIconUrl(slot.itemId)}
+                            src={spriteAtlas.getItemIconUrl(
+                              slot.itemId,
+                              slot.selectedColor
+                            )}
                             alt={def.name}
                             className="w-5 h-5 sm:w-6 sm:h-6 pixelated"
                           />
                           {slot.count > 1 && (
-                            <span className="absolute bottom-0 right-0.5 text-[8px] sm:text-[9px] font-mono-tabular font-extrabold text-[#fef08a]">
-                              {slot.count}
+                            <span
+                              className={`absolute bottom-0 right-0.5 text-[8px] sm:text-[9px] font-mono-tabular font-extrabold ${
+                                isSel && activeSelectedCount < slot.count
+                                  ? 'text-cyan-300 bg-black/80 px-0.5 rounded-sm'
+                                  : 'text-[#fef08a]'
+                              }`}
+                            >
+                              {isSel && activeSelectedCount < slot.count
+                                ? `${activeSelectedCount}/${slot.count}`
+                                : slot.count}
                             </span>
                           )}
                         </>
@@ -339,8 +431,8 @@ export const ChestStorageModal: React.FC<ChestStorageModalProps> = ({
               </span>
               <span className="text-[9px] text-[#c4ab7d]">
                 {selectedSlot
-                  ? 'Clique no destino p/ mover ou trocar'
-                  : 'Clique no item p/ selecionar'}
+                  ? 'Clique no destino p/ mover'
+                  : 'Toque ou segure + arraste ◀ ▶'}
               </span>
             </div>
 
@@ -350,11 +442,20 @@ export const ChestStorageModal: React.FC<ChestStorageModalProps> = ({
                 const isSel =
                   selectedSlot?.container === 'chest' &&
                   selectedSlot.index === idx;
+                const canQuantize =
+                  Boolean(slot && slot.count > 1) &&
+                  (!selectedSlot || isSel);
+                const gestureProps = getSlotGestureProps(
+                  `chest:${idx}`,
+                  slot?.count || 0,
+                  canQuantize
+                );
                 return (
                   <button
                     key={idx}
-                    onClick={() => handleSlotClick('chest', idx)}
-                    className={`relative aspect-square min-h-[36px] sm:min-h-[42px] flex flex-col items-center justify-center p-0.5 transition-transform ${
+                    type="button"
+                    {...gestureProps}
+                    className={`relative aspect-square min-h-[36px] sm:min-h-[42px] flex flex-col items-center justify-center p-0.5 transition-transform touch-none ${
                       isSel
                         ? 'mc-slot-active ring-2 ring-amber-400'
                         : selectedSlot
@@ -365,13 +466,24 @@ export const ChestStorageModal: React.FC<ChestStorageModalProps> = ({
                     {slot && def ? (
                       <>
                         <img
-                          src={spriteAtlas.getItemIconUrl(slot.itemId)}
+                          src={spriteAtlas.getItemIconUrl(
+                            slot.itemId,
+                            slot.selectedColor
+                          )}
                           alt={def.name}
                           className="w-5 h-5 sm:w-6 sm:h-6 pixelated"
                         />
                         {slot.count > 1 && (
-                          <span className="absolute bottom-0 right-0.5 text-[8px] sm:text-[9px] font-mono-tabular font-extrabold text-[#fef08a]">
-                            {slot.count}
+                          <span
+                            className={`absolute bottom-0 right-0.5 text-[8px] sm:text-[9px] font-mono-tabular font-extrabold ${
+                              isSel && activeSelectedCount < slot.count
+                                ? 'text-cyan-300 bg-black/80 px-0.5 rounded-sm'
+                                : 'text-[#fef08a]'
+                            }`}
+                          >
+                            {isSel && activeSelectedCount < slot.count
+                              ? `${activeSelectedCount}/${slot.count}`
+                              : slot.count}
                           </span>
                         )}
                       </>
@@ -393,10 +505,14 @@ export const ChestStorageModal: React.FC<ChestStorageModalProps> = ({
                     />
                     <div className="min-w-0">
                       <div className="font-pixel text-[10px] font-bold text-amber-300 truncate">
-                        Selecionado: {activeItemDef.name} (x{activeSlot.count})
+                        Selecionado: {activeItemDef.name} (x{activeSelectedCount}
+                        {activeSelectedCount < activeSlot.count
+                          ? ` de ${activeSlot.count}`
+                          : ''}
+                        )
                       </div>
                       <div className="text-[9px] text-[#c4ab7d] truncate">
-                        Clique em qualquer slot vazio ou ocupado para mover ou trocar de posição.
+                        Clique no slot de destino para mover a quantidade selecionada.
                       </div>
                     </div>
                   </div>
@@ -409,7 +525,7 @@ export const ChestStorageModal: React.FC<ChestStorageModalProps> = ({
                 </>
               ) : (
                 <div className="text-[10px] text-[#8c6d46] w-full text-center">
-                  Clique em um item e depois clique no local de destino (Mochila ou Baú).
+                  Toque em um item para selecioná-lo (ou segure e arraste ◀ ▶ para escolher a quantidade) e toque no destino.
                 </div>
               )}
             </div>
@@ -420,20 +536,20 @@ export const ChestStorageModal: React.FC<ChestStorageModalProps> = ({
       {showHelp && (
         <WindowHelpModal
           title="Ajuda — Baú de Madeira"
-          subtitle="Como mover e organizar itens entre a Mochila e o Baú"
+          subtitle="Como mover, dividir pilhas e organizar itens entre a Mochila e o Baú"
           onClose={() => setShowHelp(false)}
           sections={[
             {
-              title: '1. Selecionar e Mover (Estilo Minecraft)',
-              body: 'Clique primeiro sobre o item que deseja mover (no Baú ou na Mochila) para selecioná-lo. Em seguida, clique no slot de destino onde deseja colocá-lo.',
+              title: '1. Selecionar e Mover',
+              body: 'Toque primeiro sobre o item que deseja mover (na Mochila ou no Baú) e depois toque no slot de destino.',
             },
             {
-              title: '2. Troca de Posição e Desseleção',
-              body: 'Se você clicar em um slot de destino que já possui outro item, os dois itens trocam de posição imediatamente. Após qualquer movimento, o item é desselecionado automaticamente.',
+              title: '2. Quantizar Pilhas (Segurar e Arrastar ◀ ▶)',
+              body: 'Segure o dedo sobre um item empilhável e arraste para a esquerda ou para a direita para escolher exatamente quantos itens serão movidos. Ao soltar o dedo, toque no slot de destino para transferir essa quantidade.',
             },
             {
-              title: '3. Ações Rápidas (Retirar, Guardar e Organizar)',
-              body: 'Use Retirar Tudo para trazer os itens do baú para a mochila, Guardar Tudo para depositar sua mochila no baú, ou Organizar para empilhar e ordenar os itens.',
+              title: '3. Semelhantes, Guardar, Retirar e Organizar',
+              body: 'O botão Semelhantes guarda apenas os itens da sua mochila que já existem naquele baú, empilhando ou usando espaços vazios até a capacidade máxima.',
             },
           ]}
         />

@@ -5,6 +5,7 @@ import {
   Check,
   CloudRain,
   Compass,
+  Droplet,
   Flame,
   Hand,
   Heart,
@@ -49,6 +50,10 @@ import {
   WindowHelpButton,
   WindowHelpModal,
 } from './UiTooltipAndHelp';
+import {
+  StackDragFloatingHud,
+  useStackQuantityGesture,
+} from './useStackQuantityGesture';
 
 interface MobileHudProps {
   engine: GameEngine;
@@ -120,6 +125,7 @@ export const MobileHud: React.FC<MobileHudProps> = ({
   const [selectedSaddleSlot, setSelectedSaddleSlot] = useState<{
     container: 'mount' | 'player';
     index: number;
+    count?: number;
   } | null>(null);
   const [showSaddlebagHelp, setShowSaddlebagHelp] = useState(false);
 
@@ -353,6 +359,94 @@ export const MobileHud: React.FC<MobileHudProps> = ({
     engine.ensureMountInventoryInitialized(saddlebagCreature);
   }
   const saddlebagSlots = saddlebagCreature?.mountInventory || [];
+
+  const handleSaddleSlotTap = (container: 'mount' | 'player', idx: number) => {
+    if (!saddlebagCreature) return;
+    const clickedSlot =
+      container === 'mount' ? saddlebagSlots[idx] : player.inventory[idx];
+    if (!selectedSaddleSlot) {
+      if (clickedSlot && clickedSlot.count > 0) {
+        setSelectedSaddleSlot({
+          container,
+          index: idx,
+          count: clickedSlot.count,
+        });
+      }
+      return;
+    }
+    if (
+      selectedSaddleSlot.container === container &&
+      selectedSaddleSlot.index === idx
+    ) {
+      setSelectedSaddleSlot(null);
+      return;
+    }
+    const srcSlot =
+      selectedSaddleSlot.container === 'mount'
+        ? saddlebagSlots[selectedSaddleSlot.index]
+        : player.inventory[selectedSaddleSlot.index];
+    if (!srcSlot || srcSlot.count <= 0) {
+      if (clickedSlot && clickedSlot.count > 0) {
+        setSelectedSaddleSlot({
+          container,
+          index: idx,
+          count: clickedSlot.count,
+        });
+      } else {
+        setSelectedSaddleSlot(null);
+      }
+      return;
+    }
+    const moveCount =
+      typeof selectedSaddleSlot.count === 'number'
+        ? Math.max(1, Math.min(srcSlot.count, selectedSaddleSlot.count))
+        : srcSlot.count;
+    engine.moveOrSwapMountAndPlayerSlot(
+      saddlebagCreature.id,
+      { container: selectedSaddleSlot.container, index: selectedSaddleSlot.index },
+      { container, index: idx },
+      moveCount
+    );
+    setSelectedSaddleSlot(null);
+  };
+
+  const {
+    activeDrag: saddleActiveDrag,
+    getSlotGestureProps: getSaddleGestureProps,
+  } = useStackQuantityGesture<string>({
+    onSelectWithCount: (slotKey, count) => {
+      const [cType, idxStr] = slotKey.split(':');
+      const container = cType === 'mount' ? 'mount' : 'player';
+      const index = Number(idxStr);
+      if (Number.isInteger(index) && index >= 0) {
+        setSelectedSaddleSlot({ container, index, count });
+      }
+    },
+    onSlotTap: (slotKey) => {
+      const [cType, idxStr] = slotKey.split(':');
+      const container = cType === 'mount' ? 'mount' : 'player';
+      const index = Number(idxStr);
+      if (Number.isInteger(index) && index >= 0) {
+        handleSaddleSlotTap(container, index);
+      }
+    },
+  });
+
+  const activeSaddleSrcSlot =
+    selectedSaddleSlot === null
+      ? null
+      : selectedSaddleSlot.container === 'mount'
+      ? saddlebagSlots[selectedSaddleSlot.index] || null
+      : player.inventory[selectedSaddleSlot.index] || null;
+  const activeSaddleSelectedCount = activeSaddleSrcSlot
+    ? Math.max(
+        1,
+        Math.min(
+          activeSaddleSrcSlot.count,
+          selectedSaddleSlot?.count ?? activeSaddleSrcSlot.count
+        )
+      )
+    : 0;
 
   return (
     <div className="pointer-events-none fixed inset-0 z-20 flex flex-col justify-between p-1.5 sm:p-2.5 select-none overflow-hidden">
@@ -1179,64 +1273,76 @@ export const MobileHud: React.FC<MobileHudProps> = ({
               })()}
             </div>
 
-            {/* PRIMAL BUTTON 1: ATAQUE / QUEBRAR (attackBtn) */}
-            <button
-              style={getControlTransformStyle('attackBtn', 'bottom right')}
-              onPointerDown={(e) => {
-                if (isEditingHud) {
-                  handleEditPointerDown('attackBtn', e);
-                  return;
-                }
-                e.stopPropagation();
-                try {
-                  e.currentTarget.setPointerCapture(e.pointerId);
-                } catch {
-                  // Ignore if pointer capture is unavailable
-                }
-                engine.setAttackButtonHeld(true);
-                engine.performAttackOrHarvestAction(false);
-              }}
-              onPointerMove={handleEditPointerMove}
-              onPointerUp={(e) => {
-                if (isEditingHud) {
-                  handleEditPointerUp();
-                  return;
-                }
-                try {
-                  if (e.currentTarget.hasPointerCapture(e.pointerId)) {
-                    e.currentTarget.releasePointerCapture(e.pointerId);
-                  }
-                } catch {
-                  // Ignore
-                }
-                engine.setAttackButtonHeld(false);
-              }}
-              onPointerCancel={() => {
-                if (isEditingHud) {
-                  handleEditPointerUp();
-                }
-                engine.setAttackButtonHeld(false);
-              }}
-              onLostPointerCapture={() => {
-                engine.setAttackButtonHeld(false);
-              }}
-              className={`w-15 h-15 sm:w-18 sm:h-18 rounded-full medieval-btn-crimson flex flex-col items-center justify-center active:scale-90 shadow-[0_6px_18px_rgba(0,0,0,0.85)] ${
-                isEditingHud
-                  ? selectedEditKey === 'attackBtn'
-                    ? 'ring-2 ring-amber-400 cursor-move'
-                    : 'ring-1 ring-amber-500/40 cursor-move'
-                  : ''
-              }`}
-            >
-              <Swords className="w-6 h-6 sm:w-7 sm:h-7 text-amber-200" />
-              <span className="text-[8px] font-pixel font-bold mt-0.5">
-                {selectedItem?.toolType === ToolType.WATERING_CAN ||
+            {/* PRIMAL BUTTON 1: ATAQUE / QUEBRAR / REGAR (attackBtn) */}
+            {(() => {
+              const isHoldingWateringCan =
+                selectedItem?.toolType === ToolType.WATERING_CAN ||
                 selectedItem?.id === 'watering_can' ||
-                selectedItem?.id === 'watering_can_full'
-                  ? 'Regar'
-                  : 'Atacar'}
-              </span>
-            </button>
+                selectedItem?.id === 'watering_can_full';
+              return (
+                <button
+                  style={getControlTransformStyle('attackBtn', 'bottom right')}
+                  onPointerDown={(e) => {
+                    if (isEditingHud) {
+                      handleEditPointerDown('attackBtn', e);
+                      return;
+                    }
+                    e.stopPropagation();
+                    try {
+                      e.currentTarget.setPointerCapture(e.pointerId);
+                    } catch {
+                      // Ignore if pointer capture is unavailable
+                    }
+                    engine.setAttackButtonHeld(true);
+                    engine.performAttackOrHarvestAction(false);
+                  }}
+                  onPointerMove={handleEditPointerMove}
+                  onPointerUp={(e) => {
+                    if (isEditingHud) {
+                      handleEditPointerUp();
+                      return;
+                    }
+                    try {
+                      if (e.currentTarget.hasPointerCapture(e.pointerId)) {
+                        e.currentTarget.releasePointerCapture(e.pointerId);
+                      }
+                    } catch {
+                      // Ignore
+                    }
+                    engine.setAttackButtonHeld(false);
+                  }}
+                  onPointerCancel={() => {
+                    if (isEditingHud) {
+                      handleEditPointerUp();
+                    }
+                    engine.setAttackButtonHeld(false);
+                  }}
+                  onLostPointerCapture={() => {
+                    engine.setAttackButtonHeld(false);
+                  }}
+                  className={`w-15 h-15 sm:w-18 sm:h-18 rounded-full flex flex-col items-center justify-center active:scale-90 ${
+                    isHoldingWateringCan
+                      ? 'bg-sky-700 hover:bg-sky-600 text-sky-50 border-2 border-sky-950 shadow-[inset_0_2px_0_0_#38bdf8,inset_0_-3px_0_0_#0369a1,0_6px_18px_rgba(0,0,0,0.85)]'
+                      : 'medieval-btn-crimson shadow-[0_6px_18px_rgba(0,0,0,0.85)]'
+                  } ${
+                    isEditingHud
+                      ? selectedEditKey === 'attackBtn'
+                        ? 'ring-2 ring-amber-400 cursor-move'
+                        : 'ring-1 ring-amber-500/40 cursor-move'
+                      : ''
+                  }`}
+                >
+                  {isHoldingWateringCan ? (
+                    <Droplet className="w-6 h-6 sm:w-7 sm:h-7 text-sky-100 fill-sky-300/60" />
+                  ) : (
+                    <Swords className="w-6 h-6 sm:w-7 sm:h-7 text-amber-200" />
+                  )}
+                  <span className="text-[8px] font-pixel font-bold mt-0.5">
+                    {isHoldingWateringCan ? 'Regar' : 'Atacar'}
+                  </span>
+                </button>
+              );
+            })()}
           </div>
         ) : (
           <div className="w-6" />
@@ -1254,6 +1360,7 @@ export const MobileHud: React.FC<MobileHudProps> = ({
             setSaddlebagMountId(null);
           }}
         >
+          <StackDragFloatingHud drag={saddleActiveDrag} />
           <div
             className="w-full max-w-3xl medieval-panel flex flex-col max-h-[92dvh] overflow-hidden"
             onClick={(e) => e.stopPropagation()}
@@ -1338,7 +1445,7 @@ export const MobileHud: React.FC<MobileHudProps> = ({
                   <span className="text-[9px] text-[#c4ab7d]">
                     {selectedSaddleSlot
                       ? 'Clique no destino'
-                      : 'Clique p/ selecionar'}
+                      : 'Toque ou segure ◀ ▶'}
                   </span>
                 </div>
                 <div className="grid grid-cols-4 gap-1.5">
@@ -1347,35 +1454,20 @@ export const MobileHud: React.FC<MobileHudProps> = ({
                     const isSel =
                       selectedSaddleSlot?.container === 'mount' &&
                       selectedSaddleSlot.index === idx;
+                    const canQuantize =
+                      Boolean(slot && slot.count > 1) &&
+                      (!selectedSaddleSlot || isSel);
+                    const gestureProps = getSaddleGestureProps(
+                      `mount:${idx}`,
+                      slot?.count || 0,
+                      canQuantize
+                    );
                     return (
                       <button
                         key={idx}
                         type="button"
-                        onClick={() => {
-                          if (!selectedSaddleSlot) {
-                            if (slot && slot.count > 0) {
-                              setSelectedSaddleSlot({
-                                container: 'mount',
-                                index: idx,
-                              });
-                            }
-                            return;
-                          }
-                          if (
-                            selectedSaddleSlot.container === 'mount' &&
-                            selectedSaddleSlot.index === idx
-                          ) {
-                            setSelectedSaddleSlot(null);
-                            return;
-                          }
-                          engine.moveOrSwapMountAndPlayerSlot(
-                            saddlebagCreature.id,
-                            selectedSaddleSlot,
-                            { container: 'mount', index: idx }
-                          );
-                          setSelectedSaddleSlot(null);
-                        }}
-                        className={`aspect-square min-h-[44px] flex items-center justify-center relative ${
+                        {...gestureProps}
+                        className={`aspect-square min-h-[44px] flex items-center justify-center relative touch-none ${
                           isSel
                             ? 'mc-slot-active ring-2 ring-amber-400'
                             : selectedSaddleSlot
@@ -1386,12 +1478,23 @@ export const MobileHud: React.FC<MobileHudProps> = ({
                         {slot && def && (
                           <>
                             <img
-                              src={spriteAtlas.getItemIconUrl(slot.itemId)}
+                              src={spriteAtlas.getItemIconUrl(
+                                slot.itemId,
+                                slot.selectedColor
+                              )}
                               alt={def.name}
                               className="w-6 h-6 pixelated"
                             />
-                            <span className="absolute bottom-0 right-0.5 text-[9px] font-mono-tabular font-extrabold text-[#fef08a]">
-                              {slot.count}
+                            <span
+                              className={`absolute bottom-0 right-0.5 text-[9px] font-mono-tabular font-extrabold ${
+                                isSel && activeSaddleSelectedCount < slot.count
+                                  ? 'text-cyan-300 bg-black/80 px-0.5 rounded-sm'
+                                  : 'text-[#fef08a]'
+                              }`}
+                            >
+                              {isSel && activeSaddleSelectedCount < slot.count
+                                ? `${activeSaddleSelectedCount}/${slot.count}`
+                                : slot.count}
                             </span>
                           </>
                         )}
@@ -1409,8 +1512,8 @@ export const MobileHud: React.FC<MobileHudProps> = ({
                   </span>
                   <span className="text-[9px] text-amber-300">
                     {selectedSaddleSlot
-                      ? 'Clique no destino p/ mover ou trocar'
-                      : 'Clique no item p/ selecionar'}
+                      ? 'Clique no destino p/ mover'
+                      : 'Toque ou segure + arraste ◀ ▶'}
                   </span>
                 </div>
                 <div className="grid grid-cols-8 gap-1">
@@ -1421,35 +1524,20 @@ export const MobileHud: React.FC<MobileHudProps> = ({
                       const isSel =
                         selectedSaddleSlot?.container === 'player' &&
                         selectedSaddleSlot.index === idx;
+                      const canQuantize =
+                        Boolean(slot && slot.count > 1) &&
+                        (!selectedSaddleSlot || isSel);
+                      const gestureProps = getSaddleGestureProps(
+                        `player:${idx}`,
+                        slot?.count || 0,
+                        canQuantize
+                      );
                       return (
                         <button
                           key={idx}
                           type="button"
-                          onClick={() => {
-                            if (!selectedSaddleSlot) {
-                              if (slot && slot.count > 0) {
-                                setSelectedSaddleSlot({
-                                  container: 'player',
-                                  index: idx,
-                                });
-                              }
-                              return;
-                            }
-                            if (
-                              selectedSaddleSlot.container === 'player' &&
-                              selectedSaddleSlot.index === idx
-                            ) {
-                              setSelectedSaddleSlot(null);
-                              return;
-                            }
-                            engine.moveOrSwapMountAndPlayerSlot(
-                              saddlebagCreature.id,
-                              selectedSaddleSlot,
-                              { container: 'player', index: idx }
-                            );
-                            setSelectedSaddleSlot(null);
-                          }}
-                          className={`aspect-square min-h-[36px] flex items-center justify-center relative ${
+                          {...gestureProps}
+                          className={`aspect-square min-h-[36px] flex items-center justify-center relative touch-none ${
                             isSel
                               ? 'mc-slot-active ring-2 ring-amber-400'
                               : selectedSaddleSlot
@@ -1460,12 +1548,24 @@ export const MobileHud: React.FC<MobileHudProps> = ({
                           {slot && def && (
                             <>
                               <img
-                                src={spriteAtlas.getItemIconUrl(slot.itemId)}
+                                src={spriteAtlas.getItemIconUrl(
+                                  slot.itemId,
+                                  slot.selectedColor
+                                )}
                                 alt={def.name}
                                 className="w-5 h-5 pixelated"
                               />
-                              <span className="absolute bottom-0 right-0.5 text-[8px] font-mono-tabular font-extrabold text-[#fef08a]">
-                                {slot.count}
+                              <span
+                                className={`absolute bottom-0 right-0.5 text-[8px] font-mono-tabular font-extrabold ${
+                                  isSel &&
+                                  activeSaddleSelectedCount < slot.count
+                                    ? 'text-cyan-300 bg-black/80 px-0.5 rounded-sm'
+                                    : 'text-[#fef08a]'
+                                }`}
+                              >
+                                {isSel && activeSaddleSelectedCount < slot.count
+                                  ? `${activeSaddleSelectedCount}/${slot.count}`
+                                  : slot.count}
                               </span>
                             </>
                           )}

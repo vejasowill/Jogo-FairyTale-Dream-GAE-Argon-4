@@ -166,6 +166,34 @@ export default function App() {
     return () => window.clearTimeout(timer);
   }, [isPortraitMobile, dismissedPortraitHint]);
 
+  // Block native browser context menu ("Download image" / "Open link") on long-press across mobile & desktop
+  useEffect(() => {
+    const handleContextMenu = (e: MouseEvent) => {
+      const target = e.target as HTMLElement | null;
+      if (
+        target &&
+        (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA')
+      ) {
+        return;
+      }
+      e.preventDefault();
+    };
+    const handleDragStart = (e: DragEvent) => {
+      const target = e.target as HTMLElement | null;
+      if (target && (target.tagName === 'IMG' || target.tagName === 'A')) {
+        e.preventDefault();
+      }
+    };
+    window.addEventListener('contextmenu', handleContextMenu, {
+      passive: false,
+    });
+    window.addEventListener('dragstart', handleDragStart, { passive: false });
+    return () => {
+      window.removeEventListener('contextmenu', handleContextMenu);
+      window.removeEventListener('dragstart', handleDragStart);
+    };
+  }, []);
+
   useEffect(() => {
     const syncFullscreenState = () => {
       const active = Boolean(getNativeFullscreenElement() || isStandalonePwa());

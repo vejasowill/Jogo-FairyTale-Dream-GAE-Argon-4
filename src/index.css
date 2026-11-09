@@ -12,9 +12,27 @@
     font-family: var(--font-sans);
     overscroll-behavior: none;
     -webkit-tap-highlight-color: transparent;
+    -webkit-touch-callout: none;
+    -webkit-user-select: none;
     user-select: none;
     background-color: #120c08;
     color: #f3e5c8;
+  }
+
+  button,
+  a,
+  img,
+  canvas,
+  svg {
+    -webkit-touch-callout: none;
+    -webkit-user-select: none;
+    user-select: none;
+    -webkit-user-drag: none;
+  }
+
+  button img,
+  button svg {
+    pointer-events: none;
   }
 
   h1, h2, h3, .font-display {

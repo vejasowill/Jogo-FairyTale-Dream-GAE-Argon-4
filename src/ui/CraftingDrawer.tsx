@@ -52,6 +52,10 @@ import {
 import { GameEngine, HudSnapshot } from '../game/loop/GameEngine';
 import { spriteAtlas } from '../game/rendering/SpriteAtlas';
 import { WindowHelpButton, WindowHelpModal } from './UiTooltipAndHelp';
+import {
+  StackDragFloatingHud,
+  useStackQuantityGesture,
+} from './useStackQuantityGesture';
 
 interface CraftingDrawerProps {
   engine: GameEngine;
@@ -237,6 +241,9 @@ export const CraftingDrawer: React.FC<CraftingDrawerProps> = ({
   const [selectedInvIndex, setSelectedInvIndex] = useState<number | null>(
     null
   );
+  const [selectedInvCount, setSelectedInvCount] = useState<number | null>(
+    null
+  );
   const [campfireBannerMsg, setCampfireBannerMsg] = useState<string | null>(
     null
   );
@@ -265,6 +272,7 @@ export const CraftingDrawer: React.FC<CraftingDrawerProps> = ({
       setActiveStation(stationContext);
       setCategoryFilter('ALL');
       setSelectedInvIndex(null);
+      setSelectedInvCount(null);
       setCampfireBannerMsg(null);
       setWeavingWindow('confeccao');
     }
@@ -378,6 +386,12 @@ export const CraftingDrawer: React.FC<CraftingDrawerProps> = ({
   const selectedSlot =
     selectedInvIndex !== null ? player.inventory[selectedInvIndex] || null : null;
   const selectedSlotItem = selectedSlot ? ITEMS[selectedSlot.itemId] : null;
+  const activeSelectedInvCount = selectedSlot
+    ? Math.max(
+        1,
+        Math.min(selectedSlot.count, selectedInvCount ?? selectedSlot.count)
+      )
+    : 0;
 
   // Find all recipes where the selected inventory item is used as an ingredient
   const usedInRecipes = useMemo(() => {
@@ -393,6 +407,54 @@ export const CraftingDrawer: React.FC<CraftingDrawerProps> = ({
       resultName: ITEMS[r.resultItemId]?.name || r.resultItemId,
     }));
   }, [selectedSlotItem]);
+
+  const handleInventorySlotClick = (idx: number) => {
+    const clickedSlot = player.inventory[idx];
+    if (selectedInvIndex === null) {
+      if (clickedSlot && clickedSlot.count > 0) {
+        setSelectedInvIndex(idx);
+        setSelectedInvCount(clickedSlot.count);
+      }
+      return;
+    }
+
+    if (selectedInvIndex === idx) {
+      setSelectedInvIndex(null);
+      setSelectedInvCount(null);
+      return;
+    }
+
+    const srcSlot = player.inventory[selectedInvIndex];
+    if (!srcSlot || srcSlot.count <= 0) {
+      if (clickedSlot && clickedSlot.count > 0) {
+        setSelectedInvIndex(idx);
+        setSelectedInvCount(clickedSlot.count);
+      } else {
+        setSelectedInvIndex(null);
+        setSelectedInvCount(null);
+      }
+      return;
+    }
+
+    const moveCount =
+      typeof selectedInvCount === 'number'
+        ? Math.max(1, Math.min(srcSlot.count, selectedInvCount))
+        : srcSlot.count;
+
+    engine.swapInventorySlots(selectedInvIndex, idx, moveCount);
+    setSelectedInvIndex(null);
+    setSelectedInvCount(null);
+  };
+
+  const { activeDrag, getSlotGestureProps } = useStackQuantityGesture<number>({
+    onSelectWithCount: (slotIdx, count) => {
+      setSelectedInvIndex(slotIdx);
+      setSelectedInvCount(count);
+    },
+    onSlotTap: (slotIdx) => {
+      handleInventorySlotClick(slotIdx);
+    },
+  });
 
   if (!isOpen) return null;
 
@@ -487,33 +549,6 @@ export const CraftingDrawer: React.FC<CraftingDrawerProps> = ({
     }
   };
 
-  const handleInventorySlotClick = (idx: number) => {
-    const clickedSlot = player.inventory[idx];
-    if (selectedInvIndex === null) {
-      if (clickedSlot && clickedSlot.count > 0) {
-        setSelectedInvIndex(idx);
-      }
-      return;
-    }
-
-    if (selectedInvIndex === idx) {
-      setSelectedInvIndex(null);
-      return;
-    }
-
-    if (!player.inventory[selectedInvIndex]) {
-      if (clickedSlot && clickedSlot.count > 0) {
-        setSelectedInvIndex(idx);
-      } else {
-        setSelectedInvIndex(null);
-      }
-      return;
-    }
-
-    engine.swapInventorySlots(selectedInvIndex, idx);
-    setSelectedInvIndex(null);
-  };
-
   const resultItem = selectedRecipe
     ? ITEMS[selectedRecipe.resultItemId]
     : undefined;
@@ -567,6 +602,7 @@ export const CraftingDrawer: React.FC<CraftingDrawerProps> = ({
 
   return (
     <div className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-1.5 sm:p-3 select-none">
+      <StackDragFloatingHud drag={activeDrag} />
       <div
         className={`w-full max-w-5xl h-[95vh] max-h-[660px] flex flex-col overflow-hidden rounded-sm ${theme.outerPanelClass}`}
       >
@@ -1663,16 +1699,20 @@ export const CraftingDrawer: React.FC<CraftingDrawerProps> = ({
                       const idx = offset + HOTBAR_SIZE;
                       const def = slot ? ITEMS[slot.itemId] : null;
                       const isSel = selectedInvIndex === idx;
+                      const canQuantize =
+                        Boolean(slot && slot.count > 1) &&
+                        (selectedInvIndex === null || isSel);
+                      const gestureProps = getSlotGestureProps(
+                        idx,
+                        slot?.count || 0,
+                        canQuantize
+                      );
                       return (
                         <button
                           key={idx}
-                          draggable={Boolean(slot && slot.count > 0)}
-                          onDragStart={(e) => {
-                            e.dataTransfer.setData('text/plain', String(idx));
-                            setSelectedInvIndex(idx);
-                          }}
-                          onClick={() => handleInventorySlotClick(idx)}
-                          className={`relative aspect-square min-h-[36px] sm:min-h-[42px] flex flex-col items-center justify-center p-0.5 ${
+                          type="button"
+                          {...gestureProps}
+                          className={`relative aspect-square min-h-[36px] sm:min-h-[42px] flex flex-col items-center justify-center p-0.5 touch-none ${
                             isSel
                               ? 'mc-slot-active ring-2 ring-amber-400'
                               : selectedInvIndex !== null
@@ -1692,8 +1732,16 @@ export const CraftingDrawer: React.FC<CraftingDrawerProps> = ({
                                 className="w-5 h-5 sm:w-6 sm:h-6 pixelated pointer-events-none"
                               />
                               {slot.count > 1 && (
-                                <span className="absolute bottom-0 right-0.5 text-[8px] sm:text-[9px] font-mono-tabular font-extrabold text-[#fef08a] pointer-events-none">
-                                  {slot.count}
+                                <span
+                                  className={`absolute bottom-0 right-0.5 text-[8px] sm:text-[9px] font-mono-tabular font-extrabold pointer-events-none ${
+                                    isSel && activeSelectedInvCount < slot.count
+                                      ? 'text-cyan-300 bg-black/80 px-0.5 rounded-sm'
+                                      : 'text-[#fef08a]'
+                                  }`}
+                                >
+                                  {isSel && activeSelectedInvCount < slot.count
+                                    ? `${activeSelectedInvCount}/${slot.count}`
+                                    : slot.count}
                                 </span>
                               )}
                             </>
@@ -1716,16 +1764,20 @@ export const CraftingDrawer: React.FC<CraftingDrawerProps> = ({
                   {player.inventory.slice(0, HOTBAR_SIZE).map((slot, idx) => {
                     const def = slot ? ITEMS[slot.itemId] : null;
                     const isSel = selectedInvIndex === idx;
+                    const canQuantize =
+                      Boolean(slot && slot.count > 1) &&
+                      (selectedInvIndex === null || isSel);
+                    const gestureProps = getSlotGestureProps(
+                      idx,
+                      slot?.count || 0,
+                      canQuantize
+                    );
                     return (
                       <button
                         key={idx}
-                        draggable={Boolean(slot && slot.count > 0)}
-                        onDragStart={(e) => {
-                          e.dataTransfer.setData('text/plain', String(idx));
-                          setSelectedInvIndex(idx);
-                        }}
-                        onClick={() => handleInventorySlotClick(idx)}
-                        className={`relative aspect-square min-h-[38px] sm:min-h-[44px] flex flex-col items-center justify-center p-0.5 ${
+                        type="button"
+                        {...gestureProps}
+                        className={`relative aspect-square min-h-[38px] sm:min-h-[44px] flex flex-col items-center justify-center p-0.5 touch-none ${
                           isSel
                             ? 'mc-slot-active ring-2 ring-amber-400'
                             : selectedInvIndex !== null
@@ -1748,8 +1800,16 @@ export const CraftingDrawer: React.FC<CraftingDrawerProps> = ({
                               className="w-5 h-5 sm:w-6 sm:h-6 pixelated pointer-events-none"
                             />
                             {slot.count > 1 && (
-                              <span className="absolute bottom-0 right-0.5 text-[8px] sm:text-[9px] font-mono-tabular font-extrabold text-[#fef08a] pointer-events-none">
-                                {slot.count}
+                              <span
+                                className={`absolute bottom-0 right-0.5 text-[8px] sm:text-[9px] font-mono-tabular font-extrabold pointer-events-none ${
+                                  isSel && activeSelectedInvCount < slot.count
+                                    ? 'text-cyan-300 bg-black/80 px-0.5 rounded-sm'
+                                    : 'text-[#fef08a]'
+                                }`}
+                              >
+                                {isSel && activeSelectedInvCount < slot.count
+                                  ? `${activeSelectedInvCount}/${slot.count}`
+                                  : slot.count}
                               </span>
                             )}
                           </>
@@ -1802,15 +1862,20 @@ export const CraftingDrawer: React.FC<CraftingDrawerProps> = ({
                       ? slotIdxOverride
                       : selectedInvIndex;
                   if (targetInvIdx !== null) {
+                    const countToDeposit =
+                      slotIdxOverride !== undefined
+                        ? undefined
+                        : activeSelectedInvCount > 0
+                        ? activeSelectedInvCount
+                        : undefined;
                     const deposited = engine.depositInventorySlotToThermalInput(
                       stationType,
-                      targetInvIdx
+                      targetInvIdx,
+                      countToDeposit
                     );
-                    if (
-                      deposited &&
-                      !engine.player.inventory[targetInvIdx]
-                    ) {
+                    if (deposited) {
                       setSelectedInvIndex(null);
+                      setSelectedInvCount(null);
                     }
                     return;
                   }
@@ -1825,15 +1890,20 @@ export const CraftingDrawer: React.FC<CraftingDrawerProps> = ({
                       ? slotIdxOverride
                       : selectedInvIndex;
                   if (targetInvIdx !== null) {
+                    const countToDeposit =
+                      slotIdxOverride !== undefined
+                        ? undefined
+                        : activeSelectedInvCount > 0
+                        ? activeSelectedInvCount
+                        : undefined;
                     const deposited = engine.depositInventorySlotToThermalFuel(
                       stationType,
-                      targetInvIdx
+                      targetInvIdx,
+                      countToDeposit
                     );
-                    if (
-                      deposited &&
-                      !engine.player.inventory[targetInvIdx]
-                    ) {
+                    if (deposited) {
                       setSelectedInvIndex(null);
+                      setSelectedInvCount(null);
                     }
                     return;
                   }
@@ -2588,7 +2658,7 @@ export const CraftingDrawer: React.FC<CraftingDrawerProps> = ({
                   <span className="text-[#8c6d46]">
                     {selectedInvIndex !== null
                       ? 'Clique no slot de destino para mover/trocar'
-                      : 'Clique em um item para selecionar'}
+                      : 'Toque ou segure + arraste ◀ ▶ p/ escolher quantia'}
                   </span>
                 </div>
                 <div className="grid grid-cols-8 gap-1">
@@ -2598,11 +2668,20 @@ export const CraftingDrawer: React.FC<CraftingDrawerProps> = ({
                       const idx = offset + HOTBAR_SIZE;
                       const def = slot ? ITEMS[slot.itemId] : null;
                       const isSel = selectedInvIndex === idx;
+                      const canQuantize =
+                        Boolean(slot && slot.count > 1) &&
+                        (selectedInvIndex === null || isSel);
+                      const gestureProps = getSlotGestureProps(
+                        idx,
+                        slot?.count || 0,
+                        canQuantize
+                      );
                       return (
                         <button
                           key={idx}
-                          onClick={() => handleInventorySlotClick(idx)}
-                          className={`relative aspect-square min-h-[36px] sm:min-h-[42px] flex flex-col items-center justify-center p-0.5 ${
+                          type="button"
+                          {...gestureProps}
+                          className={`relative aspect-square min-h-[36px] sm:min-h-[42px] flex flex-col items-center justify-center p-0.5 touch-none ${
                             isSel
                               ? 'mc-slot-active ring-2 ring-amber-400'
                               : selectedInvIndex !== null
@@ -2621,8 +2700,16 @@ export const CraftingDrawer: React.FC<CraftingDrawerProps> = ({
                                 className="w-5 h-5 sm:w-6 sm:h-6 pixelated"
                               />
                               {slot.count > 1 && (
-                                <span className="absolute bottom-0 right-0.5 text-[8px] sm:text-[9px] font-mono-tabular font-extrabold text-[#fef08a]">
-                                  {slot.count}
+                                <span
+                                  className={`absolute bottom-0 right-0.5 text-[8px] sm:text-[9px] font-mono-tabular font-extrabold ${
+                                    isSel && activeSelectedInvCount < slot.count
+                                      ? 'text-cyan-300 bg-black/80 px-0.5 rounded-sm'
+                                      : 'text-[#fef08a]'
+                                  }`}
+                                >
+                                  {isSel && activeSelectedInvCount < slot.count
+                                    ? `${activeSelectedInvCount}/${slot.count}`
+                                    : slot.count}
                                 </span>
                               )}
                             </>
@@ -2645,11 +2732,20 @@ export const CraftingDrawer: React.FC<CraftingDrawerProps> = ({
                   {player.inventory.slice(0, HOTBAR_SIZE).map((slot, idx) => {
                     const def = slot ? ITEMS[slot.itemId] : null;
                     const isSel = selectedInvIndex === idx;
+                    const canQuantize =
+                      Boolean(slot && slot.count > 1) &&
+                      (selectedInvIndex === null || isSel);
+                    const gestureProps = getSlotGestureProps(
+                      idx,
+                      slot?.count || 0,
+                      canQuantize
+                    );
                     return (
                       <button
                         key={idx}
-                        onClick={() => handleInventorySlotClick(idx)}
-                        className={`relative aspect-square min-h-[38px] sm:min-h-[44px] flex flex-col items-center justify-center p-0.5 ${
+                        type="button"
+                        {...gestureProps}
+                        className={`relative aspect-square min-h-[38px] sm:min-h-[44px] flex flex-col items-center justify-center p-0.5 touch-none ${
                           isSel
                             ? 'mc-slot-active ring-2 ring-amber-400'
                             : selectedInvIndex !== null
@@ -2671,8 +2767,16 @@ export const CraftingDrawer: React.FC<CraftingDrawerProps> = ({
                               className="w-5 h-5 sm:w-6 sm:h-6 pixelated"
                             />
                             {slot.count > 1 && (
-                              <span className="absolute bottom-0 right-0.5 text-[8px] sm:text-[9px] font-mono-tabular font-extrabold text-[#fef08a]">
-                                {slot.count}
+                              <span
+                                className={`absolute bottom-0 right-0.5 text-[8px] sm:text-[9px] font-mono-tabular font-extrabold ${
+                                  isSel && activeSelectedInvCount < slot.count
+                                    ? 'text-cyan-300 bg-black/80 px-0.5 rounded-sm'
+                                    : 'text-[#fef08a]'
+                                }`}
+                              >
+                                {isSel && activeSelectedInvCount < slot.count
+                                  ? `${activeSelectedInvCount}/${slot.count}`
+                                  : slot.count}
                               </span>
                             )}
                           </>

@@ -898,7 +898,17 @@ class SpriteAtlasManager {
   ): HTMLCanvasElement {
     this.ensureInitialized();
     const suffix = isAttacking ? 'atk' : `${frame % 4}`;
+    const perspective =
+      dir === 'up'
+        ? 'up'
+        : dir === 'left' || dir === 'right'
+        ? 'side'
+        : 'down';
     if (options?.isBaby) {
+      const babyDirKey = `${kind}_BABY_${perspective}_${suffix}`;
+      if (this.creatureSprites.has(babyDirKey)) {
+        return this.creatureSprites.get(babyDirKey)!;
+      }
       const babyKey = `${kind}_BABY_${suffix}`;
       if (this.creatureSprites.has(babyKey)) {
         return this.creatureSprites.get(babyKey)!;
@@ -918,12 +928,6 @@ class SpriteAtlasManager {
         return this.creatureSprites.get(shornFallback)!;
       }
     }
-    const perspective =
-      dir === 'up'
-        ? 'up'
-        : dir === 'left' || dir === 'right'
-        ? 'side'
-        : 'down';
     const dirKey = `${kind}_${perspective}_${suffix}`;
     if (this.creatureSprites.has(dirKey)) {
       return this.creatureSprites.get(dirKey)!;
@@ -10020,6 +10024,225 @@ class SpriteAtlasManager {
       drawer(atkC.getContext('2d')!, 1, true);
       this.creatureSprites.set(`${variantKeyPrefix}_atk`, atkC);
     };
+
+    // HORSE FRONT/DOWN VIEW (36x32 — Symmetrical front chest, barrel fitting rider's astride legs, front head with white blaze & ears)
+    buildCustomCreatureVariant(`${CreatureKind.HORSE}_down`, 36, 32, (ctx, f) => {
+      const legL = f % 2 === 1 ? -1 : 1;
+      const legR = f % 2 === 1 ? 1 : -1;
+      const bob = f % 2;
+      // Ground shadow
+      ctx.fillStyle = 'rgba(0,0,0,0.32)';
+      ctx.fillRect(10, 28, 16, 3);
+      // Dark outer silhouette (barrel x=10..26 fits inside rider's astride legs)
+      ctx.fillStyle = '#1c1008';
+      ctx.fillRect(10, 10, 16, 12);
+      ctx.fillRect(13, 3 + bob, 10, 13);
+      // Hind legs (slightly darker, visible behind front legs)
+      ctx.fillStyle = '#451a03';
+      ctx.fillRect(11, 20 - legL, 2, 8);
+      ctx.fillRect(23, 20 - legR, 2, 8);
+      // Muscular front legs & dark hooves
+      ctx.fillStyle = '#5c2d16';
+      ctx.fillRect(13, 20 + legL, 3, 9);
+      ctx.fillRect(20, 20 + legR, 3, 9);
+      ctx.fillStyle = '#1e293b';
+      ctx.fillRect(13, 28 + legL, 3, 2);
+      ctx.fillRect(20, 28 + legR, 3, 2);
+      // Chestnut barrel & broad muscular chest
+      ctx.fillStyle = '#854d0e';
+      ctx.fillRect(11, 11, 14, 10);
+      ctx.fillStyle = '#a16207';
+      ctx.fillRect(12, 12, 12, 7);
+      ctx.fillStyle = '#713f12';
+      ctx.fillRect(14, 16, 8, 4);
+      // Pointed Horse Ears (top left & top right of head)
+      ctx.fillStyle = '#1c1008';
+      ctx.fillRect(13, 1 + bob, 3, 3);
+      ctx.fillRect(20, 1 + bob, 3, 3);
+      ctx.fillStyle = '#854d0e';
+      ctx.fillRect(14, 2 + bob, 2, 2);
+      ctx.fillRect(20, 2 + bob, 2, 2);
+      // Upright Neck & Front Equine Head
+      ctx.fillStyle = '#854d0e';
+      ctx.fillRect(14, 4 + bob, 8, 11);
+      ctx.fillStyle = '#a16207';
+      ctx.fillRect(15, 5 + bob, 6, 8);
+      // Dark Forelock Mane between ears
+      ctx.fillStyle = '#27170c';
+      ctx.fillRect(16, 2 + bob, 4, 4);
+      ctx.fillRect(17, 6 + bob, 2, 2);
+      // White Facial Blaze down nose bridge
+      ctx.fillStyle = '#fef3c7';
+      ctx.fillRect(17, 6 + bob, 2, 6);
+      // Lateral Equine Eyes
+      ctx.fillStyle = '#0f172a';
+      ctx.fillRect(14, 7 + bob, 1, 2);
+      ctx.fillRect(21, 7 + bob, 1, 2);
+      // Warm Muzzle & Nostrils
+      ctx.fillStyle = '#5c2d16';
+      ctx.fillRect(15, 12 + bob, 6, 4);
+      ctx.fillStyle = '#1c1008';
+      ctx.fillRect(16, 13 + bob, 1, 2);
+      ctx.fillRect(19, 13 + bob, 1, 2);
+    });
+
+    // HORSE BACK/UP VIEW (36x32 — Symmetrical hindquarters, flowing tail, barrel between rider's legs, upright neck & mane)
+    buildCustomCreatureVariant(`${CreatureKind.HORSE}_up`, 36, 32, (ctx, f) => {
+      const legL = f % 2 === 1 ? -1 : 1;
+      const legR = f % 2 === 1 ? 1 : -1;
+      const tailSway = f === 1 ? -1 : f === 3 ? 1 : 0;
+      const bob = f % 2;
+      // Ground shadow
+      ctx.fillStyle = 'rgba(0,0,0,0.32)';
+      ctx.fillRect(10, 28, 16, 3);
+      // Dark outer silhouette
+      ctx.fillStyle = '#1c1008';
+      ctx.fillRect(10, 10, 16, 12);
+      ctx.fillRect(13, 2 + bob, 10, 10);
+      // Pointed Ears seen from behind
+      ctx.fillRect(13, 1 + bob, 3, 3);
+      ctx.fillRect(20, 1 + bob, 3, 3);
+      ctx.fillStyle = '#854d0e';
+      ctx.fillRect(14, 2 + bob, 2, 2);
+      ctx.fillRect(20, 2 + bob, 2, 2);
+      // Back of Head & Neck with flowing central dark mane
+      ctx.fillStyle = '#854d0e';
+      ctx.fillRect(14, 3 + bob, 8, 9);
+      ctx.fillStyle = '#27170c';
+      ctx.fillRect(16, 2 + bob, 4, 10);
+      // Front legs (slightly forward/darker) & Hind legs with hooves
+      ctx.fillStyle = '#451a03';
+      ctx.fillRect(11, 20 - legL, 2, 8);
+      ctx.fillRect(23, 20 - legR, 2, 8);
+      ctx.fillStyle = '#5c2d16';
+      ctx.fillRect(13, 20 + legL, 3, 9);
+      ctx.fillRect(20, 20 + legR, 3, 9);
+      ctx.fillStyle = '#1e293b';
+      ctx.fillRect(13, 28 + legL, 3, 2);
+      ctx.fillRect(20, 28 + legR, 3, 2);
+      // Rounded Chestnut Croup / Hindquarters & Back Barrel
+      ctx.fillStyle = '#854d0e';
+      ctx.fillRect(11, 11, 14, 10);
+      ctx.fillStyle = '#a16207';
+      ctx.fillRect(12, 11, 12, 6);
+      // Long Flowing Dark Tail down the center of the hindquarters
+      ctx.fillStyle = '#1c1008';
+      ctx.fillRect(15 + tailSway, 14, 6, 12);
+      ctx.fillStyle = '#27170c';
+      ctx.fillRect(16 + tailSway, 14, 4, 11);
+      ctx.fillStyle = '#451a03';
+      ctx.fillRect(17 + tailSway, 15, 2, 8);
+    });
+
+    // CAMEL FRONT/DOWN VIEW (36x36 — Tall dromedary hump, golden barrel fitting rider's legs, curved neck & split muzzle)
+    buildCustomCreatureVariant(`${CreatureKind.CAMEL}_down`, 36, 36, (ctx, f, isAtk) => {
+      const legL = f % 2 === 1 ? -1 : 1;
+      const legR = f % 2 === 1 ? 1 : -1;
+      const bob = f % 2;
+      // Ground shadow
+      ctx.fillStyle = 'rgba(0,0,0,0.32)';
+      ctx.fillRect(9, 32, 18, 3);
+      // Dark outer outline (barrel & tall hump)
+      ctx.fillStyle = '#2a1205';
+      ctx.fillRect(9, 11, 18, 12);
+      ctx.fillRect(12, 6, 12, 7);
+      ctx.fillRect(13, 3 + bob, 10, 15);
+      // Slender Rear & Front Camel Legs
+      ctx.fillStyle = '#5c2808';
+      ctx.fillRect(10, 22 - legL, 2, 10);
+      ctx.fillRect(24, 22 - legR, 2, 10);
+      ctx.fillStyle = '#78350f';
+      ctx.fillRect(12, 22 + legL, 3, 11);
+      ctx.fillRect(21, 22 + legR, 3, 11);
+      // Golden Dromedary Barrel & Furry Hump Crown
+      ctx.fillStyle = '#d97706';
+      ctx.fillRect(10, 12, 16, 10);
+      ctx.fillRect(13, 7, 10, 6);
+      ctx.fillStyle = '#fbbf24';
+      ctx.fillRect(14, 7, 8, 3);
+      ctx.fillStyle = '#b45309';
+      ctx.fillRect(11, 13, 14, 6);
+      // Rounded Lateral Dromedary Ears
+      ctx.fillStyle = '#2a1205';
+      ctx.fillRect(11, 4 + bob, 3, 3);
+      ctx.fillRect(22, 4 + bob, 3, 3);
+      ctx.fillStyle = '#d97706';
+      ctx.fillRect(12, 5 + bob, 2, 2);
+      ctx.fillRect(22, 5 + bob, 2, 2);
+      // Curved Front Neck & Camel Head
+      ctx.fillStyle = '#d97706';
+      ctx.fillRect(14, 4 + bob, 8, 13);
+      ctx.fillStyle = '#fbbf24';
+      ctx.fillRect(15, 4 + bob, 6, 4);
+      // Expressive Camel Eyes & Heavy Brows
+      ctx.fillStyle = '#92400e';
+      ctx.fillRect(13, 6 + bob, 2, 1);
+      ctx.fillRect(21, 6 + bob, 2, 1);
+      ctx.fillStyle = isAtk ? '#ef4444' : '#0f172a';
+      ctx.fillRect(14, 7 + bob, 1, 2);
+      ctx.fillRect(21, 7 + bob, 1, 2);
+      // Broad Split Camel Muzzle
+      ctx.fillStyle = '#b45309';
+      ctx.fillRect(15, 10 + bob, 6, 5);
+      ctx.fillStyle = '#fde68a';
+      ctx.fillRect(15, 11 + bob, 2, 3);
+      ctx.fillRect(19, 11 + bob, 2, 3);
+      ctx.fillStyle = '#2a1205';
+      ctx.fillRect(17, 11 + bob, 2, 3);
+      if (isAtk) {
+        ctx.fillStyle = '#38bdf8';
+        ctx.fillRect(17, 15 + bob, 2, 2);
+      }
+    });
+
+    // CAMEL BACK/UP VIEW (36x36 — Tall furry hump, golden hindquarters, tufted camel tail & upright neck)
+    buildCustomCreatureVariant(`${CreatureKind.CAMEL}_up`, 36, 36, (ctx, f) => {
+      const legL = f % 2 === 1 ? -1 : 1;
+      const legR = f % 2 === 1 ? 1 : -1;
+      const tailSway = f === 1 ? -1 : f === 3 ? 1 : 0;
+      const bob = f % 2;
+      // Ground shadow
+      ctx.fillStyle = 'rgba(0,0,0,0.32)';
+      ctx.fillRect(9, 32, 18, 3);
+      // Dark outer silhouette
+      ctx.fillStyle = '#2a1205';
+      ctx.fillRect(9, 11, 18, 12);
+      ctx.fillRect(12, 6, 12, 8);
+      ctx.fillRect(13, 2 + bob, 10, 9);
+      // Rounded Lateral Ears
+      ctx.fillRect(11, 4 + bob, 3, 3);
+      ctx.fillRect(22, 4 + bob, 3, 3);
+      ctx.fillStyle = '#d97706';
+      ctx.fillRect(12, 5 + bob, 2, 2);
+      ctx.fillRect(22, 5 + bob, 2, 2);
+      // Back of Camel Head & Neck
+      ctx.fillStyle = '#d97706';
+      ctx.fillRect(14, 3 + bob, 8, 8);
+      ctx.fillStyle = '#92400e';
+      ctx.fillRect(16, 3 + bob, 4, 7);
+      // Slender Front & Hind Camel Legs
+      ctx.fillStyle = '#5c2808';
+      ctx.fillRect(10, 22 - legL, 2, 10);
+      ctx.fillRect(24, 22 - legR, 2, 10);
+      ctx.fillStyle = '#78350f';
+      ctx.fillRect(12, 22 + legL, 3, 11);
+      ctx.fillRect(21, 22 + legR, 3, 11);
+      // Golden Hindquarters & Prominent Furry Hump
+      ctx.fillStyle = '#d97706';
+      ctx.fillRect(10, 12, 16, 10);
+      ctx.fillRect(13, 7, 10, 7);
+      ctx.fillStyle = '#fbbf24';
+      ctx.fillRect(14, 7, 8, 4);
+      ctx.fillStyle = '#b45309';
+      ctx.fillRect(13, 11, 10, 3);
+      // Tufted Camel Tail hanging down center of hindquarters
+      ctx.fillStyle = '#b45309';
+      ctx.fillRect(17 + tailSway, 16, 2, 8);
+      ctx.fillStyle = '#2a1205';
+      ctx.fillRect(16 + tailSway, 23, 4, 4);
+      ctx.fillStyle = '#78350f';
+      ctx.fillRect(17 + tailSway, 23, 2, 3);
+    });
 
     // SHORN SHEEP (26x20 — Skinny shorn sheep without wool coat: slender torso, exposed pinkish-tan skin & thin legs)
     buildCustomCreatureVariant(`${CreatureKind.SHEEP}_SHORN`, 26, 20, (ctx, f) => {

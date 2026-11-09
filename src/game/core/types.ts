@@ -613,7 +613,8 @@ export const TRANSPORT_SEAT_MODELS: Partial<Record<CreatureKind, TransportSeatSp
       label: '1º Assento (Sela)',
       canSteer: true,
       getOffset: (direction: Direction) => {
-        const dirSign = direction === 'left' ? -1 : 1;
+        const dirSign =
+          direction === 'left' ? -1 : direction === 'right' ? 1 : 0;
         return { x: -1 * dirSign, y: -11, ySortDelta: 0.25 };
       },
     },
@@ -625,7 +626,8 @@ export const TRANSPORT_SEAT_MODELS: Partial<Record<CreatureKind, TransportSeatSp
       label: '1º Assento (Sela)',
       canSteer: true,
       getOffset: (direction: Direction) => {
-        const dirSign = direction === 'left' ? -1 : 1;
+        const dirSign =
+          direction === 'left' ? -1 : direction === 'right' ? 1 : 0;
         return { x: -1 * dirSign, y: -15, ySortDelta: 0.25 };
       },
     },
@@ -642,7 +644,7 @@ export function getTransportSeatOffset(
     const clampedIdx = Math.max(0, Math.min(specs.length - 1, seatIndex));
     return specs[clampedIdx].getOffset(direction);
   }
-  const dirSign = direction === 'left' ? -1 : 1;
+  const dirSign = direction === 'left' ? -1 : direction === 'right' ? 1 : 0;
   return { x: -1 * dirSign, y: -11, ySortDelta: 0.25 };
 }
 

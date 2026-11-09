@@ -6839,20 +6839,41 @@ export class GameRenderer {
     // Draw Saddle & 8-Slot Saddlebags on Horse or Camel when cr.hasSaddle is true
     if ((cr.kind === 'HORSE' || cr.kind === 'CAMEL') && cr.hasSaddle) {
       const saddleY = cr.kind === 'CAMEL' ? -drawH * 0.64 : -drawH * 0.61;
-      // Crimson saddle blanket
-      ctx.fillStyle = '#991b1b';
-      ctx.fillRect(-7, saddleY, 13, 7);
-      ctx.fillStyle = '#fbbf24';
-      ctx.fillRect(-7, saddleY + 6, 13, 1.2);
-      //Tooled leather saddle seat & side saddlebag pouch
-      ctx.fillStyle = '#451a03';
-      ctx.fillRect(-6, saddleY - 1.5, 11, 5);
-      ctx.fillStyle = '#92400e';
-      ctx.fillRect(-5, saddleY - 1, 9, 4);
-      // Saddlebag buckle & golden stirrup
-      ctx.fillStyle = '#fde047';
-      ctx.fillRect(-1, saddleY + 1, 2, 2);
-      ctx.fillRect(0, saddleY + 7, 2, 2);
+      if (cr.direction === 'up' || cr.direction === 'down') {
+        // Symmetrical front/back perspective saddle blanket & twin side saddlebags on left/right flanks
+        ctx.fillStyle = '#991b1b';
+        ctx.fillRect(-8, saddleY, 16, 7);
+        ctx.fillStyle = '#fbbf24';
+        ctx.fillRect(-8, saddleY + 6, 16, 1.2);
+        // Twin lateral leather saddlebag pouches & central seat
+        ctx.fillStyle = '#451a03';
+        ctx.fillRect(-9, saddleY + 1, 3, 6);
+        ctx.fillRect(6, saddleY + 1, 3, 6);
+        ctx.fillRect(-6, saddleY - 1.5, 12, 4);
+        ctx.fillStyle = '#92400e';
+        ctx.fillRect(-8, saddleY + 1.5, 2, 4.5);
+        ctx.fillRect(6, saddleY + 1.5, 2, 4.5);
+        ctx.fillRect(-5, saddleY - 1, 10, 3);
+        // Golden buckles & stirrups on both flanks
+        ctx.fillStyle = '#fde047';
+        ctx.fillRect(-8, saddleY + 3, 1.5, 1.5);
+        ctx.fillRect(6.5, saddleY + 3, 1.5, 1.5);
+      } else {
+        // Crimson saddle blanket (side profile)
+        ctx.fillStyle = '#991b1b';
+        ctx.fillRect(-7, saddleY, 13, 7);
+        ctx.fillStyle = '#fbbf24';
+        ctx.fillRect(-7, saddleY + 6, 13, 1.2);
+        // Tooled leather saddle seat & side saddlebag pouch
+        ctx.fillStyle = '#451a03';
+        ctx.fillRect(-6, saddleY - 1.5, 11, 5);
+        ctx.fillStyle = '#92400e';
+        ctx.fillRect(-5, saddleY - 1, 9, 4);
+        // Saddlebag buckle & golden stirrup
+        ctx.fillStyle = '#fde047';
+        ctx.fillRect(-1, saddleY + 1, 2, 2);
+        ctx.fillRect(0, saddleY + 7, 2, 2);
+      }
     }
 
     // Draw Passenger Pet seated in the 2nd seat of a Boat
@@ -7788,6 +7809,37 @@ export class GameRenderer {
       }
       // 48x42 composite sprite drawn at 45x39.375 so head stays 1.0x and body is 1.5x larger
       ctx.drawImage(sprite, -22.5, -27.5, 45, 39.375);
+
+      // When mounted on a Horse or Camel facing SOUTH ('down'), draw the mount's front head/neck in front of the rider's waist so the rider sits behind the animal's neck
+      if (
+        mountEntity &&
+        (mountEntity.kind === 'HORSE' || mountEntity.kind === 'CAMEL') &&
+        mountEntity.direction === 'down'
+      ) {
+        const mountSprite = spriteAtlas.getCreatureSprite(
+          mountEntity.kind,
+          mountEntity.animFrame,
+          false,
+          'down',
+          { isBaby: mountEntity.isBaby }
+        );
+        const mW = mountSprite.width;
+        const mH = mountSprite.height;
+        const headSliceH = mountEntity.kind === 'CAMEL' ? 16 : 16;
+        ctx.drawImage(
+          mountSprite,
+          11,
+          0,
+          14,
+          headSliceH,
+          -7,
+          mountEntity.kind === 'CAMEL' ? -5 : -7,
+          14,
+          headSliceH
+        );
+        void mW;
+        void mH;
+      }
     }
     ctx.restore();
 
@@ -8160,6 +8212,32 @@ export class GameRenderer {
         ctx.filter = 'brightness(2.0) contrast(1.2)';
       }
       ctx.drawImage(sprite, -22.5, -27.5, 45, 39.375);
+
+      if (
+        mountEntity &&
+        (mountEntity.kind === 'HORSE' || mountEntity.kind === 'CAMEL') &&
+        mountEntity.direction === 'down'
+      ) {
+        const mountSprite = spriteAtlas.getCreatureSprite(
+          mountEntity.kind,
+          mountEntity.animFrame,
+          false,
+          'down',
+          { isBaby: mountEntity.isBaby }
+        );
+        const headSliceH = 16;
+        ctx.drawImage(
+          mountSprite,
+          11,
+          0,
+          14,
+          headSliceH,
+          -7,
+          mountEntity.kind === 'CAMEL' ? -5 : -7,
+          14,
+          headSliceH
+        );
+      }
     }
     ctx.restore();
 

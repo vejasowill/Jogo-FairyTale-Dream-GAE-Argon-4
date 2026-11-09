@@ -13389,7 +13389,11 @@ export class GameEngine {
     this.emitUiSnapshot();
   }
 
-  public swapInventorySlots(indexA: number, indexB: number): void {
+  public swapInventorySlots(
+    indexA: number,
+    indexB: number,
+    count?: number
+  ): void {
     if (
       indexA < 0 ||
       indexA >= this.player.inventory.length ||
@@ -13401,13 +13405,54 @@ export class GameEngine {
     }
     const slotA = this.player.inventory[indexA];
     const slotB = this.player.inventory[indexB];
+    if (!slotA || slotA.count <= 0) return;
 
-    // If moving an item (slotA) onto an identical item (slotB), stack them up to maxStack first!
+    const moveCount =
+      typeof count === 'number'
+        ? Math.max(1, Math.min(slotA.count, Math.floor(count)))
+        : slotA.count;
+
+    // 1. Moving partial stack into an EMPTY slot (split stack)
+    if (!slotB && moveCount < slotA.count) {
+      const def = ITEMS[slotA.itemId];
+      if (def?.isFlower) {
+        const defaultColor: ClothingColorId =
+          def.allowedFlowerColors?.[0] || 'branco';
+        const emptyTarget: InventorySlot = {
+          itemId: slotA.itemId,
+          count: 0,
+          colorCounts: {},
+          selectedColor: slotA.selectedColor || defaultColor,
+        };
+        const merged = this.mergeFlowerColorCountsIntoSlot(
+          emptyTarget,
+          slotA,
+          moveCount,
+          defaultColor
+        );
+        this.player.inventory[indexB] = merged.updatedTarget;
+        this.player.inventory[indexA] = merged.updatedSource;
+      } else {
+        this.player.inventory[indexB] = {
+          ...slotA,
+          count: moveCount,
+        };
+        this.player.inventory[indexA] = {
+          ...slotA,
+          count: slotA.count - moveCount,
+        };
+      }
+      soundManager.playPickup();
+      this.emitUiSnapshot();
+      return;
+    }
+
+    // 2. If moving an item (slotA) onto an identical item (slotB), stack them up to maxStack first!
     if (slotA && slotB && slotA.itemId === slotB.itemId) {
       const def = ITEMS[slotB.itemId];
       const maxStack = def?.maxStack || 99;
       if (maxStack > 1 && slotB.count < maxStack) {
-        const transfer = Math.min(slotA.count, maxStack - slotB.count);
+        const transfer = Math.min(moveCount, maxStack - slotB.count);
         const newDstCount = slotB.count + transfer;
         const newSrcCount = slotA.count - transfer;
 
@@ -14751,7 +14796,8 @@ export class GameEngine {
   public moveOrSwapChestAndPlayerSlot(
     chestId: string,
     source: { container: 'chest' | 'player'; index: number },
-    dest: { container: 'chest' | 'player'; index: number }
+    dest: { container: 'chest' | 'player'; index: number },
+    count?: number
   ): boolean {
     if (
       source.container === dest.container &&
@@ -14805,6 +14851,10 @@ export class GameEngine {
     const srcSlot = getSlot(source);
     if (!srcSlot || srcSlot.count <= 0) return false;
     const dstSlot = getSlot(dest);
+    const moveCount =
+      typeof count === 'number'
+        ? Math.max(1, Math.min(srcSlot.count, Math.floor(count)))
+        : srcSlot.count;
 
     // Special case: moving gold_coin from a treasure chest into a player slot adds to gold purse without deleting dstSlot!
     if (
@@ -14812,10 +14862,45 @@ export class GameEngine {
       dest.container === 'player' &&
       srcSlot.itemId === 'gold_coin'
     ) {
-      this.addItemToInventory('gold_coin', srcSlot.count);
-      setSlot(source, null);
+      this.addItemToInventory('gold_coin', moveCount);
+      const rem = srcSlot.count - moveCount;
+      setSlot(source, rem > 0 ? { ...srcSlot, count: rem } : null);
       soundManager.playPickup();
       this.commitChestStorageMutation(chest);
+      this.emitUiSnapshot();
+      return true;
+    }
+
+    // Moving a partial stack into an empty destination slot (split stack)
+    if (!dstSlot && moveCount < srcSlot.count) {
+      const def = ITEMS[srcSlot.itemId];
+      if (def?.isFlower) {
+        const defaultColor: ClothingColorId =
+          def.allowedFlowerColors?.[0] || 'branco';
+        const emptyTarget: InventorySlot = {
+          itemId: srcSlot.itemId,
+          count: 0,
+          colorCounts: {},
+          selectedColor: srcSlot.selectedColor || defaultColor,
+        };
+        const merged = this.mergeFlowerColorCountsIntoSlot(
+          emptyTarget,
+          srcSlot,
+          moveCount,
+          defaultColor
+        );
+        setSlot(dest, merged.updatedTarget);
+        setSlot(source, merged.updatedSource);
+      } else {
+        setSlot(dest, { ...srcSlot, count: moveCount });
+        setSlot(source, { ...srcSlot, count: srcSlot.count - moveCount });
+      }
+      soundManager.playPickup();
+      if (source.container === 'chest' || dest.container === 'chest') {
+        this.commitChestStorageMutation(chest);
+      } else {
+        void this.saveGame(true);
+      }
       this.emitUiSnapshot();
       return true;
     }
@@ -14825,7 +14910,7 @@ export class GameEngine {
       const def = ITEMS[dstSlot.itemId];
       const maxStack = def?.maxStack || 99;
       if (maxStack > 1 && dstSlot.count < maxStack) {
-        const transfer = Math.min(srcSlot.count, maxStack - dstSlot.count);
+        const transfer = Math.min(moveCount, maxStack - dstSlot.count);
         if (def?.isFlower) {
           const merged = this.mergeFlowerColorCountsIntoSlot(
             dstSlot,
@@ -14869,7 +14954,8 @@ export class GameEngine {
   }
 
   /**
-   * "Empilhar Iguais": Automatically transfers items from player inventory that match item types already inside the chest.
+   * "Semelhantes": Stores only items from the player's inventory that match item types already present in this chest,
+   * stacking into existing stacks or placing into empty chest slots while respecting the chest's maximum capacity.
    */
   public quickStackToChest(chestId: string): number {
     const chest = this.getChestById(chestId);
@@ -14882,16 +14968,51 @@ export class GameEngine {
         existingTypes.add(sl.itemId);
       }
     }
-    if (existingTypes.size === 0) return 0;
+    if (existingTypes.size === 0) {
+      this.addFloatingText(
+        'Baú vazio — nenhum item semelhante!',
+        this.player.x,
+        this.player.y - 20,
+        '#fbbf24'
+      );
+      return 0;
+    }
 
     let totalMoved = 0;
-    for (let i = 0; i < this.player.inventory.length; i++) {
+    // 1. First transfer matching items from backpack (8..31)
+    for (let i = HOTBAR_SIZE; i < this.player.inventory.length; i++) {
       const pSlot = this.player.inventory[i];
-      if (!pSlot || !existingTypes.has(pSlot.itemId)) continue;
-      // Don't strip single tools/weapons from hotbar unless stackable resource/placeable
-      const def = ITEMS[pSlot.itemId];
-      if (i < HOTBAR_SIZE && def && def.maxStack === 1) continue;
+      if (!pSlot || pSlot.count <= 0 || !existingTypes.has(pSlot.itemId)) {
+        continue;
+      }
+      const moved = this.addItemToChestStorage(
+        slots,
+        pSlot.itemId,
+        pSlot.count,
+        undefined,
+        pSlot
+      );
+      if (moved > 0) {
+        this.consumeInventoryAt(i, moved);
+        totalMoved += moved;
+      }
+    }
 
+    // 2. Also transfer matching items from hotbar (0..7), keeping non-stackable tools/weapons in hand
+    for (let i = 0; i < HOTBAR_SIZE; i++) {
+      const pSlot = this.player.inventory[i];
+      if (!pSlot || pSlot.count <= 0 || !existingTypes.has(pSlot.itemId)) {
+        continue;
+      }
+      const def = ITEMS[pSlot.itemId];
+      if (
+        def &&
+        (def.category === ItemCategory.TOOL ||
+          def.category === ItemCategory.WEAPON) &&
+        def.maxStack === 1
+      ) {
+        continue;
+      }
       const moved = this.addItemToChestStorage(
         slots,
         pSlot.itemId,
@@ -14908,13 +15029,20 @@ export class GameEngine {
     if (totalMoved > 0) {
       soundManager.playCraft();
       this.addFloatingText(
-        `Empilhado no Baú (${totalMoved} itens)`,
+        `Semelhantes guardados (${totalMoved} itens)`,
         this.player.x,
         this.player.y - 22,
         '#4ade80'
       );
       this.commitChestStorageMutation(chest);
       this.emitUiSnapshot();
+    } else {
+      this.addFloatingText(
+        'Nenhum item semelhante ou baú cheio!',
+        this.player.x,
+        this.player.y - 20,
+        '#fbbf24'
+      );
     }
     return totalMoved;
   }
@@ -16679,7 +16807,8 @@ export class GameEngine {
 
   public depositInventorySlotToThermalInput(
     stationType: PlaceableType.CAMPFIRE | PlaceableType.FURNACE,
-    slotIndex: number
+    slotIndex: number,
+    requestedCount?: number
   ): boolean {
     const slot = this.player.inventory[slotIndex];
     if (!slot || slot.count <= 0) return false;
@@ -16758,7 +16887,14 @@ export class GameEngine {
     const currentBatches = st.cookingInputCount || 0;
     const maxStack = ITEMS[slot.itemId]?.maxStack || 99;
     const maxBatches = Math.max(1, Math.floor(maxStack / ingCountPerBatch));
-    const availableBatchesInSlot = Math.floor(slot.count / ingCountPerBatch);
+    const desiredItems =
+      typeof requestedCount === 'number'
+        ? Math.max(
+            ingCountPerBatch,
+            Math.min(slot.count, Math.floor(requestedCount))
+          )
+        : slot.count;
+    const availableBatchesInSlot = Math.floor(desiredItems / ingCountPerBatch);
     const spaceBatches = Math.max(0, maxBatches - currentBatches);
     const batchesToAdd = Math.min(availableBatchesInSlot, spaceBatches);
     if (batchesToAdd <= 0) return false;
@@ -16780,7 +16916,8 @@ export class GameEngine {
 
   public depositInventorySlotToThermalFuel(
     stationType: PlaceableType.CAMPFIRE | PlaceableType.FURNACE,
-    slotIndex: number
+    slotIndex: number,
+    requestedCount?: number
   ): boolean {
     const slot = this.player.inventory[slotIndex];
     if (!slot || slot.count <= 0) return false;
@@ -16813,7 +16950,11 @@ export class GameEngine {
     const currentCount = st.fuelCount || 0;
     const maxStack = ITEMS[fuelItemId]?.maxStack || 99;
     const space = Math.max(0, maxStack - currentCount);
-    const toAdd = Math.min(slot.count, space);
+    const desiredCount =
+      typeof requestedCount === 'number'
+        ? Math.max(1, Math.min(slot.count, Math.floor(requestedCount)))
+        : slot.count;
+    const toAdd = Math.min(desiredCount, space);
     if (toAdd <= 0) return false;
 
     this.consumeInventoryAt(slotIndex, toAdd);
@@ -19937,7 +20078,8 @@ export class GameEngine {
   public moveOrSwapMountAndPlayerSlot(
     creatureId: string,
     source: { container: 'mount' | 'player'; index: number },
-    dest: { container: 'mount' | 'player'; index: number }
+    dest: { container: 'mount' | 'player'; index: number },
+    count?: number
   ): boolean {
     if (
       source.container === dest.container &&
@@ -19984,11 +20126,35 @@ export class GameEngine {
     const srcSlot = getSlot(source);
     if (!srcSlot || srcSlot.count <= 0) return false;
     const dstSlot = getSlot(dest);
+    const moveCount =
+      typeof count === 'number'
+        ? Math.max(1, Math.min(srcSlot.count, Math.floor(count)))
+        : srcSlot.count;
+
+    if (!dstSlot && moveCount < srcSlot.count) {
+      setSlot(dest, { ...srcSlot, count: moveCount });
+      setSlot(source, { ...srcSlot, count: srcSlot.count - moveCount });
+      this.syncPlayerMountedCreatureData();
+      if (this.multiplayer.isOnline && this.multiplayer.role === 'GUEST') {
+        this.multiplayer.sendGuestMountEvent({
+          action: 'mount_inventory',
+          creatureId: cr.id,
+          ownerId: this.getLocalOwnerId(),
+          mountInventory: cr.mountInventory,
+        });
+      } else if (this.multiplayer.isOnline && this.multiplayer.role === 'HOST') {
+        this.multiplayer.sendCreaturesSync(this.entities.creatures);
+      }
+      void this.saveGame(true);
+      soundManager.playPickup();
+      this.emitUiSnapshot();
+      return true;
+    }
 
     if (dstSlot && dstSlot.itemId === srcSlot.itemId) {
       const maxStack = ITEMS[dstSlot.itemId]?.maxStack || 99;
       if (maxStack > 1 && dstSlot.count < maxStack) {
-        const transfer = Math.min(srcSlot.count, maxStack - dstSlot.count);
+        const transfer = Math.min(moveCount, maxStack - dstSlot.count);
         const newDstCount = dstSlot.count + transfer;
         const newSrcCount = srcSlot.count - transfer;
         setSlot(dest, { ...dstSlot, count: newDstCount });
