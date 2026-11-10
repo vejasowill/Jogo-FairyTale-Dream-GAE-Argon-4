@@ -1,6 +1,9 @@
 import {
   CONSTRUCTION_BLUEPRINTS,
   getItemBasePrice,
+  isBenchPlaceable,
+  isChairPlaceable,
+  isSeatPlaceable,
   NATURE_BLUEPRINTS,
 } from '../core/ItemRegistry';
 import {
@@ -3543,6 +3546,148 @@ export class WorldManager {
     return { isVillage: false, isNeighborPair: false, roadDir: 'none' };
   }
 
+  private ogreCampDecisionCache = new Map<string, boolean>();
+  private ogreCampDecisionCacheSeed: number | null = null;
+
+  /**
+   * Deterministically evaluates the connected Dark Forest (BiomeType.TEMPERATE_FOREST) biome patch
+   * containing chunk (cx, cy) so that:
+   * 1. Every Dark Forest biome patch is guaranteed at least 1 Ogre Camp (in its highest-ranked eligible chunk).
+   * 2. Having a 2nd Ogre Camp in the same Dark Forest patch is rare (~16% chance in patches of >= 5 eligible chunks, spaced >= 3 chunks apart).
+   * 3. Ogre Camps NEVER generate near villages (within a 3-chunk radius of any village).
+   */
+  private shouldSpawnOgreCampInDarkForestChunk(cx: number, cy: number): boolean {
+    if (this.ogreCampDecisionCacheSeed !== this.seed) {
+      this.ogreCampDecisionCache.clear();
+      this.ogreCampDecisionCacheSeed = this.seed;
+    }
+    const targetKey = `${cx},${cy}`;
+    const cached = this.ogreCampDecisionCache.get(targetKey);
+    if (cached !== undefined) {
+      return cached;
+    }
+
+    const isDarkForestChunk = (nx: number, ny: number): boolean => {
+      return (
+        this.computeBiomeAtTileV2(nx * CHUNK_SIZE + 8, ny * CHUNK_SIZE + 8) ===
+        BiomeType.TEMPERATE_FOREST
+      );
+    };
+
+    if (!isDarkForestChunk(cx, cy)) {
+      this.ogreCampDecisionCache.set(targetKey, false);
+      return false;
+    }
+
+    const isEligibleCampChunk = (nx: number, ny: number): boolean => {
+      if (nx === 0 && ny === 0) return false;
+      if (Math.hypot(nx, ny) < 1.4) return false;
+      // Never generate an Ogre Camp near any village (3-chunk exclusion radius)
+      for (let vdy = -3; vdy <= 3; vdy++) {
+        for (let vdx = -3; vdx <= 3; vdx++) {
+          if (this.getRareVillageRoleForChunk(nx + vdx, ny + vdy).isVillage) {
+            return false;
+          }
+        }
+      }
+      // Verify the 5x5 camp footprint (local tiles 6..10) is dry land without rivers/lakes
+      const bTx = nx * CHUNK_SIZE;
+      const bTy = ny * CHUNK_SIZE;
+      const sampleOffsets: Array<[number, number]> = [
+        [6, 6],
+        [10, 6],
+        [8, 8],
+        [6, 10],
+        [10, 10],
+      ];
+      for (const [ox, oy] of sampleOffsets) {
+        const tx = bTx + ox;
+        const ty = bTy + oy;
+        if (this.computeBiomeAtTileV2(tx, ty) === BiomeType.OCEAN) {
+          return false;
+        }
+        if (this.getHydrologyAtTile(tx, ty).waterKind !== 'none') {
+          return false;
+        }
+      }
+      return true;
+    };
+
+    // Bounded deterministic BFS across 8-connected Dark Forest chunks to discover the full biome patch
+    const MAX_PATCH_CHUNKS = 72;
+    const visited = new Set<string>([targetKey]);
+    const queue: Array<[number, number]> = [[cx, cy]];
+    let minCx = cx;
+    let minCy = cy;
+
+    while (queue.length > 0 && visited.size < MAX_PATCH_CHUNKS) {
+      const [curX, curY] = queue.shift()!;
+      if (curY < minCy || (curY === minCy && curX < minCx)) {
+        minCx = curX;
+        minCy = curY;
+      }
+      for (let dy = -1; dy <= 1; dy++) {
+        for (let dx = -1; dx <= 1; dx++) {
+          if (dx === 0 && dy === 0) continue;
+          const nx = curX + dx;
+          const ny = curY + dy;
+          const nKey = `${nx},${ny}`;
+          if (visited.has(nKey)) continue;
+          if (isDarkForestChunk(nx, ny)) {
+            visited.add(nKey);
+            queue.push([nx, ny]);
+            if (visited.size >= MAX_PATCH_CHUNKS) break;
+          }
+        }
+        if (visited.size >= MAX_PATCH_CHUNKS) break;
+      }
+    }
+
+    const patchChunks: Array<{ x: number; y: number; key: string; score: number }> = [];
+    for (const key of visited) {
+      const [sx, sy] = key.split(',').map(Number);
+      if (isEligibleCampChunk(sx, sy)) {
+        patchChunks.push({
+          x: sx,
+          y: sy,
+          key,
+          score: hash2D(sx, sy, this.seed + 31415),
+        });
+      }
+    }
+
+    patchChunks.sort((a, b) => {
+      if (b.score !== a.score) return b.score - a.score;
+      if (a.y !== b.y) return a.y - b.y;
+      return a.x - b.x;
+    });
+
+    const selectedKeys = new Set<string>();
+    if (patchChunks.length > 0) {
+      // Guarantee at least 1 Ogre Camp in every Dark Forest biome patch
+      const primary = patchChunks[0];
+      selectedKeys.add(primary.key);
+
+      // Rarely (~16% chance in larger Dark Forest patches), allow a 2nd Ogre Camp if well separated
+      const secondCampRoll = hash2D(minCx, minCy, this.seed + 41953);
+      if (patchChunks.length >= 5 && secondCampRoll < 0.16) {
+        for (let i = 1; i < patchChunks.length; i++) {
+          const cand = patchChunks[i];
+          if (Math.hypot(cand.x - primary.x, cand.y - primary.y) >= 3.0) {
+            selectedKeys.add(cand.key);
+            break;
+          }
+        }
+      }
+    }
+
+    for (const key of visited) {
+      this.ogreCampDecisionCache.set(key, selectedKeys.has(key));
+    }
+
+    return selectedKeys.has(targetKey);
+  }
+
   private tryGenerateChunkLandmark(chunk: ChunkData): void {
     const { cx, cy } = chunk;
     // Never place landmarks on the origin chunk (0,0) so the player's own base spot stays clean
@@ -4403,6 +4548,78 @@ export class WorldManager {
     }
 
     // =========================================================================
+    // OGRE CAMP (Acampamento de Ogro) — Exclusive to Dark Forests (TEMPERATE_FOREST)
+    // Guaranteed at least 1 per Dark Forest biome patch, rarely a 2nd in large patches,
+    // and NEVER generated near villages.
+    // =========================================================================
+    if (
+      centerBiome === BiomeType.TEMPERATE_FOREST &&
+      isBoxAllLand(5, 5, 11, 11) &&
+      this.shouldSpawnOgreCampInDarkForestChunk(cx, cy)
+    ) {
+      clearNodesInBox(5, 5, 11, 11);
+      chunk.landmarkName = 'Acampamento de Ogro';
+      for (let ly = 6; ly <= 10; ly++) {
+        for (let lx = 6; lx <= 10; lx++) {
+          addStruct(lx, ly, PlaceableType.DIRT_PATH, 'dirt_path');
+        }
+      }
+      const campfireSt = addStruct(8, 8, PlaceableType.CAMPFIRE, 'campfire');
+      campfireSt.outputItemId = 'cooked_lamb';
+      campfireSt.outputCount = 3;
+
+      // 4 rustic backless benches around the campfire facing inward toward the fire
+      const northBench = addStruct(
+        8,
+        6,
+        PlaceableType.DARK_OAK_BENCH,
+        'dark_oak_bench',
+        undefined,
+        undefined,
+        undefined,
+        'horizontal'
+      );
+      northBench.rotation = 0; // Facing South ('down') toward campfire
+
+      const eastBench = addStruct(
+        10,
+        8,
+        PlaceableType.DARK_OAK_BENCH,
+        'dark_oak_bench',
+        undefined,
+        undefined,
+        undefined,
+        'vertical'
+      );
+      eastBench.rotation = 3; // Facing West ('left') toward campfire
+
+      const southBench = addStruct(
+        8,
+        10,
+        PlaceableType.DARK_OAK_BENCH,
+        'dark_oak_bench',
+        undefined,
+        undefined,
+        undefined,
+        'horizontal'
+      );
+      southBench.rotation = 2; // Facing North ('up') toward campfire
+
+      const westBench = addStruct(
+        6,
+        8,
+        PlaceableType.DARK_OAK_BENCH,
+        'dark_oak_bench',
+        undefined,
+        undefined,
+        undefined,
+        'vertical'
+      );
+      westBench.rotation = 1; // Facing East ('right') toward campfire
+      return;
+    }
+
+    // =========================================================================
     // ULTRA-RARE NON-VILLAGE LANDMARK GATE
     // Only 1 candidate chunk per 7x7 chunk super-region (49 chunks), and only ~22% of those
     // regions actually spawn a landmark (~1 landmark per ~220 chunks), keeping the world wild and uncrowded.
@@ -4536,6 +4753,7 @@ export class WorldManager {
     // 2C. BANDIT RAIDER STRONGHOLD (Reduto dos Saqueadores) — Fortified wooden palisade camp
     if (
       chunkDist >= 2.2 &&
+      centerBiome !== BiomeType.TEMPERATE_FOREST &&
       (centerZone === EcologicalZone.OVERGROWN_SHRUBLAND ||
         centerZone === EcologicalZone.DENSE_WOODLAND ||
         centerZone === EcologicalZone.CACTUS_SCRUBLAND) &&
@@ -4820,9 +5038,8 @@ export class WorldManager {
       }
     }
 
-    // Gota Solar: 5% chance to be the generated flower in ANY land biome (Plains, Desert, Island)
-    const solarRoll = hash2D(tx, ty, this.seed + 5779);
-    if (solarRoll < 0.05) {
+    // Gota Solar: very rare flower, only considered after a minimum chunk distance and spaced across chunk regions
+    if (this.canSpawnSolarDropFlowerAtTile(tx, ty)) {
       return {
         type: NatureNodeType.FLOWER_SOLAR_DROP,
         flowerColor: 'amarelo',
@@ -4960,6 +5177,94 @@ export class WorldManager {
     return Array.from(newlyDiscoveredIslandChunks);
   }
 
+  private cachedSeedDefaultSpawn: {
+    seed: number;
+    x: number;
+    y: number;
+    tileX: number;
+    tileY: number;
+  } | null = null;
+
+  /**
+   * Enforces that Flor Gota Solar is a very rare flower whose generation is only
+   * considered after a minimum distance in chunks from the world origin and with
+   * a minimum chunk spacing between eligible chunks.
+   */
+  private canSpawnSolarDropFlowerAtTile(tx: number, ty: number): boolean {
+    const cx = Math.floor(tx / CHUNK_SIZE);
+    const cy = Math.floor(ty / CHUNK_SIZE);
+
+    // Minimum distance of 4 chunks from origin before generation is even considered
+    const MIN_ORIGIN_CHUNK_DIST = 4;
+    if (Math.hypot(cx, cy) < MIN_ORIGIN_CHUNK_DIST) {
+      return false;
+    }
+
+    // Divide world into 5x5 chunk regions and only pick at most one inner chunk (1..3)
+    // per qualifying region, guaranteeing a minimum chunk distance between occurrences
+    const REGION_CHUNKS = 5;
+    const regX = Math.floor(cx / REGION_CHUNKS);
+    const regY = Math.floor(cy / REGION_CHUNKS);
+    const regionChance = hash2D(regX, regY, this.seed + 5711);
+    if (regionChance >= 0.25) {
+      return false;
+    }
+
+    const candCx =
+      regX * REGION_CHUNKS +
+      1 +
+      Math.floor(hash2D(regX, regY, this.seed + 5737) * 3);
+    const candCy =
+      regY * REGION_CHUNKS +
+      1 +
+      Math.floor(hash2D(regX, regY, this.seed + 5749) * 3);
+    if (cx !== candCx || cy !== candCy) {
+      return false;
+    }
+
+    // Very rare per-flower roll inside the eligible chunk
+    const solarRoll = hash2D(tx, ty, this.seed + 5779);
+    return solarRoll < 0.015;
+  }
+
+  /**
+   * Returns the canonical, deterministic default spawn/respawn point for this world's seed.
+   * Always returns the exact same initial valid point for a given seed regardless of
+   * subsequent chunk modifications.
+   */
+  public getSeedDefaultSpawnPoint(): {
+    x: number;
+    y: number;
+    tileX: number;
+    tileY: number;
+  } {
+    if (
+      this.cachedSeedDefaultSpawn &&
+      this.cachedSeedDefaultSpawn.seed === this.seed
+    ) {
+      return {
+        x: this.cachedSeedDefaultSpawn.x,
+        y: this.cachedSeedDefaultSpawn.y,
+        tileX: this.cachedSeedDefaultSpawn.tileX,
+        tileY: this.cachedSeedDefaultSpawn.tileY,
+      };
+    }
+
+    const hasExistingChunks = Object.keys(this.chunks).length > 0;
+    const probeWorld = hasExistingChunks
+      ? new WorldManager(this.seed, undefined, this.worldGenVersion)
+      : this;
+    const pt = probeWorld.findInitialPlayerSpawnPoint();
+    this.cachedSeedDefaultSpawn = {
+      seed: this.seed,
+      x: pt.x,
+      y: pt.y,
+      tileX: pt.tileX,
+      tileY: pt.tileY,
+    };
+    return pt;
+  }
+
   /**
    * Finds a natural, valid initial spawn point for the player on a new world without molding
    * or altering the surrounding biome (no forced circular Plains clearing).
@@ -4972,6 +5277,17 @@ export class WorldManager {
     tileX: number;
     tileY: number;
   } {
+    if (
+      this.cachedSeedDefaultSpawn &&
+      this.cachedSeedDefaultSpawn.seed === this.seed
+    ) {
+      return {
+        x: this.cachedSeedDefaultSpawn.x,
+        y: this.cachedSeedDefaultSpawn.y,
+        tileX: this.cachedSeedDefaultSpawn.tileX,
+        tileY: this.cachedSeedDefaultSpawn.tileY,
+      };
+    }
     const isSolidLandmassAnchor = (
       tx: number,
       ty: number,
@@ -5039,6 +5355,7 @@ export class WorldManager {
         const hit = tryFindWalkableTileNearAnchor(0, 0);
         if (hit) {
           cleanupUnexploredProbedChunks();
+          this.cachedSeedDefaultSpawn = { seed: this.seed, ...hit };
           return hit;
         }
       }
@@ -5054,6 +5371,7 @@ export class WorldManager {
           const hit = tryFindWalkableTileNearAnchor(tx, ty);
           if (hit) {
             cleanupUnexploredProbedChunks();
+            this.cachedSeedDefaultSpawn = { seed: this.seed, ...hit };
             return hit;
           }
         }
@@ -5062,12 +5380,14 @@ export class WorldManager {
 
     cleanupUnexploredProbedChunks();
     const fallbackSafe = this.findNearestSafePosition(16, 16, 7.2);
-    return {
+    const fallbackHit = {
       x: fallbackSafe.x,
       y: fallbackSafe.y,
       tileX: Math.floor(fallbackSafe.x / TILE_SIZE),
       tileY: Math.floor(fallbackSafe.y / TILE_SIZE),
     };
+    this.cachedSeedDefaultSpawn = { seed: this.seed, ...fallbackHit };
+    return fallbackHit;
   }
 
   /**
@@ -6391,6 +6711,73 @@ export class WorldManager {
     );
   }
 
+  public static isChairStructure(type?: PlaceableType | null): boolean {
+    return isChairPlaceable(type);
+  }
+
+  public static isBenchStructure(type?: PlaceableType | null): boolean {
+    return isBenchPlaceable(type);
+  }
+
+  public static isSeatStructure(type?: PlaceableType | null): boolean {
+    return isSeatPlaceable(type);
+  }
+
+  /**
+   * Returns the facing Direction ('down' | 'right' | 'up' | 'left') of a rotatable structure.
+   * For connected non-corner benches, aligns with the bench run axis so the sitter always faces perpendicular to the bench plank.
+   */
+  public static getStructureFacingDirection(
+    st: PlacedStructure,
+    connMask = 0
+  ): Direction {
+    const rot: 0 | 1 | 2 | 3 =
+      st.rotation !== undefined
+        ? st.rotation
+        : st.orientation === 'vertical'
+        ? 1
+        : 0;
+
+    if (isBenchPlaceable(st.type) && connMask !== 0) {
+      const hasNS = (connMask & 5) !== 0; // Connected vertically (North/South)
+      const hasEW = (connMask & 10) !== 0; // Connected horizontally (East/West)
+      if (hasEW && !hasNS) {
+        return rot === 2 ? 'up' : 'down';
+      }
+      if (hasNS && !hasEW) {
+        return rot === 3 ? 'left' : 'right';
+      }
+    }
+
+    switch (rot) {
+      case 1:
+        return 'right';
+      case 2:
+        return 'up';
+      case 3:
+        return 'left';
+      case 0:
+      default:
+        return 'down';
+    }
+  }
+
+  /**
+   * Returns true when a bench at `(tx, ty)` connects to adjacent benches on both axes
+   * (at least one North/South bench neighbor AND at least one East/West bench neighbor),
+   * forming a corner bench ("banco de quina"), which cannot be sat on.
+   */
+  public isCornerBenchAt(
+    tx: number,
+    ty: number,
+    st?: PlacedStructure
+  ): boolean {
+    const target = st || this.getStructureAtTile(tx, ty);
+    if (!target || !isBenchPlaceable(target.type)) return false;
+    const mask = this.getStructureConnectionMask(tx, ty, target.type);
+    return (mask & 5) !== 0 && (mask & 10) !== 0;
+  }
+
   public static getStructureLayerCategory(
     type: PlaceableType
   ): 'GROUND' | 'WALL' | 'FURNITURE' {
@@ -7161,9 +7548,7 @@ export class WorldManager {
             nodeType = NatureNodeType.SHORT_GRASS;
           }
         } else if (biome === BiomeType.ISLAND) {
-          if (roll < 0.10) {
-            nodeType = NatureNodeType.FLOWER_SOLAR_DROP;
-          } else if (roll < 0.18) {
+          if (roll < 0.14) {
             nodeType = NatureNodeType.FLOWER_SUNFLOWER;
           } else if (roll < 0.54) {
             nodeType = NatureNodeType.TALL_GRASS;
@@ -7174,12 +7559,10 @@ export class WorldManager {
           // PLAINS and default fertile land
           if (roll < 0.06) {
             nodeType = NatureNodeType.FLOWER_TULIP;
-          } else if (roll < 0.11) {
+          } else if (roll < 0.12) {
             nodeType = NatureNodeType.FLOWER_SUNFLOWER;
-          } else if (roll < 0.15) {
-            nodeType = NatureNodeType.FLOWER_LILY;
           } else if (roll < 0.18) {
-            nodeType = NatureNodeType.FLOWER_SOLAR_DROP;
+            nodeType = NatureNodeType.FLOWER_LILY;
           } else if (roll < 0.56) {
             nodeType = NatureNodeType.TALL_GRASS;
           } else {
@@ -7202,11 +7585,9 @@ export class WorldManager {
         const isFlowerNode =
           nodeType === NatureNodeType.FLOWER_TULIP ||
           nodeType === NatureNodeType.FLOWER_LILY ||
-          nodeType === NatureNodeType.FLOWER_SUNFLOWER ||
-          nodeType === NatureNodeType.FLOWER_SOLAR_DROP;
+          nodeType === NatureNodeType.FLOWER_SUNFLOWER;
         const flowerColor: ClothingColorId | undefined = isFlowerNode
-          ? nodeType === NatureNodeType.FLOWER_SUNFLOWER ||
-            nodeType === NatureNodeType.FLOWER_SOLAR_DROP
+          ? nodeType === NatureNodeType.FLOWER_SUNFLOWER
             ? 'amarelo'
             : flowerColors[Math.floor(Math.random() * flowerColors.length)]
           : undefined;

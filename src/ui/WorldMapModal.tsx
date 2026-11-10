@@ -1180,6 +1180,23 @@ export const WorldMapModal: React.FC<WorldMapModalProps> = ({
               break;
             }
 
+            case PlaceableType.WOOD_CHAIR:
+            case PlaceableType.WOOD_BENCH:
+              drawMiniWallSegment(st, '#451a03', '#c28442');
+              break;
+            case PlaceableType.DARK_OAK_CHAIR:
+            case PlaceableType.DARK_OAK_BENCH:
+              drawMiniWallSegment(st, '#140904', '#5c3a21');
+              break;
+            case PlaceableType.PINE_CHAIR:
+            case PlaceableType.PINE_BENCH:
+              drawMiniWallSegment(st, '#3d2410', '#e2be8a');
+              break;
+            case PlaceableType.PALM_CHAIR:
+            case PlaceableType.PALM_BENCH:
+              drawMiniWallSegment(st, '#42280e', '#f1c26b');
+              break;
+
             case PlaceableType.CHEST: {
               const cw = Math.max(3, cellSize);
               ctx.fillStyle = '#2a1205';

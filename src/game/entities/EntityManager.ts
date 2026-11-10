@@ -1752,6 +1752,50 @@ export class EntityManager {
       return;
     }
 
+    if (chunk.landmarkName === 'Acampamento de Ogro') {
+      const benches = chunk.structures.filter((s) =>
+        WorldManager.isBenchStructure(s.type)
+      );
+      const ogreCount =
+        ((Math.abs(chunk.cx * 73856093) ^
+          Math.abs(chunk.cy * 19349663) ^
+          world.seed) >>>
+          0) %
+          2 ===
+        0
+          ? 4
+          : 3;
+
+      for (let i = 0; i < Math.min(ogreCount, Math.max(4, benches.length)); i++) {
+        const bench = benches[i];
+        const bx = bench
+          ? bench.tileX * TILE_SIZE + TILE_SIZE / 2
+          : centerWx + (i === 0 ? 0 : i === 1 ? 64 : i === 2 ? 0 : -64);
+        const by = bench
+          ? bench.tileY * TILE_SIZE + TILE_SIZE / 2
+          : centerWy + (i === 0 ? -64 : i === 1 ? 0 : i === 2 ? 64 : 0);
+        const isElite = i === 0;
+        const ogre = this.trySpawnCreatureAt(world, CreatureKind.OGRE, bx, by, {
+          isElite,
+          customName: isElite ? 'Ogro de Elite' : 'Ogro',
+          homeX: centerWx,
+          homeY: centerWy,
+          ignoreNaturalChunkCap: true,
+          forceWalkable: true,
+        });
+        if (ogre && bench) {
+          ogre.x = bx;
+          ogre.y = by;
+          ogre.vx = 0;
+          ogre.vy = 0;
+          ogre.isSitting = true;
+          ogre.sittingStructureId = bench.id;
+          ogre.direction = WorldManager.getStructureFacingDirection(bench);
+        }
+      }
+      return;
+    }
+
     if (chunk.landmarkName === 'Santuário Primordial') {
       this.trySpawnCreatureAt(
         world,

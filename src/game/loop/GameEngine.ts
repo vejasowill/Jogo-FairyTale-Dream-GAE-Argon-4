@@ -356,6 +356,37 @@ export class GameEngine {
       this.metadata.createdWorldGenVersion ?? this.metadata.worldGenVersion ?? 2,
       saveData.undergroundChunks
     );
+    const seedDefaultSpawn = this.world.getSeedDefaultSpawnPoint();
+    if (isGuestSession && !this.guestPlayers[localPersistentUid]) {
+      let hasSavedLocalGuest = false;
+      try {
+        hasSavedLocalGuest = Boolean(
+          localStorage.getItem(`wildborn_guest_player_${this.metadata.id}`)
+        );
+      } catch {
+        hasSavedLocalGuest = false;
+      }
+      if (!hasSavedLocalGuest) {
+        this.player.x = seedDefaultSpawn.x;
+        this.player.y = seedDefaultSpawn.y;
+      }
+    }
+    const isDefaultRespawnLabel =
+      !this.player.respawnLabel ||
+      this.player.respawnLabel === 'Acampamento Inicial';
+    if (
+      isDefaultRespawnLabel ||
+      typeof this.player.respawnX !== 'number' ||
+      !Number.isFinite(this.player.respawnX) ||
+      typeof this.player.respawnY !== 'number' ||
+      !Number.isFinite(this.player.respawnY)
+    ) {
+      this.player.respawnX = seedDefaultSpawn.x;
+      this.player.respawnY = seedDefaultSpawn.y;
+      this.player.respawnLabel = 'Acampamento Inicial';
+      this.player.respawnIsUnderground = false;
+    }
+
     this.world.setActiveLayer(
       this.player.isUnderground ? 'underground' : 'surface'
     );
@@ -373,6 +404,11 @@ export class GameEngine {
     this.droppedItems = saveData.droppedItems || [];
     this.deathBags = Array.isArray(saveData.deathBags) ? saveData.deathBags : [];
     this.waypoints = saveData.waypoints || [];
+    const originWp = this.waypoints.find((w) => w && w.id === 'wp_origin');
+    if (originWp) {
+      originWp.tileX = seedDefaultSpawn.tileX;
+      originWp.tileY = seedDefaultSpawn.tileY;
+    }
     this.settings = settings;
     this.onUiChange = onUiChange || null;
     this.onStationInteract = onStationInteract || null;
@@ -1263,6 +1299,23 @@ export class GameEngine {
       this.updateSleepingState(dt);
     }
 
+    if (this.sitCooldownTimer > 0) {
+      this.sitCooldownTimer = Math.max(0, this.sitCooldownTimer - dt);
+    }
+
+    if (this.player.isSitting) {
+      const seatSt = this.findSeatStructureById(this.player.sittingStructureId);
+      if (
+        !seatSt ||
+        (WorldManager.isBenchStructure(seatSt.type) &&
+          this.world.isCornerBenchAt(seatSt.tileX, seatSt.tileY, seatSt))
+      ) {
+        this.stopSitting();
+      } else if (isInputMoving && this.sitCooldownTimer <= 0) {
+        this.stopSitting();
+      }
+    }
+
     // If the local player is seated in Seat 2 (Passenger) of a Boat, they never steer the Boat!
     // Even if Seat 1 (Pilot) is empty, the Passenger remains stationary in Seat 2 until exiting and re-boarding Seat 1.
     const isBoatPassengerOnly =
@@ -1271,6 +1324,25 @@ export class GameEngine {
       this.isLocalPlayerBoatPassenger(activeMount);
 
     if (this.player.isSleeping) {
+      this.player.vx = 0;
+      this.player.vy = 0;
+      this.player.isMoving = false;
+      this.player.animFrame = 0;
+    } else if (this.player.isSitting) {
+      const seatSt = this.findSeatStructureById(this.player.sittingStructureId);
+      if (seatSt) {
+        this.player.x = seatSt.tileX * TILE_SIZE + TILE_SIZE / 2;
+        this.player.y = seatSt.tileY * TILE_SIZE + TILE_SIZE / 2;
+        const connMask = this.world.getStructureConnectionMask(
+          seatSt.tileX,
+          seatSt.tileY,
+          seatSt.type
+        );
+        this.player.direction = WorldManager.getStructureFacingDirection(
+          seatSt,
+          connMask
+        );
+      }
       this.player.vx = 0;
       this.player.vy = 0;
       this.player.isMoving = false;
@@ -1426,9 +1498,10 @@ export class GameEngine {
     // Keep player.mountedCreatureData continuously synchronized with activeMount (integrated with player body)
     this.syncPlayerMountedCreatureData();
 
-    // Secondary post-movement check to guarantee the character never stays stuck inside a hitbox (skip while sleeping in bed!)
+    // Secondary post-movement check to guarantee the character never stays stuck inside a hitbox (skip while sleeping in bed or sitting on a chair/bench!)
     if (
       !this.player.isSleeping &&
+      !this.player.isSitting &&
       !isBoatMount &&
       !this.canEntityOccupy(this.player.x, this.player.y)
     ) {
@@ -1532,6 +1605,9 @@ export class GameEngine {
    * placed on top of them, or any collision overlap).
    */
   private pushPlayerOutOfHitbox(dt: number, immediate = false): void {
+    if (this.player.isSleeping || this.player.isSitting) {
+      return;
+    }
     const isHumanPlayer =
       !this.player.mountedEntityId && !this.player.mountedCreatureData;
     if (this.canEntityOccupy(this.player.x, this.player.y, isHumanPlayer)) {
@@ -5158,6 +5234,87 @@ export class GameEngine {
           }
         }
 
+        // OGRE CAMP ("Acampamento de Ogro"): Ogres remain seated on the camp benches around the campfire
+        // while no player approaches the camp (and none of the camp ogres have been attacked/aggroed).
+        if (cr.isSitting) {
+          const seatSt = cr.sittingStructureId
+            ? this.findSeatStructureById(cr.sittingStructureId)
+            : null;
+          const campCenterX = cr.homeX ?? cr.x;
+          const campCenterY = cr.homeY ?? cr.y;
+          let playerApproachedCamp =
+            this.player.hp > 0 &&
+            !this.player.isSleeping &&
+            localPlayerUnder === crUnder &&
+            (distToPlayer <= 215 ||
+              Math.hypot(this.player.x - campCenterX, this.player.y - campCenterY) <=
+                225);
+          if (!playerApproachedCamp) {
+            for (const rp of this.remotePlayersList) {
+              if (
+                rp.hp > 0 &&
+                !rp.isSleeping &&
+                Boolean(rp.isUnderground) === crUnder &&
+                (Math.hypot(rp.x - cr.x, rp.y - cr.y) <= 215 ||
+                  Math.hypot(rp.x - campCenterX, rp.y - campCenterY) <= 225)
+              ) {
+                playerApproachedCamp = true;
+                break;
+              }
+            }
+          }
+          const campMateAlerted = this.entities.creatures.some(
+            (other) =>
+              other.id !== cr.id &&
+              other.kind === CreatureKind.OGRE &&
+              other.hp > 0 &&
+              Boolean(other.isUnderground) === crUnder &&
+              !other.isSitting &&
+              (other.aiState === 'chase' || other.hp < other.maxHp) &&
+              Math.hypot(
+                (other.homeX ?? other.x) - campCenterX,
+                (other.homeY ?? other.y) - campCenterY
+              ) <= 160
+          );
+
+          if (
+            !seatSt ||
+            playerApproachedCamp ||
+            closestEnemyType !== 'none' ||
+            cr.hp < cr.maxHp ||
+            Boolean(cr.retaliateTargetId) ||
+            campMateAlerted
+          ) {
+            cr.isSitting = false;
+            cr.sittingStructureId = null;
+            const safePos = this.world.findNearestSafePosition(
+              cr.x,
+              cr.y,
+              9.5,
+              false
+            );
+            cr.x = safePos.x;
+            cr.y = safePos.y;
+          } else {
+            cr.x = seatSt.tileX * TILE_SIZE + TILE_SIZE / 2;
+            cr.y = seatSt.tileY * TILE_SIZE + TILE_SIZE / 2;
+            const benchMask = this.world.getStructureConnectionMask(
+              seatSt.tileX,
+              seatSt.tileY,
+              seatSt.type
+            );
+            cr.direction = WorldManager.getStructureFacingDirection(
+              seatSt,
+              benchMask
+            );
+            cr.vx = 0;
+            cr.vy = 0;
+            cr.animFrame = 0;
+            cr.aiState = 'idle';
+            continue;
+          }
+        }
+
         // STONE_GOLEM remains camouflaged as a dormant monolith until any enemy approaches within 155px or hits it
         if (
           cr.kind === CreatureKind.STONE_GOLEM &&
@@ -5654,7 +5811,13 @@ export class GameEngine {
     if (count < 2) return;
 
     const isEligible = (c: CreatureEntity): boolean => {
-      if (!c || c.hp <= 0 || c.isInsideHouse || c.kind === CreatureKind.BOAT) {
+      if (
+        !c ||
+        c.hp <= 0 ||
+        c.isInsideHouse ||
+        c.isSitting ||
+        c.kind === CreatureKind.BOAT
+      ) {
         return false;
       }
       if (this.player.mountedEntityId === c.id) return false;
@@ -7501,11 +7664,13 @@ export class GameEngine {
       if (priorityLockTarget) {
         const dx = priorityLockTarget.x - this.player.x;
         const dy = priorityLockTarget.y - this.player.y;
-        this.player.direction = EntityManager.vectorToDirection(
-          dx,
-          dy,
-          this.player.direction
-        );
+        if (!this.player.isSitting) {
+          this.player.direction = EntityManager.vectorToDirection(
+            dx,
+            dy,
+            this.player.direction
+          );
+        }
         dirVec = this.getDirectionOffset(this.player.direction);
       }
 
@@ -7693,7 +7858,9 @@ export class GameEngine {
 
     // B1. Agricultural Tools: Hoe (Tilling & Flattening Tilled Soil)
     if (equippedTool === ToolType.HOE) {
-      const tile = this.world.worldToTile(forwardHitX, forwardHitY);
+      const tile =
+        this.getTargetTileForPlacement() ||
+        this.world.worldToTile(forwardHitX, forwardHitY);
       const { cx, cy } = this.world.tileToChunk(tile.tx, tile.ty);
       const chunk = this.world.chunks[WorldManager.chunkKey(cx, cy)];
       const existingSoil = chunk?.structures.find(
@@ -7777,7 +7944,9 @@ export class GameEngine {
 
     // B1_SHOVEL. Shovel Tool (Pá): Creates or flattens Beaten Earth / Dirt Paths (Caminho de Solo Batido)
     if (equippedTool === ToolType.SHOVEL) {
-      const tile = this.world.worldToTile(forwardHitX, forwardHitY);
+      const tile =
+        this.getTargetTileForPlacement() ||
+        this.world.worldToTile(forwardHitX, forwardHitY);
       const { cx, cy } = this.world.tileToChunk(tile.tx, tile.ty);
       const chunk = this.world.chunks[WorldManager.chunkKey(cx, cy)];
       const existingPath = chunk?.structures.find(
@@ -8692,6 +8861,11 @@ export class GameEngine {
   public performInteractAction(): void {
     if (this.isPaused || this.isGameOver) return;
 
+    if (this.player.isSitting) {
+      this.stopSitting();
+      return;
+    }
+
     const target = this.getAimedTarget();
     if (this.tryUseWateringCanInteraction(target)) {
       return;
@@ -8853,8 +9027,25 @@ export class GameEngine {
       return;
     }
 
-    // 1. Interacting with a Placed Crafting Station or Interactive Door/Gate
+    // 1. Interacting with a Placed Crafting Station, Seat (Chair/Bench), or Interactive Door/Gate
     if (target.kind === 'station' && target.stationType) {
+      if (WorldManager.isSeatStructure(target.stationType)) {
+        const { tx, ty } = this.world.worldToTile(target.worldX, target.worldY);
+        const { cx, cy } = this.world.tileToChunk(tx, ty);
+        const chunk = this.world.chunks[WorldManager.chunkKey(cx, cy)];
+        const seatSt = chunk?.structures.find(
+          (s) =>
+            (target.structureId ? s.id === target.structureId : true) &&
+            s.tileX === tx &&
+            s.tileY === ty &&
+            WorldManager.isSeatStructure(s.type)
+        );
+        if (seatSt) {
+          this.startSittingOnStructure(seatSt);
+        }
+        return;
+      }
+
       if (WorldManager.isDoorOrGateStructure(target.stationType)) {
         const { tx, ty } = this.world.worldToTile(target.worldX, target.worldY);
         const { cx, cy } = this.world.tileToChunk(tx, ty);
@@ -10264,13 +10455,15 @@ export class GameEngine {
       return;
     }
 
-    // Face the water tile where the bobber landed
+    // Face the water tile where the bobber landed (unless seated on a chair/bench)
     const dx = targetBobberX - this.player.x;
     const dy = targetBobberY - this.player.y;
-    if (Math.abs(dx) > Math.abs(dy)) {
-      this.player.direction = dx >= 0 ? 'right' : 'left';
-    } else {
-      this.player.direction = dy >= 0 ? 'down' : 'up';
+    if (!this.player.isSitting) {
+      if (Math.abs(dx) > Math.abs(dy)) {
+        this.player.direction = dx >= 0 ? 'right' : 'left';
+      } else {
+        this.player.direction = dy >= 0 ? 'down' : 'up';
+      }
     }
 
     this.player.stamina = Math.max(0, this.player.stamina - 4);
@@ -10758,7 +10951,8 @@ export class GameEngine {
             st.type !== PlaceableType.CHEST &&
             st.type !== PlaceableType.VILLAGE_WELL &&
             st.type !== PlaceableType.MARKET_STALL &&
-            !WorldManager.isDoorOrGateStructure(st.type)
+            !WorldManager.isDoorOrGateStructure(st.type) &&
+            !WorldManager.isSeatStructure(st.type)
           ) {
             continue;
           }
@@ -10943,6 +11137,14 @@ export class GameEngine {
                   : st.cookingInputCount && st.cookingInputCount > 0
                   ? 'Fundindo na Fornalha... 🔥'
                   : 'Abrir Fornalha 🔥'
+                : WorldManager.isSeatStructure(st.type)
+                ? WorldManager.isBenchStructure(st.type) &&
+                  this.world.isCornerBenchAt(st.tileX, st.tileY, st)
+                  ? 'Banco de Quina (Não é possível sentar)'
+                  : this.player.isSitting &&
+                    this.player.sittingStructureId === st.id
+                  ? 'Levantar 🪑'
+                  : 'Sentar 🪑'
                 : 'Interagir';
 
             candidates.push({
@@ -12377,6 +12579,10 @@ export class GameEngine {
       return;
     }
 
+    if (this.player.isSitting) {
+      this.stopSitting();
+    }
+
     const reduction = this.getTotalDefenseBonus();
     const finalDmg = Math.max(1, Math.round(rawAmount * (1 - reduction)));
 
@@ -12663,16 +12869,26 @@ export class GameEngine {
       this.player.isUnderground = false;
       this.world.setActiveLayer('surface');
     }
-    const targetRespawnX =
+    const seedDefaultSpawn = this.world.getSeedDefaultSpawnPoint();
+    const hasCustomCheckpoint =
+      Boolean(this.player.respawnLabel) &&
+      this.player.respawnLabel !== 'Acampamento Inicial' &&
       typeof this.player.respawnX === 'number' &&
-      Number.isFinite(this.player.respawnX)
-        ? this.player.respawnX
-        : 16;
-    const targetRespawnY =
+      Number.isFinite(this.player.respawnX) &&
       typeof this.player.respawnY === 'number' &&
-      Number.isFinite(this.player.respawnY)
-        ? this.player.respawnY
-        : 16;
+      Number.isFinite(this.player.respawnY);
+    if (!hasCustomCheckpoint) {
+      this.player.respawnX = seedDefaultSpawn.x;
+      this.player.respawnY = seedDefaultSpawn.y;
+      this.player.respawnLabel = 'Acampamento Inicial';
+      this.player.respawnIsUnderground = false;
+    }
+    const targetRespawnX = hasCustomCheckpoint
+      ? this.player.respawnX!
+      : seedDefaultSpawn.x;
+    const targetRespawnY = hasCustomCheckpoint
+      ? this.player.respawnY!
+      : seedDefaultSpawn.y;
     const safeRespawn = this.world.findNearestSafePosition(
       targetRespawnX,
       targetRespawnY,
@@ -12907,10 +13123,11 @@ export class GameEngine {
     // 2. Special Recall Crystal Use: Teleport to Base/Waypoint
     if (item.specialUse === 'recall') {
       this.consumeInventoryAt(slotIndex, 1);
+      const seedDefaultSpawn = this.world.getSeedDefaultSpawnPoint();
       const destTile =
         this.waypoints.length > 0
           ? { tx: this.waypoints[0].tileX, ty: this.waypoints[0].tileY }
-          : { tx: 0, ty: 0 };
+          : { tx: seedDefaultSpawn.tileX, ty: seedDefaultSpawn.tileY };
       const destX = destTile.tx * TILE_SIZE + 16;
       const destY = destTile.ty * TILE_SIZE + 16;
 
@@ -17598,27 +17815,48 @@ export class GameEngine {
     }
   }
 
+  private thermalStationTickAccum = new Map<string, number>();
+
   private tickSingleThermalStation(st: PlacedStructure, dt: number): boolean {
     let changed = false;
     const isWeaving = st.type === PlaceableType.WEAVING_TABLE;
-    const hasQueue =
-      Boolean(st.cookingRecipeId) && (st.cookingInputCount || 0) > 0;
 
-    // 1. Decay active fuel burn timer (only for thermal stations)
-    if (!isWeaving && (st.fuelBurnRemaining || 0) > 0) {
-      st.fuelBurnRemaining = Math.max(0, (st.fuelBurnRemaining || 0) - dt);
+    // Normalize any legacy fractional state into clean integer seconds
+    if (
+      typeof st.fuelBurnRemaining === 'number' &&
+      !Number.isInteger(st.fuelBurnRemaining)
+    ) {
+      st.fuelBurnRemaining = Math.max(0, Math.ceil(st.fuelBurnRemaining));
+      changed = true;
+    }
+    if (
+      typeof st.cookingProgress === 'number' &&
+      !Number.isInteger(st.cookingProgress)
+    ) {
+      st.cookingProgress = Math.max(0, Math.floor(st.cookingProgress));
       changed = true;
     }
 
-    // 2. If fuel flame ran out and we still have batches queued, consume 1 fuel item from the fuel slot
+    const hasQueueInit =
+      Boolean(st.cookingRecipeId) && (st.cookingInputCount || 0) > 0;
+    const hasActiveBurnInit = !isWeaving && (st.fuelBurnRemaining || 0) > 0;
+    const hasCoolingInit =
+      !isWeaving &&
+      hasQueueInit &&
+      (st.fuelBurnRemaining || 0) <= 0 &&
+      (st.fuelCount || 0) <= 0 &&
+      (st.cookingProgress || 0) > 0;
+
+    // Immediately ignite first fuel unit on the frame items + fuel are both ready
+    // so the player sees the flame light up right away at its full integer burnTimeSec
     if (
       !isWeaving &&
       (st.fuelBurnRemaining || 0) <= 0 &&
-      hasQueue &&
+      hasQueueInit &&
       st.fuelItemId &&
       (st.fuelCount || 0) > 0
     ) {
-      const burnSec = getFuelBurnTimeSec(st.fuelItemId);
+      const burnSec = Math.round(getFuelBurnTimeSec(st.fuelItemId));
       if (burnSec > 0) {
         st.fuelCount = (st.fuelCount || 0) - 1;
         if (st.fuelCount <= 0) {
@@ -17627,82 +17865,159 @@ export class GameEngine {
         }
         st.fuelBurnRemaining = burnSec;
         st.fuelBurnMax = burnSec;
+        this.thermalStationTickAccum.set(st.id, 0);
         changed = true;
       }
     }
 
-    // 3. Advance cooking / smelting / weaving progress
-    if (hasQueue && (isWeaving || (st.fuelBurnRemaining || 0) > 0)) {
-      const recipe = RECIPES.find((r) => r.id === st.cookingRecipeId);
-      if (!recipe) {
-        st.cookingRecipeId = null;
-        st.weavingTargetItemId = null;
-        st.cookingInputCount = 0;
-        st.cookingProgress = 0;
-        return true;
-      }
-      const duration = Math.max(1, st.cookingDuration || recipe.craftTimeSec || 6);
-      st.cookingDuration = duration;
-      st.cookingProgress = (st.cookingProgress || 0) + dt;
-      changed = true;
+    const isStationActive =
+      (Boolean(st.cookingRecipeId) && (st.cookingInputCount || 0) > 0) ||
+      (!isWeaving && (st.fuelBurnRemaining || 0) > 0) ||
+      hasCoolingInit;
 
-      if (st.cookingProgress >= duration) {
-        st.cookingProgress -= duration;
-        st.cookingInputCount = Math.max(0, (st.cookingInputCount || 0) - 1);
+    if (!isStationActive) {
+      this.thermalStationTickAccum.delete(st.id);
+      return changed;
+    }
 
-        const targetOutId =
-          isWeaving && st.weavingTargetItemId
-            ? st.weavingTargetItemId
-            : recipe.resultItemId;
+    let accum = (this.thermalStationTickAccum.get(st.id) || 0) + dt;
+    while (accum >= 1.0) {
+      accum -= 1.0;
 
-        if (
-          st.outputItemId &&
-          st.outputItemId !== targetOutId &&
-          (st.outputCount || 0) > 0
-        ) {
-          this.spawnDrop(
-            st.outputItemId,
-            st.outputCount!,
-            st.tileX * TILE_SIZE + 16,
-            st.tileY * TILE_SIZE + 16
-          );
-          st.outputCount = 0;
+      const hasQueue =
+        Boolean(st.cookingRecipeId) && (st.cookingInputCount || 0) > 0;
+
+      // Ensure fuel is available for this 1-second integer work unit if needed
+      if (
+        !isWeaving &&
+        (st.fuelBurnRemaining || 0) <= 0 &&
+        hasQueue &&
+        st.fuelItemId &&
+        (st.fuelCount || 0) > 0
+      ) {
+        const burnSec = Math.round(getFuelBurnTimeSec(st.fuelItemId));
+        if (burnSec > 0) {
+          st.fuelCount = (st.fuelCount || 0) - 1;
+          if (st.fuelCount <= 0) {
+            st.fuelItemId = null;
+            st.fuelCount = 0;
+          }
+          st.fuelBurnRemaining = burnSec;
+          st.fuelBurnMax = burnSec;
+          changed = true;
         }
+      }
 
-        st.outputItemId = targetOutId;
-        st.outputCount = (st.outputCount || 0) + recipe.resultCount;
+      const hasFuelForThisSecond =
+        isWeaving || (st.fuelBurnRemaining || 0) > 0;
 
-        if (st.cookingInputCount <= 0) {
+      // 1. Consume 1 integer second of fuel burn time
+      if (!isWeaving && (st.fuelBurnRemaining || 0) > 0) {
+        st.fuelBurnRemaining = Math.max(
+          0,
+          Math.round(st.fuelBurnRemaining || 0) - 1
+        );
+        changed = true;
+      }
+
+      // 2. Advance cooking / smelting / weaving by 1 integer second if we had active flame/weaving during this second
+      if (hasQueue && hasFuelForThisSecond) {
+        const recipe = RECIPES.find((r) => r.id === st.cookingRecipeId);
+        if (!recipe) {
           st.cookingRecipeId = null;
           st.weavingTargetItemId = null;
-          st.weavingDyeItemId = null;
           st.cookingInputCount = 0;
           st.cookingProgress = 0;
+          this.thermalStationTickAccum.delete(st.id);
+          return true;
         }
-
-        const sx = st.tileX * TILE_SIZE + TILE_SIZE / 2;
-        const sy = st.tileY * TILE_SIZE + TILE_SIZE / 2;
-        if (Math.hypot(sx - this.player.x, sy - this.player.y) <= 260) {
-          soundManager.playCraft();
-          this.renderer.spawnBurst(sx, sy - 6, 'SPARK', 8);
-          const outName = ITEMS[targetOutId]?.name || targetOutId;
-          this.addFloatingText(
-            `${isWeaving ? '🧵' : '🔥'} Pronto: +${recipe.resultCount}x ${outName}`,
-            sx,
-            sy - 20,
-            '#fde047'
-          );
-        }
-        this.gainXp(18);
-      }
-    } else if (!isWeaving && hasQueue && (st.fuelBurnRemaining || 0) <= 0) {
-      // Without fire, progress cools down gently
-      if ((st.cookingProgress || 0) > 0) {
-        st.cookingProgress = Math.max(0, (st.cookingProgress || 0) - dt * 0.5);
+        const duration = Math.max(
+          1,
+          Math.round(st.cookingDuration || recipe.craftTimeSec || 6)
+        );
+        st.cookingDuration = duration;
+        st.cookingProgress = Math.round(st.cookingProgress || 0) + 1;
         changed = true;
+
+        if (st.cookingProgress >= duration) {
+          st.cookingProgress = Math.max(0, st.cookingProgress - duration);
+          st.cookingInputCount = Math.max(0, (st.cookingInputCount || 0) - 1);
+
+          const targetOutId =
+            isWeaving && st.weavingTargetItemId
+              ? st.weavingTargetItemId
+              : recipe.resultItemId;
+
+          if (
+            st.outputItemId &&
+            st.outputItemId !== targetOutId &&
+            (st.outputCount || 0) > 0
+          ) {
+            this.spawnDrop(
+              st.outputItemId,
+              st.outputCount!,
+              st.tileX * TILE_SIZE + 16,
+              st.tileY * TILE_SIZE + 16
+            );
+            st.outputCount = 0;
+          }
+
+          st.outputItemId = targetOutId;
+          st.outputCount = (st.outputCount || 0) + recipe.resultCount;
+
+          if (st.cookingInputCount <= 0) {
+            st.cookingRecipeId = null;
+            st.weavingTargetItemId = null;
+            st.weavingDyeItemId = null;
+            st.cookingInputCount = 0;
+            st.cookingProgress = 0;
+          } else if (
+            !isWeaving &&
+            (st.fuelBurnRemaining || 0) <= 0 &&
+            st.fuelItemId &&
+            (st.fuelCount || 0) > 0
+          ) {
+            // Immediately light the next fuel unit if more items remain in the queue
+            const nextBurnSec = Math.round(getFuelBurnTimeSec(st.fuelItemId));
+            if (nextBurnSec > 0) {
+              st.fuelCount = (st.fuelCount || 0) - 1;
+              if (st.fuelCount <= 0) {
+                st.fuelItemId = null;
+                st.fuelCount = 0;
+              }
+              st.fuelBurnRemaining = nextBurnSec;
+              st.fuelBurnMax = nextBurnSec;
+            }
+          }
+
+          const sx = st.tileX * TILE_SIZE + TILE_SIZE / 2;
+          const sy = st.tileY * TILE_SIZE + TILE_SIZE / 2;
+          if (Math.hypot(sx - this.player.x, sy - this.player.y) <= 260) {
+            soundManager.playCraft();
+            this.renderer.spawnBurst(sx, sy - 6, 'SPARK', 8);
+            const outName = ITEMS[targetOutId]?.name || targetOutId;
+            this.addFloatingText(
+              `${isWeaving ? '🧵' : '🔥'} Pronto: +${recipe.resultCount}x ${outName}`,
+              sx,
+              sy - 20,
+              '#fde047'
+            );
+          }
+          this.gainXp(18);
+        }
+      } else if (!isWeaving && hasQueue && !hasFuelForThisSecond) {
+        // Without fire, progress cools down by 1 integer second per tick
+        if ((st.cookingProgress || 0) > 0) {
+          st.cookingProgress = Math.max(
+            0,
+            Math.round(st.cookingProgress || 0) - 1
+          );
+          changed = true;
+        }
       }
     }
 
+    this.thermalStationTickAccum.set(st.id, accum);
     return changed;
   }
 
@@ -18103,7 +18418,9 @@ export class GameEngine {
       (heldItem.category !== ItemCategory.PLACEABLE &&
         heldItem.id !== 'wood_boat' &&
         !heldItem.seedCropType &&
-        heldItem.id !== 'bone_fertilizer')
+        heldItem.id !== 'bone_fertilizer' &&
+        heldItem.toolType !== ToolType.HOE &&
+        heldItem.toolType !== ToolType.SHOVEL)
     ) {
       return null;
     }
@@ -18473,6 +18790,158 @@ export class GameEngine {
         reason,
         this.player.x,
         this.player.y - 22,
+        '#fde047'
+      );
+    }
+    if (this.multiplayer.isOnline) {
+      this.multiplayer.sendPlayerState(this.player);
+    }
+    this.emitUiSnapshot();
+  }
+
+  private sitCooldownTimer = 0;
+
+  private findSeatStructureById(
+    structureId?: string | null
+  ): PlacedStructure | null {
+    if (!structureId) return null;
+    for (const chunk of Object.values(this.world.chunks)) {
+      if (!chunk) continue;
+      const found = chunk.structures.find(
+        (s) => s.id === structureId && WorldManager.isSeatStructure(s.type)
+      );
+      if (found) return found;
+    }
+    return null;
+  }
+
+  public startSittingOnStructure(seatSt: PlacedStructure): void {
+    const sx = seatSt.tileX * TILE_SIZE + TILE_SIZE / 2;
+    const sy = seatSt.tileY * TILE_SIZE + TILE_SIZE / 2;
+
+    if (
+      WorldManager.isBenchStructure(seatSt.type) &&
+      this.world.isCornerBenchAt(seatSt.tileX, seatSt.tileY, seatSt)
+    ) {
+      soundManager.playHitWood();
+      this.renderer.spawnRipple(sx, sy, '#f43f5e', 20, 0.35);
+      this.addFloatingText(
+        '🪑 Banco de quina: não é possível se sentar!',
+        sx,
+        sy - 20,
+        '#f43f5e'
+      );
+      this.emitUiSnapshot();
+      return;
+    }
+
+    const occupiedByCreature = this.entities.creatures.some(
+      (c) =>
+        c.hp > 0 &&
+        Boolean(c.isUnderground) === Boolean(this.player.isUnderground) &&
+        c.isSitting &&
+        c.sittingStructureId === seatSt.id
+    );
+    const occupiedByRemote = this.remotePlayersList.some(
+      (rp) =>
+        rp.hp > 0 &&
+        Boolean(rp.isUnderground) === Boolean(this.player.isUnderground) &&
+        rp.isSitting &&
+        rp.sittingStructureId === seatSt.id
+    );
+    if (occupiedByCreature || occupiedByRemote) {
+      soundManager.playHitWood();
+      this.renderer.spawnRipple(sx, sy, '#fbbf24', 20, 0.35);
+      this.addFloatingText('🪑 Este assento já está ocupado!', sx, sy - 20, '#fde047');
+      this.emitUiSnapshot();
+      return;
+    }
+
+    if (this.player.mountedEntityId) {
+      this.dismountCreature();
+    }
+    if (this.player.fishingState) {
+      this.player.fishingState = null;
+    }
+
+    const connMask = this.world.getStructureConnectionMask(
+      seatSt.tileX,
+      seatSt.tileY,
+      seatSt.type
+    );
+    const facingDir = WorldManager.getStructureFacingDirection(seatSt, connMask);
+
+    this.player.sittingPrevX = this.player.x;
+    this.player.sittingPrevY = this.player.y;
+    this.player.x = sx;
+    this.player.y = sy;
+    this.player.direction = facingDir;
+    this.player.isSitting = true;
+    this.player.sittingStructureId = seatSt.id;
+    this.player.sittingStructureType = seatSt.type;
+    this.player.vx = 0;
+    this.player.vy = 0;
+    this.player.isMoving = false;
+    this.player.animFrame = 0;
+    this.sitCooldownTimer = 0.28;
+
+    soundManager.playHitWood();
+    this.renderer.spawnRipple(sx, sy, '#fbbf24', 18, 0.32);
+    if (this.multiplayer.isOnline) {
+      this.multiplayer.sendPlayerState(this.player);
+    }
+    this.emitUiSnapshot();
+  }
+
+  public stopSitting(reason?: string): void {
+    if (!this.player.isSitting) return;
+    const seatSt = this.findSeatStructureById(this.player.sittingStructureId);
+    const seatX = seatSt
+      ? seatSt.tileX * TILE_SIZE + TILE_SIZE / 2
+      : this.player.x;
+    const seatY = seatSt
+      ? seatSt.tileY * TILE_SIZE + TILE_SIZE / 2
+      : this.player.y;
+    const facingDir = this.player.direction;
+    const prevX = this.player.sittingPrevX;
+    const prevY = this.player.sittingPrevY;
+
+    this.player.isSitting = false;
+    this.player.sittingStructureId = null;
+    this.player.sittingStructureType = null;
+    this.player.sittingPrevX = undefined;
+    this.player.sittingPrevY = undefined;
+
+    const dirVec = this.getDirectionOffset(facingDir);
+    const frontX = seatX + dirVec.x * 20;
+    const frontY = seatY + dirVec.y * 20;
+    if (this.canEntityOccupy(frontX, frontY, true)) {
+      this.player.x = frontX;
+      this.player.y = frontY;
+    } else if (
+      prevX !== undefined &&
+      prevY !== undefined &&
+      Math.hypot(prevX - seatX, prevY - seatY) <= 72 &&
+      this.canEntityOccupy(prevX, prevY, true)
+    ) {
+      this.player.x = prevX;
+      this.player.y = prevY;
+    } else {
+      const safePos = this.world.findNearestSafePosition(
+        frontX,
+        frontY,
+        6.2,
+        true
+      );
+      this.player.x = safePos.x;
+      this.player.y = safePos.y;
+    }
+
+    if (reason) {
+      this.addFloatingText(
+        reason,
+        this.player.x,
+        this.player.y - 20,
         '#fde047'
       );
     }

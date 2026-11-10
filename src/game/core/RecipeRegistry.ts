@@ -789,6 +789,78 @@ export const RECIPES: CraftingRecipe[] = [
     ],
   },
   {
+    id: 'craft_wood_chair',
+    resultItemId: 'wood_chair',
+    resultCount: 1,
+    requiredStation: PlaceableType.WORKBENCH,
+    craftTimeSec: 0,
+    rarity: RarityTier.BASIC,
+    ingredients: [{ itemId: 'wood', count: 4 }],
+  },
+  {
+    id: 'craft_dark_oak_chair',
+    resultItemId: 'dark_oak_chair',
+    resultCount: 1,
+    requiredStation: PlaceableType.WORKBENCH,
+    craftTimeSec: 0,
+    rarity: RarityTier.BASIC,
+    ingredients: [{ itemId: 'dark_oak_wood', count: 4 }],
+  },
+  {
+    id: 'craft_pine_chair',
+    resultItemId: 'pine_chair',
+    resultCount: 1,
+    requiredStation: PlaceableType.WORKBENCH,
+    craftTimeSec: 0,
+    rarity: RarityTier.BASIC,
+    ingredients: [{ itemId: 'pine_wood', count: 4 }],
+  },
+  {
+    id: 'craft_palm_chair',
+    resultItemId: 'palm_chair',
+    resultCount: 1,
+    requiredStation: PlaceableType.WORKBENCH,
+    craftTimeSec: 0,
+    rarity: RarityTier.BASIC,
+    ingredients: [{ itemId: 'palm_wood', count: 4 }],
+  },
+  {
+    id: 'craft_wood_bench',
+    resultItemId: 'wood_bench',
+    resultCount: 1,
+    requiredStation: PlaceableType.WORKBENCH,
+    craftTimeSec: 0,
+    rarity: RarityTier.BASIC,
+    ingredients: [{ itemId: 'wood', count: 5 }],
+  },
+  {
+    id: 'craft_dark_oak_bench',
+    resultItemId: 'dark_oak_bench',
+    resultCount: 1,
+    requiredStation: PlaceableType.WORKBENCH,
+    craftTimeSec: 0,
+    rarity: RarityTier.BASIC,
+    ingredients: [{ itemId: 'dark_oak_wood', count: 5 }],
+  },
+  {
+    id: 'craft_pine_bench',
+    resultItemId: 'pine_bench',
+    resultCount: 1,
+    requiredStation: PlaceableType.WORKBENCH,
+    craftTimeSec: 0,
+    rarity: RarityTier.BASIC,
+    ingredients: [{ itemId: 'pine_wood', count: 5 }],
+  },
+  {
+    id: 'craft_palm_bench',
+    resultItemId: 'palm_bench',
+    resultCount: 1,
+    requiredStation: PlaceableType.WORKBENCH,
+    craftTimeSec: 0,
+    rarity: RarityTier.BASIC,
+    ingredients: [{ itemId: 'palm_wood', count: 5 }],
+  },
+  {
     id: 'craft_weaving_table',
     resultItemId: 'weaving_table',
     resultCount: 1,
@@ -1712,7 +1784,7 @@ export const RECIPES: CraftingRecipe[] = [
     resultItemId: 'wanderer_hood',
     resultCount: 1,
     requiredStation: PlaceableType.WEAVING_TABLE,
-    craftTimeSec: 210, // 3.5 min
+    craftTimeSec: 180, // 3 min
     rarity: RarityTier.BASIC,
     ingredients: [
       { itemId: 'wool', count: 5 },
@@ -1775,7 +1847,7 @@ export const RECIPES: CraftingRecipe[] = [
     resultItemId: 'blacksmith_apron',
     resultCount: 1,
     requiredStation: PlaceableType.WEAVING_TABLE,
-    craftTimeSec: 270, // 4.5 min
+    craftTimeSec: 240, // 4 min
     rarity: RarityTier.BASIC,
     ingredients: [
       { itemId: 'leather', count: 6 },
@@ -1801,7 +1873,7 @@ export const RECIPES: CraftingRecipe[] = [
     resultItemId: 'elder_robe',
     resultCount: 1,
     requiredStation: PlaceableType.WEAVING_TABLE,
-    craftTimeSec: 330, // 5.5 min
+    craftTimeSec: 300, // 5 min
     rarity: RarityTier.BASIC,
     ingredients: [
       { itemId: 'wool', count: 11 },
@@ -1814,7 +1886,7 @@ export const RECIPES: CraftingRecipe[] = [
     resultItemId: 'wanderer_poncho',
     resultCount: 1,
     requiredStation: PlaceableType.WEAVING_TABLE,
-    craftTimeSec: 270, // 4.5 min
+    craftTimeSec: 240, // 4 min
     rarity: RarityTier.BASIC,
     ingredients: [
       { itemId: 'wool', count: 8 },
@@ -1866,7 +1938,7 @@ export const RECIPES: CraftingRecipe[] = [
     resultItemId: 'merchant_slacks',
     resultCount: 1,
     requiredStation: PlaceableType.WEAVING_TABLE,
-    craftTimeSec: 210, // 3.5 min
+    craftTimeSec: 180, // 3 min
     rarity: RarityTier.BASIC,
     ingredients: [
       { itemId: 'wool', count: 7 },
@@ -1878,7 +1950,7 @@ export const RECIPES: CraftingRecipe[] = [
     resultItemId: 'wanderer_leggings',
     resultCount: 1,
     requiredStation: PlaceableType.WEAVING_TABLE,
-    craftTimeSec: 210, // 3.5 min
+    craftTimeSec: 180, // 3 min
     rarity: RarityTier.BASIC,
     ingredients: [
       { itemId: 'wool', count: 5 },
@@ -1950,6 +2022,8 @@ const WOOD_VARIANT_SPECIFIC_RECIPES = new Set([
   'craft_wood_wall',
   'craft_wood_window',
   'craft_wood_door',
+  'craft_wood_chair',
+  'craft_wood_bench',
 ]);
 
 for (const recipe of RECIPES) {

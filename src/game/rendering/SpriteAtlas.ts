@@ -854,7 +854,7 @@ class SpriteAtlasManager {
     dir: Direction,
     frame: number,
     playerOrArmor: PlayerState | string | null,
-    mountPose: 'none' | 'horse' | 'boat' = 'none'
+    mountPose: 'none' | 'horse' | 'boat' | 'chair' = 'none'
   ): HTMLCanvasElement {
     this.ensureInitialized();
     const f = frame % 4;
@@ -3466,6 +3466,94 @@ class SpriteAtlasManager {
       ],
       { d: '#3d2410', m: '#8c6239', l: '#e2be8a', z: '#5c3a21', c: '#ea580c' }
     );
+
+    // Rustic Chairs (4 Wood Variants)
+    const chairGrid = [
+      '....dd....dd....',
+      '....dbddddbd....',
+      '....dbmmmmbd....',
+      '....dbppppbd....',
+      '....dbddddbd....',
+      '....dbmmmmbd....',
+      '....dbddddbd....',
+      '...ddbbbbbbdd...',
+      '..dbppppppppbd..',
+      '..dbmmmmmmmmbd..',
+      '..dddddddddddd..',
+      '...dbdd..ddbd...',
+      '...dbmd..dmbd...',
+      '...dbmd..dmbd...',
+      '...dddd..dddd...',
+      '................',
+    ];
+    registerItem('wood_chair', chairGrid, {
+      d: '#271206',
+      b: '#78350f',
+      m: '#b45309',
+      p: '#d97706',
+    });
+    registerItem('dark_oak_chair', chairGrid, {
+      d: '#120804',
+      b: '#2b170b',
+      m: '#4a2c16',
+      p: '#6b4226',
+    });
+    registerItem('pine_chair', chairGrid, {
+      d: '#3d2410',
+      b: '#8c6239',
+      m: '#b78853',
+      p: '#e2be8a',
+    });
+    registerItem('palm_chair', chairGrid, {
+      d: '#42280e',
+      b: '#9c6628',
+      m: '#c88d3a',
+      p: '#f1c26b',
+    });
+
+    // Rustic Backless Benches (4 Wood Variants — Bancos rústicos sem encosto)
+    const benchGrid = [
+      '................',
+      '................',
+      '................',
+      '................',
+      '.dddddddddddddd.',
+      'dbppppppppppppbd',
+      'dbmmmmmmmmmmmmbd',
+      'dbddddddddddddbd',
+      'dbppppppppppppbd',
+      'dbbbbbbbbbbbbbbd',
+      'dddddddddddddddd',
+      '.dbmd......dmbd.',
+      '.dbbbbbbbbbbbbd.',
+      '.dbmd......dmbd.',
+      '.dddd......dddd.',
+      '................',
+    ];
+    registerItem('wood_bench', benchGrid, {
+      d: '#271206',
+      b: '#78350f',
+      m: '#b45309',
+      p: '#d97706',
+    });
+    registerItem('dark_oak_bench', benchGrid, {
+      d: '#120804',
+      b: '#2b170b',
+      m: '#4a2c16',
+      p: '#6b4226',
+    });
+    registerItem('pine_bench', benchGrid, {
+      d: '#3d2410',
+      b: '#8c6239',
+      m: '#b78853',
+      p: '#e2be8a',
+    });
+    registerItem('palm_bench', benchGrid, {
+      d: '#42280e',
+      b: '#9c6628',
+      m: '#c88d3a',
+      p: '#f1c26b',
+    });
 
     // Porta de Coqueiro Icon (Door made of whole vertical coconut-palm trunks lined up & bound with rope)
     registerItem(
@@ -7238,6 +7326,112 @@ class SpriteAtlasManager {
         ctx.fillRect(22, 14, 2, 2);
       })
     );
+
+    // Rustic Chairs & Benches (4 wood variants)
+    const seatPalettes: Array<{
+      chairType: PlaceableType;
+      benchType: PlaceableType;
+      outline: string;
+      dark: string;
+      mid: string;
+      light: string;
+    }> = [
+      {
+        chairType: PlaceableType.WOOD_CHAIR,
+        benchType: PlaceableType.WOOD_BENCH,
+        outline: '#271206',
+        dark: '#78350f',
+        mid: '#b45309',
+        light: '#d97706',
+      },
+      {
+        chairType: PlaceableType.DARK_OAK_CHAIR,
+        benchType: PlaceableType.DARK_OAK_BENCH,
+        outline: '#120804',
+        dark: '#2b170b',
+        mid: '#4a2c16',
+        light: '#6b4226',
+      },
+      {
+        chairType: PlaceableType.PINE_CHAIR,
+        benchType: PlaceableType.PINE_BENCH,
+        outline: '#3d2410',
+        dark: '#8c6239',
+        mid: '#b78853',
+        light: '#e2be8a',
+      },
+      {
+        chairType: PlaceableType.PALM_CHAIR,
+        benchType: PlaceableType.PALM_BENCH,
+        outline: '#42280e',
+        dark: '#9c6628',
+        mid: '#c88d3a',
+        light: '#f1c26b',
+      },
+    ];
+
+    for (const pal of seatPalettes) {
+      this.structureSprites.set(
+        pal.chairType,
+        createFrames(24, 28, (ctx) => {
+          ctx.fillStyle = 'rgba(0,0,0,0.34)';
+          ctx.fillRect(4, 22, 16, 5);
+          ctx.fillStyle = pal.outline;
+          ctx.fillRect(5, 3, 14, 12);
+          ctx.fillRect(4, 13, 16, 7);
+          ctx.fillRect(5, 20, 3, 6);
+          ctx.fillRect(16, 20, 3, 6);
+          ctx.fillStyle = pal.dark;
+          ctx.fillRect(6, 4, 2, 10);
+          ctx.fillRect(16, 4, 2, 10);
+          ctx.fillRect(6, 20, 2, 5);
+          ctx.fillRect(16, 20, 2, 5);
+          ctx.fillStyle = pal.mid;
+          ctx.fillRect(7, 5, 10, 3);
+          ctx.fillRect(7, 9, 10, 3);
+          ctx.fillRect(5, 14, 14, 5);
+          ctx.fillStyle = pal.light;
+          ctx.fillRect(7, 5, 10, 1);
+          ctx.fillRect(6, 14, 12, 2);
+        })
+      );
+
+      this.structureSprites.set(
+        pal.benchType,
+        createFrames(32, 26, (ctx) => {
+          // Ground shadow
+          ctx.fillStyle = 'rgba(0,0,0,0.35)';
+          ctx.fillRect(3, 20, 26, 5);
+          // Backless rustic bench: thick plank top + front apron + sturdy trestle legs
+          ctx.fillStyle = pal.outline;
+          ctx.fillRect(2, 7, 28, 11);
+          ctx.fillRect(4, 18, 5, 6);
+          ctx.fillRect(23, 18, 5, 6);
+          ctx.fillRect(8, 19, 16, 3);
+          // Trestle legs & stretcher bar
+          ctx.fillStyle = pal.dark;
+          ctx.fillRect(5, 18, 3, 5);
+          ctx.fillRect(24, 18, 3, 5);
+          ctx.fillRect(8, 20, 16, 1);
+          // Front 3D plank apron
+          ctx.fillRect(3, 15, 26, 2);
+          // Top split-plank seat surface
+          ctx.fillStyle = pal.mid;
+          ctx.fillRect(3, 8, 26, 7);
+          ctx.fillStyle = pal.light;
+          ctx.fillRect(3, 8, 26, 2);
+          ctx.fillRect(3, 12, 26, 1);
+          // Center rustic plank seam & wooden dowels
+          ctx.fillStyle = pal.outline;
+          ctx.fillRect(3, 11, 26, 1);
+          ctx.fillStyle = pal.dark;
+          ctx.fillRect(5, 9, 2, 1);
+          ctx.fillRect(25, 9, 2, 1);
+          ctx.fillRect(5, 13, 2, 1);
+          ctx.fillRect(25, 13, 2, 1);
+        })
+      );
+    }
   }
 
   private buildPlayerSprites(): void {
@@ -7425,7 +7619,7 @@ class SpriteAtlasManager {
     frame: number,
     eq: PlayerEquipment,
     app: PlayerAppearance,
-    mountPose: 'none' | 'horse' | 'boat' = 'none'
+    mountPose: 'none' | 'horse' | 'boat' | 'chair' = 'none'
   ): HTMLCanvasElement {
     const f = frame % 4;
     const gender = app.gender || 'masculino';
@@ -7568,6 +7762,30 @@ class SpriteAtlasManager {
         ctx.fillRect(6, 22, 6, 7);
         ctx.fillRect(20, 22, 6, 7);
       }
+    } else if (mountPose === 'chair') {
+      // Seated on Chair / Bench: Upright torso, relaxed arms, bent knees & forward-angled legs
+      const torsoW = isFeminine ? 10 : 12;
+      const torsoX = isFeminine ? 11 : 10;
+      ctx.fillRect(torsoX - 1, 14, torsoW + 2, 9);
+      if (dir === 'left') {
+        ctx.fillRect(8, 14, 4, 8);
+        ctx.fillRect(13, 14, 5, 8);
+        // L-shaped seated thigh (extending left) + bent knee & lower leg
+        ctx.fillRect(7, 21, 14, 4);
+        ctx.fillRect(7, 23, 6, 5);
+      } else if (dir === 'right') {
+        ctx.fillRect(20, 14, 4, 8);
+        ctx.fillRect(14, 14, 5, 8);
+        // L-shaped seated thigh (extending right) + bent knee & lower leg
+        ctx.fillRect(11, 21, 14, 4);
+        ctx.fillRect(19, 23, 6, 5);
+      } else {
+        ctx.fillRect(7, 14, 4, 8);
+        ctx.fillRect(21, 14, 4, 8);
+        ctx.fillRect(9, 21, 14, 4);
+        ctx.fillRect(10, 23, 5, 5);
+        ctx.fillRect(17, 23, 5, 5);
+      }
     } else {
       // Standing / Walking
       const torsoW = isFeminine ? 10 : 12;
@@ -7613,6 +7831,83 @@ class SpriteAtlasManager {
         ctx.fillRect(21, 15, 4, 6);
         ctx.fillRect(7, 22, 4, 5);
         ctx.fillRect(21, 22, 4, 5);
+      }
+    } else if (mountPose === 'chair') {
+      if (dir === 'left') {
+        ctx.fillStyle = skinShadow;
+        ctx.fillRect(9, 15, 2, 5);
+        ctx.fillStyle = skinDeep;
+        ctx.fillRect(9, 20, 2, 1);
+      } else if (dir === 'right') {
+        ctx.fillStyle = skinShadow;
+        ctx.fillRect(21, 15, 2, 5);
+        ctx.fillStyle = skinDeep;
+        ctx.fillRect(21, 20, 2, 1);
+      }
+
+      ctx.fillStyle = skinBase;
+      ctx.fillRect(11, 14, 10, 8);
+      ctx.fillStyle = skinLight;
+      ctx.fillRect(12, 14, 8, 1);
+      ctx.fillStyle = skinShadow;
+      if (isFeminine) {
+        ctx.fillRect(11, 18, 1, 3);
+        ctx.fillRect(20, 18, 1, 3);
+      } else if (dir === 'down') {
+        ctx.fillRect(12, 17, 3, 1);
+        ctx.fillRect(17, 17, 3, 1);
+        ctx.fillRect(15, 17, 2, 3);
+      }
+
+      if (dir === 'down' || dir === 'up') {
+        ctx.fillStyle = skinBase;
+        ctx.fillRect(8, 15, 2, 6);
+        ctx.fillRect(22, 15, 2, 6);
+        ctx.fillStyle = skinLight;
+        ctx.fillRect(8, 15, 1, 4);
+        ctx.fillRect(23, 15, 1, 4);
+        ctx.fillStyle = skinShadow;
+        ctx.fillRect(8, 20, 2, 1);
+        ctx.fillRect(22, 20, 2, 1);
+      }
+
+      // Bare seated legs & bare feet
+      if (dir === 'left') {
+        ctx.fillStyle = skinBase;
+        ctx.fillRect(8, 22, 12, 2);
+        ctx.fillRect(8, 24, 4, 2);
+        ctx.fillStyle = skinLight;
+        ctx.fillRect(8, 22, 6, 1);
+        ctx.fillStyle = skinDeep;
+        ctx.fillRect(8, 26, 4, 1);
+      } else if (dir === 'right') {
+        ctx.fillStyle = skinBase;
+        ctx.fillRect(12, 22, 12, 2);
+        ctx.fillRect(20, 24, 4, 2);
+        ctx.fillStyle = skinLight;
+        ctx.fillRect(18, 22, 6, 1);
+        ctx.fillStyle = skinDeep;
+        ctx.fillRect(20, 26, 4, 1);
+      } else {
+        ctx.fillStyle = skinBase;
+        ctx.fillRect(11, 22, 3, 4);
+        ctx.fillRect(18, 22, 3, 4);
+        ctx.fillStyle = skinLight;
+        ctx.fillRect(11, 22, 3, 1);
+        ctx.fillRect(18, 22, 3, 1);
+        ctx.fillStyle = skinShadow;
+        ctx.fillRect(11, 24, 3, 1);
+        ctx.fillRect(18, 24, 3, 1);
+        ctx.fillStyle = skinDeep;
+        ctx.fillRect(11, 26, 3, 1);
+        ctx.fillRect(18, 26, 3, 1);
+      }
+
+      if (!legsId) {
+        ctx.fillStyle = '#cbd5e1';
+        ctx.fillRect(11, 21, 10, 1);
+        ctx.fillStyle = '#f8fafc';
+        ctx.fillRect(11, 22, 10, 2);
       }
     } else {
       // Standing / Walking: If facing left/right, draw FAR arm behind torso first
@@ -7800,6 +8095,24 @@ class SpriteAtlasManager {
         ctx.fillRect(18, 23, 1, skirtH - 1);
         // Bottom hem trim
         ctx.fillRect(isLong ? 9 : 10, 22 + skirtH - 1, isLong ? 14 : 12, 1);
+      } else if (mountPose === 'chair') {
+        ctx.fillStyle = d;
+        ctx.fillRect(11, 21, 10, 1);
+        ctx.fillStyle = m;
+        if (dir === 'left') {
+          ctx.fillRect(8, 22, 12, isLong ? 4 : 3);
+          ctx.fillStyle = l;
+          ctx.fillRect(9, 22, 8, 1);
+        } else if (dir === 'right') {
+          ctx.fillRect(12, 22, 12, isLong ? 4 : 3);
+          ctx.fillStyle = l;
+          ctx.fillRect(15, 22, 8, 1);
+        } else {
+          ctx.fillRect(10, 22, 12, isLong ? 4 : 3);
+          ctx.fillStyle = l;
+          ctx.fillRect(11, 22, 2, isLong ? 3 : 2);
+          ctx.fillRect(19, 22, 2, isLong ? 3 : 2);
+        }
       } else if (mountPose === 'horse') {
         ctx.fillStyle = m;
         if (dir === 'left' || dir === 'right') {
@@ -7928,12 +8241,12 @@ class SpriteAtlasManager {
           ctx.fillRect(8, 19 + sL, 3, 1);
           ctx.fillRect(21, 19 + sR, 3, 1);
         }
-      } else if (dir === 'left' && mountPose === 'none') {
+      } else if (dir === 'left' && (mountPose === 'none' || mountPose === 'chair')) {
         // Far arm sleeve in side profile
         const farX = 9 + Math.round(stepR * 0.5);
         ctx.fillStyle = d;
         ctx.fillRect(farX, 15 + stepR, 2, 5);
-      } else if (dir === 'right' && mountPose === 'none') {
+      } else if (dir === 'right' && (mountPose === 'none' || mountPose === 'chair')) {
         const farX = 21 - Math.round(stepL * 0.5);
         ctx.fillStyle = d;
         ctx.fillRect(farX, 15 + stepL, 2, 5);
@@ -8331,6 +8644,26 @@ class SpriteAtlasManager {
         ctx.fillStyle = d;
         ctx.fillRect(11, 25, 4, 1);
         ctx.fillRect(17, 25, 4, 1);
+      } else if (mountPose === 'chair') {
+        ctx.fillStyle = '#451a03';
+        ctx.fillRect(11, 21, 10, 1);
+        ctx.fillStyle = m;
+        if (dir === 'left') {
+          ctx.fillRect(9, 22, 11, 2);
+          ctx.fillStyle = l;
+          ctx.fillRect(10, 22, 6, 1);
+        } else if (dir === 'right') {
+          ctx.fillRect(12, 22, 11, 2);
+          ctx.fillStyle = l;
+          ctx.fillRect(16, 22, 6, 1);
+        } else {
+          ctx.fillRect(11, 22, 10, 2);
+          ctx.fillRect(11, 23, 4, 2);
+          ctx.fillRect(17, 23, 4, 2);
+          ctx.fillStyle = l;
+          ctx.fillRect(12, 22, 2, 2);
+          ctx.fillRect(18, 22, 2, 2);
+        }
       } else if (mountPose === 'horse') {
         ctx.fillStyle = m;
         if (dir === 'left' || dir === 'right') {
@@ -8393,6 +8726,35 @@ class SpriteAtlasManager {
           ctx.fillRect(11, 26, 4, 1);
           ctx.fillRect(17, 26, 4, 1);
         }
+      } else if (mountPose === 'chair') {
+        ctx.fillStyle = legsBaseId === 'merchant_slacks' ? '#fde047' : '#451a03';
+        ctx.fillRect(11, 21, 10, 1);
+        ctx.fillStyle = m;
+        if (dir === 'left') {
+          ctx.fillRect(8, 22, 12, 2);
+          ctx.fillRect(8, 24, 4, 2);
+          ctx.fillStyle = l;
+          ctx.fillRect(8, 22, 7, 1);
+          ctx.fillStyle = d;
+          ctx.fillRect(8, 25, 4, 1);
+        } else if (dir === 'right') {
+          ctx.fillRect(12, 22, 12, 2);
+          ctx.fillRect(20, 24, 4, 2);
+          ctx.fillStyle = l;
+          ctx.fillRect(17, 22, 7, 1);
+          ctx.fillStyle = d;
+          ctx.fillRect(20, 25, 4, 1);
+        } else {
+          ctx.fillRect(11, 22, 10, 2);
+          ctx.fillRect(11, 24, 4, 2);
+          ctx.fillRect(17, 24, 4, 2);
+          ctx.fillStyle = l;
+          ctx.fillRect(12, 22, 2, 2);
+          ctx.fillRect(18, 22, 2, 2);
+          ctx.fillStyle = d;
+          ctx.fillRect(11, 25, 4, 1);
+          ctx.fillRect(17, 25, 4, 1);
+        }
       } else if (mountPose === 'horse') {
         ctx.fillStyle = m;
         if (dir === 'left' || dir === 'right') {
@@ -8443,6 +8805,29 @@ class SpriteAtlasManager {
         ctx.fillStyle = kneeRivet;
         ctx.fillRect(12, 24, 1, 1);
         ctx.fillRect(19, 24, 1, 1);
+      } else if (mountPose === 'chair') {
+        ctx.fillStyle = beltColor;
+        ctx.fillRect(10, 21, 12, 2);
+        ctx.fillStyle = buckleColor;
+        ctx.fillRect(14, 21, 4, 2);
+        ctx.fillStyle = legsMain;
+        if (dir === 'left') {
+          ctx.fillRect(8, 22, 12, 2);
+          ctx.fillRect(8, 24, 4, 2);
+          ctx.fillStyle = legsKnee;
+          ctx.fillRect(8, 23, 3, 2);
+        } else if (dir === 'right') {
+          ctx.fillRect(12, 22, 12, 2);
+          ctx.fillRect(20, 24, 4, 2);
+          ctx.fillStyle = legsKnee;
+          ctx.fillRect(21, 23, 3, 2);
+        } else {
+          ctx.fillRect(10, 23, 5, 3);
+          ctx.fillRect(17, 23, 5, 3);
+          ctx.fillStyle = legsKnee;
+          ctx.fillRect(11, 23, 3, 2);
+          ctx.fillRect(18, 23, 3, 2);
+        }
       } else if (mountPose === 'horse') {
         ctx.fillStyle = legsMain;
         if (dir === 'left' || dir === 'right') {
@@ -8477,6 +8862,23 @@ class SpriteAtlasManager {
         ctx.fillStyle = '#fbbf24';
         ctx.fillRect(11, leftFootY, 1, 1);
         ctx.fillRect(19, rightFootY, 1, 1);
+      } else if (mountPose === 'chair') {
+        ctx.fillStyle = d;
+        if (dir === 'left') {
+          ctx.fillRect(8, 26, 4, 1);
+          ctx.fillStyle = m;
+          ctx.fillRect(9, 25, 2, 1);
+        } else if (dir === 'right') {
+          ctx.fillRect(20, 26, 4, 1);
+          ctx.fillStyle = m;
+          ctx.fillRect(21, 25, 2, 1);
+        } else {
+          ctx.fillRect(10, 26, 4, 1);
+          ctx.fillRect(18, 26, 4, 1);
+          ctx.fillStyle = m;
+          ctx.fillRect(11, 25, 2, 1);
+          ctx.fillRect(18, 25, 2, 1);
+        }
       } else if (mountPose === 'horse') {
         ctx.fillStyle = m;
         if (dir === 'left' || dir === 'right') {
@@ -8518,6 +8920,23 @@ class SpriteAtlasManager {
         ctx.fillStyle = d;
         ctx.fillRect(10, leftBootY + 3, 5, 1);
         ctx.fillRect(17, rightBootY + 3, 5, 1);
+      } else if (mountPose === 'chair') {
+        ctx.fillStyle = m;
+        if (dir === 'left') {
+          ctx.fillRect(8, 24, 4, 3);
+          ctx.fillStyle = d;
+          ctx.fillRect(8, 26, 4, 1);
+        } else if (dir === 'right') {
+          ctx.fillRect(20, 24, 4, 3);
+          ctx.fillStyle = d;
+          ctx.fillRect(20, 26, 4, 1);
+        } else {
+          ctx.fillRect(10, 24, 5, 3);
+          ctx.fillRect(17, 24, 5, 3);
+          ctx.fillStyle = d;
+          ctx.fillRect(10, 26, 5, 1);
+          ctx.fillRect(17, 26, 5, 1);
+        }
       } else if (mountPose === 'horse') {
         ctx.fillStyle = m;
         if (dir === 'left' || dir === 'right') {
@@ -8571,6 +8990,23 @@ class SpriteAtlasManager {
           ctx.fillStyle = bootsWing;
           ctx.fillRect(8, leftBootY - 1, 2, 3);
           ctx.fillRect(22, rightBootY - 1, 2, 3);
+        }
+      } else if (mountPose === 'chair') {
+        ctx.fillStyle = bootsMain;
+        if (dir === 'left') {
+          ctx.fillRect(8, 25, 4, 2);
+          ctx.fillStyle = bootsSole;
+          ctx.fillRect(8, 26, 4, 1);
+        } else if (dir === 'right') {
+          ctx.fillRect(20, 25, 4, 2);
+          ctx.fillStyle = bootsSole;
+          ctx.fillRect(20, 26, 4, 1);
+        } else {
+          ctx.fillRect(10, 25, 5, 2);
+          ctx.fillRect(17, 25, 5, 2);
+          ctx.fillStyle = bootsSole;
+          ctx.fillRect(10, 26, 5, 1);
+          ctx.fillRect(17, 26, 5, 1);
         }
       } else if (mountPose === 'horse') {
         ctx.fillStyle = bootsMain;

@@ -2474,6 +2474,104 @@ export const ITEMS: Record<string, ItemDefinition> = {
     placeableType: PlaceableType.WEAVING_TABLE,
   },
 
+  // === CADEIRAS E BANCOS RÚSTICOS DE MADEIRA (4 VARIANTES DE MADEIRA · INTERATIVOS PARA SENTAR) ===
+  wood_chair: {
+    id: 'wood_chair',
+    name: 'Cadeira de Carvalho',
+    description:
+      'Cadeira rústica entalhada em madeira de carvalho. Pressione o botão de Interagir para se sentar nela, ficando voltado para a direção em que a cadeira está virada.',
+    purposeSummary:
+      'Assento Rústico (4 Direções · 75 HP · Interativo): Permite sentar para o lado em que a cadeira está virada.',
+    category: ItemCategory.PLACEABLE,
+    rarity: RarityTier.BASIC,
+    maxStack: 20,
+    placeableType: PlaceableType.WOOD_CHAIR,
+  },
+  dark_oak_chair: {
+    id: 'dark_oak_chair',
+    name: 'Cadeira de Carvalho Escuro',
+    description:
+      'Cadeira rústica entalhada em madeira densa de carvalho escuro. Pressione o botão de Interagir para se sentar nela, ficando voltado para a direção em que a cadeira está virada.',
+    purposeSummary:
+      'Assento Rústico (4 Direções · 75 HP · Interativo): Permite sentar para o lado em que a cadeira está virada.',
+    category: ItemCategory.PLACEABLE,
+    rarity: RarityTier.BASIC,
+    maxStack: 20,
+    placeableType: PlaceableType.DARK_OAK_CHAIR,
+  },
+  pine_chair: {
+    id: 'pine_chair',
+    name: 'Cadeira de Pinheiro',
+    description:
+      'Cadeira rústica entalhada em madeira clara de pinheiro. Pressione o botão de Interagir para se sentar nela, ficando voltado para a direção em que a cadeira está virada.',
+    purposeSummary:
+      'Assento Rústico (4 Direções · 75 HP · Interativo): Permite sentar para o lado em que a cadeira está virada.',
+    category: ItemCategory.PLACEABLE,
+    rarity: RarityTier.BASIC,
+    maxStack: 20,
+    placeableType: PlaceableType.PINE_CHAIR,
+  },
+  palm_chair: {
+    id: 'palm_chair',
+    name: 'Cadeira de Coqueiro',
+    description:
+      'Cadeira rústica entalhada em madeira tropical de coqueiro. Pressione o botão de Interagir para se sentar nela, ficando voltado para a direção em que a cadeira está virada.',
+    purposeSummary:
+      'Assento Rústico (4 Direções · 75 HP · Interativo): Permite sentar para o lado em que a cadeira está virada.',
+    category: ItemCategory.PLACEABLE,
+    rarity: RarityTier.BASIC,
+    maxStack: 20,
+    placeableType: PlaceableType.PALM_CHAIR,
+  },
+  wood_bench: {
+    id: 'wood_bench',
+    name: 'Banco de Carvalho',
+    description:
+      'Banco rústico de tábuas de carvalho. Conecta-se com bancos adjacentes. Pressione Interagir para se sentar para o lado em que o banco está virado (bancos de quina não permitem sentar).',
+    purposeSummary:
+      'Banco Rústico Conectável (4 Direções · 90 HP · Interativo): Permite sentar quando reto; bancos de quina não permitem sentar.',
+    category: ItemCategory.PLACEABLE,
+    rarity: RarityTier.BASIC,
+    maxStack: 20,
+    placeableType: PlaceableType.WOOD_BENCH,
+  },
+  dark_oak_bench: {
+    id: 'dark_oak_bench',
+    name: 'Banco de Carvalho Escuro',
+    description:
+      'Banco rústico de tábuas de carvalho escuro, típico dos acampamentos da Floresta Escura. Conecta-se com bancos adjacentes. Pressione Interagir para se sentar (bancos de quina não permitem sentar).',
+    purposeSummary:
+      'Banco Rústico Conectável (4 Direções · 90 HP · Interativo): Permite sentar quando reto; bancos de quina não permitem sentar.',
+    category: ItemCategory.PLACEABLE,
+    rarity: RarityTier.BASIC,
+    maxStack: 20,
+    placeableType: PlaceableType.DARK_OAK_BENCH,
+  },
+  pine_bench: {
+    id: 'pine_bench',
+    name: 'Banco de Pinheiro',
+    description:
+      'Banco rústico de tábuas de pinheiro. Conecta-se com bancos adjacentes. Pressione Interagir para se sentar para o lado em que o banco está virado (bancos de quina não permitem sentar).',
+    purposeSummary:
+      'Banco Rústico Conectável (4 Direções · 90 HP · Interativo): Permite sentar quando reto; bancos de quina não permitem sentar.',
+    category: ItemCategory.PLACEABLE,
+    rarity: RarityTier.BASIC,
+    maxStack: 20,
+    placeableType: PlaceableType.PINE_BENCH,
+  },
+  palm_bench: {
+    id: 'palm_bench',
+    name: 'Banco de Coqueiro',
+    description:
+      'Banco rústico de tábuas de coqueiro. Conecta-se com bancos adjacentes. Pressione Interagir para se sentar para o lado em que o banco está virado (bancos de quina não permitem sentar).',
+    purposeSummary:
+      'Banco Rústico Conectável (4 Direções · 90 HP · Interativo): Permite sentar quando reto; bancos de quina não permitem sentar.',
+    category: ItemCategory.PLACEABLE,
+    rarity: RarityTier.BASIC,
+    maxStack: 20,
+    placeableType: PlaceableType.PALM_BENCH,
+  },
+
   // === FLORES SELVAGENS COLETÁVEIS E COLOCÁVEIS (SEM HITBOX · AGRUPADAS POR ESPÉCIE NO INVENTÁRIO) ===
   flower_tulip: {
     id: 'flower_tulip',
@@ -3680,6 +3778,150 @@ export const CONSTRUCTION_BLUEPRINTS: Record<PlaceableType, ConstructionBlueprin
     lightRadius: 0,
     isInteractive: true,
   },
+  [PlaceableType.WOOD_CHAIR]: {
+    type: PlaceableType.WOOD_CHAIR,
+    role: 'MOBILIA',
+    roleLabel: 'Cadeira Rústica de Carvalho',
+    layer: 'FURNITURE',
+    layerLabel: 'Camada de Mobília (Assento Rotacionável em 4 Direções)',
+    hasHitbox: true,
+    hitboxBehavior: 'SOLID_COMPACT',
+    hitboxLabel: 'Hitbox Compacta (7px · Sentar)',
+    hitboxRadius: 7,
+    continuityMode: 'STANDALONE',
+    continuityLabel: 'Cadeira Individual (4 Direções)',
+    connectionGroup: 'none',
+    connectsToGroups: [],
+    maxHp: 75,
+    lightRadius: 0,
+    isInteractive: true,
+  },
+  [PlaceableType.DARK_OAK_CHAIR]: {
+    type: PlaceableType.DARK_OAK_CHAIR,
+    role: 'MOBILIA',
+    roleLabel: 'Cadeira Rústica de Carvalho Escuro',
+    layer: 'FURNITURE',
+    layerLabel: 'Camada de Mobília (Assento Rotacionável em 4 Direções)',
+    hasHitbox: true,
+    hitboxBehavior: 'SOLID_COMPACT',
+    hitboxLabel: 'Hitbox Compacta (7px · Sentar)',
+    hitboxRadius: 7,
+    continuityMode: 'STANDALONE',
+    continuityLabel: 'Cadeira Individual (4 Direções)',
+    connectionGroup: 'none',
+    connectsToGroups: [],
+    maxHp: 75,
+    lightRadius: 0,
+    isInteractive: true,
+  },
+  [PlaceableType.PINE_CHAIR]: {
+    type: PlaceableType.PINE_CHAIR,
+    role: 'MOBILIA',
+    roleLabel: 'Cadeira Rústica de Pinheiro',
+    layer: 'FURNITURE',
+    layerLabel: 'Camada de Mobília (Assento Rotacionável em 4 Direções)',
+    hasHitbox: true,
+    hitboxBehavior: 'SOLID_COMPACT',
+    hitboxLabel: 'Hitbox Compacta (7px · Sentar)',
+    hitboxRadius: 7,
+    continuityMode: 'STANDALONE',
+    continuityLabel: 'Cadeira Individual (4 Direções)',
+    connectionGroup: 'none',
+    connectsToGroups: [],
+    maxHp: 75,
+    lightRadius: 0,
+    isInteractive: true,
+  },
+  [PlaceableType.PALM_CHAIR]: {
+    type: PlaceableType.PALM_CHAIR,
+    role: 'MOBILIA',
+    roleLabel: 'Cadeira Rústica de Coqueiro',
+    layer: 'FURNITURE',
+    layerLabel: 'Camada de Mobília (Assento Rotacionável em 4 Direções)',
+    hasHitbox: true,
+    hitboxBehavior: 'SOLID_COMPACT',
+    hitboxLabel: 'Hitbox Compacta (7px · Sentar)',
+    hitboxRadius: 7,
+    continuityMode: 'STANDALONE',
+    continuityLabel: 'Cadeira Individual (4 Direções)',
+    connectionGroup: 'none',
+    connectsToGroups: [],
+    maxHp: 75,
+    lightRadius: 0,
+    isInteractive: true,
+  },
+  [PlaceableType.WOOD_BENCH]: {
+    type: PlaceableType.WOOD_BENCH,
+    role: 'MOBILIA',
+    roleLabel: 'Banco Rústico de Carvalho',
+    layer: 'FURNITURE',
+    layerLabel: 'Camada de Mobília (Conecta com Bancos · Quina não sentável)',
+    hasHitbox: true,
+    hitboxBehavior: 'SOLID_COMPACT',
+    hitboxLabel: 'Hitbox Compacta (8px · Sentar)',
+    hitboxRadius: 8,
+    continuityMode: 'WALL_16',
+    continuityLabel: 'Banco Conectável (Quinas sem Assento)',
+    connectionGroup: 'bench',
+    connectsToGroups: ['bench'],
+    maxHp: 90,
+    lightRadius: 0,
+    isInteractive: true,
+  },
+  [PlaceableType.DARK_OAK_BENCH]: {
+    type: PlaceableType.DARK_OAK_BENCH,
+    role: 'MOBILIA',
+    roleLabel: 'Banco Rústico de Carvalho Escuro',
+    layer: 'FURNITURE',
+    layerLabel: 'Camada de Mobília (Conecta com Bancos · Quina não sentável)',
+    hasHitbox: true,
+    hitboxBehavior: 'SOLID_COMPACT',
+    hitboxLabel: 'Hitbox Compacta (8px · Sentar)',
+    hitboxRadius: 8,
+    continuityMode: 'WALL_16',
+    continuityLabel: 'Banco Conectável (Quinas sem Assento)',
+    connectionGroup: 'bench',
+    connectsToGroups: ['bench'],
+    maxHp: 90,
+    lightRadius: 0,
+    isInteractive: true,
+  },
+  [PlaceableType.PINE_BENCH]: {
+    type: PlaceableType.PINE_BENCH,
+    role: 'MOBILIA',
+    roleLabel: 'Banco Rústico de Pinheiro',
+    layer: 'FURNITURE',
+    layerLabel: 'Camada de Mobília (Conecta com Bancos · Quina não sentável)',
+    hasHitbox: true,
+    hitboxBehavior: 'SOLID_COMPACT',
+    hitboxLabel: 'Hitbox Compacta (8px · Sentar)',
+    hitboxRadius: 8,
+    continuityMode: 'WALL_16',
+    continuityLabel: 'Banco Conectável (Quinas sem Assento)',
+    connectionGroup: 'bench',
+    connectsToGroups: ['bench'],
+    maxHp: 90,
+    lightRadius: 0,
+    isInteractive: true,
+  },
+  [PlaceableType.PALM_BENCH]: {
+    type: PlaceableType.PALM_BENCH,
+    role: 'MOBILIA',
+    roleLabel: 'Banco Rústico de Coqueiro',
+    layer: 'FURNITURE',
+    layerLabel: 'Camada de Mobília (Conecta com Bancos · Quina não sentável)',
+    hasHitbox: true,
+    hitboxBehavior: 'SOLID_COMPACT',
+    hitboxLabel: 'Hitbox Compacta (8px · Sentar)',
+    hitboxRadius: 8,
+    continuityMode: 'WALL_16',
+    continuityLabel: 'Banco Conectável (Quinas sem Assento)',
+    connectionGroup: 'bench',
+    connectsToGroups: ['bench'],
+    maxHp: 90,
+    lightRadius: 0,
+    isInteractive: true,
+  },
   [PlaceableType.FLOWER_TULIP]: {
     type: PlaceableType.FLOWER_TULIP,
     role: 'MOBILIA',
@@ -4321,6 +4563,14 @@ export const ITEM_BASE_PRICES: Record<string, number> = {
   explorer_tent: 195,
   saddle: 75,
   wood_boat: 60,
+  wood_chair: 12,
+  dark_oak_chair: 12,
+  pine_chair: 12,
+  palm_chair: 12,
+  wood_bench: 16,
+  dark_oak_bench: 16,
+  pine_bench: 16,
+  palm_bench: 16,
   drilling_stake: 525,
   level_stairs: 525,
 
@@ -4751,6 +5001,54 @@ export const STRUCTURE_MATERIAL_REQUIREMENTS: Record<
     requirementLabel: 'Mão Livre ou Machado (Ideal: Machado)',
   },
   [PlaceableType.WEAVING_TABLE]: {
+    materialKind: 'SOFT_WOOD',
+    requiredTool: ToolType.AXE,
+    requiredTier: 0,
+    requirementLabel: 'Mão Livre ou Machado (Ideal: Machado)',
+  },
+  [PlaceableType.WOOD_CHAIR]: {
+    materialKind: 'SOFT_WOOD',
+    requiredTool: ToolType.AXE,
+    requiredTier: 0,
+    requirementLabel: 'Mão Livre ou Machado (Ideal: Machado)',
+  },
+  [PlaceableType.DARK_OAK_CHAIR]: {
+    materialKind: 'SOFT_WOOD',
+    requiredTool: ToolType.AXE,
+    requiredTier: 0,
+    requirementLabel: 'Mão Livre ou Machado (Ideal: Machado)',
+  },
+  [PlaceableType.PINE_CHAIR]: {
+    materialKind: 'SOFT_WOOD',
+    requiredTool: ToolType.AXE,
+    requiredTier: 0,
+    requirementLabel: 'Mão Livre ou Machado (Ideal: Machado)',
+  },
+  [PlaceableType.PALM_CHAIR]: {
+    materialKind: 'SOFT_WOOD',
+    requiredTool: ToolType.AXE,
+    requiredTier: 0,
+    requirementLabel: 'Mão Livre ou Machado (Ideal: Machado)',
+  },
+  [PlaceableType.WOOD_BENCH]: {
+    materialKind: 'SOFT_WOOD',
+    requiredTool: ToolType.AXE,
+    requiredTier: 0,
+    requirementLabel: 'Mão Livre ou Machado (Ideal: Machado)',
+  },
+  [PlaceableType.DARK_OAK_BENCH]: {
+    materialKind: 'SOFT_WOOD',
+    requiredTool: ToolType.AXE,
+    requiredTier: 0,
+    requirementLabel: 'Mão Livre ou Machado (Ideal: Machado)',
+  },
+  [PlaceableType.PINE_BENCH]: {
+    materialKind: 'SOFT_WOOD',
+    requiredTool: ToolType.AXE,
+    requiredTier: 0,
+    requirementLabel: 'Mão Livre ou Machado (Ideal: Machado)',
+  },
+  [PlaceableType.PALM_BENCH]: {
     materialKind: 'SOFT_WOOD',
     requiredTool: ToolType.AXE,
     requiredTier: 0,
@@ -5352,49 +5650,49 @@ export const FUEL_ITEMS: Record<string, FuelDefinition> = {
     name: 'Fibra Vegetal',
     burnTimeSec: 4,
     efficiencyLabel: 'Graveto Rápido (4s)',
-    smeltCapacityHint: '0.5x preparo (Fogo curto)',
+    smeltCapacityHint: '4s de fogo por unidade',
   },
   wood: {
     itemId: 'wood',
     name: 'Madeira de Carvalho',
     burnTimeSec: 12,
     efficiencyLabel: 'Lenha Básica (12s)',
-    smeltCapacityHint: '1.5x preparos por tora',
+    smeltCapacityHint: '2 preparos de 6s por tora',
   },
   dark_oak_wood: {
     itemId: 'dark_oak_wood',
     name: 'Madeira de Carvalho Escuro',
     burnTimeSec: 12,
     efficiencyLabel: 'Lenha Básica (12s)',
-    smeltCapacityHint: '1.5x preparos por tora',
+    smeltCapacityHint: '2 preparos de 6s por tora',
   },
   pine_wood: {
     itemId: 'pine_wood',
     name: 'Madeira de Pinheiro',
     burnTimeSec: 12,
     efficiencyLabel: 'Lenha Básica (12s)',
-    smeltCapacityHint: '1.5x preparos por tora',
+    smeltCapacityHint: '2 preparos de 6s por tora',
   },
   palm_wood: {
     itemId: 'palm_wood',
     name: 'Madeira de Coqueiro',
     burnTimeSec: 12,
     efficiencyLabel: 'Lenha Básica (12s)',
-    smeltCapacityHint: '1.5x preparos por tora',
+    smeltCapacityHint: '2 preparos de 6s por tora',
   },
   hardwood: {
     itemId: 'hardwood',
     name: 'Madeira Nobre',
     burnTimeSec: 24,
     efficiencyLabel: 'Lenha Densa (24s)',
-    smeltCapacityHint: '3x preparos por tora',
+    smeltCapacityHint: '4 preparos de 6s por tora',
   },
   charcoal: {
     itemId: 'charcoal',
     name: 'Carvão',
     burnTimeSec: 60,
     efficiencyLabel: 'Alta Eficiência (60s · 5x Madeira!)',
-    smeltCapacityHint: 'Até 10–12 preparos por unidade!',
+    smeltCapacityHint: '10 preparos de 6s por unidade',
   },
 };
 
@@ -5432,6 +5730,14 @@ export function getPlaceableRotationMode(
     case PlaceableType.WORKBENCH:
     case PlaceableType.FURNACE:
     case PlaceableType.WEAVING_TABLE:
+    case PlaceableType.WOOD_CHAIR:
+    case PlaceableType.DARK_OAK_CHAIR:
+    case PlaceableType.PINE_CHAIR:
+    case PlaceableType.PALM_CHAIR:
+    case PlaceableType.WOOD_BENCH:
+    case PlaceableType.DARK_OAK_BENCH:
+    case PlaceableType.PINE_BENCH:
+    case PlaceableType.PALM_BENCH:
     case PlaceableType.MARKET_STALL:
     case PlaceableType.EXPLORER_TENT:
     case PlaceableType.VILLAGE_HOUSE:
@@ -5471,3 +5777,26 @@ export function getPlaceableRotationMode(
 export function isRotatablePlaceable(type?: PlaceableType): boolean {
   return getPlaceableRotationMode(type) !== 'none';
 }
+
+export function isChairPlaceable(type?: PlaceableType | null): boolean {
+  return (
+    type === PlaceableType.WOOD_CHAIR ||
+    type === PlaceableType.DARK_OAK_CHAIR ||
+    type === PlaceableType.PINE_CHAIR ||
+    type === PlaceableType.PALM_CHAIR
+  );
+}
+
+export function isBenchPlaceable(type?: PlaceableType | null): boolean {
+  return (
+    type === PlaceableType.WOOD_BENCH ||
+    type === PlaceableType.DARK_OAK_BENCH ||
+    type === PlaceableType.PINE_BENCH ||
+    type === PlaceableType.PALM_BENCH
+  );
+}
+
+export function isSeatPlaceable(type?: PlaceableType | null): boolean {
+  return isChairPlaceable(type) || isBenchPlaceable(type);
+}
+

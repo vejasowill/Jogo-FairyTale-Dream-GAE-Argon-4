@@ -244,6 +244,8 @@ export const CraftingDrawer: React.FC<CraftingDrawerProps> = ({
     useState<ClothingColorId>('vermelho');
   const [selectedMaterialOptionId, setSelectedMaterialOptionId] =
     useState<string>('');
+  const [isMaterialPickerExpanded, setIsMaterialPickerExpanded] =
+    useState<boolean>(false);
   const [weavingOpenGuard, setWeavingOpenGuard] = useState<boolean>(false);
 
   useEffect(() => {
@@ -348,15 +350,24 @@ export const CraftingDrawer: React.FC<CraftingDrawerProps> = ({
         setCraftColorId('branco');
       }
     }
+    setIsMaterialPickerExpanded(false);
     if (selectedRecipe?.materialOptions && selectedRecipe.materialOptions.length > 0) {
-      const firstAvailable = selectedRecipe.materialOptions.find((opt) =>
-        opt.ingredients.every(
-          (ing) => engine.getIngredientAvailableCount(ing) >= ing.count
-        )
-      );
-      setSelectedMaterialOptionId(
-        firstAvailable?.id || selectedRecipe.materialOptions[0].id
-      );
+      let bestOpt = selectedRecipe.materialOptions[0];
+      let bestCount = -1;
+      for (const opt of selectedRecipe.materialOptions) {
+        const matIng =
+          opt.ingredients.find((ing) =>
+            opt.iconItemId
+              ? ing.itemId === opt.iconItemId
+              : isCommonWoodItem(ing.itemId)
+          ) || opt.ingredients[0];
+        const count = matIng ? engine.getIngredientAvailableCount(matIng) : 0;
+        if (count > bestCount) {
+          bestCount = count;
+          bestOpt = opt;
+        }
+      }
+      setSelectedMaterialOptionId(bestOpt.id);
     } else {
       setSelectedMaterialOptionId('');
     }
@@ -545,11 +556,11 @@ export const CraftingDrawer: React.FC<CraftingDrawerProps> = ({
     thermalState?.fuelItemId && ITEMS[thermalState.fuelItemId]
       ? ITEMS[thermalState.fuelItemId]
       : null;
-  const fuelBurnRem = thermalState?.fuelBurnRemaining || 0;
-  const fuelBurnMax = Math.max(1, thermalState?.fuelBurnMax || 12);
+  const fuelBurnRem = Math.max(0, Math.round(thermalState?.fuelBurnRemaining || 0));
+  const fuelBurnMax = Math.max(1, Math.round(thermalState?.fuelBurnMax || 12));
   const fuelFlamePct = Math.min(
     100,
-    Math.max(0, (fuelBurnRem / fuelBurnMax) * 100)
+    Math.max(0, Math.round((fuelBurnRem / fuelBurnMax) * 100))
   );
 
   const activeCookingRecipe = thermalState?.cookingRecipeId
@@ -559,14 +570,19 @@ export const CraftingDrawer: React.FC<CraftingDrawerProps> = ({
     ? ITEMS[activeCookingRecipe.resultItemId]
     : null;
   const cookingInputCount = thermalState?.cookingInputCount || 0;
-  const cookingProgress = thermalState?.cookingProgress || 0;
+  const cookingProgress = Math.max(0, Math.round(thermalState?.cookingProgress || 0));
   const cookingDuration = Math.max(
     1,
-    thermalState?.cookingDuration || activeCookingRecipe?.craftTimeSec || 6
+    Math.round(
+      thermalState?.cookingDuration || activeCookingRecipe?.craftTimeSec || 6
+    )
   );
   const cookingPct =
     cookingInputCount > 0
-      ? Math.min(100, Math.max(0, (cookingProgress / cookingDuration) * 100))
+      ? Math.min(
+          100,
+          Math.max(0, Math.round((cookingProgress / cookingDuration) * 100))
+        )
       : 0;
 
   const outputItemDef =
@@ -2411,73 +2427,141 @@ export const CraftingDrawer: React.FC<CraftingDrawerProps> = ({
 
                   {/* Material Option Selector for Multi-Source Dye or Wood Recipes */}
                   {selectedRecipe.materialOptions &&
-                    selectedRecipe.materialOptions.length > 1 && (
-                      <div className="space-y-1.5 pt-1 border-t border-white/10">
-                        <span className="text-[9px] font-pixel text-amber-300 block">
-                          {resultItem.isDye
-                            ? 'ESCOLHA O MATERIAL PARA PRODUZIR O CORANTE:'
-                            : 'ESCOLHA QUAL MADEIRA USAR:'}
-                        </span>
-                        <div className="grid grid-cols-1 gap-1">
-                          {selectedRecipe.materialOptions.map((opt) => {
-                            const isSelectedOpt =
-                              (selectedMaterialOptionId ||
-                                selectedRecipe.materialOptions![0].id) ===
-                              opt.id;
-                            const matIng =
-                              opt.ingredients.find((ing) =>
-                                opt.iconItemId
-                                  ? ing.itemId === opt.iconItemId
-                                  : isCommonWoodItem(ing.itemId)
-                              ) || opt.ingredients[0];
-                            const have = matIng
-                              ? engine.getIngredientAvailableCount(matIng)
-                              : 0;
-                            const need = matIng?.count || 1;
-                            const enough = have >= need;
-                            return (
-                              <button
-                                key={opt.id}
-                                type="button"
-                                onClick={() =>
-                                  setSelectedMaterialOptionId(opt.id)
-                                }
-                                className={`p-1.5 rounded-sm border flex items-center justify-between gap-2 text-left transition-all ${
-                                  isSelectedOpt
-                                    ? 'bg-amber-950/60 border-amber-400 ring-1 ring-amber-400/60'
-                                    : 'bg-black/45 border-white/15 hover:border-amber-400/50'
-                                }`}
-                              >
-                                <div className="flex items-center gap-2 min-w-0">
-                                  {matIng && (
-                                    <img
-                                      src={spriteAtlas.getItemIconUrl(
-                                        opt.iconItemId || matIng.itemId,
-                                        matIng.flowerColor
-                                      )}
-                                      alt={opt.label}
-                                      className="w-5 h-5 pixelated shrink-0"
-                                    />
-                                  )}
-                                  <span className="text-[10px] font-bold text-white truncate">
-                                    {opt.label}
-                                  </span>
-                                </div>
+                    selectedRecipe.materialOptions.length > 1 &&
+                    (() => {
+                      const activeOpt =
+                        selectedRecipe.materialOptions.find(
+                          (o) => o.id === selectedMaterialOptionId
+                        ) || selectedRecipe.materialOptions[0];
+                      const activeMatIng =
+                        activeOpt.ingredients.find((ing) =>
+                          activeOpt.iconItemId
+                            ? ing.itemId === activeOpt.iconItemId
+                            : isCommonWoodItem(ing.itemId)
+                        ) || activeOpt.ingredients[0];
+                      const activeHave = activeMatIng
+                        ? engine.getIngredientAvailableCount(activeMatIng)
+                        : 0;
+                      const activeNeed = activeMatIng?.count || 1;
+                      const activeEnough = activeHave >= activeNeed;
+
+                      return (
+                        <div className="space-y-1 pt-1 border-t border-white/10">
+                          {!isMaterialPickerExpanded ? (
+                            <div className="px-2 py-1 rounded-sm bg-black/45 border border-amber-500/40 flex items-center justify-between gap-2">
+                              <div className="flex items-center gap-1.5 min-w-0">
+                                {activeMatIng && (
+                                  <img
+                                    src={spriteAtlas.getItemIconUrl(
+                                      activeOpt.iconItemId ||
+                                        activeMatIng.itemId,
+                                      activeMatIng.flowerColor
+                                    )}
+                                    alt={activeOpt.label}
+                                    className="w-4 h-4 pixelated shrink-0"
+                                  />
+                                )}
+                                <span className="text-[10px] font-bold text-amber-100 truncate">
+                                  {activeOpt.label}
+                                </span>
                                 <span
                                   className={`text-[10px] font-mono-tabular font-bold shrink-0 ${
-                                    enough
+                                    activeEnough
                                       ? 'text-emerald-400'
                                       : 'text-rose-400'
                                   }`}
                                 >
-                                  {have}/{need}
+                                  ({activeHave}/{activeNeed})
                                 </span>
+                              </div>
+                              <button
+                                type="button"
+                                onClick={() => setIsMaterialPickerExpanded(true)}
+                                className="px-2 py-0.5 rounded-sm bg-amber-900/70 hover:bg-amber-800/80 border border-amber-400/60 text-[9px] font-pixel font-bold text-amber-200 shrink-0 transition-colors"
+                              >
+                                Trocar
                               </button>
-                            );
-                          })}
+                            </div>
+                          ) : (
+                            <div className="space-y-1 bg-black/50 p-1.5 rounded-sm border border-amber-500/40">
+                              <div className="flex items-center justify-between">
+                                <span className="text-[8px] font-pixel text-amber-300">
+                                  {resultItem.isDye
+                                    ? 'ESCOLHA O MATERIAL:'
+                                    : 'ESCOLHA A MADEIRA:'}
+                                </span>
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    setIsMaterialPickerExpanded(false)
+                                  }
+                                  className="text-[9px] text-stone-400 hover:text-white font-bold px-1"
+                                >
+                                  Fechar
+                                </button>
+                              </div>
+                              <div className="grid grid-cols-1 gap-1">
+                                {selectedRecipe.materialOptions.map((opt) => {
+                                  const isSelectedOpt =
+                                    activeOpt.id === opt.id;
+                                  const matIng =
+                                    opt.ingredients.find((ing) =>
+                                      opt.iconItemId
+                                        ? ing.itemId === opt.iconItemId
+                                        : isCommonWoodItem(ing.itemId)
+                                    ) || opt.ingredients[0];
+                                  const have = matIng
+                                    ? engine.getIngredientAvailableCount(matIng)
+                                    : 0;
+                                  const need = matIng?.count || 1;
+                                  const enough = have >= need;
+                                  return (
+                                    <button
+                                      key={opt.id}
+                                      type="button"
+                                      onClick={() => {
+                                        setSelectedMaterialOptionId(opt.id);
+                                        setIsMaterialPickerExpanded(false);
+                                      }}
+                                      className={`px-2 py-1 rounded-sm border flex items-center justify-between gap-2 text-left transition-all ${
+                                        isSelectedOpt
+                                          ? 'bg-amber-950/70 border-amber-400 ring-1 ring-amber-400/60'
+                                          : 'bg-black/45 border-white/15 hover:border-amber-400/50'
+                                      }`}
+                                    >
+                                      <div className="flex items-center gap-1.5 min-w-0">
+                                        {matIng && (
+                                          <img
+                                            src={spriteAtlas.getItemIconUrl(
+                                              opt.iconItemId || matIng.itemId,
+                                              matIng.flowerColor
+                                            )}
+                                            alt={opt.label}
+                                            className="w-4 h-4 pixelated shrink-0"
+                                          />
+                                        )}
+                                        <span className="text-[10px] font-bold text-white truncate">
+                                          {opt.label}
+                                        </span>
+                                      </div>
+                                      <span
+                                        className={`text-[10px] font-mono-tabular font-bold shrink-0 ${
+                                          enough
+                                            ? 'text-emerald-400'
+                                            : 'text-rose-400'
+                                        }`}
+                                      >
+                                        {have}/{need}
+                                      </span>
+                                    </button>
+                                  );
+                                })}
+                              </div>
+                            </div>
+                          )}
                         </div>
-                      </div>
-                    )}
+                      );
+                    })()}
 
                   {/* Ingredients List */}
                   <div className="space-y-1 pt-1 border-t border-white/10">
@@ -2489,10 +2573,7 @@ export const CraftingDrawer: React.FC<CraftingDrawerProps> = ({
                         const ingDef = ITEMS[ing.itemId];
                         const have = engine.getIngredientAvailableCount(ing);
                         const enough = have >= ing.count;
-                        const isWoodChoice = isCommonWoodItem(ing.itemId);
-                        const ingName = isWoodChoice
-                          ? 'Madeira'
-                          : ing.flowerColor
+                        const ingName = ing.flowerColor
                           ? `${ingDef?.name || ing.itemId} (${getFlowerColorLabel(
                               ing.flowerColor
                             )})`

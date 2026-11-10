@@ -371,6 +371,9 @@ export class MultiplayerManager {
       equippedBySlot: player.equippedBySlot,
       appearance: player.appearance,
       isSleeping: Boolean(player.isSleeping),
+      isSitting: Boolean(player.isSitting),
+      sittingStructureId: player.sittingStructureId || null,
+      sittingStructureType: player.sittingStructureType || null,
       isUnderground: Boolean(player.isUnderground),
     };
   }
@@ -426,6 +429,8 @@ export class MultiplayerManager {
       attractedStallId: c.attractedStallId,
       stallInspectionsToday: c.stallInspectionsToday,
       peaceDebtCoins: c.peaceDebtCoins,
+      isSitting: Boolean(c.isSitting),
+      sittingStructureId: c.sittingStructureId || null,
       isUnderground: Boolean(c.isUnderground),
     }));
   }
@@ -3407,6 +3412,9 @@ export class MultiplayerManager {
         existing.appearance = st.appearance;
       }
       existing.isSleeping = Boolean(st.isSleeping);
+      existing.isSitting = Boolean(st.isSitting);
+      existing.sittingStructureId = st.sittingStructureId ?? null;
+      existing.sittingStructureType = st.sittingStructureType ?? null;
     } else {
       const rx = typeof st.x === 'number' ? st.x : 0;
       const ry = typeof st.y === 'number' ? st.y : 0;
@@ -3428,6 +3436,9 @@ export class MultiplayerManager {
         isMoving: Boolean(st.isMoving),
         isSwimming: Boolean(st.isSwimming),
         isSleeping: Boolean(st.isSleeping),
+        isSitting: Boolean(st.isSitting),
+        sittingStructureId: st.sittingStructureId ?? null,
+        sittingStructureType: st.sittingStructureType ?? null,
         isUnderground: Boolean(st.isUnderground),
         mountedEntityId: st.mountedEntityId ?? null,
         mountedSeatIndex:

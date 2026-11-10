@@ -664,10 +664,55 @@ export function migrateSaveData(rawSave: WorldSaveData): WorldSaveData {
   cleanChunkObjects(migrated.chunks);
   cleanChunkObjects(migrated.undergroundChunks);
 
+  // Ensure default world spawn and default respawn (when no bed/tent checkpoint is set)
+  // always use the seed's valid deterministic initial spawn point instead of (16, 16)
+  const originWp = Array.isArray(migrated.waypoints)
+    ? migrated.waypoints.find((w) => w && w.id === 'wp_origin')
+    : undefined;
+  let defaultSeedSpawn: {
+    x: number;
+    y: number;
+    tileX: number;
+    tileY: number;
+  } | null = null;
+  if (typeof migrated.metadata?.seed === 'number') {
+    const spawnProbeMgr = new WorldManager(
+      migrated.metadata.seed,
+      undefined,
+      migrated.metadata.createdWorldGenVersion ??
+        migrated.metadata.worldGenVersion ??
+        CURRENT_WORLD_GEN_VERSION
+    );
+    defaultSeedSpawn = spawnProbeMgr.getSeedDefaultSpawnPoint();
+    if (originWp) {
+      originWp.tileX = defaultSeedSpawn.tileX;
+      originWp.tileY = defaultSeedSpawn.tileY;
+    }
+  }
+
+  const syncDefaultRespawnToSeed = (p: PlayerState | undefined) => {
+    if (!p || !defaultSeedSpawn) return;
+    const isDefaultLabel =
+      !p.respawnLabel || p.respawnLabel === 'Acampamento Inicial';
+    const hasInvalidRespawnCoords =
+      typeof p.respawnX !== 'number' ||
+      !Number.isFinite(p.respawnX) ||
+      typeof p.respawnY !== 'number' ||
+      !Number.isFinite(p.respawnY);
+    if (isDefaultLabel || hasInvalidRespawnCoords) {
+      p.respawnX = defaultSeedSpawn.x;
+      p.respawnY = defaultSeedSpawn.y;
+      p.respawnLabel = 'Acampamento Inicial';
+      p.respawnIsUnderground = false;
+    }
+  };
+
   sanitizePlayerState(migrated.player);
+  syncDefaultRespawnToSeed(migrated.player);
   if (migrated.guestPlayers && typeof migrated.guestPlayers === 'object') {
     for (const gp of Object.values(migrated.guestPlayers)) {
       sanitizePlayerState(gp);
+      syncDefaultRespawnToSeed(gp);
     }
   }
   if (Array.isArray(migrated.creatures)) {

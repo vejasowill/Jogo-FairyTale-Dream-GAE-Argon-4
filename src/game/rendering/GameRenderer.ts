@@ -10,6 +10,7 @@ import {
   EcologicalZone,
   FloatingText,
   ItemCategory,
+  ItemDefinition,
   NatureNode,
   NatureNodeType,
   PlaceableType,
@@ -839,6 +840,20 @@ export class GameRenderer {
       ctx.restore();
     } else if (
       heldItem &&
+      (heldItem.toolType === ToolType.HOE ||
+        heldItem.toolType === ToolType.SHOVEL ||
+        Boolean(heldItem.seedCropType)) &&
+      targetBuildTile
+    ) {
+      this.drawGroundToolTileSelector(
+        ctx,
+        world,
+        heldItem,
+        targetBuildTile,
+        globalTime
+      );
+    } else if (
+      heldItem &&
       heldItem.id === 'bone_fertilizer' &&
       !(
         aimedTarget &&
@@ -1180,7 +1195,7 @@ export class GameRenderer {
           ? false
           : Boolean(cr.isSwimming || world.isWorldPosInWater(cr.x, cr.y));
       renderQueue.push({
-        ySort: cr.y + 10,
+        ySort: cr.isSitting ? cr.y + 18 : cr.y + 10,
         draw: (c) =>
           this.drawCreature(
             c,
@@ -1254,9 +1269,10 @@ export class GameRenderer {
         ? false
         : Boolean(rp.isSwimming || world.isWorldPosInWater(rp.x, rp.y));
       renderQueue.push({
-        ySort: rp.isSleeping
-          ? rp.y + 18
-          : (rpMount ? rpMount.y : rp.y) + 10.2,
+        ySort:
+          rp.isSleeping || rp.isSitting
+            ? rp.y + 18
+            : (rpMount ? rpMount.y : rp.y) + 10.2,
         draw: (c) =>
           this.drawRemotePlayer(c, rp, globalTime, shadowDx, rpSwimming, rpMount),
       });
@@ -1301,9 +1317,10 @@ export class GameRenderer {
       ? false
       : Boolean(player.isSwimming || world.isWorldPosInWater(player.x, player.y));
     renderQueue.push({
-      ySort: player.isSleeping
-        ? player.y + 18
-        : (playerMount ? playerMount.y : player.y) + 10.25,
+      ySort:
+        player.isSleeping || player.isSitting
+          ? player.y + 18
+          : (playerMount ? playerMount.y : player.y) + 10.25,
       draw: (c) =>
         this.drawPlayer(c, player, globalTime, shadowDx, playerSwimming, playerMount),
     });
@@ -1343,6 +1360,20 @@ export class GameRenderer {
         tileAnimFrame,
         globalTime,
         buildOptions
+      );
+    } else if (
+      heldItem &&
+      (heldItem.toolType === ToolType.HOE ||
+        heldItem.toolType === ToolType.SHOVEL ||
+        Boolean(heldItem.seedCropType)) &&
+      targetBuildTile
+    ) {
+      this.drawGroundToolTileSelector(
+        ctx,
+        world,
+        heldItem,
+        targetBuildTile,
+        globalTime
       );
     }
 
@@ -3873,6 +3904,33 @@ export class GameRenderer {
     const wx = st.tileX * TILE_SIZE;
     const wy = st.tileY * TILE_SIZE;
 
+    // Rustic Chairs & Connected/Corner Benches (4 Wood Variants)
+    if (WorldManager.isChairStructure(st.type)) {
+      ctx.save();
+      if (st.hitFlashTimer > 0) {
+        ctx.filter = 'brightness(1.7)';
+      }
+      this.drawRusticChair(ctx, st, wx, wy, shadowDx);
+      ctx.restore();
+      if (st.hp < st.maxHp && !isAimed) {
+        this.drawMiniBar(ctx, wx + TILE_SIZE / 2, wy - 6, st.hp / st.maxHp, '#38bdf8');
+      }
+      return;
+    }
+
+    if (WorldManager.isBenchStructure(st.type)) {
+      ctx.save();
+      if (st.hitFlashTimer > 0) {
+        ctx.filter = 'brightness(1.7)';
+      }
+      this.drawRusticBench(ctx, world, st, wx, wy, shadowDx);
+      ctx.restore();
+      if (st.hp < st.maxHp && !isAimed) {
+        this.drawMiniBar(ctx, wx + TILE_SIZE / 2, wy - 6, st.hp / st.maxHp, '#38bdf8');
+      }
+      return;
+    }
+
     // Adaptive 16-State Wall, Window, Fence & Door Rendering
     if (
       st.type !== PlaceableType.CHEST &&
@@ -5899,6 +5957,417 @@ export class GameRenderer {
     ctx.drawImage(wallStamp, wx - 2, wy - 16);
   }
 
+  private getWoodSeatPalette(type?: PlaceableType | null): {
+    outline: string;
+    dark: string;
+    mid: string;
+    light: string;
+    grain: string;
+  } {
+    switch (type) {
+      case PlaceableType.DARK_OAK_CHAIR:
+      case PlaceableType.DARK_OAK_BENCH:
+        return {
+          outline: '#120804',
+          dark: '#2b170b',
+          mid: '#4a2c16',
+          light: '#6b4226',
+          grain: '#1f1007',
+        };
+      case PlaceableType.PINE_CHAIR:
+      case PlaceableType.PINE_BENCH:
+        return {
+          outline: '#3d2410',
+          dark: '#8c6239',
+          mid: '#b78853',
+          light: '#e2be8a',
+          grain: '#6e4926',
+        };
+      case PlaceableType.PALM_CHAIR:
+      case PlaceableType.PALM_BENCH:
+        return {
+          outline: '#42280e',
+          dark: '#9c6628',
+          mid: '#c88d3a',
+          light: '#f1c26b',
+          grain: '#7a4d1b',
+        };
+      case PlaceableType.WOOD_CHAIR:
+      case PlaceableType.WOOD_BENCH:
+      default:
+        return {
+          outline: '#271206',
+          dark: '#78350f',
+          mid: '#b45309',
+          light: '#d97706',
+          grain: '#5c280b',
+        };
+    }
+  }
+
+  /**
+   * Renders a 4-directional rustic wooden chair for all 4 wood variants.
+   * Facing direction is determined by `WorldManager.getStructureFacingDirection(st, 0)`.
+   */
+  private drawRusticChair(
+    ctx: CanvasRenderingContext2D,
+    st: PlacedStructure,
+    wx: number,
+    wy: number,
+    shadowDx: number
+  ): void {
+    const pal = this.getWoodSeatPalette(st.type);
+    const facing = WorldManager.getStructureFacingDirection(st, 0);
+
+    // Ground shadow
+    ctx.fillStyle = 'rgba(8, 12, 18, 0.30)';
+    ctx.fillRect(wx + 7 + Math.round(shadowDx * 0.4), wy + 24, 18, 5);
+
+    if (facing === 'down') {
+      // Backrest on North side (top), seat in center, legs at bottom
+      ctx.fillStyle = pal.outline;
+      ctx.fillRect(wx + 8, wy + 4, 16, 12);
+      ctx.fillStyle = pal.dark;
+      ctx.fillRect(wx + 9, wy + 5, 2, 10);
+      ctx.fillRect(wx + 21, wy + 5, 2, 10);
+      ctx.fillStyle = pal.mid;
+      ctx.fillRect(wx + 11, wy + 6, 10, 3);
+      ctx.fillRect(wx + 11, wy + 10, 10, 3);
+      ctx.fillStyle = pal.light;
+      ctx.fillRect(wx + 11, wy + 6, 10, 1);
+
+      // Seat plank
+      ctx.fillStyle = pal.outline;
+      ctx.fillRect(wx + 7, wy + 14, 18, 7);
+      ctx.fillStyle = pal.mid;
+      ctx.fillRect(wx + 8, wy + 15, 16, 5);
+      ctx.fillStyle = pal.light;
+      ctx.fillRect(wx + 9, wy + 15, 14, 2);
+      ctx.fillStyle = pal.grain;
+      ctx.fillRect(wx + 8, wy + 18, 16, 1);
+
+      // Front legs
+      ctx.fillStyle = pal.outline;
+      ctx.fillRect(wx + 8, wy + 21, 4, 6);
+      ctx.fillRect(wx + 20, wy + 21, 4, 6);
+      ctx.fillStyle = pal.dark;
+      ctx.fillRect(wx + 9, wy + 21, 2, 5);
+      ctx.fillRect(wx + 21, wy + 21, 2, 5);
+    } else if (facing === 'up') {
+      // Seat drawn first, then tall backrest on South side (front)
+      ctx.fillStyle = pal.outline;
+      ctx.fillRect(wx + 7, wy + 12, 18, 7);
+      ctx.fillStyle = pal.mid;
+      ctx.fillRect(wx + 8, wy + 13, 16, 5);
+      ctx.fillStyle = pal.light;
+      ctx.fillRect(wx + 9, wy + 13, 14, 2);
+
+      // South backrest + legs
+      ctx.fillStyle = pal.outline;
+      ctx.fillRect(wx + 8, wy + 8, 16, 19);
+      ctx.fillStyle = pal.dark;
+      ctx.fillRect(wx + 9, wy + 9, 2, 17);
+      ctx.fillRect(wx + 21, wy + 9, 2, 17);
+      ctx.fillStyle = pal.mid;
+      ctx.fillRect(wx + 11, wy + 10, 10, 4);
+      ctx.fillRect(wx + 11, wy + 15, 10, 4);
+      ctx.fillStyle = pal.light;
+      ctx.fillRect(wx + 9, wy + 9, 14, 1);
+      ctx.fillStyle = pal.grain;
+      ctx.fillRect(wx + 11, wy + 13, 10, 1);
+    } else if (facing === 'right') {
+      // Side profile facing East: Backrest on West (left), seat extending East (right)
+      // Back & front legs
+      ctx.fillStyle = pal.outline;
+      ctx.fillRect(wx + 8, wy + 4, 5, 23);
+      ctx.fillRect(wx + 19, wy + 15, 4, 12);
+      ctx.fillStyle = pal.dark;
+      ctx.fillRect(wx + 9, wy + 5, 3, 21);
+      ctx.fillRect(wx + 20, wy + 16, 2, 10);
+      ctx.fillStyle = pal.light;
+      ctx.fillRect(wx + 9, wy + 5, 2, 2);
+
+      // Seat plank
+      ctx.fillStyle = pal.outline;
+      ctx.fillRect(wx + 8, wy + 14, 16, 6);
+      ctx.fillStyle = pal.mid;
+      ctx.fillRect(wx + 9, wy + 15, 14, 4);
+      ctx.fillStyle = pal.light;
+      ctx.fillRect(wx + 10, wy + 15, 12, 2);
+    } else {
+      // Side profile facing West: Backrest on East (right), seat extending West (left)
+      ctx.fillStyle = pal.outline;
+      ctx.fillRect(wx + 19, wy + 4, 5, 23);
+      ctx.fillRect(wx + 9, wy + 15, 4, 12);
+      ctx.fillStyle = pal.dark;
+      ctx.fillRect(wx + 20, wy + 5, 3, 21);
+      ctx.fillRect(wx + 10, wy + 16, 2, 10);
+      ctx.fillStyle = pal.light;
+      ctx.fillRect(wx + 20, wy + 5, 2, 2);
+
+      // Seat plank
+      ctx.fillStyle = pal.outline;
+      ctx.fillRect(wx + 8, wy + 14, 16, 6);
+      ctx.fillStyle = pal.mid;
+      ctx.fillRect(wx + 9, wy + 15, 14, 4);
+      ctx.fillStyle = pal.light;
+      ctx.fillRect(wx + 10, wy + 15, 12, 2);
+    }
+  }
+
+  /**
+   * Renders a rustic backless wooden bench ("banco rústico sem encosto") that seamlessly connects
+   * to adjacent benches and forms a coherent corner bench ("banco de quina") when connected on both axes.
+   */
+  private drawRusticBench(
+    ctx: CanvasRenderingContext2D,
+    world: WorldManager,
+    st: PlacedStructure,
+    wx: number,
+    wy: number,
+    shadowDx: number
+  ): void {
+    const pal = this.getWoodSeatPalette(st.type);
+    const connMask = world.getStructureConnectionMask(st.tileX, st.tileY, st.type);
+    const hasN = (connMask & 1) !== 0;
+    const hasE = (connMask & 2) !== 0;
+    const hasS = (connMask & 4) !== 0;
+    const hasW = (connMask & 8) !== 0;
+    const isCorner = (hasN || hasS) && (hasE || hasW);
+
+    if (isCorner) {
+      // Corner bench ("Banco de Quina" — non-sittable L-joint / T-joint / cross-joint)
+      // Uses exact pixel-aligned plank bounds matching horizontal [wy+10..wy+23] and vertical [wx+9..wx+23] benches.
+      const hx0 = hasW ? wx : wx + 9;
+      const hx1 = hasE ? wx + TILE_SIZE : wx + 23;
+      const hw = hx1 - hx0;
+
+      const vy0 = hasN ? wy : wy + 10;
+      const vy1 = hasS ? wy + TILE_SIZE : wy + 23;
+      const vh = vy1 - vy0;
+
+      // Ground shadow under connected arms
+      ctx.fillStyle = 'rgba(8, 12, 18, 0.30)';
+      ctx.fillRect(hx0 + 1 + Math.round(shadowDx * 0.4), wy + 23, Math.max(8, hw - 2), 5);
+      if (hasS) {
+        ctx.fillRect(wx + 10 + Math.round(shadowDx * 0.4), wy + 22, 14, 10);
+      }
+
+      // Corner trestle support legs (visible when South is not connected)
+      if (!hasS) {
+        ctx.fillStyle = pal.outline;
+        ctx.fillRect(wx + 10, wy + 23, 4, 4);
+        ctx.fillRect(wx + 18, wy + 23, 4, 4);
+        ctx.fillStyle = pal.dark;
+        ctx.fillRect(wx + 11, wy + 23, 2, 3);
+        ctx.fillRect(wx + 19, wy + 23, 2, 3);
+      }
+
+      // 1. Unified dark outer border across both arms
+      ctx.fillStyle = pal.outline;
+      ctx.fillRect(hx0, wy + 10, hw, 13);
+      ctx.fillRect(wx + 9, vy0, 14, vh);
+
+      // 2. 3D front plank thickness (apron) along South edges
+      ctx.fillStyle = pal.dark;
+      const hInL = hasW ? hx0 : hx0 + 1;
+      const hInR = hasE ? hx1 : hx1 - 1;
+      ctx.fillRect(hInL, wy + 19, hInR - hInL, 3);
+      if (hasS) {
+        // Vertical arm continues South: keep side bevels along vertical arm
+        ctx.fillRect(wx + 10, wy + 19, 1, 13);
+        ctx.fillRect(wx + 21, wy + 19, 1, 13);
+      }
+
+      // 3. Unified mid-tone wood plank top surface (erases internal borders so L/T/+ joint is seamless)
+      ctx.fillStyle = pal.mid;
+      ctx.fillRect(hInL, wy + 11, hInR - hInL, 8);
+      const vTopIn = hasN ? vy0 : wy + 11;
+      const vBotIn = hasS ? vy1 : wy + 19;
+      ctx.fillRect(wx + 10, vTopIn, 12, vBotIn - vTopIn);
+
+      // 4. Top-edge wood highlights
+      ctx.fillStyle = pal.light;
+      if (hasW) {
+        ctx.fillRect(hx0, wy + 11, 10, 2);
+      }
+      if (hasE) {
+        ctx.fillRect(wx + 22, wy + 11, 10, 2);
+      }
+      if (!hasN) {
+        ctx.fillRect(hInL, wy + 11, hInR - hInL, 2);
+      } else {
+        ctx.fillRect(wx + 10, vy0, 2, 12);
+      }
+      if (hasS) {
+        ctx.fillRect(wx + 10, wy + 19, 2, 13);
+      }
+
+      // 5. Split-plank center seam + 45-degree corner mitre joint
+      ctx.fillStyle = pal.grain;
+      if (hasW) {
+        ctx.fillRect(hx0, wy + 15, 16, 1);
+      }
+      if (hasE) {
+        ctx.fillRect(wx + 16, wy + 15, 16, 1);
+      }
+      if (hasN) {
+        ctx.fillRect(wx + 16, vy0, 1, 16);
+      }
+      if (hasS) {
+        ctx.fillRect(wx + 16, wy + 15, 1, 17);
+      }
+      // Subtle diagonal mitre pixels at the corner intersection
+      for (let d = 1; d <= 4; d++) {
+        const mx = hasE && !hasW ? wx + 16 + d : wx + 16 - d;
+        const my = hasS && !hasN ? wy + 15 + d : wy + 15 - d;
+        ctx.fillRect(mx, my, 1, 1);
+      }
+
+      // 6. Rustic wooden dowels / pegs at the corner joint
+      ctx.fillStyle = pal.outline;
+      ctx.fillRect(wx + 12, wy + 13, 1, 1);
+      ctx.fillRect(wx + 19, wy + 13, 1, 1);
+      ctx.fillRect(wx + 12, wy + 17, 1, 1);
+      ctx.fillRect(wx + 19, wy + 17, 1, 1);
+      return;
+    }
+
+    const facing = WorldManager.getStructureFacingDirection(st, connMask);
+    const isHorizontalBench = facing === 'down' || facing === 'up';
+
+    if (isHorizontalBench) {
+      // Backless horizontal rustic bench: plank spans y = wy + 10 .. wy + 23
+      const x0 = hasW ? wx : wx + 2;
+      const x1 = hasE ? wx + TILE_SIZE : wx + TILE_SIZE - 2;
+      const w = x1 - x0;
+      const inX0 = hasW ? x0 : x0 + 1;
+      const inX1 = hasE ? x1 : x1 - 1;
+      const inW = inX1 - inX0;
+
+      // Ground shadow
+      ctx.fillStyle = 'rgba(8, 12, 18, 0.30)';
+      ctx.fillRect(x0 + 1 + Math.round(shadowDx * 0.4), wy + 24, Math.max(8, w - 2), 4);
+
+      // Sturdy trestle legs (underneath plank)
+      if (!hasW) {
+        ctx.fillStyle = pal.outline;
+        ctx.fillRect(x0 + 3, wy + 23, 5, 4);
+        ctx.fillStyle = pal.dark;
+        ctx.fillRect(x0 + 4, wy + 23, 3, 3);
+      }
+      if (!hasE) {
+        ctx.fillStyle = pal.outline;
+        ctx.fillRect(x1 - 8, wy + 23, 5, 4);
+        ctx.fillStyle = pal.dark;
+        ctx.fillRect(x1 - 7, wy + 23, 3, 3);
+      }
+      if (hasW && hasE) {
+        // Middle trestle support on long connected spans
+        ctx.fillStyle = pal.outline;
+        ctx.fillRect(wx + 13, wy + 23, 6, 4);
+        ctx.fillStyle = pal.dark;
+        ctx.fillRect(wx + 14, wy + 23, 4, 3);
+      }
+
+      // Plank outer border
+      ctx.fillStyle = pal.outline;
+      ctx.fillRect(x0, wy + 10, w, 13);
+
+      // 3D front plank apron (thickness)
+      ctx.fillStyle = pal.dark;
+      ctx.fillRect(inX0, wy + 19, inW, 3);
+
+      // Top split-plank seating surface
+      ctx.fillStyle = pal.mid;
+      ctx.fillRect(inX0, wy + 11, inW, 8);
+
+      // Sunlit top bevel highlight
+      ctx.fillStyle = pal.light;
+      ctx.fillRect(inX0, wy + 11, inW, 2);
+      ctx.fillRect(inX0, wy + 16, inW, 1);
+
+      // Longitudinal plank split seam + rustic wood grain
+      ctx.fillStyle = pal.grain;
+      ctx.fillRect(inX0, wy + 15, inW, 1);
+      ctx.fillRect(inX0, wy + 20, inW, 1);
+
+      // Wooden dowels / pegs near ends
+      ctx.fillStyle = pal.outline;
+      if (!hasW) {
+        ctx.fillRect(x0 + 4, wy + 13, 1, 1);
+        ctx.fillRect(x0 + 4, wy + 17, 1, 1);
+      }
+      if (!hasE) {
+        ctx.fillRect(x1 - 5, wy + 13, 1, 1);
+        ctx.fillRect(x1 - 5, wy + 17, 1, 1);
+      }
+    } else {
+      // Backless vertical rustic bench: plank spans x = wx + 9 .. wx + 23
+      const y0 = hasN ? wy : wy + 3;
+      const y1 = hasS ? wy + TILE_SIZE : wy + 23;
+      const h = y1 - y0;
+      const topIn = hasN ? y0 : y0 + 1;
+      const botIn = hasS ? y1 : wy + 19;
+
+      // Ground shadow
+      ctx.fillStyle = 'rgba(8, 12, 18, 0.30)';
+      ctx.fillRect(
+        wx + 8 + Math.round(shadowDx * 0.4),
+        y0 + 2,
+        16,
+        hasS ? h - 2 : h + 4
+      );
+
+      // Trestle legs at the South end (when not connected South)
+      if (!hasS) {
+        ctx.fillStyle = pal.outline;
+        ctx.fillRect(wx + 10, wy + 23, 4, 4);
+        ctx.fillRect(wx + 18, wy + 23, 4, 4);
+        ctx.fillStyle = pal.dark;
+        ctx.fillRect(wx + 11, wy + 23, 2, 3);
+        ctx.fillRect(wx + 19, wy + 23, 2, 3);
+      }
+
+      // Plank outer border
+      ctx.fillStyle = pal.outline;
+      ctx.fillRect(wx + 9, y0, 14, h);
+
+      // 3D front apron at South end (or side bevels when continuing South)
+      ctx.fillStyle = pal.dark;
+      if (!hasS) {
+        ctx.fillRect(wx + 10, wy + 19, 12, 3);
+      } else {
+        ctx.fillRect(wx + 10, topIn, 1, botIn - topIn);
+        ctx.fillRect(wx + 21, topIn, 1, botIn - topIn);
+      }
+
+      // Top split-plank seating surface
+      ctx.fillStyle = pal.mid;
+      ctx.fillRect(wx + 10, topIn, 12, botIn - topIn);
+
+      // Sunlit edge highlight
+      ctx.fillStyle = pal.light;
+      ctx.fillRect(wx + 10, topIn, 2, botIn - topIn);
+      ctx.fillRect(wx + 17, topIn, 1, botIn - topIn);
+
+      // Vertical split-plank center seam
+      ctx.fillStyle = pal.grain;
+      ctx.fillRect(wx + 16, topIn, 1, botIn - topIn);
+
+      // Wooden dowels / pegs
+      ctx.fillStyle = pal.outline;
+      if (!hasN) {
+        ctx.fillRect(wx + 12, y0 + 3, 1, 1);
+        ctx.fillRect(wx + 19, y0 + 3, 1, 1);
+      }
+      if (!hasS) {
+        ctx.fillRect(wx + 12, wy + 16, 1, 1);
+        ctx.fillRect(wx + 19, wy + 16, 1, 1);
+      }
+    }
+  }
+
   private wallStampCache = new Map<string, HTMLCanvasElement>();
 
   /**
@@ -6331,6 +6800,121 @@ export class GameRenderer {
       ctx.fillRect(svx + 1, wy + 16, svw - 2, 1);
     }
     return stamp;
+  }
+
+  /**
+   * Renders the ground cell selector when holding ground-interaction tools (Hoe, Shovel, or Seeds).
+   */
+  private drawGroundToolTileSelector(
+    ctx: CanvasRenderingContext2D,
+    world: WorldManager,
+    heldItem: ItemDefinition,
+    targetTile: { tx: number; ty: number },
+    globalTime: number
+  ): void {
+    const { tx, ty } = targetTile;
+    const px = tx * TILE_SIZE;
+    const py = ty * TILE_SIZE;
+    const { cx, cy } = world.tileToChunk(tx, ty);
+    const chunk = world.chunks[WorldManager.chunkKey(cx, cy)];
+    const hasPuddle = world.hasRainPuddleAtTile(tx, ty);
+
+    let mode: 'valid' | 'revert' | 'invalid' = 'invalid';
+
+    if (heldItem.toolType === ToolType.HOE) {
+      const existingSoil = chunk?.structures.find(
+        (s) =>
+          s.tileX === tx &&
+          s.tileY === ty &&
+          s.type === PlaceableType.TILLED_SOIL
+      );
+      if (existingSoil && !existingSoil.cropType) {
+        mode = 'revert';
+      } else if (!hasPuddle && world.canTillTileAt(tx, ty)) {
+        mode = 'valid';
+      }
+    } else if (heldItem.toolType === ToolType.SHOVEL) {
+      const existingPath = chunk?.structures.find(
+        (s) =>
+          s.tileX === tx &&
+          s.tileY === ty &&
+          s.type === PlaceableType.DIRT_PATH
+      );
+      const hasUpperBlocking = chunk?.structures.some(
+        (s) =>
+          s.tileX === tx &&
+          s.tileY === ty &&
+          s.type !== PlaceableType.DIRT_PATH
+      );
+      if (existingPath && !hasUpperBlocking) {
+        mode = 'revert';
+      } else if (!hasPuddle && world.canMakeDirtPathAt(tx, ty)) {
+        mode = 'valid';
+      }
+    } else if (heldItem.seedCropType) {
+      const existingSoil = chunk?.structures.find(
+        (s) =>
+          s.tileX === tx &&
+          s.tileY === ty &&
+          s.type === PlaceableType.TILLED_SOIL
+      );
+      if (existingSoil && !existingSoil.cropType) {
+        mode = 'valid';
+      }
+    }
+
+    const pulse = 0.85 + Math.sin(globalTime * 5) * 0.15;
+    const fillColor =
+      mode === 'valid'
+        ? `rgba(74, 222, 128, ${(0.2 * pulse).toFixed(3)})`
+        : mode === 'revert'
+        ? `rgba(251, 191, 36, ${(0.22 * pulse).toFixed(3)})`
+        : 'rgba(248, 113, 113, 0.14)';
+    const strokeColor =
+      mode === 'valid'
+        ? 'rgba(74, 222, 128, 0.92)'
+        : mode === 'revert'
+        ? 'rgba(251, 191, 36, 0.92)'
+        : 'rgba(248, 113, 113, 0.72)';
+
+    ctx.save();
+    ctx.fillStyle = fillColor;
+    ctx.fillRect(px + 1, py + 1, TILE_SIZE - 2, TILE_SIZE - 2);
+
+    ctx.strokeStyle = 'rgba(15, 23, 42, 0.65)';
+    ctx.lineWidth = 2.5;
+    ctx.strokeRect(px + 1.5, py + 1.5, TILE_SIZE - 3, TILE_SIZE - 3);
+
+    ctx.strokeStyle = strokeColor;
+    ctx.lineWidth = 1.5;
+    ctx.setLineDash([4, 3]);
+    ctx.strokeRect(px + 1.5, py + 1.5, TILE_SIZE - 3, TILE_SIZE - 3);
+    ctx.setLineDash([]);
+
+    // Crisp corner brackets
+    const bLen = 6;
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = strokeColor;
+    ctx.beginPath();
+    // Top-left
+    ctx.moveTo(px + 1, py + 1 + bLen);
+    ctx.lineTo(px + 1, py + 1);
+    ctx.lineTo(px + 1 + bLen, py + 1);
+    // Top-right
+    ctx.moveTo(px + TILE_SIZE - 1 - bLen, py + 1);
+    ctx.lineTo(px + TILE_SIZE - 1, py + 1);
+    ctx.lineTo(px + TILE_SIZE - 1, py + 1 + bLen);
+    // Bottom-right
+    ctx.moveTo(px + TILE_SIZE - 1, py + TILE_SIZE - 1 - bLen);
+    ctx.lineTo(px + TILE_SIZE - 1, py + TILE_SIZE - 1);
+    ctx.lineTo(px + TILE_SIZE - 1 - bLen, py + TILE_SIZE - 1);
+    // Bottom-left
+    ctx.moveTo(px + 1 + bLen, py + TILE_SIZE - 1);
+    ctx.lineTo(px + 1, py + TILE_SIZE - 1);
+    ctx.lineTo(px + 1, py + TILE_SIZE - 1 - bLen);
+    ctx.stroke();
+
+    ctx.restore();
   }
 
   /**
@@ -6887,7 +7471,10 @@ export class GameRenderer {
     }
 
     ctx.save();
-    ctx.translate(cr.x + atkLungeX, footY - walkBounce + atkLungeY);
+    ctx.translate(
+      cr.x + atkLungeX,
+      (cr.isSitting ? footY - 4 : footY - walkBounce) + atkLungeY
+    );
     if (atkTiltRad !== 0) {
       ctx.rotate(atkTiltRad);
     }
@@ -6910,6 +7497,21 @@ export class GameRenderer {
         -visibleDrawH,
         drawW,
         visibleDrawH
+      );
+    } else if (cr.isSitting) {
+      // Seated pose on backless rustic bench (e.g. Ogres in Ogre Camp): draw upper 84% of body resting on bench plank
+      const sitSrcH = Math.max(1, Math.round(sprite.height * 0.84));
+      const sitDrawH = Math.round(drawH * 0.84);
+      ctx.drawImage(
+        sprite,
+        0,
+        0,
+        sprite.width,
+        sitSrcH,
+        -drawW / 2,
+        -sitDrawH + 3,
+        drawW,
+        sitDrawH
       );
     } else {
       ctx.drawImage(sprite, -drawW / 2, -drawH + 2, drawW, drawH);
@@ -7701,10 +8303,12 @@ export class GameRenderer {
       return;
     }
 
-    const frame = player.isMoving && !mountEntity ? player.animFrame : 0;
+    const frame = player.isMoving && !mountEntity && !player.isSitting ? player.animFrame : 0;
     const isBoatMount = Boolean(mountEntity && mountEntity.kind === 'BOAT');
-    const mountPose: 'none' | 'horse' | 'boat' = !mountEntity
-      ? 'none'
+    const mountPose: 'none' | 'horse' | 'boat' | 'chair' = !mountEntity
+      ? player.isSitting
+        ? 'chair'
+        : 'none'
       : isBoatMount
         ? 'boat'
         : 'horse';
@@ -7880,6 +8484,27 @@ export class GameRenderer {
         45,
         drawHalfH
       );
+    } else if (player.isSitting && !mountEntity) {
+      // Seated on a Chair or Backless Bench using dedicated 'chair' pixel-art pose (no vertical cropping/jitter)
+      ctx.translate(Math.round(drawX + hurtShakeX), Math.round(drawY + 2));
+      ctx.scale(breathScaleX, breathScaleY);
+      if (player.hitFlashTimer > 0) {
+        ctx.filter = 'brightness(2.0) contrast(1.2)';
+      }
+      ctx.drawImage(sprite, -22.5, -27.5, 45, 39.375);
+      // Only chairs have a backrest; backless benches never draw a backrest overlay
+      if (
+        player.direction === 'up' &&
+        WorldManager.isChairStructure(player.sittingStructureType)
+      ) {
+        const pal = this.getWoodSeatPalette(player.sittingStructureType);
+        ctx.fillStyle = pal.outline;
+        ctx.fillRect(-8, -7, 16, 7);
+        ctx.fillStyle = pal.mid;
+        ctx.fillRect(-7, -6, 14, 5);
+        ctx.fillStyle = pal.light;
+        ctx.fillRect(-7, -6, 14, 1.5);
+      }
     } else {
       ctx.translate(drawX + hurtShakeX, drawY - walkHop);
       ctx.scale(breathScaleX, breathScaleY);
@@ -8317,10 +8942,12 @@ export class GameRenderer {
       return;
     }
 
-    const frame = rp.isMoving && !mountEntity ? rp.animFrame : 0;
+    const frame = rp.isMoving && !mountEntity && !rp.isSitting ? rp.animFrame : 0;
     const isBoatMount = Boolean(mountEntity && mountEntity.kind === 'BOAT');
-    const mountPose: 'none' | 'horse' | 'boat' = !mountEntity
-      ? 'none'
+    const mountPose: 'none' | 'horse' | 'boat' | 'chair' = !mountEntity
+      ? rp.isSitting
+        ? 'chair'
+        : 'none'
       : isBoatMount
         ? 'boat'
         : 'horse';
@@ -8438,6 +9065,25 @@ export class GameRenderer {
         45,
         drawHalfH
       );
+    } else if (rp.isSitting && !mountEntity) {
+      ctx.translate(Math.round(drawX + rpHurtShakeX), Math.round(drawY + 2));
+      ctx.scale(breathScaleX, breathScaleY);
+      if (rp.hitFlashTimer > 0) {
+        ctx.filter = 'brightness(2.0) contrast(1.2)';
+      }
+      ctx.drawImage(sprite, -22.5, -27.5, 45, 39.375);
+      if (
+        rp.direction === 'up' &&
+        WorldManager.isChairStructure(rp.sittingStructureType)
+      ) {
+        const pal = this.getWoodSeatPalette(rp.sittingStructureType);
+        ctx.fillStyle = pal.outline;
+        ctx.fillRect(-8, -7, 16, 7);
+        ctx.fillStyle = pal.mid;
+        ctx.fillRect(-7, -6, 14, 5);
+        ctx.fillStyle = pal.light;
+        ctx.fillRect(-7, -6, 14, 1.5);
+      }
     } else {
       ctx.translate(drawX + rpHurtShakeX, drawY - walkHop);
       ctx.scale(breathScaleX, breathScaleY);

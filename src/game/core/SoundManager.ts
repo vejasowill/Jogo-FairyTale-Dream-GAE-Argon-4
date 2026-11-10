@@ -319,19 +319,19 @@ class SoundManager {
     const base = Math.max(0, Math.min(1, this.ambientVolume));
     const intensity = Math.max(0, Math.min(1, this.currentRainIntensity));
     const uiFactor = this.isMuffledByUi ? 0.55 : 1.0;
-    const indoorFactor = this.isRainInsideStructure ? 0.68 : 1.0;
+    const indoorFactor = this.isRainInsideStructure ? 0.78 : 1.0;
     return base * uiFactor * indoorFactor * intensity;
   }
 
   private getTargetRainCutoffHz(): number {
     if (this.isRainInsideStructure) {
-      return this.isMuffledByUi ? 310 : 390;
+      return this.isMuffledByUi ? 1050 : 1850;
     }
     return this.isMuffledByUi ? 1150 : 8400;
   }
 
   private getTargetRainFilterQ(): number {
-    return this.isRainInsideStructure ? 1.35 : 0.7;
+    return this.isRainInsideStructure ? 0.55 : 0.7;
   }
 
   private async loadAndDecodeRainBuffer(): Promise<AudioBuffer | null> {

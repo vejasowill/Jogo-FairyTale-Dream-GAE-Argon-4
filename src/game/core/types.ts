@@ -166,6 +166,7 @@ export type ConnectionGroup =
   | 'carpet'
   | 'bridge'
   | 'chest'
+  | 'bench'
   | 'tilled_soil'
   | 'dirt_path'
   | 'none';
@@ -273,6 +274,14 @@ export enum PlaceableType {
   PALM_SAPLING = 'PALM_SAPLING',
   BED = 'BED',
   WEAVING_TABLE = 'WEAVING_TABLE',
+  WOOD_CHAIR = 'WOOD_CHAIR',
+  DARK_OAK_CHAIR = 'DARK_OAK_CHAIR',
+  PINE_CHAIR = 'PINE_CHAIR',
+  PALM_CHAIR = 'PALM_CHAIR',
+  WOOD_BENCH = 'WOOD_BENCH',
+  DARK_OAK_BENCH = 'DARK_OAK_BENCH',
+  PINE_BENCH = 'PINE_BENCH',
+  PALM_BENCH = 'PALM_BENCH',
   FLOWER_TULIP = 'FLOWER_TULIP',
   FLOWER_LILY = 'FLOWER_LILY',
   FLOWER_SUNFLOWER = 'FLOWER_SUNFLOWER',
@@ -558,6 +567,9 @@ export interface CreatureEntity {
   appearance?: PlayerAppearance;
   equippedBySlot?: PlayerEquipment;
   heldItemId?: string | null;
+  // Sitting on a chair or bench (e.g., Ogre Camp ogres seated around campfire)
+  isSitting?: boolean;
+  sittingStructureId?: string | null;
 }
 
 export type TransportSeatRole = 'pilot' | 'passenger';
@@ -871,6 +883,12 @@ export interface PlayerState {
   sleepingTargetY?: number;
   sleepingPrevX?: number;
   sleepingPrevY?: number;
+  // Sitting state (Chair or non-corner Bench)
+  isSitting?: boolean;
+  sittingStructureId?: string | null;
+  sittingStructureType?: PlaceableType | null;
+  sittingPrevX?: number;
+  sittingPrevY?: number;
   // Animation state
   isUnderground?: boolean;
   isMoving: boolean;
@@ -907,6 +925,9 @@ export interface RemotePlayerState {
   isGalloping?: boolean;
   isSleeping?: boolean;
   sleepingStructureType?: PlaceableType | null;
+  isSitting?: boolean;
+  sittingStructureId?: string | null;
+  sittingStructureType?: PlaceableType | null;
   animFrame: number;
   animTimer: number;
   swingTimer: number;
@@ -935,7 +956,7 @@ export interface OnlineActivationStep {
 }
 
 // REGRA PERMANENTE: A cada nova atualização do jogo, incremente a versão para o número seguinte da beta (ex: 0.4.4-beta -> 0.4.5-beta).
-export const GAME_VERSION = '0.8.2-beta';
+export const GAME_VERSION = '0.8.3-beta';
 export const CURRENT_WORLD_GEN_VERSION = 5;
 
 export interface OnlineSessionInfo {

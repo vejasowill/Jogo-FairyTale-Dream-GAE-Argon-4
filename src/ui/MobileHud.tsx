@@ -1211,7 +1211,11 @@ export const MobileHud: React.FC<MobileHudProps> = ({
                 const isGroundFertilizeMode =
                   isHoldingFertilizer && !isAimingAtCropOrSapling;
 
-                const interactLabel = snapshot.aimedTarget?.isPetFeedTarget
+                const interactLabel = player.isSitting
+                  ? 'Levantar'
+                  : snapshot.aimedTarget?.actionHint?.startsWith('Sentar')
+                  ? 'Sentar'
+                  : snapshot.aimedTarget?.isPetFeedTarget
                   ? 'Alimentar'
                   : isGroundFertilizeMode
                   ? 'Adubar Chão'
