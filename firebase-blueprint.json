@@ -100,7 +100,7 @@
     },
     "CloudWorldSave": {
       "title": "CloudWorldSave",
-      "description": "Authoritative cloud save of a player's procedural open world.",
+      "description": "Lightweight world metadata, version pointers, and chunk manifest index stored in Cloud Firestore (world chunks and heavy payloads live in Firebase Storage / independent chunk objects).",
       "type": "object",
       "properties": {
         "worldId": {
@@ -170,17 +170,50 @@
         },
         "checksum": {
           "type": "string",
-          "description": "FNV-1a integrity checksum of the save payload.",
+          "description": "FNV-1a integrity checksum of the world manifest.",
           "minLength": 1,
-          "maxLength": 32
+          "maxLength": 64
         },
         "clientUpdatedAt": {
           "type": "integer",
           "description": "Client epoch timestamp (ms) when the world was saved."
         },
-        "savePayload": {
+        "storageVersion": {
+          "type": "integer",
+          "description": "Cloud storage schema version (2 = Hybrid Firestore Metadata + Independent Chunk/Storage Objects)."
+        },
+        "activeRevisionId": {
+          "type": "string",
+          "description": "Identifier of the latest verified and committed world revision.",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "previousRevisionId": {
+          "type": "string",
+          "description": "Identifier of the previous verified world revision for atomic rollback/recovery.",
+          "minLength": 0,
+          "maxLength": 128
+        },
+        "storageBackend": {
+          "type": "string",
+          "description": "Storage backend where chunk files are stored.",
+          "enum": [
+            "firebase_storage",
+            "hybrid_segmented",
+            "server_storage"
+          ]
+        },
+        "totalBytes": {
+          "type": "integer",
+          "description": "Total byte size of all chunks and entities in this world."
+        },
+        "totalChunksCount": {
+          "type": "integer",
+          "description": "Total number of independent chunk objects indexed for this world."
+        },
+        "chunkIndexSummary": {
           "type": "object",
-          "description": "Compacted WorldSaveData object containing metadata, player, chunks, creatures, waypoints, and structures."
+          "description": "Compact summary of the world manifest, entity parts count, and chunk hashes."
         },
         "createdAt": {
           "type": "string",
@@ -208,7 +241,116 @@
         "worldGenVersion",
         "checksum",
         "clientUpdatedAt",
-        "savePayload",
+        "storageVersion",
+        "activeRevisionId",
+        "previousRevisionId",
+        "storageBackend",
+        "totalBytes",
+        "totalChunksCount",
+        "chunkIndexSummary",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "CloudWorldChunk": {
+      "title": "CloudWorldChunk",
+      "description": "Independent chunk or multipart segment index/record belonging to a saved world.",
+      "type": "object",
+      "properties": {
+        "chunkKey": {
+          "type": "string",
+          "description": "Unique chunk or segment identifier.",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "worldId": {
+          "type": "string",
+          "description": "Parent world identifier.",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "ownerId": {
+          "type": "string",
+          "description": "Firebase Auth UID of the world owner.",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "layer": {
+          "type": "string",
+          "description": "Layer or segment category.",
+          "enum": [
+            "surface",
+            "underground",
+            "entities",
+            "manifest",
+            "snapshot"
+          ]
+        },
+        "partIndex": {
+          "type": "integer",
+          "description": "Zero-based part index when a large chunk/entity payload is split into parts."
+        },
+        "totalParts": {
+          "type": "integer",
+          "description": "Total number of parts for this logical object."
+        },
+        "hash": {
+          "type": "string",
+          "description": "Integrity checksum hash of this chunk or part.",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "sizeBytes": {
+          "type": "integer",
+          "description": "Uncompressed byte length of this chunk or part."
+        },
+        "storagePath": {
+          "type": "string",
+          "description": "Object path in Firebase Storage / Cloud Object Storage.",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "revisionId": {
+          "type": "string",
+          "description": "World revision ID when this chunk was written.",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "chunkData": {
+          "type": "object",
+          "description": "Chunk payload or storage descriptor map."
+        },
+        "clientUpdatedAt": {
+          "type": "integer",
+          "description": "Client epoch timestamp (ms) when this chunk was saved."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when the chunk document was created."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when the chunk document was last updated."
+        }
+      },
+      "required": [
+        "chunkKey",
+        "worldId",
+        "ownerId",
+        "layer",
+        "partIndex",
+        "totalParts",
+        "hash",
+        "sizeBytes",
+        "storagePath",
+        "revisionId",
+        "chunkData",
+        "clientUpdatedAt",
         "createdAt",
         "updatedAt"
       ]
@@ -323,70 +465,6 @@
         "status",
         "grantedAt"
       ]
-    },
-    "CloudWorldChunk": {
-      "title": "CloudWorldChunk",
-      "description": "Individual modified chunk document belonging to a saved world in Cloud Firestore.",
-      "type": "object",
-      "properties": {
-        "chunkKey": {
-          "type": "string",
-          "description": "Chunk coordinate identifier (e.g., surface_0_0 or underground_0_0).",
-          "minLength": 1,
-          "maxLength": 128,
-          "pattern": "^[a-zA-Z0-9_\\-]+$"
-        },
-        "worldId": {
-          "type": "string",
-          "description": "Parent world identifier.",
-          "minLength": 1,
-          "maxLength": 128,
-          "pattern": "^[a-zA-Z0-9_\\-]+$"
-        },
-        "ownerId": {
-          "type": "string",
-          "description": "Firebase Auth UID of the world owner.",
-          "minLength": 1,
-          "maxLength": 128,
-          "pattern": "^[a-zA-Z0-9_\\-]+$"
-        },
-        "layer": {
-          "type": "string",
-          "description": "World layer of this chunk.",
-          "enum": [
-            "surface",
-            "underground"
-          ]
-        },
-        "chunkData": {
-          "type": "object",
-          "description": "Serialized ChunkData deltas (tiles, natureNodes, placeables)."
-        },
-        "clientUpdatedAt": {
-          "type": "integer",
-          "description": "Client epoch timestamp (ms) when this chunk was saved."
-        },
-        "createdAt": {
-          "type": "string",
-          "format": "date-time",
-          "description": "Server timestamp when the chunk document was created."
-        },
-        "updatedAt": {
-          "type": "string",
-          "format": "date-time",
-          "description": "Server timestamp when the chunk document was last updated."
-        }
-      },
-      "required": [
-        "chunkKey",
-        "worldId",
-        "ownerId",
-        "layer",
-        "chunkData",
-        "clientUpdatedAt",
-        "createdAt",
-        "updatedAt"
-      ]
     }
   },
   "firestore": {
@@ -400,11 +478,11 @@
     },
     "/users/{userId}/worlds/{worldId}": {
       "schema": "CloudWorldSave",
-      "description": "Player's saved worlds subcollection."
+      "description": "Lightweight world metadata, version pointers, and chunk manifest index."
     },
     "/users/{userId}/worlds/{worldId}/chunks/{chunkKey}": {
       "schema": "CloudWorldChunk",
-      "description": "Modified chunks subcollection belonging to a saved world."
+      "description": "Independent chunk objects and multipart segments belonging to a saved world."
     },
     "/users/{userId}/guestProfiles/{worldId}": {
       "schema": "CloudGuestProfile",

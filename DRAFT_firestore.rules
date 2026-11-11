@@ -46,16 +46,6 @@ service cloud.firestore {
       );
     }
 
-    function parentWorldExists(userId, worldId) {
-      return (
-        exists(/databases/$(database)/documents/users/$(userId)/worlds/$(worldId)) &&
-        get(/databases/$(database)/documents/users/$(userId)/worlds/$(worldId)).data.ownerId == request.auth.uid
-      ) || (
-        existsAfter(/databases/$(database)/documents/users/$(userId)/worlds/$(worldId)) &&
-        getAfter(/databases/$(database)/documents/users/$(userId)/worlds/$(worldId)).data.ownerId == request.auth.uid
-      );
-    }
-
     // =========================================================================
     // 2. ENTITY VALIDATION BLUEPRINTS (Anti-Update-Gap)
     // =========================================================================
@@ -136,7 +126,13 @@ service cloud.firestore {
           'worldGenVersion',
           'checksum',
           'clientUpdatedAt',
-          'savePayload',
+          'storageVersion',
+          'activeRevisionId',
+          'previousRevisionId',
+          'storageBackend',
+          'totalBytes',
+          'totalChunksCount',
+          'chunkIndexSummary',
           'createdAt',
           'updatedAt'
         ]) &&
@@ -155,7 +151,13 @@ service cloud.firestore {
           'worldGenVersion',
           'checksum',
           'clientUpdatedAt',
-          'savePayload',
+          'storageVersion',
+          'activeRevisionId',
+          'previousRevisionId',
+          'storageBackend',
+          'totalBytes',
+          'totalChunksCount',
+          'chunkIndexSummary',
           'createdAt',
           'updatedAt'
         ]) &&
@@ -193,7 +195,7 @@ service cloud.firestore {
         data.playerLevel <= 9999 &&
         (data.exploredChunksCount is int || data.exploredChunksCount is float) &&
         data.exploredChunksCount >= 0 &&
-        data.exploredChunksCount <= 100000 &&
+        data.exploredChunksCount <= 1000000 &&
         data.gameVersion is string &&
         data.gameVersion.size() >= 1 &&
         data.gameVersion.size() <= 32 &&
@@ -202,23 +204,26 @@ service cloud.firestore {
         data.worldGenVersion <= 1000 &&
         data.checksum is string &&
         data.checksum.size() >= 1 &&
-        data.checksum.size() <= 32 &&
+        data.checksum.size() <= 64 &&
         (data.clientUpdatedAt is int || data.clientUpdatedAt is float) &&
         data.clientUpdatedAt >= 0 &&
-        data.savePayload is map &&
-        data.savePayload.keys().hasAll(['version', 'metadata', 'player', 'chunks']) &&
-        data.savePayload.keys().hasOnly([
-          'version',
-          'metadata',
-          'player',
-          'guestPlayers',
-          'chunks',
-          'undergroundChunks',
-          'creatures',
-          'droppedItems',
-          'waypoints',
-          'deathBags'
-        ]) &&
+        (data.storageVersion is int || data.storageVersion is float) &&
+        data.storageVersion == 2 &&
+        data.activeRevisionId is string &&
+        data.activeRevisionId.size() >= 1 &&
+        data.activeRevisionId.size() <= 128 &&
+        data.previousRevisionId is string &&
+        data.previousRevisionId.size() >= 0 &&
+        data.previousRevisionId.size() <= 128 &&
+        data.storageBackend is string &&
+        data.storageBackend.size() <= 32 &&
+        data.storageBackend in ['firebase_storage', 'hybrid_segmented', 'server_storage'] &&
+        (data.totalBytes is int || data.totalBytes is float) &&
+        data.totalBytes >= 0 &&
+        (data.totalChunksCount is int || data.totalChunksCount is float) &&
+        data.totalChunksCount >= 0 &&
+        data.chunkIndexSummary is map &&
+        data.chunkIndexSummary.size() <= 40 &&
         data.createdAt is timestamp &&
         data.updatedAt is timestamp;
     }
@@ -229,6 +234,12 @@ service cloud.firestore {
           'worldId',
           'ownerId',
           'layer',
+          'partIndex',
+          'totalParts',
+          'hash',
+          'sizeBytes',
+          'storagePath',
+          'revisionId',
           'chunkData',
           'clientUpdatedAt',
           'createdAt',
@@ -239,6 +250,12 @@ service cloud.firestore {
           'worldId',
           'ownerId',
           'layer',
+          'partIndex',
+          'totalParts',
+          'hash',
+          'sizeBytes',
+          'storagePath',
+          'revisionId',
           'chunkData',
           'clientUpdatedAt',
           'createdAt',
@@ -262,9 +279,27 @@ service cloud.firestore {
         data.ownerId == userId &&
         data.layer is string &&
         data.layer.size() <= 16 &&
-        data.layer in ['surface', 'underground'] &&
+        data.layer in ['surface', 'underground', 'entities', 'manifest', 'snapshot'] &&
+        (data.partIndex is int || data.partIndex is float) &&
+        data.partIndex >= 0 &&
+        data.partIndex <= 100000 &&
+        (data.totalParts is int || data.totalParts is float) &&
+        data.totalParts >= 1 &&
+        data.totalParts <= 100000 &&
+        data.hash is string &&
+        data.hash.size() >= 1 &&
+        data.hash.size() <= 64 &&
+        (data.sizeBytes is int || data.sizeBytes is float) &&
+        data.sizeBytes >= 0 &&
+        data.sizeBytes <= 10485760 &&
+        data.storagePath is string &&
+        data.storagePath.size() >= 1 &&
+        data.storagePath.size() <= 512 &&
+        data.revisionId is string &&
+        data.revisionId.size() >= 1 &&
+        data.revisionId.size() <= 128 &&
         data.chunkData is map &&
-        data.chunkData.size() <= 30 &&
+        data.chunkData.size() <= 60 &&
         (data.clientUpdatedAt is int || data.clientUpdatedAt is float) &&
         data.clientUpdatedAt >= 0 &&
         data.createdAt is timestamp &&
@@ -387,7 +422,7 @@ service cloud.firestore {
         allow delete: if false;
       }
 
-      // 3.3 Cloud Saved Worlds Subcollection (/users/{userId}/worlds/{worldId})
+      // 3.3 Cloud Saved Worlds Metadata & Manifest Index (/users/{userId}/worlds/{worldId})
       match /worlds/{worldId} {
         allow get: if isSignedIn() &&
           isOwner(userId) &&
@@ -420,7 +455,7 @@ service cloud.firestore {
           incoming().createdAt == existing().createdAt &&
           incoming().updatedAt == request.time &&
           (
-            // Action: Save / Sync World State or Metadata
+            // Action: Commit World Revision / Update Metadata / Migrate v1 -> v2
             incoming().diff(existing()).affectedKeys().hasOnly([
               'name',
               'seedText',
@@ -433,6 +468,13 @@ service cloud.firestore {
               'worldGenVersion',
               'checksum',
               'clientUpdatedAt',
+              'storageVersion',
+              'activeRevisionId',
+              'previousRevisionId',
+              'storageBackend',
+              'totalBytes',
+              'totalChunksCount',
+              'chunkIndexSummary',
               'savePayload',
               'updatedAt'
             ])
@@ -446,7 +488,7 @@ service cloud.firestore {
           (resource == null || existing().ownerId == request.auth.uid) &&
           parentUserExists(userId);
 
-        // 3.3.1 Modified Chunks Subcollection (/users/{userId}/worlds/{worldId}/chunks/{chunkKey})
+        // 3.3.1 Independent Chunks & Multipart Segments (/users/{userId}/worlds/{worldId}/chunks/{chunkKey})
         match /chunks/{chunkKey} {
           allow get: if isSignedIn() &&
             isOwner(userId) &&
@@ -467,8 +509,7 @@ service cloud.firestore {
             isValidCloudWorldChunk(incoming(), userId, worldId, chunkKey) &&
             incoming().createdAt == request.time &&
             incoming().updatedAt == request.time &&
-            parentUserExists(userId) &&
-            parentWorldExists(userId, worldId);
+            parentUserExists(userId);
 
           allow update: if isVerifiedUser() &&
             isOwner(userId) &&
@@ -483,15 +524,20 @@ service cloud.firestore {
             incoming().createdAt == existing().createdAt &&
             incoming().updatedAt == request.time &&
             (
-              // Action: Sync Modified Chunk Data
+              // Action: Update Chunk / Segment Revision & Payload
               incoming().diff(existing()).affectedKeys().hasOnly([
+                'partIndex',
+                'totalParts',
+                'hash',
+                'sizeBytes',
+                'storagePath',
+                'revisionId',
                 'chunkData',
                 'clientUpdatedAt',
                 'updatedAt'
               ])
             ) &&
-            parentUserExists(userId) &&
-            parentWorldExists(userId, worldId);
+            parentUserExists(userId);
 
           allow delete: if isVerifiedUser() &&
             isOwner(userId) &&

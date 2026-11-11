@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import {
+  AlertTriangle,
   CheckCircle2,
   Cloud,
   Copy,
@@ -29,6 +30,20 @@ interface CloudAccountModalProps {
   onWorldsUpdated?: () => void;
 }
 
+function formatByteSize(bytes: number): string {
+  const safe = Math.max(0, Number(bytes) || 0);
+  if (safe < 1024) return `${safe} B`;
+  if (safe < 1024 * 1024) return `${(safe / 1024).toFixed(1)} KB`;
+  return `${(safe / (1024 * 1024)).toFixed(2)} MB`;
+}
+
+function formatTransferSpeed(bytesPerSec: number): string {
+  const safe = Math.max(0, Number(bytesPerSec) || 0);
+  if (safe <= 0) return '—';
+  if (safe < 1024 * 1024) return `${(safe / 1024).toFixed(1)} KB/s`;
+  return `${(safe / (1024 * 1024)).toFixed(2)} MB/s`;
+}
+
 export const CloudAccountModal: React.FC<CloudAccountModalProps> = ({
   onClose,
   onWorldsUpdated,
@@ -38,6 +53,9 @@ export const CloudAccountModal: React.FC<CloudAccountModalProps> = ({
   );
   const [feedback, setFeedback] = useState<string | null>(null);
   const [isBusy, setIsBusy] = useState(false);
+  const [concurrency, setConcurrency] = useState<number>(() =>
+    firebaseCloudSync.getMaxUploadConcurrency()
+  );
   const [firestoreReachable, setFirestoreReachable] = useState<boolean | null>(
     null
   );
@@ -45,10 +63,12 @@ export const CloudAccountModal: React.FC<CloudAccountModalProps> = ({
     checked: boolean;
     adminInitialized: boolean;
     adminSecretsIsolated: boolean;
+    storageMode: string;
   }>({
     checked: false,
     adminInitialized: false,
     adminSecretsIsolated: true,
+    storageMode: 'Híbrido (Firestore + Storage Chunks)',
   });
   const clientDiag = getClientFirebaseDiagnostics();
 
@@ -69,6 +89,9 @@ export const CloudAccountModal: React.FC<CloudAccountModalProps> = ({
             adminSecretsIsolated:
               Boolean(data.security?.adminCredentialsIsolatedToServer) &&
               clientDiag.adminSecretsAbsentFromFrontend,
+            storageMode: data.firebaseStorageBucketProvisioned
+              ? 'Firebase Storage + Firestore Index'
+              : 'Híbrido Segmentado (Sem Limite 1MB)',
           });
         }
       })
@@ -102,22 +125,30 @@ export const CloudAccountModal: React.FC<CloudAccountModalProps> = ({
   const handleManualSyncNow = async () => {
     if (isBusy || !cloudSnap.user) return;
     setIsBusy(true);
-    setFeedback('Sincronizando mundos locais e nuvem (Cloud Firestore)...');
+    setFeedback(
+      'Iniciando sincronização incremental de chunks e metadados na nuvem...'
+    );
     try {
       await firebaseCloudSync.syncAllWorldsWithCloud();
       await firebaseCloudSync.syncAllGuestProfilesWithCloud();
       await firebaseCloudSync.fetchUserEntitlements();
       onWorldsUpdated?.();
       setFeedback(
-        'Sincronização concluída! Todos os seus mundos locais e na nuvem estão atualizados.'
+        'Sincronização incremental concluída! Chunks modificados e metadados estão atualizados e verificados por hash.'
       );
     } catch (err: any) {
       setFeedback(
-        err?.message || 'Erro ao sincronizar mundos com o Cloud Firestore.'
+        err?.message ||
+          'Transferência interrompida. O estado local foi preservado e você pode retomar de onde parou.'
       );
     } finally {
       setIsBusy(false);
     }
+  };
+
+  const handleConcurrencyChange = (newLimit: number) => {
+    setConcurrency(newLimit);
+    firebaseCloudSync.setMaxUploadConcurrency(newLimit);
   };
 
   const handleCopyUid = (uidToCopy: string) => {
@@ -127,6 +158,18 @@ export const CloudAccountModal: React.FC<CloudAccountModalProps> = ({
 
   const localWorldsCount = SaveManager.listWorlds().length;
   const legacyDeviceUid = getOrCreateLocalDevicePlayerUid();
+  const prog = cloudSnap.transferProgress;
+  const progressPercent =
+    prog && prog.chunksTotal > 0
+      ? Math.min(100, Math.round((prog.chunksUploaded / prog.chunksTotal) * 100))
+      : prog?.phase === 'COMPLETED'
+      ? 100
+      : 0;
+  const hasErrorOrResume =
+    Boolean(prog?.canResume) ||
+    prog?.phase === 'PAUSED_INTERRUPTED' ||
+    prog?.phase === 'ERROR' ||
+    cloudSnap.syncStatus === 'ERROR';
 
   return (
     <div
@@ -157,7 +200,13 @@ export const CloudAccountModal: React.FC<CloudAccountModalProps> = ({
         {/* Body */}
         <div className="p-3.5 sm:p-4 overflow-y-auto space-y-3 flex-1">
           {(feedback || cloudSnap.statusMessage) && (
-            <div className="medieval-inset px-3 py-2 border border-amber-500/40 text-xs text-amber-200 font-bold flex items-center justify-between gap-2">
+            <div
+              className={`medieval-inset px-3 py-2 border text-xs font-bold flex items-center justify-between gap-2 ${
+                hasErrorOrResume
+                  ? 'border-red-500/50 text-red-200'
+                  : 'border-amber-500/40 text-amber-200'
+              }`}
+            >
               <span>{feedback || cloudSnap.statusMessage}</span>
               {feedback && (
                 <button
@@ -288,7 +337,7 @@ export const CloudAccountModal: React.FC<CloudAccountModalProps> = ({
                   <div className="mc-slot p-2 flex items-center justify-between gap-2">
                     <div>
                       <div className="text-[9px] text-[#c4ab7d] uppercase font-bold">
-                        Mundos no Cloud Firestore
+                        Mundos na Nuvem (Híbrido v2)
                       </div>
                       <div className="font-bold text-sky-300 text-xs">
                         {Math.max(cloudSnap.cloudWorldsCount, localWorldsCount)}{' '}
@@ -299,15 +348,133 @@ export const CloudAccountModal: React.FC<CloudAccountModalProps> = ({
                   </div>
                 </div>
 
-                <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
-                  <span className="text-[10px] text-[#c4ab7d]">
-                    {cloudSnap.lastSyncedAt
-                      ? `Última sincronização na nuvem: ${new Date(
-                          cloudSnap.lastSyncedAt
-                        ).toLocaleTimeString()}`
-                      : 'Sincronização automática em tempo real ativa'}
-                  </span>
+                {/* Real-time Incremental Transfer Progress & Telemetry */}
+                <div className="mc-slot p-2.5 space-y-2 border border-[#4a301e]">
+                  <div className="flex items-center justify-between text-[10px]">
+                    <span className="font-pixel text-amber-300 font-bold uppercase">
+                      {prog && prog.phase !== 'IDLE'
+                        ? prog.phase === 'COMPLETED'
+                          ? `Sincronizado (${prog.worldName || 'Mundo'})`
+                          : prog.phase === 'PAUSED_INTERRUPTED' ||
+                            prog.phase === 'ERROR'
+                          ? 'Transferência Pausada / Retomável'
+                          : `Sincronizando: ${prog.worldName || 'Mundo'} (${progressPercent}%)`
+                        : 'Sincronização Incremental de Chunks'}
+                    </span>
+                    <span className="font-mono text-emerald-300 font-bold">
+                      {prog ? `${progressPercent}%` : 'Pronto'}
+                    </span>
+                  </div>
 
+                  {/* Progress Bar */}
+                  <div className="w-full h-2.5 bg-[#120b07] border border-[#4a301e] overflow-hidden">
+                    <div
+                      className={`h-full transition-all duration-150 ${
+                        hasErrorOrResume
+                          ? 'bg-red-500'
+                          : 'bg-gradient-to-r from-emerald-600 to-amber-400'
+                      }`}
+                      style={{ width: `${prog ? progressPercent : 100}%` }}
+                    />
+                  </div>
+
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5 text-[10px]">
+                    <div className="bg-[#160e09] px-2 py-1 border border-[#3a2518]">
+                      <div className="text-[#a89068] text-[9px]">
+                        Chunks Enviados
+                      </div>
+                      <div className="font-mono font-bold text-emerald-300">
+                        {prog ? prog.chunksUploaded : 0}
+                        {prog && prog.unchangedChunksSkipped > 0
+                          ? ` (+${prog.unchangedChunksSkipped} intactos)`
+                          : ''}
+                      </div>
+                    </div>
+
+                    <div className="bg-[#160e09] px-2 py-1 border border-[#3a2518]">
+                      <div className="text-[#a89068] text-[9px]">
+                        Chunks Pendentes
+                      </div>
+                      <div className="font-mono font-bold text-amber-300">
+                        {prog ? prog.chunksPending : 0}
+                      </div>
+                    </div>
+
+                    <div className="bg-[#160e09] px-2 py-1 border border-[#3a2518]">
+                      <div className="text-[#a89068] text-[9px]">
+                        Transferido / Mundo
+                      </div>
+                      <div className="font-mono font-bold text-sky-300 truncate">
+                        {prog
+                          ? `${formatByteSize(prog.bytesTransferred)} / ${formatByteSize(
+                              prog.totalWorldBytes
+                            )}`
+                          : '0 B'}
+                      </div>
+                    </div>
+
+                    <div className="bg-[#160e09] px-2 py-1 border border-[#3a2518]">
+                      <div className="text-[#a89068] text-[9px]">
+                        Velocidade
+                      </div>
+                      <div className="font-mono font-bold text-amber-200">
+                        {prog
+                          ? formatTransferSpeed(prog.transferSpeedBytesPerSec)
+                          : '—'}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Concurrency Control & Last Sync Timestamp */}
+                  <div className="flex flex-wrap items-center justify-between gap-2 pt-1 text-[10px] text-[#c4ab7d]">
+                    <div className="flex items-center gap-1.5">
+                      <span>Uploads simultâneos:</span>
+                      {[1, 2, 4, 8].map((limit) => (
+                        <button
+                          key={limit}
+                          type="button"
+                          onClick={() => handleConcurrencyChange(limit)}
+                          className={`px-1.5 py-0.5 border font-mono text-[9px] font-bold ${
+                            concurrency === limit
+                              ? 'bg-amber-700/80 border-amber-400 text-white'
+                              : 'bg-[#1a110b] border-[#4a301e] text-[#c4ab7d]'
+                          }`}
+                        >
+                          {limit}x
+                        </button>
+                      ))}
+                    </div>
+
+                    <span>
+                      {cloudSnap.lastSyncedAt
+                        ? `Última sincronização: ${new Date(
+                            cloudSnap.lastSyncedAt
+                          ).toLocaleDateString()} às ${new Date(
+                            cloudSnap.lastSyncedAt
+                          ).toLocaleTimeString()}`
+                        : 'Aguardando primeira sincronização'}
+                    </span>
+                  </div>
+
+                  {hasErrorOrResume && prog?.lastError && (
+                    <div className="p-2 bg-red-950/60 border border-red-500/40 text-[10px] text-red-200 flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-1.5">
+                        <AlertTriangle className="w-3.5 h-3.5 text-red-400 shrink-0" />
+                        <span>{prog.lastError}</span>
+                      </div>
+                      <button
+                        type="button"
+                        disabled={isBusy}
+                        onClick={handleManualSyncNow}
+                        className="px-2 py-1 medieval-btn-gold text-[9px] font-pixel font-bold shrink-0"
+                      >
+                        RETOMAR
+                      </button>
+                    </div>
+                  )}
+                </div>
+
+                <div className="flex flex-wrap items-center justify-end gap-2 pt-1">
                   <button
                     type="button"
                     disabled={isBusy}
@@ -317,7 +484,11 @@ export const CloudAccountModal: React.FC<CloudAccountModalProps> = ({
                     <RefreshCw
                       className={`w-3.5 h-3.5 ${isBusy ? 'animate-spin' : ''}`}
                     />
-                    <span>SINCRONIZAR MUNDOS AGORA</span>
+                    <span>
+                      {hasErrorOrResume
+                        ? 'RETOMAR SINCRONIZAÇÃO'
+                        : 'SINCRONIZAR MUNDOS AGORA'}
+                    </span>
                   </button>
                 </div>
               </div>
@@ -367,7 +538,7 @@ export const CloudAccountModal: React.FC<CloudAccountModalProps> = ({
               <div className="flex items-center gap-1.5">
                 <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" />
                 <span className="font-pixel text-[10px] font-bold text-amber-300 uppercase">
-                  Diagnóstico da Integração Firebase
+                  Diagnóstico da Arquitetura Híbrida Firebase
                 </span>
               </div>
               <span className="font-mono text-[10px] text-emerald-300 font-bold">
@@ -377,20 +548,7 @@ export const CloudAccountModal: React.FC<CloudAccountModalProps> = ({
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 text-[10px]">
               <div className="mc-slot px-2 py-1.5 flex items-center justify-between">
-                <span className="text-[#c4ab7d]">SDK & Config Cliente:</span>
-                <span
-                  className={
-                    clientDiag.clientConfigComplete
-                      ? 'text-emerald-300 font-bold'
-                      : 'text-red-400 font-bold'
-                  }
-                >
-                  {clientDiag.clientConfigComplete ? 'Ativo' : 'Pendente'}
-                </span>
-              </div>
-
-              <div className="mc-slot px-2 py-1.5 flex items-center justify-between">
-                <span className="text-[#c4ab7d]">Cloud Firestore:</span>
+                <span className="text-[#c4ab7d]">Metadados & Índice:</span>
                 <span
                   className={
                     firestoreReachable === null
@@ -403,15 +561,22 @@ export const CloudAccountModal: React.FC<CloudAccountModalProps> = ({
                   {firestoreReachable === null
                     ? 'Verificando...'
                     : firestoreReachable
-                    ? 'Online'
+                    ? 'Cloud Firestore Online'
                     : 'Offline'}
                 </span>
               </div>
 
               <div className="mc-slot px-2 py-1.5 flex items-center justify-between">
-                <span className="text-[#c4ab7d]">Salvamento Híbrido:</span>
+                <span className="text-[#c4ab7d]">Motor de Chunks:</span>
+                <span className="text-sky-300 font-bold truncate ml-1">
+                  {serverAdminStatus.storageMode}
+                </span>
+              </div>
+
+              <div className="mc-slot px-2 py-1.5 flex items-center justify-between">
+                <span className="text-[#c4ab7d]">Salvamento Local:</span>
                 <span className="text-emerald-300 font-bold">
-                  Local + Nuvem
+                  IndexedDB + localStorage
                 </span>
               </div>
 
@@ -447,3 +612,4 @@ export const CloudAccountModal: React.FC<CloudAccountModalProps> = ({
     </div>
   );
 };
+

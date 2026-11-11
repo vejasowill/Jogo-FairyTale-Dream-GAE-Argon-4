@@ -1,0 +1,120 @@
+rules_version = '2';
+
+service firebase.storage {
+  match /b/{bucket}/o {
+    // =========================================================================
+    // 0. GLOBAL SAFETY NET (Default-Deny Catch-All)
+    // =========================================================================
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+
+    // =========================================================================
+    // 1. HARDENED PRIMITIVES
+    // =========================================================================
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isVerifiedUser() {
+      return isSignedIn() && request.auth.token.email_verified == true;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-\\.]+$');
+    }
+
+    function isValidStoragePayload(maxBytes) {
+      return request.resource != null &&
+        request.resource.size <= maxBytes &&
+        (
+          request.resource.contentType.matches('application/json.*') ||
+          request.resource.contentType.matches('application/octet-stream.*') ||
+          request.resource.contentType.matches('text/plain.*')
+        );
+    }
+
+    // =========================================================================
+    // 2. ISOLATED PLAYER WORLD CHUNKS, MANIFESTS & SNAPSHOTS
+    // =========================================================================
+
+    // 2.1 Independent World Chunk Files (and Multipart Chunk Segments)
+    // Path: /users/{userId}/worlds/{worldId}/chunks/{chunkFile}
+    match /users/{userId}/worlds/{worldId}/chunks/{chunkFile} {
+      allow read: if isSignedIn() &&
+        isOwner(userId) &&
+        isValidId(userId) &&
+        isValidId(worldId) &&
+        isValidId(chunkFile);
+
+      allow create, update: if isVerifiedUser() &&
+        isOwner(userId) &&
+        isValidId(userId) &&
+        isValidId(worldId) &&
+        isValidId(chunkFile) &&
+        isValidStoragePayload(10 * 1024 * 1024);
+
+      allow delete: if isVerifiedUser() &&
+        isOwner(userId) &&
+        isValidId(userId) &&
+        isValidId(worldId) &&
+        isValidId(chunkFile);
+    }
+
+    // 2.2 Versioned World Revision Manifests, Entities & Recoverable Backups
+    // Path: /users/{userId}/worlds/{worldId}/revisions/{revisionId}/{fileName}
+    match /users/{userId}/worlds/{worldId}/revisions/{revisionId}/{fileName} {
+      allow read: if isSignedIn() &&
+        isOwner(userId) &&
+        isValidId(userId) &&
+        isValidId(worldId) &&
+        isValidId(revisionId) &&
+        isValidId(fileName);
+
+      allow create, update: if isVerifiedUser() &&
+        isOwner(userId) &&
+        isValidId(userId) &&
+        isValidId(worldId) &&
+        isValidId(revisionId) &&
+        isValidId(fileName) &&
+        isValidStoragePayload(15 * 1024 * 1024);
+
+      allow delete: if isVerifiedUser() &&
+        isOwner(userId) &&
+        isValidId(userId) &&
+        isValidId(worldId) &&
+        isValidId(revisionId) &&
+        isValidId(fileName);
+    }
+
+    // 2.3 Full World Snapshot Parts (For Massive Multi-Part Backups)
+    // Path: /users/{userId}/worlds/{worldId}/snapshots/{snapshotId}/{partFile}
+    match /users/{userId}/worlds/{worldId}/snapshots/{snapshotId}/{partFile} {
+      allow read: if isSignedIn() &&
+        isOwner(userId) &&
+        isValidId(userId) &&
+        isValidId(worldId) &&
+        isValidId(snapshotId) &&
+        isValidId(partFile);
+
+      allow create, update: if isVerifiedUser() &&
+        isOwner(userId) &&
+        isValidId(userId) &&
+        isValidId(worldId) &&
+        isValidId(snapshotId) &&
+        isValidId(partFile) &&
+        isValidStoragePayload(25 * 1024 * 1024);
+
+      allow delete: if isVerifiedUser() &&
+        isOwner(userId) &&
+        isValidId(userId) &&
+        isValidId(worldId) &&
+        isValidId(snapshotId) &&
+        isValidId(partFile);
+    }
+  }
+}

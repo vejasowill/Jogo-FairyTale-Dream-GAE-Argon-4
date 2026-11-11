@@ -8,6 +8,13 @@ import {
   User,
 } from 'firebase/auth';
 import { doc, getDocFromServer, getFirestore } from 'firebase/firestore';
+import {
+  deleteObject,
+  getBytes,
+  getStorage,
+  ref as storageRef,
+  uploadBytesResumable,
+} from 'firebase/storage';
 import appletFirebaseConfig from '../firebase-applet-config.json';
 
 const env = (import.meta as any).env || {};
@@ -44,6 +51,8 @@ export const firebaseApp = initializeApp(resolvedConfig);
 export const db = resolvedConfig.firestoreDatabaseId
   ? getFirestore(firebaseApp, resolvedConfig.firestoreDatabaseId)
   : getFirestore(firebaseApp);
+
+export const storage = getStorage(firebaseApp);
 
 export const auth = getAuth(firebaseApp);
 
@@ -137,6 +146,7 @@ export async function testFirestoreConnection(force = false): Promise<boolean> {
 export interface ClientFirebaseDiagnostics {
   projectId: string;
   authDomain: string;
+  storageBucket: string;
   firestoreDatabaseId: string;
   clientConfigComplete: boolean;
   adminSecretsAbsentFromFrontend: boolean;
@@ -153,6 +163,7 @@ export function getClientFirebaseDiagnostics(): ClientFirebaseDiagnostics {
   return {
     projectId: resolvedConfig.projectId || '',
     authDomain: resolvedConfig.authDomain || '',
+    storageBucket: resolvedConfig.storageBucket || '',
     firestoreDatabaseId: resolvedConfig.firestoreDatabaseId || '(default)',
     clientConfigComplete: Boolean(
       resolvedConfig.apiKey &&
@@ -166,6 +177,14 @@ export function getClientFirebaseDiagnostics(): ClientFirebaseDiagnostics {
 
 void testFirestoreConnection();
 
-export { onAuthStateChanged, signInWithPopup, signOut };
+export {
+  deleteObject,
+  getBytes,
+  onAuthStateChanged,
+  signInWithPopup,
+  signOut,
+  storageRef,
+  uploadBytesResumable,
+};
 export type { User };
 

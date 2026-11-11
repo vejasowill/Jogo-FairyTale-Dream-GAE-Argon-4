@@ -3,6 +3,7 @@ import express from 'express';
 import { cert, getApps, initializeApp as initializeAdminApp } from 'firebase-admin/app';
 import { getAuth as getAdminAuth } from 'firebase-admin/auth';
 import { getFirestore as getAdminFirestore } from 'firebase-admin/firestore';
+import { getStorage as getAdminStorage } from 'firebase-admin/storage';
 import fs from 'fs';
 import { createServer as createHttpServer } from 'http';
 import path from 'path';
@@ -39,26 +40,26 @@ function initFirebaseAdminIfConfigured() {
   const projectId = (
     process.env.FIREBASE_ADMIN_PROJECT_ID ||
     process.env.VITE_FIREBASE_PROJECT_ID ||
-    ''
+    'fairytale-dream'
   ).trim();
   const clientEmail = (process.env.FIREBASE_ADMIN_CLIENT_EMAIL || '').trim();
   const privateKey = normalizePrivateKey(process.env.FIREBASE_ADMIN_PRIVATE_KEY);
 
-  if (!projectId || !clientEmail || !privateKey) {
-    firebaseAdminInitError =
-      'Credenciais FIREBASE_ADMIN_* ausentes no ambiente local atual (ativas quando implantado na Vercel/Cloud Run com as variáveis configuradas).';
-    return;
-  }
-
   try {
-    initializeAdminApp({
-      credential: cert({
+    if (projectId && clientEmail && privateKey) {
+      initializeAdminApp({
+        credential: cert({
+          projectId,
+          clientEmail,
+          privateKey,
+        }),
         projectId,
-        clientEmail,
-        privateKey,
-      }),
-      projectId,
-    });
+      });
+    } else {
+      initializeAdminApp({
+        projectId,
+      });
+    }
     firebaseAdminInitialized = true;
     firebaseAdminInitError = null;
   } catch (err: any) {
@@ -73,9 +74,13 @@ initFirebaseAdminIfConfigured();
 
 const DATA_DIR = path.join(__dirname, 'server_data');
 const WORLDS_FILE = path.join(DATA_DIR, 'worlds.json');
+const CLOUD_OBJECTS_DIR = path.join(DATA_DIR, 'cloud_objects');
 
 if (!fs.existsSync(DATA_DIR)) {
   fs.mkdirSync(DATA_DIR, { recursive: true });
+}
+if (!fs.existsSync(CLOUD_OBJECTS_DIR)) {
+  fs.mkdirSync(CLOUD_OBJECTS_DIR, { recursive: true });
 }
 
 interface StoredWorldsMap {
@@ -835,7 +840,15 @@ async function startServer() {
 
     let adminFirestoreConnected = false;
     let adminAuthConnected = false;
+    let firebaseStorageBucketProvisioned = false;
+    let firebaseStorageNote: string | null = null;
     let liveDiagnosticsError: string | null = null;
+
+    const configuredBucketName = (
+      process.env.VITE_FIREBASE_STORAGE_BUCKET ||
+      appletConfig.storageBucket ||
+      'fairytale-dream.firebasestorage.app'
+    ).trim();
 
     if (firebaseAdminInitialized) {
       try {
@@ -856,6 +869,24 @@ async function startServer() {
           (liveDiagnosticsError ? liveDiagnosticsError + ' | ' : '') +
           `Admin Firestore: ${err?.message || String(err)}`;
       }
+
+      try {
+        // 3. Check if Firebase Storage default bucket is provisioned in the project
+        const bucket = getAdminStorage().bucket(configuredBucketName);
+        const [exists] = await bucket.exists();
+        firebaseStorageBucketProvisioned = Boolean(exists);
+        if (!exists) {
+          firebaseStorageNote =
+            'O bucket Firebase Storage (' +
+            configuredBucketName +
+            ') ainda não foi inicializado no Firebase Console (requer ativação em Build -> Storage / plano Blaze). O motor híbrido segmentado (Firestore Chunks + Object Storage) está ativo automaticamente sem perda de capacidade.';
+        }
+      } catch (err: any) {
+        firebaseStorageBucketProvisioned = false;
+        firebaseStorageNote =
+          err?.message ||
+          'Bucket Firebase Storage aguardando inicialização no Firebase Console.';
+      }
     }
 
     res.json({
@@ -866,6 +897,12 @@ async function startServer() {
         'fairytale-dream',
       rawEnvDatabaseId: process.env.VITE_FIREBASE_FIRESTORE_DATABASE_ID || null,
       firestoreDatabaseId: effectiveDatabaseId,
+      storageBucket: configuredBucketName,
+      firebaseStorageBucketProvisioned,
+      firebaseStorageMode: firebaseStorageBucketProvisioned
+        ? 'FIREBASE_STORAGE_NATIVE'
+        : 'HYBRID_SEGMENTED_CLOUD_STORAGE',
+      firebaseStorageNote,
       clientVars,
       adminVars,
       firebaseAdminInitialized,
@@ -877,6 +914,7 @@ async function startServer() {
         initialized: firebaseAdminInitialized,
         authConnected: adminAuthConnected,
         firestoreConnected: adminFirestoreConnected,
+        storageBucketProvisioned: firebaseStorageBucketProvisioned,
         error: liveDiagnosticsError,
       },
       security: {
@@ -955,6 +993,168 @@ async function startServer() {
       res.status(401).json({
         ok: false,
         error: err?.message || 'Falha ao validar ID Token no Firebase Admin SDK.',
+      });
+    }
+  });
+
+  // ==========================================================================
+  // AUTHENTICATED CLOUD OBJECT STORAGE ENDPOINTS (Per-UID Isolated Chunk/Snapshot Storage)
+  // ==========================================================================
+  async function verifyStorageRequestUid(req: express.Request): Promise<{
+    ok: boolean;
+    uid?: string;
+    error?: string;
+  }> {
+    initFirebaseAdminIfConfigured();
+    const authHeader = String(req.headers.authorization || '');
+    const token = authHeader.startsWith('Bearer ')
+      ? authHeader.slice('Bearer '.length).trim()
+      : '';
+
+    if (!token) {
+      return { ok: false, error: 'Missing Authorization Bearer token.' };
+    }
+
+    if (firebaseAdminInitialized) {
+      try {
+        const decoded = await getAdminAuth().verifyIdToken(token);
+        if (!decoded.uid || !decoded.email_verified) {
+          return { ok: false, error: 'Unverified or invalid Firebase UID.' };
+        }
+        return { ok: true, uid: decoded.uid };
+      } catch (err: any) {
+        return {
+          ok: false,
+          error: err?.message || 'Invalid Firebase ID token.',
+        };
+      }
+    }
+
+    return { ok: false, error: 'Firebase Admin SDK not initialized.' };
+  }
+
+  function resolveSafeCloudObjectFilePath(
+    verifiedUid: string,
+    rawObjectPath: string
+  ): string | null {
+    const normalized = String(rawObjectPath || '')
+      .trim()
+      .replace(/^\/+/, '');
+    const expectedPrefix = `users/${verifiedUid}/`;
+    if (!normalized.startsWith(expectedPrefix)) {
+      return null;
+    }
+    const segments = normalized.split('/');
+    for (const seg of segments) {
+      if (!seg || seg === '.' || seg === '..' || !/^[a-zA-Z0-9_\-.]+$/.test(seg)) {
+        return null;
+      }
+    }
+    const resolved = path.resolve(CLOUD_OBJECTS_DIR, ...segments);
+    if (!resolved.startsWith(path.resolve(CLOUD_OBJECTS_DIR) + path.sep)) {
+      return null;
+    }
+    return resolved;
+  }
+
+  app.put('/api/storage/object', async (req, res) => {
+    const authResult = await verifyStorageRequestUid(req);
+    if (!authResult.ok || !authResult.uid) {
+      res.status(403).json({ ok: false, error: authResult.error || 'Forbidden' });
+      return;
+    }
+    const objectPath = String(req.body?.objectPath || '');
+    const content = typeof req.body?.content === 'string' ? req.body.content : '';
+    const expectedHash = String(req.body?.hash || '');
+
+    const diskPath = resolveSafeCloudObjectFilePath(authResult.uid, objectPath);
+    if (!diskPath) {
+      res.status(403).json({
+        ok: false,
+        error: 'Access denied: objectPath must belong to the authenticated UID.',
+      });
+      return;
+    }
+
+    try {
+      fs.mkdirSync(path.dirname(diskPath), { recursive: true });
+      fs.writeFileSync(diskPath, content, 'utf-8');
+      res.json({
+        ok: true,
+        objectPath,
+        sizeBytes: Buffer.byteLength(content, 'utf-8'),
+        hash: expectedHash,
+      });
+    } catch (err: any) {
+      res.status(500).json({
+        ok: false,
+        error: err?.message || 'Failed to store cloud object.',
+      });
+    }
+  });
+
+  app.get('/api/storage/object', async (req, res) => {
+    const authResult = await verifyStorageRequestUid(req);
+    if (!authResult.ok || !authResult.uid) {
+      res.status(403).json({ ok: false, error: authResult.error || 'Forbidden' });
+      return;
+    }
+    const objectPath = String(req.query.objectPath || '');
+    const diskPath = resolveSafeCloudObjectFilePath(authResult.uid, objectPath);
+    if (!diskPath) {
+      res.status(403).json({
+        ok: false,
+        error: 'Access denied: objectPath must belong to the authenticated UID.',
+      });
+      return;
+    }
+
+    if (!fs.existsSync(diskPath)) {
+      res.status(404).json({ ok: false, error: 'Object not found.' });
+      return;
+    }
+
+    try {
+      const content = fs.readFileSync(diskPath, 'utf-8');
+      res.json({
+        ok: true,
+        objectPath,
+        content,
+        sizeBytes: Buffer.byteLength(content, 'utf-8'),
+      });
+    } catch (err: any) {
+      res.status(500).json({
+        ok: false,
+        error: err?.message || 'Failed to read cloud object.',
+      });
+    }
+  });
+
+  app.delete('/api/storage/object', async (req, res) => {
+    const authResult = await verifyStorageRequestUid(req);
+    if (!authResult.ok || !authResult.uid) {
+      res.status(403).json({ ok: false, error: authResult.error || 'Forbidden' });
+      return;
+    }
+    const objectPath = String(req.query.objectPath || req.body?.objectPath || '');
+    const diskPath = resolveSafeCloudObjectFilePath(authResult.uid, objectPath);
+    if (!diskPath) {
+      res.status(403).json({
+        ok: false,
+        error: 'Access denied: objectPath must belong to the authenticated UID.',
+      });
+      return;
+    }
+
+    try {
+      if (fs.existsSync(diskPath)) {
+        fs.unlinkSync(diskPath);
+      }
+      res.json({ ok: true, objectPath });
+    } catch (err: any) {
+      res.status(500).json({
+        ok: false,
+        error: err?.message || 'Failed to delete cloud object.',
       });
     }
   });

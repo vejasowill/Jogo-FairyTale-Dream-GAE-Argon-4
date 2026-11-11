@@ -37,6 +37,11 @@ import {
   SaveManager,
 } from './SaveManager';
 
+import {
+  CloudTransferProgress,
+  cloudWorldStorageEngine,
+} from './CloudWorldStorageEngine';
+
 const LEGACY_UID_STORAGE_KEY = 'wildborn_legacy_local_uid_v1';
 
 export interface UserEntitlementRecord {
@@ -67,6 +72,7 @@ export interface CloudSyncSnapshot {
   lastSyncedAt: number | null;
   cloudWorldsCount: number;
   entitlements: UserEntitlementRecord[];
+  transferProgress: CloudTransferProgress | null;
 }
 
 type CloudSyncListener = (snapshot: CloudSyncSnapshot) => void;
@@ -126,6 +132,7 @@ class FirebaseCloudSyncService {
   private lastSyncedAt: number | null = null;
   private cloudWorldsCount = 0;
   private entitlements: UserEntitlementRecord[] = [];
+  private transferProgress: CloudTransferProgress | null = null;
   private listeners = new Set<CloudSyncListener>();
   private profileReadyForUid: string | null = null;
   private activeProfileSyncPromise: Promise<boolean> | null = null;
@@ -165,10 +172,41 @@ class FirebaseCloudSyncService {
           this.statusMessage = null;
           this.cloudWorldsCount = 0;
           this.entitlements = [];
+          this.transferProgress = null;
         }
         this.notifyListeners();
       });
     }
+  }
+
+  private updateTransferProgress(progress: CloudTransferProgress): void {
+    this.transferProgress = { ...progress };
+    if (progress.phase === 'PAUSED_INTERRUPTED' || progress.phase === 'ERROR') {
+      this.syncStatus = 'ERROR';
+      if (progress.lastError) {
+        this.statusMessage = progress.lastError;
+      }
+    } else if (progress.phase === 'COMPLETED') {
+      this.syncStatus = 'SYNCED';
+    } else if (progress.phase !== 'IDLE') {
+      this.syncStatus = 'SYNCING';
+    }
+    this.notifyListeners();
+  }
+
+  public setMaxUploadConcurrency(limit: number): void {
+    cloudWorldStorageEngine.setMaxConcurrency(limit);
+    if (this.transferProgress) {
+      this.transferProgress = {
+        ...this.transferProgress,
+        maxConcurrency: cloudWorldStorageEngine.getMaxConcurrency(),
+      };
+      this.notifyListeners();
+    }
+  }
+
+  public getMaxUploadConcurrency(): number {
+    return cloudWorldStorageEngine.getMaxConcurrency();
   }
 
   public getOrStoreLegacyLocalUid(): string {
@@ -229,6 +267,9 @@ class FirebaseCloudSyncService {
       lastSyncedAt: this.lastSyncedAt,
       cloudWorldsCount: this.cloudWorldsCount,
       entitlements: [...this.entitlements],
+      transferProgress: this.transferProgress
+        ? { ...this.transferProgress }
+        : null,
     };
   }
 
@@ -665,7 +706,10 @@ class FirebaseCloudSyncService {
   }
 
   /**
-   * Uploads a single world save to `/users/{uid}/worlds/{worldId}`.
+   * Uploads a world save incrementally using the v2 Hybrid Cloud Storage Engine:
+   * - Only modified chunks are uploaded to independent chunk/Storage objects.
+   * - `/users/{uid}/worlds/{worldId}` stores ONLY lightweight metadata & manifest pointers (~1.2 KB),
+   *   eliminating the 1 MB Firestore document limit for worlds of 3 MB, 50 MB, 100 MB, or 500 MB+.
    */
   public async uploadWorldToCloud(
     saveData: WorldSaveData
@@ -681,49 +725,21 @@ class FirebaseCloudSyncService {
       return { ok: false, message: 'Perfil Firebase ainda não sincronizado.' };
     }
 
-    const { worldId, docFields } = this.buildCloudWorldPayload(saveData, uid);
-    const worldPath = `users/${uid}/worlds/${worldId}`;
-    const worldRef = doc(db, 'users', uid, 'worlds', worldId);
-
-    let existingSnap;
-    try {
-      existingSnap = await getDoc(worldRef);
-    } catch (err) {
-      handleFirestoreError(err, OperationType.GET, worldPath);
-    }
-
-    if (!existingSnap.exists()) {
-      try {
-        await setDoc(worldRef, {
-          ...docFields,
-          createdAt: serverTimestamp(),
-          updatedAt: serverTimestamp(),
-        });
-      } catch (err) {
-        handleFirestoreError(err, OperationType.CREATE, worldPath);
-      }
-    } else {
-      // Update mutable fields only (preserving immutable worldId, ownerId, seed, createdAt)
-      const {
-        worldId: _w,
-        ownerId: _o,
-        seed: _s,
-        ...mutableFields
-      } = docFields;
-      try {
-        await updateDoc(worldRef, {
-          ...mutableFields,
-          updatedAt: serverTimestamp(),
-        });
-      } catch (err) {
-        handleFirestoreError(err, OperationType.UPDATE, worldPath);
-      }
-    }
+    const legacyUid = this.getOrStoreLegacyLocalUid();
+    const result = await cloudWorldStorageEngine.publishWorldIncremental(
+      saveData,
+      uid,
+      legacyUid,
+      (prog) => this.updateTransferProgress(prog)
+    );
 
     this.lastSyncedAt = Date.now();
     this.syncStatus = 'SYNCED';
     this.notifyListeners();
-    return { ok: true, message: 'Mundo salvo no Cloud Firestore!' };
+    return {
+      ok: result.ok,
+      message: `Mundo sincronizado (${result.chunksUploaded} parte(s) enviada(s), ${result.unchangedChunksSkipped} inalterada(s))!`,
+    };
   }
 
   /**
@@ -753,8 +769,20 @@ class FirebaseCloudSyncService {
       cleanChunkKey
     );
 
-    const sanitizedChunkData = sanitizeForFirestore(chunkPayload);
-    const clientUpdatedAtInt = Math.max(0, Math.floor(Number(clientUpdatedAt) || Date.now()));
+    const serialized = JSON.stringify(chunkPayload);
+    const hash = computeChecksum(serialized);
+    const storagePath = `users/${uid}/worlds/${cleanWorldId}/chunks/${cleanChunkKey}.json`;
+    const revisionId = `rev_${Date.now()}`;
+    const clientUpdatedAtInt = Math.max(
+      0,
+      Math.floor(Number(clientUpdatedAt) || Date.now())
+    );
+
+    const chunkDataMap = {
+      logicalKey: cleanChunkKey,
+      inlineSlice: serialized,
+      storedInBucket: false,
+    };
 
     let snap;
     try {
@@ -770,7 +798,13 @@ class FirebaseCloudSyncService {
           worldId: cleanWorldId,
           ownerId: uid,
           layer,
-          chunkData: sanitizedChunkData,
+          partIndex: 0,
+          totalParts: 1,
+          hash,
+          sizeBytes: serialized.length,
+          storagePath,
+          revisionId,
+          chunkData: chunkDataMap,
           clientUpdatedAt: clientUpdatedAtInt,
           createdAt: serverTimestamp(),
           updatedAt: serverTimestamp(),
@@ -781,7 +815,13 @@ class FirebaseCloudSyncService {
     } else {
       try {
         await updateDoc(chunkRef, {
-          chunkData: sanitizedChunkData,
+          partIndex: 0,
+          totalParts: 1,
+          hash,
+          sizeBytes: serialized.length,
+          storagePath,
+          revisionId,
+          chunkData: chunkDataMap,
           clientUpdatedAt: clientUpdatedAtInt,
           updatedAt: serverTimestamp(),
         });
@@ -792,34 +832,28 @@ class FirebaseCloudSyncService {
   }
 
   /**
-   * Deletes a world save from `/users/{uid}/worlds/{worldId}` when deleted locally by the user.
+   * Deletes a world save and all its associated chunk objects from Cloud Firestore / Storage.
    */
   public async deleteWorldFromCloud(worldId: string): Promise<void> {
     const user = this.currentUser || auth.currentUser;
     if (!user || !user.uid || !user.emailVerified) return;
     const uid = sanitizeValidId(user.uid);
     const cleanWorldId = sanitizeValidId(worldId);
-    const worldPath = `users/${uid}/worlds/${cleanWorldId}`;
-    const worldRef = doc(db, 'users', uid, 'worlds', cleanWorldId);
 
-    try {
-      const snap = await getDoc(worldRef);
-      if (snap.exists()) {
-        await deleteDoc(worldRef);
-        this.cloudWorldsCount = Math.max(0, this.cloudWorldsCount - 1);
-        this.lastSyncedAt = Date.now();
-        this.notifyListeners();
-      }
-    } catch (err) {
-      handleFirestoreError(err, OperationType.DELETE, worldPath);
-    }
+    await cloudWorldStorageEngine.deleteWorldAndChunksFromCloud(
+      uid,
+      cleanWorldId
+    );
+    this.cloudWorldsCount = Math.max(0, this.cloudWorldsCount - 1);
+    this.lastSyncedAt = Date.now();
+    this.notifyListeners();
   }
 
   /**
-   * Performs a non-destructive bi-directional migration & sync between local storage (IndexedDB/localStorage)
-   * and Cloud Firestore (`/users/{uid}/worlds`):
-   * - Local worlds that are not yet in Firestore (or have a newer timestamp locally) are uploaded to Firestore.
-   * - Cloud worlds that are not on this device (or have a newer timestamp in Firestore) are downloaded and saved locally.
+   * Performs a non-destructive bi-directional migration & incremental sync between local storage (IndexedDB/localStorage)
+   * and Cloud Firestore + Storage (`/users/{uid}/worlds/{worldId}` + `/chunks/{chunkKey}`):
+   * - Local worlds that are not yet in Cloud (or have a newer timestamp locally, or are still in v1 format) are uploaded incrementally.
+   * - Cloud worlds that are not on this device (or have a newer timestamp in Cloud) are reconstructed from their independent chunks and saved locally.
    */
   public async syncAllWorldsWithCloud(): Promise<WorldMetadata[]> {
     const user = this.currentUser || auth.currentUser;
@@ -843,7 +877,7 @@ class FirebaseCloudSyncService {
       let cloudDocs: {
         id: string;
         clientUpdatedAt: number;
-        savePayload: WorldSaveData | null;
+        storageVersion: number;
       }[] = [];
 
       try {
@@ -853,7 +887,7 @@ class FirebaseCloudSyncService {
           return {
             id: String(data.worldId || d.id),
             clientUpdatedAt: Number(data.clientUpdatedAt || 0),
-            savePayload: (data.savePayload as WorldSaveData) || null,
+            storageVersion: Number(data.storageVersion || 1),
           };
         });
       } catch (err) {
@@ -866,19 +900,27 @@ class FirebaseCloudSyncService {
 
       // 1. Download any Cloud worlds that are missing locally or newer in Cloud
       for (const cloudEntry of cloudDocs) {
-        if (!cloudEntry.savePayload || !cloudEntry.savePayload.metadata) {
-          continue;
-        }
         const localMeta = localById.get(cloudEntry.id);
         const localUpdatedAt = Number(localMeta?.updatedAt || 0);
         if (!localMeta || cloudEntry.clientUpdatedAt > localUpdatedAt) {
-          const migrated = migrateSaveData(cloudEntry.savePayload);
-          migrated.player.persistentPlayerId = uid;
-          await SaveManager.saveWorldGuaranteed(migrated, true);
+          const reconstructed =
+            await cloudWorldStorageEngine.downloadAndReconstructWorld(
+              uid,
+              cloudEntry.id,
+              (prog) => this.updateTransferProgress(prog)
+            );
+          if (reconstructed && reconstructed.metadata) {
+            reconstructed.player.persistentPlayerId = uid;
+            await SaveManager.saveWorldGuaranteed(reconstructed, true);
+            // If this cloud world was still in legacy v1 format, migrate it to v2 chunked format automatically!
+            if (cloudEntry.storageVersion !== 2) {
+              await this.uploadWorldToCloud(reconstructed);
+            }
+          }
         }
       }
 
-      // 2. Upload any Local worlds that are missing in Cloud or newer locally (Non-destructive migration!)
+      // 2. Upload any Local worlds that are missing in Cloud, newer locally, or need v1->v2 migration
       const updatedLocalList = SaveManager.listWorlds();
       let totalInCloud = cloudById.size;
 
@@ -886,8 +928,10 @@ class FirebaseCloudSyncService {
         const cloudEntry = cloudById.get(localMeta.id);
         const localUpdatedAt = Number(localMeta.updatedAt || 0);
         const cloudUpdatedAt = Number(cloudEntry?.clientUpdatedAt || 0);
+        const needsMigrationToV2 =
+          cloudEntry !== undefined && cloudEntry.storageVersion !== 2;
 
-        if (!cloudEntry || localUpdatedAt > cloudUpdatedAt) {
+        if (!cloudEntry || localUpdatedAt > cloudUpdatedAt || needsMigrationToV2) {
           const fullLocal =
             (await SaveManager.loadWorldGuaranteed(localMeta.id)) ||
             SaveManager.loadWorldLocal(localMeta.id);
