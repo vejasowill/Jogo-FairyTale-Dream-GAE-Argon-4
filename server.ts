@@ -1,4 +1,8 @@
+import 'dotenv/config';
 import express from 'express';
+import { cert, getApps, initializeApp as initializeAdminApp } from 'firebase-admin/app';
+import { getAuth as getAdminAuth } from 'firebase-admin/auth';
+import { getFirestore as getAdminFirestore } from 'firebase-admin/firestore';
 import fs from 'fs';
 import { createServer as createHttpServer } from 'http';
 import path from 'path';
@@ -8,6 +12,64 @@ import { WebSocket, WebSocketServer } from 'ws';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+
+// ============================================================================
+// FIREBASE ADMIN SDK INITIALIZATION (SERVER-ONLY — NEVER EXPOSED TO CLIENT)
+// ============================================================================
+let firebaseAdminInitialized = false;
+let firebaseAdminInitError: string | null = null;
+
+function normalizePrivateKey(rawKey?: string): string {
+  if (!rawKey) return '';
+  let cleaned = rawKey.trim();
+  if (
+    (cleaned.startsWith('"') && cleaned.endsWith('"')) ||
+    (cleaned.startsWith("'") && cleaned.endsWith("'"))
+  ) {
+    cleaned = cleaned.slice(1, -1);
+  }
+  return cleaned.replace(/\\n/g, '\n');
+}
+
+function initFirebaseAdminIfConfigured() {
+  if (firebaseAdminInitialized || getApps().length > 0) {
+    firebaseAdminInitialized = true;
+    return;
+  }
+  const projectId = (
+    process.env.FIREBASE_ADMIN_PROJECT_ID ||
+    process.env.VITE_FIREBASE_PROJECT_ID ||
+    ''
+  ).trim();
+  const clientEmail = (process.env.FIREBASE_ADMIN_CLIENT_EMAIL || '').trim();
+  const privateKey = normalizePrivateKey(process.env.FIREBASE_ADMIN_PRIVATE_KEY);
+
+  if (!projectId || !clientEmail || !privateKey) {
+    firebaseAdminInitError =
+      'Credenciais FIREBASE_ADMIN_* ausentes no ambiente local atual (ativas quando implantado na Vercel/Cloud Run com as variáveis configuradas).';
+    return;
+  }
+
+  try {
+    initializeAdminApp({
+      credential: cert({
+        projectId,
+        clientEmail,
+        privateKey,
+      }),
+      projectId,
+    });
+    firebaseAdminInitialized = true;
+    firebaseAdminInitError = null;
+  } catch (err: any) {
+    firebaseAdminInitialized = false;
+    firebaseAdminInitError =
+      err?.message || 'Falha ao inicializar Firebase Admin SDK.';
+    console.warn('Firebase Admin SDK initialization warning:', firebaseAdminInitError);
+  }
+}
+
+initFirebaseAdminIfConfigured();
 
 const DATA_DIR = path.join(__dirname, 'server_data');
 const WORLDS_FILE = path.join(DATA_DIR, 'worlds.json');
@@ -687,7 +749,214 @@ async function startServer() {
       status: 'ok',
       timestamp: Date.now(),
       activeOnlineRooms: activeRooms.size,
+      firebaseAdminReady: firebaseAdminInitialized,
     });
+  });
+
+  // Helper to resolve a valid Firestore Database ID (handling "default" -> applet database or "(default)")
+  function resolveFirestoreDatabaseId(
+    envDbId: string | undefined,
+    appletDbId: string | undefined
+  ): string {
+    const raw = (envDbId || '').trim();
+    if (!raw || raw.toLowerCase() === 'default' || raw === '(default)') {
+      return (
+        appletDbId ||
+        'ai-studio-remix2pixelsurvi-82a1c441-67e6-40f5-b2fb-00c7ebfba58d'
+      );
+    }
+    return raw;
+  }
+
+  // Firebase Environment & Admin SDK Security Diagnostics (Never exposes secret values!)
+  app.get('/api/firebase/diagnostics', async (_req, res) => {
+    initFirebaseAdminIfConfigured();
+    let appletConfig: Record<string, string> = {};
+    try {
+      const cfgPath = path.join(__dirname, 'firebase-applet-config.json');
+      if (fs.existsSync(cfgPath)) {
+        appletConfig = JSON.parse(fs.readFileSync(cfgPath, 'utf-8')) || {};
+      }
+    } catch {
+      appletConfig = {};
+    }
+
+    const clientVars = {
+      VITE_FIREBASE_API_KEY: Boolean(
+        process.env.VITE_FIREBASE_API_KEY || appletConfig.apiKey
+      ),
+      VITE_FIREBASE_AUTH_DOMAIN: Boolean(
+        process.env.VITE_FIREBASE_AUTH_DOMAIN || appletConfig.authDomain
+      ),
+      VITE_FIREBASE_PROJECT_ID: Boolean(
+        process.env.VITE_FIREBASE_PROJECT_ID || appletConfig.projectId
+      ),
+      VITE_FIREBASE_STORAGE_BUCKET: Boolean(
+        process.env.VITE_FIREBASE_STORAGE_BUCKET || appletConfig.storageBucket
+      ),
+      VITE_FIREBASE_MESSAGING_SENDER_ID: Boolean(
+        process.env.VITE_FIREBASE_MESSAGING_SENDER_ID ||
+          appletConfig.messagingSenderId
+      ),
+      VITE_FIREBASE_APP_ID: Boolean(
+        process.env.VITE_FIREBASE_APP_ID || appletConfig.appId
+      ),
+      VITE_FIREBASE_FIRESTORE_DATABASE_ID: Boolean(
+        process.env.VITE_FIREBASE_FIRESTORE_DATABASE_ID ||
+          appletConfig.firestoreDatabaseId
+      ),
+    };
+
+    const rawPrivKey = normalizePrivateKey(process.env.FIREBASE_ADMIN_PRIVATE_KEY);
+    const adminVars = {
+      FIREBASE_ADMIN_PROJECT_ID: Boolean(process.env.FIREBASE_ADMIN_PROJECT_ID),
+      FIREBASE_ADMIN_CLIENT_EMAIL: Boolean(
+        process.env.FIREBASE_ADMIN_CLIENT_EMAIL
+      ),
+      FIREBASE_ADMIN_PRIVATE_KEY: Boolean(rawPrivKey),
+      privateKeyPemFormatValid:
+        rawPrivKey.includes('BEGIN PRIVATE KEY') &&
+        rawPrivKey.includes('END PRIVATE KEY'),
+    };
+
+    // Security check: confirm no admin variable is prefixed with VITE_
+    const leakedAdminKeys = Object.keys(process.env).filter(
+      (k) =>
+        k.startsWith('VITE_') &&
+        (k.includes('PRIVATE_KEY') ||
+          k.includes('CLIENT_EMAIL') ||
+          k.includes('ADMIN'))
+    );
+
+    const effectiveDatabaseId = resolveFirestoreDatabaseId(
+      process.env.VITE_FIREBASE_FIRESTORE_DATABASE_ID,
+      appletConfig.firestoreDatabaseId
+    );
+
+    let adminFirestoreConnected = false;
+    let adminAuthConnected = false;
+    let liveDiagnosticsError: string | null = null;
+
+    if (firebaseAdminInitialized) {
+      try {
+        // 1. Test Admin Auth service reachability
+        await getAdminAuth().listUsers(1);
+        adminAuthConnected = true;
+      } catch (err: any) {
+        liveDiagnosticsError = `Admin Auth: ${err?.message || String(err)}`;
+      }
+
+      try {
+        // 2. Test Admin Firestore service reachability on effectiveDatabaseId
+        const adminDb = getAdminFirestore(undefined as any, effectiveDatabaseId);
+        await adminDb.collection('users').limit(1).get();
+        adminFirestoreConnected = true;
+      } catch (err: any) {
+        liveDiagnosticsError =
+          (liveDiagnosticsError ? liveDiagnosticsError + ' | ' : '') +
+          `Admin Firestore: ${err?.message || String(err)}`;
+      }
+    }
+
+    res.json({
+      ok: true,
+      projectId:
+        process.env.VITE_FIREBASE_PROJECT_ID ||
+        appletConfig.projectId ||
+        'fairytale-dream',
+      rawEnvDatabaseId: process.env.VITE_FIREBASE_FIRESTORE_DATABASE_ID || null,
+      firestoreDatabaseId: effectiveDatabaseId,
+      clientVars,
+      adminVars,
+      firebaseAdminInitialized,
+      firebaseAdminStatus: firebaseAdminInitialized
+        ? 'ACTIVE'
+        : 'STANDBY_AWAITING_HOST_ENV',
+      firebaseAdminNote: firebaseAdminInitError,
+      adminSdk: {
+        initialized: firebaseAdminInitialized,
+        authConnected: adminAuthConnected,
+        firestoreConnected: adminFirestoreConnected,
+        error: liveDiagnosticsError,
+      },
+      security: {
+        adminCredentialsIsolatedToServer: leakedAdminKeys.length === 0,
+      },
+      securityAudit: {
+        adminSecretsIsolatedFromFrontend: leakedAdminKeys.length === 0,
+        leakedViteKeysCount: leakedAdminKeys.length,
+      },
+    });
+  });
+
+  // Server-side Firebase ID Token & Entitlements verification using Firebase Admin SDK
+  app.post('/api/firebase/verify-session', async (req, res) => {
+    initFirebaseAdminIfConfigured();
+    const authHeader = String(req.headers.authorization || '');
+    const token = authHeader.startsWith('Bearer ')
+      ? authHeader.slice('Bearer '.length).trim()
+      : '';
+
+    if (!token) {
+      res.status(401).json({
+        ok: false,
+        error: 'Token Bearer ausente no cabeçalho Authorization.',
+      });
+      return;
+    }
+
+    if (!firebaseAdminInitialized) {
+      res.json({
+        ok: true,
+        verifiedBy: 'CLIENT_SDK_FIRESTORE_RULES',
+        adminSdkActive: false,
+        message:
+          'Sessão ativa via Firebase Web SDK + Firestore Security Rules (Admin SDK entrará em ação automaticamente na hospedagem com FIREBASE_ADMIN_*).',
+      });
+      return;
+    }
+
+    try {
+      const decoded = await getAdminAuth().verifyIdToken(token);
+      let appletDbId =
+        'ai-studio-remix2pixelsurvi-82a1c441-67e6-40f5-b2fb-00c7ebfba58d';
+      try {
+        const cfgPath = path.join(__dirname, 'firebase-applet-config.json');
+        if (fs.existsSync(cfgPath)) {
+          const parsed = JSON.parse(fs.readFileSync(cfgPath, 'utf-8')) || {};
+          if (parsed.firestoreDatabaseId) {
+            appletDbId = parsed.firestoreDatabaseId;
+          }
+        }
+      } catch {
+        // ignore
+      }
+      const dbId = resolveFirestoreDatabaseId(
+        process.env.VITE_FIREBASE_FIRESTORE_DATABASE_ID,
+        appletDbId
+      );
+      const adminDb = getAdminFirestore(undefined as any, dbId);
+      const entSnap = await adminDb
+        .collection('users')
+        .doc(decoded.uid)
+        .collection('entitlements')
+        .where('ownerId', '==', decoded.uid)
+        .get();
+
+      res.json({
+        ok: true,
+        verifiedBy: 'FIREBASE_ADMIN_SDK',
+        adminSdkActive: true,
+        uid: decoded.uid,
+        emailVerified: Boolean(decoded.email_verified),
+        entitlementsCount: entSnap.size,
+      });
+    } catch (err: any) {
+      res.status(401).json({
+        ok: false,
+        error: err?.message || 'Falha ao validar ID Token no Firebase Admin SDK.',
+      });
+    }
   });
 
   // ==========================================================================

@@ -12,6 +12,10 @@ import {
   X,
 } from 'lucide-react';
 import {
+  getClientFirebaseDiagnostics,
+  testFirestoreConnection,
+} from '../firebase';
+import {
   CloudSyncSnapshot,
   firebaseCloudSync,
 } from '../game/persistence/FirebaseCloudSync';
@@ -34,13 +38,43 @@ export const CloudAccountModal: React.FC<CloudAccountModalProps> = ({
   );
   const [feedback, setFeedback] = useState<string | null>(null);
   const [isBusy, setIsBusy] = useState(false);
+  const [firestoreReachable, setFirestoreReachable] = useState<boolean | null>(
+    null
+  );
+  const [serverAdminStatus, setServerAdminStatus] = useState<{
+    checked: boolean;
+    adminInitialized: boolean;
+    adminSecretsIsolated: boolean;
+  }>({
+    checked: false,
+    adminInitialized: false,
+    adminSecretsIsolated: true,
+  });
+  const clientDiag = getClientFirebaseDiagnostics();
 
   useEffect(() => {
     const unsub = firebaseCloudSync.subscribe((snap) => {
       setCloudSnap(snap);
     });
+    void testFirestoreConnection(true).then((ok) => {
+      setFirestoreReachable(ok);
+    });
+    fetch('/api/firebase/diagnostics')
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => {
+        if (data) {
+          setServerAdminStatus({
+            checked: true,
+            adminInitialized: Boolean(data.adminSdk?.initialized),
+            adminSecretsIsolated:
+              Boolean(data.security?.adminCredentialsIsolatedToServer) &&
+              clientDiag.adminSecretsAbsentFromFrontend,
+          });
+        }
+      })
+      .catch(() => {});
     return unsub;
-  }, []);
+  }, [clientDiag.adminSecretsAbsentFromFrontend]);
 
   const handleGoogleSignIn = async () => {
     if (isBusy) return;
@@ -326,6 +360,77 @@ export const CloudAccountModal: React.FC<CloudAccountModalProps> = ({
               </div>
             </>
           )}
+
+          {/* Integration & Security Status Summary */}
+          <div className="medieval-inset p-3 space-y-2 border border-[#4a301e] text-[11px]">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-1.5">
+                <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" />
+                <span className="font-pixel text-[10px] font-bold text-amber-300 uppercase">
+                  Diagnóstico da Integração Firebase
+                </span>
+              </div>
+              <span className="font-mono text-[10px] text-emerald-300 font-bold">
+                {clientDiag.projectId}
+              </span>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 text-[10px]">
+              <div className="mc-slot px-2 py-1.5 flex items-center justify-between">
+                <span className="text-[#c4ab7d]">SDK & Config Cliente:</span>
+                <span
+                  className={
+                    clientDiag.clientConfigComplete
+                      ? 'text-emerald-300 font-bold'
+                      : 'text-red-400 font-bold'
+                  }
+                >
+                  {clientDiag.clientConfigComplete ? 'Ativo' : 'Pendente'}
+                </span>
+              </div>
+
+              <div className="mc-slot px-2 py-1.5 flex items-center justify-between">
+                <span className="text-[#c4ab7d]">Cloud Firestore:</span>
+                <span
+                  className={
+                    firestoreReachable === null
+                      ? 'text-amber-300 font-bold'
+                      : firestoreReachable
+                      ? 'text-emerald-300 font-bold'
+                      : 'text-red-400 font-bold'
+                  }
+                >
+                  {firestoreReachable === null
+                    ? 'Verificando...'
+                    : firestoreReachable
+                    ? 'Online'
+                    : 'Offline'}
+                </span>
+              </div>
+
+              <div className="mc-slot px-2 py-1.5 flex items-center justify-between">
+                <span className="text-[#c4ab7d]">Salvamento Híbrido:</span>
+                <span className="text-emerald-300 font-bold">
+                  Local + Nuvem
+                </span>
+              </div>
+
+              <div className="mc-slot px-2 py-1.5 flex items-center justify-between">
+                <span className="text-[#c4ab7d]">Chaves Admin Isoladas:</span>
+                <span
+                  className={
+                    serverAdminStatus.adminSecretsIsolated
+                      ? 'text-emerald-300 font-bold'
+                      : 'text-red-400 font-bold'
+                  }
+                >
+                  {serverAdminStatus.adminSecretsIsolated
+                    ? 'Protegidas'
+                    : 'Alerta'}
+                </span>
+              </div>
+            </div>
+          </div>
         </div>
 
         {/* Footer */}

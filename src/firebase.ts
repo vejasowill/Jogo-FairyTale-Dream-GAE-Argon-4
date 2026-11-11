@@ -12,6 +12,17 @@ import appletFirebaseConfig from '../firebase-applet-config.json';
 
 const env = (import.meta as any).env || {};
 
+function resolveClientDatabaseId(
+  envDbId: string | undefined,
+  appletDbId: string | undefined
+): string | undefined {
+  const raw = (envDbId || '').trim();
+  if (!raw || raw.toLowerCase() === 'default' || raw === '(default)') {
+    return appletDbId || undefined;
+  }
+  return raw;
+}
+
 const resolvedConfig = {
   apiKey: env.VITE_FIREBASE_API_KEY || appletFirebaseConfig.apiKey,
   authDomain: env.VITE_FIREBASE_AUTH_DOMAIN || appletFirebaseConfig.authDomain,
@@ -22,9 +33,10 @@ const resolvedConfig = {
     env.VITE_FIREBASE_MESSAGING_SENDER_ID ||
     appletFirebaseConfig.messagingSenderId,
   appId: env.VITE_FIREBASE_APP_ID || appletFirebaseConfig.appId,
-  firestoreDatabaseId:
-    env.VITE_FIREBASE_FIRESTORE_DATABASE_ID ||
-    appletFirebaseConfig.firestoreDatabaseId,
+  firestoreDatabaseId: resolveClientDatabaseId(
+    env.VITE_FIREBASE_FIRESTORE_DATABASE_ID,
+    appletFirebaseConfig.firestoreDatabaseId
+  ),
 };
 
 export const firebaseApp = initializeApp(resolvedConfig);
@@ -97,12 +109,14 @@ export function handleFirestoreError(
 }
 
 let connectionTested = false;
+let lastFirestorePingOk = false;
 
-export async function testFirestoreConnection(): Promise<boolean> {
-  if (connectionTested) return true;
+export async function testFirestoreConnection(force = false): Promise<boolean> {
+  if (connectionTested && !force) return lastFirestorePingOk;
   connectionTested = true;
   try {
     await getDocFromServer(doc(db, 'test', 'connection'));
+    lastFirestorePingOk = true;
     return true;
   } catch (error) {
     if (
@@ -110,15 +124,48 @@ export async function testFirestoreConnection(): Promise<boolean> {
       error.message.includes('the client is offline')
     ) {
       console.error('Please check your Firebase configuration.');
+      lastFirestorePingOk = false;
       return false;
     }
     // Permission denied on /test/connection is expected because of default-deny security rules,
     // which confirms the Firestore server responded and is reachable!
+    lastFirestorePingOk = true;
     return true;
   }
+}
+
+export interface ClientFirebaseDiagnostics {
+  projectId: string;
+  authDomain: string;
+  firestoreDatabaseId: string;
+  clientConfigComplete: boolean;
+  adminSecretsAbsentFromFrontend: boolean;
+}
+
+export function getClientFirebaseDiagnostics(): ClientFirebaseDiagnostics {
+  const envKeys = Object.keys(env);
+  const leakedAdminKey = envKeys.some(
+    (k) =>
+      k.includes('ADMIN_PRIVATE_KEY') ||
+      k.includes('ADMIN_CLIENT_EMAIL') ||
+      k === 'FIREBASE_ADMIN_PROJECT_ID'
+  );
+  return {
+    projectId: resolvedConfig.projectId || '',
+    authDomain: resolvedConfig.authDomain || '',
+    firestoreDatabaseId: resolvedConfig.firestoreDatabaseId || '(default)',
+    clientConfigComplete: Boolean(
+      resolvedConfig.apiKey &&
+        resolvedConfig.authDomain &&
+        resolvedConfig.projectId &&
+        resolvedConfig.appId
+    ),
+    adminSecretsAbsentFromFrontend: !leakedAdminKey,
+  };
 }
 
 void testFirestoreConnection();
 
 export { onAuthStateChanged, signInWithPopup, signOut };
 export type { User };
+
