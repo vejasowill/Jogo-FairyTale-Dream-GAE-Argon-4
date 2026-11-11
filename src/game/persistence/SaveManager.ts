@@ -17,6 +17,8 @@ import {
   WorldSaveData,
 } from '../core/types';
 import { WorldManager } from '../world/WorldManager';
+import { auth } from '../../firebase';
+import { firebaseCloudSync } from './FirebaseCloudSync';
 
 const INDEX_KEY = 'wildborn_worlds_index_v1';
 const SETTINGS_KEY = 'wildborn_settings_v1';
@@ -25,7 +27,7 @@ const PLAYER_UID_KEY = 'wildborn_player_uid_v1';
 
 export const CURRENT_SAVE_VERSION = 3;
 
-export function getOrCreatePersistentPlayerUid(): string {
+export function getOrCreateLocalDevicePlayerUid(): string {
   try {
     const existing = localStorage.getItem(PLAYER_UID_KEY);
     if (existing && existing.trim().length >= 6) {
@@ -41,6 +43,14 @@ export function getOrCreatePersistentPlayerUid(): string {
   } catch {
     return 'player_local_default';
   }
+}
+
+export function getOrCreatePersistentPlayerUid(): string {
+  const firebaseUid = auth?.currentUser?.uid;
+  if (firebaseUid && firebaseUid.trim().length >= 4) {
+    return firebaseUid.trim();
+  }
+  return getOrCreateLocalDevicePlayerUid();
 }
 
 export interface SaveEnvelope {
@@ -173,13 +183,23 @@ export function migrateSaveData(rawSave: WorldSaveData): WorldSaveData {
     migrated.player.persistentPlayerId = getOrCreatePersistentPlayerUid();
   }
 
-  // Ensure any pre-existing tamed animals in a saved world have their ownerId assigned
+  // Ensure any pre-existing tamed animals in a saved world have their ownerId assigned or migrated to the authenticated UID
+  const activePersistentUid = getOrCreatePersistentPlayerUid();
+  const legacyDeviceUid = getOrCreateLocalDevicePlayerUid();
+  if (
+    migrated.player.persistentPlayerId === legacyDeviceUid &&
+    activePersistentUid !== legacyDeviceUid
+  ) {
+    migrated.player.persistentPlayerId = activePersistentUid;
+  }
   if (Array.isArray(migrated.creatures)) {
     for (const cr of migrated.creatures) {
-      if (cr && cr.tamed && cr.kind !== 'BOAT' && !cr.ownerId) {
-        cr.ownerId = migrated.player.persistentPlayerId;
-        if (!cr.ownerName) {
-          cr.ownerName = 'Anfitrião';
+      if (cr && cr.tamed && cr.kind !== 'BOAT') {
+        if (!cr.ownerId || cr.ownerId === legacyDeviceUid) {
+          cr.ownerId = migrated.player.persistentPlayerId;
+          if (!cr.ownerName) {
+            cr.ownerName = 'Anfitrião';
+          }
         }
       }
     }
@@ -938,6 +958,7 @@ export class SaveManager {
     } catch {
       // ignore
     }
+    void firebaseCloudSync.syncProfileAppearanceAndSettings();
     return updated;
   }
 
@@ -1795,11 +1816,15 @@ export class SaveManager {
    * commits synchronously to `memoryWorlds` + `localStorage` AND awaits `IndexedDB` disk completion.
    */
   public static async saveWorldGuaranteed(
-    saveData: WorldSaveData
+    saveData: WorldSaveData,
+    skipCloudUpload = false
   ): Promise<boolean> {
     const okSync = this.saveWorldLocal(saveData);
     const cached = this.memoryWorlds.get(saveData.metadata.id) || saveData;
     const okIdb = await this.writeWorldToIdb(cached);
+    if (!skipCloudUpload && auth?.currentUser) {
+      void firebaseCloudSync.uploadWorldToCloud(cached).catch(() => {});
+    }
     return okSync || okIdb;
   }
 
@@ -1900,6 +1925,9 @@ export class SaveManager {
     data.metadata.difficulty = newDifficulty;
     data.metadata.updatedAt = Date.now();
     this.saveWorldLocal(data);
+    if (auth?.currentUser) {
+      void firebaseCloudSync.uploadWorldToCloud(data).catch(() => {});
+    }
     return data.metadata;
   }
 
@@ -1917,6 +1945,10 @@ export class SaveManager {
     const list = this.listWorlds().filter((w) => w.id !== worldId);
     this.saveWorldIndex(list);
 
+    if (auth?.currentUser) {
+      void firebaseCloudSync.deleteWorldFromCloud(worldId).catch(() => {});
+    }
+
     const cfg = settings || this.loadSettings();
     if (cfg.serverSyncEnabled) {
       const base = cfg.customServerUrl.trim().replace(/\/$/, '');
@@ -1930,9 +1962,21 @@ export class SaveManager {
     saveData: WorldSaveData,
     settings?: GameSettings
   ): Promise<{ ok: boolean; message: string }> {
+    let cloudSaved = false;
+    if (auth?.currentUser) {
+      try {
+        const cloudRes = await firebaseCloudSync.uploadWorldToCloud(saveData);
+        cloudSaved = cloudRes.ok;
+      } catch {
+        cloudSaved = false;
+      }
+    }
+
     const cfg = settings || this.loadSettings();
     if (!cfg.serverSyncEnabled) {
-      return { ok: false, message: 'Sincronização com servidor desativada.' };
+      return cloudSaved
+        ? { ok: true, message: 'Salvo no Firebase Cloud Firestore.' }
+        : { ok: false, message: 'Sincronização com servidor desativada.' };
     }
     const base = cfg.customServerUrl.trim().replace(/\/$/, '');
     const url = `${base}/api/worlds`;
@@ -1951,15 +1995,24 @@ export class SaveManager {
       });
       window.clearTimeout(timeoutId);
       if (!res.ok) {
-        return { ok: false, message: `Erro HTTP ${res.status}` };
+        return cloudSaved
+          ? { ok: true, message: 'Salvo no Firebase Cloud Firestore.' }
+          : { ok: false, message: `Erro HTTP ${res.status}` };
       }
-      return { ok: true, message: 'Salvo no servidor com sucesso.' };
+      return {
+        ok: true,
+        message: cloudSaved
+          ? 'Salvo no Firebase e no Servidor com sucesso.'
+          : 'Salvo no servidor com sucesso.',
+      };
     } catch {
       window.clearTimeout(timeoutId);
-      return {
-        ok: false,
-        message: 'Servidor offline (salvo localmente com segurança).',
-      };
+      return cloudSaved
+        ? { ok: true, message: 'Salvo no Firebase Cloud Firestore.' }
+        : {
+            ok: false,
+            message: 'Servidor offline (salvo localmente com segurança).',
+          };
     }
   }
 
@@ -1967,6 +2020,13 @@ export class SaveManager {
     settings?: GameSettings
   ): Promise<WorldMetadata[]> {
     await this.hydrateFromIndexedDB();
+    if (auth?.currentUser) {
+      try {
+        await firebaseCloudSync.syncAllWorldsWithCloud();
+      } catch {
+        // ignore offline cloud sync error
+      }
+    }
     const cfg = settings || this.loadSettings();
     if (!cfg.serverSyncEnabled) return this.listWorlds();
     const base = cfg.customServerUrl.trim().replace(/\/$/, '');

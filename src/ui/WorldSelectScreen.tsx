@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import {
+  Cloud,
   Copy,
   Download,
   Edit3,
@@ -28,9 +29,14 @@ import {
   WorldSaveData,
 } from '../game/core/types';
 import { MultiplayerManager } from '../game/network/MultiplayerManager';
+import {
+  CloudSyncSnapshot,
+  firebaseCloudSync,
+} from '../game/persistence/FirebaseCloudSync';
 import { SaveManager } from '../game/persistence/SaveManager';
 import { spriteAtlas } from '../game/rendering/SpriteAtlas';
 import { AccountAppearanceModal } from './CharacterPetsModal';
+import { CloudAccountModal } from './CloudAccountModal';
 
 interface WorldSelectScreenProps {
   settings: GameSettings;
@@ -68,6 +74,10 @@ export const WorldSelectScreen: React.FC<WorldSelectScreenProps> = ({
   const [deletingWorldId, setDeletingWorldId] = useState<string | null>(null);
   const [showServerModal, setShowServerModal] = useState(false);
   const [showAppearanceModal, setShowAppearanceModal] = useState(false);
+  const [showCloudModal, setShowCloudModal] = useState(false);
+  const [cloudSnap, setCloudSnap] = useState<CloudSyncSnapshot>(() =>
+    firebaseCloudSync.getSnapshot()
+  );
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
 
   // Online Join by Invite Code states
@@ -87,6 +97,14 @@ export const WorldSelectScreen: React.FC<WorldSelectScreenProps> = ({
   );
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+
+  useEffect(() => {
+    const unsub = firebaseCloudSync.subscribe((snap) => {
+      setCloudSnap(snap);
+      setWorlds(SaveManager.listWorlds());
+    });
+    return unsub;
+  }, []);
 
   useEffect(() => {
     spriteAtlas.ensureInitialized();
@@ -110,8 +128,9 @@ export const WorldSelectScreen: React.FC<WorldSelectScreenProps> = ({
     setIsTransitioningWorld(true);
     setShowCreateModal(false);
     const newSave = SaveManager.createNewWorld(worldName, seedInput, difficulty);
+    void SaveManager.saveWorldGuaranteed(newSave);
     if (settings.serverSyncEnabled) {
-      SaveManager.syncWorldToServer(newSave, settings);
+      void SaveManager.syncWorldToServer(newSave, settings);
     }
     onStartWorld(newSave);
   };
@@ -295,6 +314,35 @@ export const WorldSelectScreen: React.FC<WorldSelectScreenProps> = ({
         </div>
 
         <div className="flex items-center gap-1.5">
+          <button
+            type="button"
+            onClick={() => setShowCloudModal(true)}
+            className={`min-h-[38px] px-2.5 py-1.5 ${
+              cloudSnap.user ? 'medieval-btn-emerald' : 'medieval-btn-wood'
+            } text-xs font-bold flex items-center gap-1.5 whitespace-nowrap`}
+            title="Conta Google & Salvamento em Nuvem Firebase"
+          >
+            {cloudSnap.user?.photoURL ? (
+              <img
+                src={cloudSnap.user.photoURL}
+                alt={cloudSnap.user.displayName}
+                referrerPolicy="no-referrer"
+                className="w-4 h-4 rounded-full border border-amber-300 object-cover"
+              />
+            ) : (
+              <Cloud
+                className={`w-4 h-4 ${
+                  cloudSnap.user ? 'text-white' : 'text-sky-300'
+                }`}
+              />
+            )}
+            <span>
+              {cloudSnap.user
+                ? cloudSnap.user.displayName.split(' ')[0]
+                : 'Conta Google'}
+            </span>
+          </button>
+
           <button
             type="button"
             onTouchEnd={(e) => {
@@ -1106,6 +1154,15 @@ export const WorldSelectScreen: React.FC<WorldSelectScreenProps> = ({
               ...settings,
               accountAppearance: updated,
             });
+          }}
+        />
+      )}
+
+      {showCloudModal && (
+        <CloudAccountModal
+          onClose={() => setShowCloudModal(false)}
+          onWorldsUpdated={() => {
+            setWorlds(SaveManager.listWorlds());
           }}
         />
       )}

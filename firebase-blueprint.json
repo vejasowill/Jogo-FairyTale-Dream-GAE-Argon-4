@@ -1,0 +1,350 @@
+{
+  "entities": {
+    "UserProfile": {
+      "title": "UserProfile",
+      "description": "Authenticated player profile, universal character appearance, and synced game settings.",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "description": "Firebase Auth UID of the player.",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "displayName": {
+          "type": "string",
+          "description": "Player display name shown in menus and multiplayer.",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "photoURL": {
+          "type": "string",
+          "description": "Optional avatar URL from Google Authentication.",
+          "minLength": 0,
+          "maxLength": 512
+        },
+        "legacyLocalUid": {
+          "type": "string",
+          "description": "Pre-login persistent local player ID migrated to this Firebase account.",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "appearance": {
+          "type": "object",
+          "description": "Universal character appearance settings shared across worlds."
+        },
+        "settings": {
+          "type": "object",
+          "description": "Player HUD, audio, and camera preferences."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when the profile was created."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when the profile was last updated."
+        }
+      },
+      "required": [
+        "uid",
+        "displayName",
+        "photoURL",
+        "legacyLocalUid",
+        "appearance",
+        "settings",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "UserPrivateInfo": {
+      "title": "UserPrivateInfo",
+      "description": "Isolated PII document storing the user's private email address.",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "description": "Firebase Auth UID of the owner.",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "email": {
+          "type": "string",
+          "format": "email",
+          "description": "Authenticated user email address.",
+          "minLength": 3,
+          "maxLength": 254
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when the private record was created."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when the private record was last updated."
+        }
+      },
+      "required": [
+        "uid",
+        "email",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "CloudWorldSave": {
+      "title": "CloudWorldSave",
+      "description": "Authoritative cloud save of a player's procedural open world.",
+      "type": "object",
+      "properties": {
+        "worldId": {
+          "type": "string",
+          "description": "Unique identifier of the world save.",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "ownerId": {
+          "type": "string",
+          "description": "Firebase Auth UID of the player who owns this world.",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "name": {
+          "type": "string",
+          "description": "Display name of the world.",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "seed": {
+          "type": "integer",
+          "description": "Numeric procedural generation seed."
+        },
+        "seedText": {
+          "type": "string",
+          "description": "Original text representation of the seed.",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "difficulty": {
+          "type": "string",
+          "description": "World survival difficulty mode.",
+          "enum": [
+            "normal",
+            "survival",
+            "hardcore"
+          ]
+        },
+        "dayCount": {
+          "type": "integer",
+          "description": "Current in-game day counter."
+        },
+        "timeOfDay": {
+          "type": "number",
+          "description": "Current in-game hour (0 to 24)."
+        },
+        "playerLevel": {
+          "type": "integer",
+          "description": "Current level of the host player in this world."
+        },
+        "exploredChunksCount": {
+          "type": "integer",
+          "description": "Number of explored chunks preserved in this save."
+        },
+        "gameVersion": {
+          "type": "string",
+          "description": "Game version string that last saved this world.",
+          "minLength": 1,
+          "maxLength": 32
+        },
+        "worldGenVersion": {
+          "type": "integer",
+          "description": "World generator version number."
+        },
+        "checksum": {
+          "type": "string",
+          "description": "FNV-1a integrity checksum of the save payload.",
+          "minLength": 1,
+          "maxLength": 32
+        },
+        "clientUpdatedAt": {
+          "type": "integer",
+          "description": "Client epoch timestamp (ms) when the world was saved."
+        },
+        "savePayload": {
+          "type": "object",
+          "description": "Compacted WorldSaveData object containing metadata, player, chunks, creatures, waypoints, and structures."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when the cloud world save was first created."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when the cloud world save was last updated."
+        }
+      },
+      "required": [
+        "worldId",
+        "ownerId",
+        "name",
+        "seed",
+        "seedText",
+        "difficulty",
+        "dayCount",
+        "timeOfDay",
+        "playerLevel",
+        "exploredChunksCount",
+        "gameVersion",
+        "worldGenVersion",
+        "checksum",
+        "clientUpdatedAt",
+        "savePayload",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "CloudGuestProfile": {
+      "title": "CloudGuestProfile",
+      "description": "Cloud backup of a player's guest character state in a multiplayer world hosted by another player.",
+      "type": "object",
+      "properties": {
+        "worldId": {
+          "type": "string",
+          "description": "ID of the multiplayer world where the guest played.",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "ownerId": {
+          "type": "string",
+          "description": "Firebase Auth UID of the guest player.",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "playerLevel": {
+          "type": "integer",
+          "description": "Level of the guest character."
+        },
+        "clientUpdatedAt": {
+          "type": "integer",
+          "description": "Client epoch timestamp (ms) when the guest profile was saved."
+        },
+        "playerPayload": {
+          "type": "object",
+          "description": "Serialized PlayerState for the guest character."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when the guest profile was first created."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when the guest profile was last updated."
+        }
+      },
+      "required": [
+        "worldId",
+        "ownerId",
+        "playerLevel",
+        "clientUpdatedAt",
+        "playerPayload",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "UserEntitlement": {
+      "title": "UserEntitlement",
+      "description": "Server-granted purchase, cosmetic pack, or exclusive item linked to the authenticated UID.",
+      "type": "object",
+      "properties": {
+        "entitlementId": {
+          "type": "string",
+          "description": "Unique identifier of the entitlement or purchase.",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "ownerId": {
+          "type": "string",
+          "description": "Firebase Auth UID of the account that owns this entitlement.",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "sku": {
+          "type": "string",
+          "description": "Product SKU or exclusive content identifier.",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "category": {
+          "type": "string",
+          "description": "Category of the entitlement.",
+          "enum": [
+            "cosmetic",
+            "expansion",
+            "supporter_pack",
+            "currency_bundle",
+            "exclusive_reward"
+          ]
+        },
+        "status": {
+          "type": "string",
+          "description": "Entitlement lifecycle status.",
+          "enum": [
+            "active",
+            "revoked"
+          ]
+        },
+        "grantedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when the entitlement was granted."
+        }
+      },
+      "required": [
+        "entitlementId",
+        "ownerId",
+        "sku",
+        "category",
+        "status",
+        "grantedAt"
+      ]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "UserProfile",
+      "description": "Root player profile document indexed by Firebase Auth UID."
+    },
+    "/users/{userId}/private/{docId}": {
+      "schema": "UserPrivateInfo",
+      "description": "Isolated PII subcollection storing private account details such as email."
+    },
+    "/users/{userId}/worlds/{worldId}": {
+      "schema": "CloudWorldSave",
+      "description": "Player's saved worlds subcollection."
+    },
+    "/users/{userId}/guestProfiles/{worldId}": {
+      "schema": "CloudGuestProfile",
+      "description": "Player's guest character saves in external multiplayer worlds."
+    },
+    "/users/{userId}/entitlements/{entitlementId}": {
+      "schema": "UserEntitlement",
+      "description": "Read-only server-granted purchases and exclusive content tied to the player's UID."
+    }
+  }
+}

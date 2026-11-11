@@ -1,0 +1,457 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // =========================================================================
+    // 0. GLOBAL SAFETY NET (Default-Deny Catch-All)
+    // =========================================================================
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // =========================================================================
+    // 1. HARDENED GLOBAL PRIMITIVES
+    // =========================================================================
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isVerifiedUser() {
+      return isSignedIn() && request.auth.token.email_verified == true;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function parentUserExists(userId) {
+      return exists(/databases/$(database)/documents/users/$(userId)) &&
+        get(/databases/$(database)/documents/users/$(userId)).data.uid == request.auth.uid;
+    }
+
+    // =========================================================================
+    // 2. ENTITY VALIDATION BLUEPRINTS (Anti-Update-Gap)
+    // =========================================================================
+    function isValidUserProfile(data, userId) {
+      return data.keys().hasAll([
+          'uid',
+          'displayName',
+          'photoURL',
+          'legacyLocalUid',
+          'appearance',
+          'settings',
+          'createdAt',
+          'updatedAt'
+        ]) &&
+        data.keys().hasOnly([
+          'uid',
+          'displayName',
+          'photoURL',
+          'legacyLocalUid',
+          'appearance',
+          'settings',
+          'createdAt',
+          'updatedAt'
+        ]) &&
+        data.uid is string &&
+        data.uid.size() >= 1 &&
+        data.uid.size() <= 128 &&
+        data.uid.matches('^[a-zA-Z0-9_\\-]+$') &&
+        data.uid == request.auth.uid &&
+        data.uid == userId &&
+        data.displayName is string &&
+        data.displayName.size() >= 1 &&
+        data.displayName.size() <= 64 &&
+        data.photoURL is string &&
+        data.photoURL.size() >= 0 &&
+        data.photoURL.size() <= 512 &&
+        data.legacyLocalUid is string &&
+        data.legacyLocalUid.size() >= 1 &&
+        data.legacyLocalUid.size() <= 128 &&
+        data.legacyLocalUid.matches('^[a-zA-Z0-9_\\-]+$') &&
+        data.appearance is map &&
+        data.appearance.size() <= 20 &&
+        data.settings is map &&
+        data.settings.size() <= 30 &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidUserPrivateInfo(data, userId) {
+      return data.keys().hasAll(['uid', 'email', 'createdAt', 'updatedAt']) &&
+        data.keys().hasOnly(['uid', 'email', 'createdAt', 'updatedAt']) &&
+        data.uid is string &&
+        data.uid.size() >= 1 &&
+        data.uid.size() <= 128 &&
+        data.uid.matches('^[a-zA-Z0-9_\\-]+$') &&
+        data.uid == request.auth.uid &&
+        data.uid == userId &&
+        data.email is string &&
+        data.email.size() >= 3 &&
+        data.email.size() <= 254 &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidCloudWorldSave(data, userId, worldId) {
+      return data.keys().hasAll([
+          'worldId',
+          'ownerId',
+          'name',
+          'seed',
+          'seedText',
+          'difficulty',
+          'dayCount',
+          'timeOfDay',
+          'playerLevel',
+          'exploredChunksCount',
+          'gameVersion',
+          'worldGenVersion',
+          'checksum',
+          'clientUpdatedAt',
+          'savePayload',
+          'createdAt',
+          'updatedAt'
+        ]) &&
+        data.keys().hasOnly([
+          'worldId',
+          'ownerId',
+          'name',
+          'seed',
+          'seedText',
+          'difficulty',
+          'dayCount',
+          'timeOfDay',
+          'playerLevel',
+          'exploredChunksCount',
+          'gameVersion',
+          'worldGenVersion',
+          'checksum',
+          'clientUpdatedAt',
+          'savePayload',
+          'createdAt',
+          'updatedAt'
+        ]) &&
+        data.worldId is string &&
+        data.worldId.size() >= 1 &&
+        data.worldId.size() <= 128 &&
+        data.worldId.matches('^[a-zA-Z0-9_\\-]+$') &&
+        data.worldId == worldId &&
+        data.ownerId is string &&
+        data.ownerId.size() >= 1 &&
+        data.ownerId.size() <= 128 &&
+        data.ownerId.matches('^[a-zA-Z0-9_\\-]+$') &&
+        data.ownerId == request.auth.uid &&
+        data.ownerId == userId &&
+        data.name is string &&
+        data.name.size() >= 1 &&
+        data.name.size() <= 64 &&
+        data.seed is int &&
+        data.seed >= 0 &&
+        data.seed <= 999999999 &&
+        data.seedText is string &&
+        data.seedText.size() >= 1 &&
+        data.seedText.size() <= 64 &&
+        data.difficulty is string &&
+        data.difficulty.size() <= 16 &&
+        data.difficulty in ['normal', 'survival', 'hardcore'] &&
+        data.dayCount is int &&
+        data.dayCount >= 1 &&
+        data.dayCount <= 1000000 &&
+        (data.timeOfDay is int || data.timeOfDay is float) &&
+        data.timeOfDay >= 0 &&
+        data.timeOfDay <= 24 &&
+        data.playerLevel is int &&
+        data.playerLevel >= 1 &&
+        data.playerLevel <= 9999 &&
+        data.exploredChunksCount is int &&
+        data.exploredChunksCount >= 0 &&
+        data.exploredChunksCount <= 100000 &&
+        data.gameVersion is string &&
+        data.gameVersion.size() >= 1 &&
+        data.gameVersion.size() <= 32 &&
+        data.worldGenVersion is int &&
+        data.worldGenVersion >= 1 &&
+        data.worldGenVersion <= 1000 &&
+        data.checksum is string &&
+        data.checksum.size() >= 1 &&
+        data.checksum.size() <= 32 &&
+        data.clientUpdatedAt is int &&
+        data.clientUpdatedAt >= 0 &&
+        data.savePayload is map &&
+        data.savePayload.keys().hasAll(['version', 'metadata', 'player', 'chunks']) &&
+        data.savePayload.keys().hasOnly([
+          'version',
+          'metadata',
+          'player',
+          'guestPlayers',
+          'chunks',
+          'undergroundChunks',
+          'creatures',
+          'droppedItems',
+          'waypoints',
+          'deathBags'
+        ]) &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidCloudGuestProfile(data, userId, worldId) {
+      return data.keys().hasAll([
+          'worldId',
+          'ownerId',
+          'playerLevel',
+          'clientUpdatedAt',
+          'playerPayload',
+          'createdAt',
+          'updatedAt'
+        ]) &&
+        data.keys().hasOnly([
+          'worldId',
+          'ownerId',
+          'playerLevel',
+          'clientUpdatedAt',
+          'playerPayload',
+          'createdAt',
+          'updatedAt'
+        ]) &&
+        data.worldId is string &&
+        data.worldId.size() >= 1 &&
+        data.worldId.size() <= 128 &&
+        data.worldId.matches('^[a-zA-Z0-9_\\-]+$') &&
+        data.worldId == worldId &&
+        data.ownerId is string &&
+        data.ownerId.size() >= 1 &&
+        data.ownerId.size() <= 128 &&
+        data.ownerId.matches('^[a-zA-Z0-9_\\-]+$') &&
+        data.ownerId == request.auth.uid &&
+        data.ownerId == userId &&
+        data.playerLevel is int &&
+        data.playerLevel >= 1 &&
+        data.playerLevel <= 9999 &&
+        data.clientUpdatedAt is int &&
+        data.clientUpdatedAt >= 0 &&
+        data.playerPayload is map &&
+        data.playerPayload.size() <= 60 &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+
+    // =========================================================================
+    // 3. COLLECTION RULES
+    // =========================================================================
+
+    // 3.1 Root User Profile (/users/{userId})
+    match /users/{userId} {
+      allow get: if isSignedIn() && isOwner(userId) && isValidId(userId);
+      allow list: if false;
+
+      allow create: if isVerifiedUser() &&
+        isOwner(userId) &&
+        isValidId(userId) &&
+        isValidUserProfile(incoming(), userId) &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time;
+
+      allow update: if isVerifiedUser() &&
+        isOwner(userId) &&
+        isValidId(userId) &&
+        isValidUserProfile(incoming(), userId) &&
+        incoming().uid == existing().uid &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time &&
+        (
+          // Action: Update Profile / Appearance / Settings
+          incoming().diff(existing()).affectedKeys().hasOnly([
+            'displayName',
+            'photoURL',
+            'legacyLocalUid',
+            'appearance',
+            'settings',
+            'updatedAt'
+          ])
+        );
+
+      allow delete: if false;
+
+      // 3.2 Isolated PII Subcollection (/users/{userId}/private/{docId})
+      match /private/{docId} {
+        allow get: if isSignedIn() &&
+          isOwner(userId) &&
+          isValidId(userId) &&
+          isValidId(docId) &&
+          existing().uid == request.auth.uid &&
+          parentUserExists(userId);
+
+        allow list: if false;
+
+        allow create: if isVerifiedUser() &&
+          isOwner(userId) &&
+          isValidId(userId) &&
+          isValidId(docId) &&
+          docId == 'account' &&
+          isValidUserPrivateInfo(incoming(), userId) &&
+          incoming().createdAt == request.time &&
+          incoming().updatedAt == request.time &&
+          parentUserExists(userId);
+
+        allow update: if isVerifiedUser() &&
+          isOwner(userId) &&
+          isValidId(userId) &&
+          isValidId(docId) &&
+          docId == 'account' &&
+          isValidUserPrivateInfo(incoming(), userId) &&
+          incoming().uid == existing().uid &&
+          incoming().createdAt == existing().createdAt &&
+          incoming().updatedAt == request.time &&
+          (
+            // Action: Sync Verified Email
+            incoming().diff(existing()).affectedKeys().hasOnly(['email', 'updatedAt'])
+          ) &&
+          parentUserExists(userId);
+
+        allow delete: if false;
+      }
+
+      // 3.3 Cloud Saved Worlds Subcollection (/users/{userId}/worlds/{worldId})
+      match /worlds/{worldId} {
+        allow get: if isSignedIn() &&
+          isOwner(userId) &&
+          isValidId(userId) &&
+          isValidId(worldId) &&
+          existing().ownerId == request.auth.uid &&
+          parentUserExists(userId);
+
+        // Cost-optimized list rule: checks resource.data.ownerId without O(n) get() calls
+        allow list: if isSignedIn() &&
+          isOwner(userId) &&
+          existing().ownerId == request.auth.uid;
+
+        allow create: if isVerifiedUser() &&
+          isOwner(userId) &&
+          isValidId(userId) &&
+          isValidId(worldId) &&
+          isValidCloudWorldSave(incoming(), userId, worldId) &&
+          incoming().createdAt == request.time &&
+          incoming().updatedAt == request.time &&
+          parentUserExists(userId);
+
+        allow update: if isVerifiedUser() &&
+          isOwner(userId) &&
+          isValidId(userId) &&
+          isValidId(worldId) &&
+          isValidCloudWorldSave(incoming(), userId, worldId) &&
+          incoming().worldId == existing().worldId &&
+          incoming().ownerId == existing().ownerId &&
+          incoming().seed == existing().seed &&
+          incoming().createdAt == existing().createdAt &&
+          incoming().updatedAt == request.time &&
+          (
+            // Action: Save / Sync World State or Metadata
+            incoming().diff(existing()).affectedKeys().hasOnly([
+              'name',
+              'seedText',
+              'difficulty',
+              'dayCount',
+              'timeOfDay',
+              'playerLevel',
+              'exploredChunksCount',
+              'gameVersion',
+              'worldGenVersion',
+              'checksum',
+              'clientUpdatedAt',
+              'savePayload',
+              'updatedAt'
+            ])
+          ) &&
+          parentUserExists(userId);
+
+        allow delete: if isVerifiedUser() &&
+          isOwner(userId) &&
+          isValidId(userId) &&
+          isValidId(worldId) &&
+          existing().ownerId == request.auth.uid &&
+          parentUserExists(userId);
+      }
+
+      // 3.4 Cloud Guest Character Saves (/users/{userId}/guestProfiles/{worldId})
+      match /guestProfiles/{worldId} {
+        allow get: if isSignedIn() &&
+          isOwner(userId) &&
+          isValidId(userId) &&
+          isValidId(worldId) &&
+          existing().ownerId == request.auth.uid &&
+          parentUserExists(userId);
+
+        allow list: if isSignedIn() &&
+          isOwner(userId) &&
+          existing().ownerId == request.auth.uid;
+
+        allow create: if isVerifiedUser() &&
+          isOwner(userId) &&
+          isValidId(userId) &&
+          isValidId(worldId) &&
+          isValidCloudGuestProfile(incoming(), userId, worldId) &&
+          incoming().createdAt == request.time &&
+          incoming().updatedAt == request.time &&
+          parentUserExists(userId);
+
+        allow update: if isVerifiedUser() &&
+          isOwner(userId) &&
+          isValidId(userId) &&
+          isValidId(worldId) &&
+          isValidCloudGuestProfile(incoming(), userId, worldId) &&
+          incoming().worldId == existing().worldId &&
+          incoming().ownerId == existing().ownerId &&
+          incoming().createdAt == existing().createdAt &&
+          incoming().updatedAt == request.time &&
+          (
+            // Action: Sync Guest Hero State
+            incoming().diff(existing()).affectedKeys().hasOnly([
+              'playerLevel',
+              'clientUpdatedAt',
+              'playerPayload',
+              'updatedAt'
+            ])
+          ) &&
+          parentUserExists(userId);
+
+        allow delete: if isVerifiedUser() &&
+          isOwner(userId) &&
+          isValidId(userId) &&
+          isValidId(worldId) &&
+          existing().ownerId == request.auth.uid &&
+          parentUserExists(userId);
+      }
+
+      // 3.5 Server-Granted Entitlements & Purchases (/users/{userId}/entitlements/{entitlementId})
+      // System-Only Write: Clients can only read their own entitlements; only Firebase Admin SDK can grant/modify.
+      match /entitlements/{entitlementId} {
+        allow get: if isSignedIn() &&
+          isOwner(userId) &&
+          isValidId(userId) &&
+          isValidId(entitlementId) &&
+          existing().ownerId == request.auth.uid &&
+          parentUserExists(userId);
+
+        allow list: if isSignedIn() &&
+          isOwner(userId) &&
+          existing().ownerId == request.auth.uid;
+
+        allow create, update, delete: if false;
+      }
+    }
+  }
+}

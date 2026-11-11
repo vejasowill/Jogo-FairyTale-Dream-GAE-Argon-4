@@ -67,9 +67,11 @@ import {
 } from '../entities/EntityManager';
 import { InputManager } from '../input/InputManager';
 import { MultiplayerManager } from '../network/MultiplayerManager';
+import { firebaseCloudSync } from '../persistence/FirebaseCloudSync';
 import {
   createInitialPlayerState,
   CURRENT_SAVE_VERSION,
+  getOrCreateLocalDevicePlayerUid,
   getOrCreatePersistentPlayerUid,
   migrateSaveData,
   SaveManager,
@@ -292,7 +294,9 @@ export class GameEngine {
         guestPlayer = null;
       }
 
-      const hostSavedGuest = this.guestPlayers[localPersistentUid];
+      const hostSavedGuest =
+        this.guestPlayers[localPersistentUid] ||
+        this.guestPlayers[getOrCreateLocalDevicePlayerUid()];
       if (
         hostSavedGuest &&
         (!guestPlayer ||
@@ -324,9 +328,7 @@ export class GameEngine {
       this.player = JSON.parse(JSON.stringify(saveData.player));
     }
 
-    if (!this.player.persistentPlayerId) {
-      this.player.persistentPlayerId = localPersistentUid;
-    }
+    this.player.persistentPlayerId = localPersistentUid;
 
     // Universal Account Appearance: always link player's appearance to the account appearance
     this.player.appearance = SaveManager.getAccountAppearance(
@@ -18501,6 +18503,11 @@ export class GameEngine {
   }
 
   public getLocalOwnerId(): string {
+    const authUid = firebaseCloudSync.getAuthenticatedUid();
+    if (authUid) {
+      this.player.persistentPlayerId = authUid;
+      return authUid;
+    }
     if (!this.player.persistentPlayerId) {
       this.player.persistentPlayerId = getOrCreatePersistentPlayerUid();
     }
@@ -18512,6 +18519,7 @@ export class GameEngine {
     return (
       id === this.multiplayer.peerId ||
       id === this.getLocalOwnerId() ||
+      firebaseCloudSync.isOwnedByCurrentPlayer(id) ||
       (!this.multiplayer.isOnline && id === 'LOCAL')
     );
   }
@@ -22515,6 +22523,9 @@ export class GameEngine {
           `wildborn_guest_player_${this.metadata.id}`,
           JSON.stringify(this.player)
         );
+        void firebaseCloudSync
+          .saveGuestProfileToCloud(this.metadata.id, this.player)
+          .catch(() => {});
         if ((isConnHealthy || forceExitSave) && this.multiplayer.isOnline) {
           this.multiplayer.sendGuestProfileSave(this.player);
           this.lastAutoSaveAt = now;
