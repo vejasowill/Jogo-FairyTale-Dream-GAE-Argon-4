@@ -956,7 +956,7 @@ export interface OnlineActivationStep {
 }
 
 // REGRA PERMANENTE: A cada nova atualização do jogo, incremente a versão para o número seguinte da beta (ex: 0.4.4-beta -> 0.4.5-beta).
-export const GAME_VERSION = '0.8.3-beta';
+export const GAME_VERSION = '0.8.4-beta';
 export const CURRENT_WORLD_GEN_VERSION = 5;
 
 export interface OnlineSessionInfo {
@@ -984,9 +984,31 @@ export interface OnlineSessionInfo {
 
 export type WeatherState = 'clear' | 'cloudy' | 'rain';
 
+export interface WorldSyncConflictInfo {
+  detectedAt: number;
+  cloudRevisionId: string;
+  localRevisionId?: string | null;
+  preservedCopyInstanceId?: string | null;
+  reason: string;
+}
+
 export interface WorldMetadata {
   id: string;
   name: string;
+  baseWorldName?: string;
+  originWorldId?: string;
+  instanceId?: string;
+  parentInstanceId?: string | null;
+  isCopy?: boolean;
+  copyNumber?: number | null;
+  highestCopyNumberSeen?: number;
+  contentHash?: string;
+  lastSyncedManifestHash?: string | null;
+  lastSyncedContentHash?: string | null;
+  lastSyncedRevisionId?: string | null;
+  lastSyncedAt?: number | null;
+  syncPending?: boolean;
+  conflictInfo?: WorldSyncConflictInfo | null;
   seed: number;
   seedText: string;
   difficulty: 'normal' | 'survival' | 'hardcore';

@@ -24,6 +24,7 @@ const INDEX_KEY = 'wildborn_worlds_index_v1';
 const SETTINGS_KEY = 'wildborn_settings_v1';
 const WORLD_PREFIX = 'wildborn_world_v1_';
 const PLAYER_UID_KEY = 'wildborn_player_uid_v1';
+const LINEAGE_COPY_COUNTERS_KEY = 'wildborn_lineage_copy_counters_v1';
 
 export const CURRENT_SAVE_VERSION = 3;
 
@@ -66,6 +67,130 @@ export function computeChecksum(payload: string): string {
     hash = Math.imul(hash, 16777619);
   }
   return (hash >>> 0).toString(16).padStart(8, '0');
+}
+
+/**
+ * Fast, 100% deterministic 256-bit (64-hex-char) hash function across 8 independent
+ * 32-bit FNV-1a/Murmur3 lanes. Stable across sessions, browser restarts, and logins,
+ * with zero async/Uint8Array allocation overhead for large worlds (3MB to 500MB).
+ */
+export function computeDeterministicHash256(payload: string): string {
+  let h0 = 0x811c9dc5 | 0;
+  let h1 = 0x6a09e667 | 0;
+  let h2 = 0xbb67ae85 | 0;
+  let h3 = 0x3c6ef372 | 0;
+  let h4 = 0xa54ff53a | 0;
+  let h5 = 0x510e527f | 0;
+  let h6 = 0x9b05688c | 0;
+  let h7 = 0x1f83d9ab | 0;
+
+  const len = payload.length;
+  for (let i = 0; i < len; i++) {
+    const c = payload.charCodeAt(i);
+    h0 = Math.imul(h0 ^ c, 0x01000193);
+    h1 = Math.imul(h1 ^ (c + i), 0x85ebca6b);
+    h2 = Math.imul(h2 ^ (c ^ (i & 0xff)), 0xc2b2ae35);
+    h3 = Math.imul(h3 ^ (c + (i << 1)), 0x27d4eb2f);
+    h4 = Math.imul(h4 ^ ((c << 3) ^ i), 0x165667b1);
+    h5 = Math.imul(h5 ^ (c + (i >> 2)), 0xd3a2646c);
+    h6 = Math.imul(h6 ^ (c ^ ((i * 31) & 0xffff)), 0xfd7046c5);
+    h7 = Math.imul(h7 ^ (c + (len - i)), 0xb55a4f09);
+  }
+
+  const mix = (h: number): string => {
+    let x = h ^ (len & 0xffffffff);
+    x ^= x >>> 16;
+    x = Math.imul(x, 0x85ebca6b);
+    x ^= x >>> 13;
+    x = Math.imul(x, 0xc2b2ae35);
+    x ^= x >>> 16;
+    return (x >>> 0).toString(16).padStart(8, '0');
+  };
+
+  return (
+    mix(h0) +
+    mix(h1) +
+    mix(h2) +
+    mix(h3) +
+    mix(h4) +
+    mix(h5) +
+    mix(h6) +
+    mix(h7)
+  );
+}
+
+/**
+ * Strips a trailing ` #N` copy indicator suffix from a world name to recover the clean base name.
+ */
+export function stripWorldCopySuffix(rawName: string): string {
+  const trimmed = (rawName || '').trim() || 'Fronteira Selvagem';
+  return trimmed.replace(/(?:\s+#\d+)+$/, '').trim() || 'Fronteira Selvagem';
+}
+
+/**
+ * Extracts a trailing `#N` copy number if present at the end of a world display name.
+ */
+export function extractCopyNumberFromSuffix(rawName: string): number | null {
+  const m = (rawName || '').trim().match(/\s+#(\d+)$/);
+  if (!m) return null;
+  const num = parseInt(m[1], 10);
+  return Number.isFinite(num) && num >= 1 ? num : null;
+}
+
+/**
+ * Formats the display name of a world from its `baseWorldName` and copy status,
+ * preventing `#1 #1` or `#1 #2` suffix stacking.
+ */
+export function formatWorldDisplayName(
+  baseName: string,
+  isCopy?: boolean,
+  copyNumber?: number | null
+): string {
+  const cleanBase = stripWorldCopySuffix(baseName);
+  if (isCopy && typeof copyNumber === 'number' && copyNumber >= 1) {
+    return `${cleanBase} #${Math.floor(copyNumber)}`;
+  }
+  return cleanBase;
+}
+
+/**
+ * Ensures a `WorldMetadata` object has consistent lineage and copy fields (`originWorldId`,
+ * `instanceId`, `baseWorldName`, `isCopy`, `copyNumber`, `name`).
+ */
+export function ensureWorldLineageMetadata(meta: WorldMetadata): void {
+  if (!meta) return;
+  if (!meta.id) {
+    meta.id = `world_${Date.now()}_${Math.floor(Math.random() * 9999)}`;
+  }
+  if (!meta.instanceId) {
+    meta.instanceId = meta.id;
+  } else {
+    meta.id = meta.instanceId;
+  }
+  if (!meta.originWorldId) {
+    meta.originWorldId = meta.id;
+  }
+  const suffixNum = extractCopyNumberFromSuffix(meta.name);
+  if (typeof meta.isCopy !== 'boolean') {
+    meta.isCopy = suffixNum !== null && meta.originWorldId !== meta.instanceId;
+  }
+  if (meta.isCopy) {
+    const resolvedCopyNum =
+      typeof meta.copyNumber === 'number' && meta.copyNumber >= 1
+        ? Math.floor(meta.copyNumber)
+        : suffixNum !== null
+        ? suffixNum
+        : 1;
+    meta.copyNumber = resolvedCopyNum;
+  } else {
+    meta.copyNumber = null;
+  }
+  const cleanBase = stripWorldCopySuffix(meta.baseWorldName || meta.name);
+  meta.baseWorldName = cleanBase;
+  meta.name = formatWorldDisplayName(cleanBase, meta.isCopy, meta.copyNumber);
+  if (meta.parentInstanceId === undefined) {
+    meta.parentInstanceId = null;
+  }
 }
 
 export function seedFromText(text: string): number {
@@ -621,7 +746,7 @@ export function migrateSaveData(rawSave: WorldSaveData): WorldSaveData {
           }
         }
       }
-      chunk.dirtyRev = (chunk.dirtyRev || 1) + 1;
+      chunk.dirtyRev = chunk.dirtyRev || 1;
     }
   };
 
@@ -762,6 +887,8 @@ export function migrateSaveData(rawSave: WorldSaveData): WorldSaveData {
       }
     }
   }
+
+  ensureWorldLineageMetadata(migrated.metadata);
 
   return migrated;
 }
@@ -968,9 +1095,306 @@ export class SaveManager {
     string,
     Map<string, { rev: number; compact: ChunkData }>
   >();
+  private static lineageCopyCounters = new Map<string, number>();
   private static idbPromise: Promise<IDBDatabase | null> | null = null;
   private static idbHydrationPromise: Promise<WorldMetadata[]> | null = null;
   private static idbWriteChain: Promise<boolean> = Promise.resolve(true);
+
+  private static loadLineageCopyCounters(): Map<string, number> {
+    try {
+      const raw = localStorage.getItem(LINEAGE_COPY_COUNTERS_KEY);
+      if (raw) {
+        const parsed = JSON.parse(raw) as Record<string, number>;
+        if (parsed && typeof parsed === 'object') {
+          for (const [k, v] of Object.entries(parsed)) {
+            if (typeof v === 'number' && Number.isFinite(v) && v >= 0) {
+              const prev = this.lineageCopyCounters.get(k) || 0;
+              if (v > prev) this.lineageCopyCounters.set(k, Math.floor(v));
+            }
+          }
+        }
+      }
+    } catch {
+      // ignore
+    }
+    return this.lineageCopyCounters;
+  }
+
+  private static persistLineageCopyCounters(): void {
+    try {
+      const obj: Record<string, number> = {};
+      for (const [k, v] of this.lineageCopyCounters.entries()) {
+        obj[k] = v;
+      }
+      localStorage.setItem(LINEAGE_COPY_COUNTERS_KEY, JSON.stringify(obj));
+    } catch {
+      // ignore
+    }
+  }
+
+  /**
+   * Computes the next consistent positive integer copy number (1, 2, 3...) for a world lineage (`originWorldId`)
+   * without reusing deleted intermediate copy numbers while that lineage still has loaded worlds.
+   */
+  public static allocateNextCopyNumberForOrigin(
+    originWorldId: string,
+    existingWorldsOfOrigin: WorldMetadata[]
+  ): number {
+    this.loadLineageCopyCounters();
+    let maxSeen = this.lineageCopyCounters.get(originWorldId) || 0;
+    const usedNumbers = new Set<number>();
+
+    for (const w of existingWorldsOfOrigin) {
+      if (typeof w.copyNumber === 'number' && w.copyNumber >= 1) {
+        const cn = Math.floor(w.copyNumber);
+        usedNumbers.add(cn);
+        if (cn > maxSeen) maxSeen = cn;
+      }
+      if (
+        typeof w.highestCopyNumberSeen === 'number' &&
+        w.highestCopyNumberSeen > maxSeen
+      ) {
+        maxSeen = Math.floor(w.highestCopyNumberSeen);
+      }
+      const suffixCn = extractCopyNumberFromSuffix(w.name);
+      if (suffixCn !== null) {
+        usedNumbers.add(suffixCn);
+        if (suffixCn > maxSeen) maxSeen = suffixCn;
+      }
+    }
+
+    let nextNum = maxSeen + 1;
+    while (usedNumbers.has(nextNum)) {
+      nextNum++;
+    }
+
+    this.lineageCopyCounters.set(originWorldId, nextNum);
+    this.persistLineageCopyCounters();
+    return nextNum;
+  }
+
+  public static resetLineageCopyCounter(originWorldId: string): void {
+    this.loadLineageCopyCounters();
+    this.lineageCopyCounters.set(originWorldId, 0);
+    this.persistLineageCopyCounters();
+  }
+
+  /**
+   * Computes a deterministic 256-bit hex hash of a chunk's effective content,
+   * invariant across sessions, hydration/compaction cycles, and volatile `dirtyRev` counters.
+   */
+  public static computeCanonicalChunkHash(chunk: ChunkData): string {
+    const allExplored =
+      (Array.isArray(chunk.explored) &&
+        ((chunk.explored.length === 1 && chunk.explored[0] > 0) ||
+          (chunk.explored.length === 256 &&
+            chunk.explored.every((v) => v > 0)))) ||
+      chunk.compactExplored === 'F'.repeat(64);
+    const compactExplored = allExplored
+      ? 'ALL'
+      : Array.isArray(chunk.explored) && chunk.explored.some((v) => v > 0)
+      ? WorldManager.encodeCompactExplored(chunk.explored) || ''
+      : chunk.compactExplored || '';
+    const compactTiles =
+      chunk.compactTiles && chunk.compactTiles.length === 256
+        ? chunk.compactTiles
+        : WorldManager.encodeCompactTiles(chunk.tiles);
+    const compactZones =
+      chunk.compactZones && chunk.compactZones.length === 256
+        ? chunk.compactZones
+        : WorldManager.encodeCompactZones(chunk.ecologicalZones) || '';
+    const compactVariants =
+      chunk.compactVariants && chunk.compactVariants.length === 256
+        ? chunk.compactVariants
+        : WorldManager.encodeCompactVariants(chunk.tileVariants);
+    const compactNodes =
+      Array.isArray(chunk.nodes) && chunk.nodes.length > 0
+        ? WorldManager.encodeCompactNodes(chunk.nodes, chunk.cx, chunk.cy) || ''
+        : typeof chunk.compactNodes === 'string'
+        ? chunk.compactNodes
+        : '';
+
+    const canonicalPayload = JSON.stringify({
+      cx: chunk.cx,
+      cy: chunk.cy,
+      u: Boolean(chunk.isUnderground),
+      lm: chunk.landmarkName || '',
+      vId: chunk.villageId || '',
+      mp: Boolean(chunk.mobsPopulated),
+      vp: Boolean(chunk.villagePopulatedV2),
+      ip: Boolean(chunk.islandMobsPopulated),
+      t: compactTiles || '',
+      z: compactZones || '',
+      v: compactVariants || '',
+      e: compactExplored || '',
+      n: compactNodes || '',
+      s: Array.isArray(chunk.structures) ? chunk.structures : [],
+      p:
+        Array.isArray(chunk.puddles) && chunk.puddles.length > 0
+          ? chunk.puddles
+          : [],
+    });
+    return computeDeterministicHash256(canonicalPayload);
+  }
+
+  /**
+   * Produces a canonical, login/session-invariant representation of the world's non-chunk
+   * entities state (`player`, `creatures`, `droppedItems`, `waypoints`, `deathBags`, `guestPlayers`),
+   * stripping volatile timestamps (`savedAt`, `updatedAt`) and transient animation timers.
+   */
+  public static computeCanonicalEntitiesObject(
+    saveData: WorldSaveData
+  ): Record<string, unknown> {
+    const rawPlayer = saveData.player || ({} as PlayerState);
+    const canonicalPlayer = {
+      x: Math.round((rawPlayer.x || 0) * 100) / 100,
+      y: Math.round((rawPlayer.y || 0) * 100) / 100,
+      direction: rawPlayer.direction || 'down',
+      hp: rawPlayer.hp,
+      maxHp: rawPlayer.maxHp,
+      hunger: Math.round((rawPlayer.hunger || 0) * 100) / 100,
+      maxHunger: rawPlayer.maxHunger,
+      stamina: Math.round((rawPlayer.stamina || 0) * 100) / 100,
+      maxStamina: rawPlayer.maxStamina,
+      level: rawPlayer.level,
+      xp: rawPlayer.xp,
+      xpToNext: rawPlayer.xpToNext,
+      attributePoints: rawPlayer.attributePoints,
+      attributes: rawPlayer.attributes,
+      goldCoins: rawPlayer.goldCoins || 0,
+      inventory: rawPlayer.inventory || [],
+      selectedHotbarIndex: rawPlayer.selectedHotbarIndex || 0,
+      equippedArmorId: rawPlayer.equippedArmorId || null,
+      equippedBySlot: rawPlayer.equippedBySlot || null,
+      bonusMaxHpFromItems: rawPlayer.bonusMaxHpFromItems || 0,
+      strengthBuffTimer: Math.round((rawPlayer.strengthBuffTimer || 0) * 10) / 10,
+      speedBuffTimer: Math.round((rawPlayer.speedBuffTimer || 0) * 10) / 10,
+      statusEffects: rawPlayer.statusEffects || [],
+      mountedEntityId: rawPlayer.mountedEntityId || null,
+      mountedSeatIndex: rawPlayer.mountedSeatIndex ?? null,
+      respawnX:
+        typeof rawPlayer.respawnX === 'number'
+          ? Math.round(rawPlayer.respawnX * 100) / 100
+          : 16,
+      respawnY:
+        typeof rawPlayer.respawnY === 'number'
+          ? Math.round(rawPlayer.respawnY * 100) / 100
+          : 16,
+      respawnLabel: rawPlayer.respawnLabel || 'Acampamento Inicial',
+      respawnIsUnderground: Boolean(rawPlayer.respawnIsUnderground),
+      lastWellUseDay: rawPlayer.lastWellUseDay || 0,
+      isUnderground: Boolean(rawPlayer.isUnderground),
+    };
+
+    const hostPersId = rawPlayer.persistentPlayerId || '';
+    const localDevId = getOrCreateLocalDevicePlayerUid();
+
+    const canonicalCreatures = (
+      Array.isArray(saveData.creatures) ? saveData.creatures : []
+    ).map((cr) => {
+      if (!cr) return null;
+      const normOwnerId =
+        cr.ownerId && (cr.ownerId === hostPersId || cr.ownerId === localDevId)
+          ? '__HOST__'
+          : cr.ownerId || null;
+      return {
+        id: cr.id,
+        kind: cr.kind,
+        name: cr.name || null,
+        x: Math.round((cr.x || 0) * 10) / 10,
+        y: Math.round((cr.y || 0) * 10) / 10,
+        hp: cr.hp,
+        maxHp: cr.maxHp,
+        tamed: Boolean(cr.tamed),
+        hasSaddle: Boolean(cr.hasSaddle),
+        mountInventory: cr.mountInventory || null,
+        ownerId: normOwnerId,
+        isBaby: Boolean(cr.isBaby),
+        isSheared: Boolean(cr.isSheared),
+        isUnderground: Boolean(cr.isUnderground),
+        villageId: cr.villageId || null,
+        homeHouseId: cr.homeHouseId || null,
+        npcRole: cr.npcRole || null,
+        affinity: cr.affinity ?? null,
+        trades: cr.trades || null,
+      };
+    });
+
+    return {
+      seed: saveData.metadata?.seed || 0,
+      difficulty: saveData.metadata?.difficulty || 'normal',
+      dayCount: saveData.metadata?.dayCount || 1,
+      timeOfDay: Math.round((saveData.metadata?.timeOfDay || 8) * 1000) / 1000,
+      playerLevel: saveData.metadata?.playerLevel || 1,
+      weatherState: saveData.metadata?.weatherState || 'clear',
+      rainIntensity:
+        Math.round((saveData.metadata?.rainIntensity || 0) * 1000) / 1000,
+      player: canonicalPlayer,
+      creatures: canonicalCreatures,
+      droppedItems: Array.isArray(saveData.droppedItems)
+        ? saveData.droppedItems.map((d) =>
+            d
+              ? {
+                  id: d.id,
+                  itemId: d.itemId,
+                  count: d.count,
+                  x: Math.round((d.x || 0) * 10) / 10,
+                  y: Math.round((d.y || 0) * 10) / 10,
+                  isUnderground: Boolean(d.isUnderground),
+                  flowerColor: d.flowerColor || null,
+                }
+              : null
+          )
+        : [],
+      waypoints: Array.isArray(saveData.waypoints) ? saveData.waypoints : [],
+      deathBags: Array.isArray(saveData.deathBags) ? saveData.deathBags : [],
+      guestPlayers: saveData.guestPlayers || undefined,
+    };
+  }
+
+  /**
+   * Computes a deterministic 256-bit hash of the world's effective gameplay content
+   * (independent of display name, copy number, instanceId, and timestamps).
+   * Used during World Import (Situation 4) to detect if an imported world has the exact
+   * same effective content as any already-loaded world.
+   */
+  public static computeCanonicalGameplayHash(saveData: WorldSaveData): string {
+    const compacted = this.compactSaveDataForStorage(saveData, false, 18, false);
+    const surfaceKeys = Object.keys(compacted.chunks || {}).sort();
+    const surfaceHashes: string[] = [];
+    for (const k of surfaceKeys) {
+      const ch = compacted.chunks[k];
+      if (ch) {
+        surfaceHashes.push(`${k}:${this.computeCanonicalChunkHash(ch)}`);
+      }
+    }
+    const ugKeys = Object.keys(compacted.undergroundChunks || {}).sort();
+    const ugHashes: string[] = [];
+    for (const k of ugKeys) {
+      const uch = compacted.undergroundChunks?.[k];
+      if (uch) {
+        ugHashes.push(`${k}:${this.computeCanonicalChunkHash(uch)}`);
+      }
+    }
+    const entitiesHash = computeDeterministicHash256(
+      JSON.stringify(this.computeCanonicalEntitiesObject(compacted))
+    );
+    return computeDeterministicHash256(
+      `gameplay|e:${entitiesHash}|s:${surfaceHashes.join(',')}|u:${ugHashes.join(',')}`
+    );
+  }
+
+  /**
+   * Computes a deterministic 256-bit hash of the world's full synchronizable state
+   * (gameplay content + display name + lineage/copy metadata, excluding volatile timestamps).
+   */
+  public static computeCanonicalSyncHash(saveData: WorldSaveData): string {
+    const gameplayHash = this.computeCanonicalGameplayHash(saveData);
+    const meta = saveData.metadata || ({} as WorldMetadata);
+    return computeDeterministicHash256(
+      `sync|g:${gameplayHash}|name:${meta.name || ''}|base:${meta.baseWorldName || ''}|orig:${meta.originWorldId || meta.id || ''}|copy:${Boolean(meta.isCopy)}:${meta.copyNumber ?? ''}`
+    );
+  }
 
   private static getSaveTimestamp(data?: WorldSaveData | null): number {
     if (!data) return 0;
@@ -1099,6 +1523,7 @@ export class SaveManager {
 
       for (const rec of records) {
         if (!rec || !rec.data || !rec.data.metadata?.id) continue;
+        ensureWorldLineageMetadata(rec.data.metadata);
         const id = rec.data.metadata.id;
         const idbTs = this.getSaveTimestamp(rec.data);
         const memExisting = this.memoryWorlds.get(id);
@@ -1129,6 +1554,7 @@ export class SaveManager {
         if (Array.isArray(list)) {
           for (const item of list) {
             if (item && item.id) {
+              ensureWorldLineageMetadata(item);
               byId.set(item.id, item);
             }
           }
@@ -1139,6 +1565,7 @@ export class SaveManager {
     }
 
     for (const [id, meta] of this.memoryWorldIndex.entries()) {
+      ensureWorldLineageMetadata(meta);
       const existing = byId.get(id);
       if (!existing || (meta.updatedAt || 0) >= (existing.updatedAt || 0)) {
         byId.set(id, { ...meta });
@@ -1147,6 +1574,7 @@ export class SaveManager {
 
     for (const [id, world] of this.memoryWorlds.entries()) {
       if (!world?.metadata) continue;
+      ensureWorldLineageMetadata(world.metadata);
       const existing = byId.get(id);
       if (
         !existing ||
@@ -1164,6 +1592,7 @@ export class SaveManager {
   private static saveWorldIndex(list: WorldMetadata[]): void {
     for (const item of list) {
       if (item && item.id) {
+        ensureWorldLineageMetadata(item);
         this.memoryWorldIndex.set(item.id, { ...item });
       }
     }
@@ -1198,9 +1627,19 @@ export class SaveManager {
 
     worldMgr.revealAround(player.x, player.y, 11);
 
+    const cleanBaseName = stripWorldCopySuffix(name.trim() || 'Fronteira Selvagem');
+
     const metadata: WorldMetadata = {
       id,
-      name: name.trim() || 'Fronteira Selvagem',
+      name: cleanBaseName,
+      baseWorldName: cleanBaseName,
+      originWorldId: id,
+      instanceId: id,
+      parentInstanceId: null,
+      isCopy: false,
+      copyNumber: null,
+      highestCopyNumberSeen: 0,
+      syncPending: true,
       seed,
       seedText: seedInput.trim() || String(seed),
       difficulty,
@@ -1216,7 +1655,7 @@ export class SaveManager {
       createdGameVersion: GAME_VERSION,
     };
 
-    const saveData: WorldSaveData = {
+    const rawSaveData: WorldSaveData = {
       version: CURRENT_SAVE_VERSION,
       metadata,
       player,
@@ -1235,6 +1674,8 @@ export class SaveManager {
       deathBags: [],
     };
 
+    // Pass through migrateSaveData once at creation so chunk terrain snapshots & spawn points are canonical from birth
+    const saveData = migrateSaveData(rawSaveData);
     this.saveWorldLocal(saveData);
     return saveData;
   }
@@ -1704,17 +2145,25 @@ export class SaveManager {
     }
   }
 
-  public static saveWorldLocal(saveData: WorldSaveData): boolean {
+  public static saveWorldLocal(
+    saveData: WorldSaveData,
+    options?: {
+      preserveTimestampAndSyncState?: boolean;
+      forceSyncPending?: boolean;
+    }
+  ): boolean {
     if (!saveData || !saveData.metadata || !saveData.metadata.id) {
       return false;
     }
 
+    ensureWorldLineageMetadata(saveData.metadata);
+    const worldId = saveData.metadata.id;
     const now = Date.now();
     saveData.version = CURRENT_SAVE_VERSION;
-    saveData.metadata.updatedAt = now;
-    if (saveData.player) {
-      saveData.player.savedAt = now;
-    }
+
+    const prevWorld = this.memoryWorlds.get(worldId) || null;
+    const prevMeta =
+      this.memoryWorldIndex.get(worldId) || prevWorld?.metadata || null;
 
     // 1. Authoritative compact snapshot (preserves 100% of explored chunks, nodes, structures, inventory, chests)
     const fullCompactData = this.compactSaveDataForStorage(
@@ -1724,20 +2173,107 @@ export class SaveManager {
       false
     );
 
+    const newContentHash = this.computeCanonicalSyncHash(fullCompactData);
+    const prevContentHash =
+      prevMeta?.contentHash ||
+      (prevWorld ? this.computeCanonicalSyncHash(prevWorld) : null);
+
+    const hasContentChanged =
+      !prevContentHash ||
+      newContentHash !== prevContentHash ||
+      Boolean(options?.forceSyncPending);
+
+    // Preserve previous cloud sync markers unless explicitly changed on saveData.metadata
+    const lastSyncedRevisionId =
+      saveData.metadata.lastSyncedRevisionId !== undefined
+        ? saveData.metadata.lastSyncedRevisionId
+        : prevMeta?.lastSyncedRevisionId ?? null;
+    const lastSyncedManifestHash =
+      saveData.metadata.lastSyncedManifestHash !== undefined
+        ? saveData.metadata.lastSyncedManifestHash
+        : prevMeta?.lastSyncedManifestHash ?? null;
+    const lastSyncedContentHash =
+      saveData.metadata.lastSyncedContentHash !== undefined
+        ? saveData.metadata.lastSyncedContentHash
+        : prevMeta?.lastSyncedContentHash ?? null;
+    const lastSyncedAt =
+      saveData.metadata.lastSyncedAt !== undefined
+        ? saveData.metadata.lastSyncedAt
+        : prevMeta?.lastSyncedAt ?? null;
+
+    if (options?.preserveTimestampAndSyncState) {
+      fullCompactData.metadata.contentHash = newContentHash;
+      saveData.metadata.contentHash = newContentHash;
+    } else if (hasContentChanged) {
+      saveData.metadata.updatedAt = now;
+      fullCompactData.metadata.updatedAt = now;
+      if (saveData.player) {
+        saveData.player.savedAt = now;
+      }
+      if (fullCompactData.player) {
+        fullCompactData.player.savedAt = now;
+      }
+      const matchesLastSynced = Boolean(
+        lastSyncedContentHash &&
+          lastSyncedContentHash === newContentHash &&
+          !options?.forceSyncPending
+      );
+      fullCompactData.metadata.contentHash = newContentHash;
+      fullCompactData.metadata.lastSyncedRevisionId = lastSyncedRevisionId;
+      fullCompactData.metadata.lastSyncedManifestHash = lastSyncedManifestHash;
+      fullCompactData.metadata.lastSyncedContentHash = lastSyncedContentHash;
+      fullCompactData.metadata.lastSyncedAt = lastSyncedAt;
+      fullCompactData.metadata.syncPending = !matchesLastSynced;
+
+      saveData.metadata.contentHash = newContentHash;
+      saveData.metadata.lastSyncedRevisionId = lastSyncedRevisionId;
+      saveData.metadata.lastSyncedManifestHash = lastSyncedManifestHash;
+      saveData.metadata.lastSyncedContentHash = lastSyncedContentHash;
+      saveData.metadata.lastSyncedAt = lastSyncedAt;
+      saveData.metadata.syncPending = !matchesLastSynced;
+    } else {
+      // Content did NOT change at all (e.g. world was loaded and exited without modifications)
+      const stableUpdatedAt =
+        prevMeta?.updatedAt || saveData.metadata.updatedAt || now;
+      saveData.metadata.updatedAt = stableUpdatedAt;
+      fullCompactData.metadata.updatedAt = stableUpdatedAt;
+
+      const isAlreadySynced = Boolean(
+        (lastSyncedContentHash && lastSyncedContentHash === newContentHash) ||
+          (prevMeta && prevMeta.syncPending === false && lastSyncedRevisionId)
+      );
+
+      fullCompactData.metadata.contentHash = newContentHash;
+      fullCompactData.metadata.lastSyncedRevisionId = lastSyncedRevisionId;
+      fullCompactData.metadata.lastSyncedManifestHash = lastSyncedManifestHash;
+      fullCompactData.metadata.lastSyncedContentHash =
+        lastSyncedContentHash || (isAlreadySynced ? newContentHash : null);
+      fullCompactData.metadata.lastSyncedAt = lastSyncedAt;
+      fullCompactData.metadata.syncPending = !isAlreadySynced;
+
+      saveData.metadata.contentHash = newContentHash;
+      saveData.metadata.lastSyncedRevisionId = lastSyncedRevisionId;
+      saveData.metadata.lastSyncedManifestHash = lastSyncedManifestHash;
+      saveData.metadata.lastSyncedContentHash =
+        fullCompactData.metadata.lastSyncedContentHash;
+      saveData.metadata.lastSyncedAt = lastSyncedAt;
+      saveData.metadata.syncPending = !isAlreadySynced;
+    }
+
     // 2. IMMEDIATELY commit to in-memory cache and IndexedDB so progress is NEVER lost even if localStorage is full!
-    this.memoryWorlds.set(saveData.metadata.id, fullCompactData);
-    this.memoryWorldIndex.set(saveData.metadata.id, {
+    this.memoryWorlds.set(worldId, fullCompactData);
+    this.memoryWorldIndex.set(worldId, {
       ...fullCompactData.metadata,
     });
     void this.writeWorldToIdb(fullCompactData);
 
-    const list = this.listWorlds().filter((w) => w.id !== saveData.metadata.id);
+    const list = this.listWorlds().filter((w) => w.id !== worldId);
     list.unshift({ ...fullCompactData.metadata });
     this.saveWorldIndex(list);
 
     // 3. Persist to localStorage with multi-stage compaction fallbacks
-    const primaryKey = `${WORLD_PREFIX}${saveData.metadata.id}`;
-    const backupKey = `${WORLD_PREFIX}${saveData.metadata.id}_bak`;
+    const primaryKey = `${WORLD_PREFIX}${worldId}`;
+    const backupKey = `${WORLD_PREFIX}${worldId}_bak`;
     let previousPrimaryRaw: string | null = null;
     try {
       previousPrimaryRaw = localStorage.getItem(primaryKey);
@@ -1756,7 +2292,7 @@ export class SaveManager {
         const ser = JSON.stringify(dataToWrite);
         const env: SaveEnvelope = {
           checksum: computeChecksum(ser),
-          savedAt: now,
+          savedAt: dataToWrite.metadata.updatedAt || now,
           data: dataToWrite,
         };
         localStorage.setItem(primaryKey, JSON.stringify(env));
@@ -1771,7 +2307,7 @@ export class SaveManager {
         } catch {
           // ignore
         }
-        this.reclaimLocalStorageSpace(saveData.metadata.id, false);
+        this.reclaimLocalStorageSpace(worldId, false);
         try {
           writeEnvelope(fullCompactData);
         } catch {
@@ -1786,7 +2322,7 @@ export class SaveManager {
               writeEnvelope(fb2);
             } catch {
               // Fallback 3: Reclaim space from oldest other world in localStorage (already backed up in IDB & memory) + ultra compact
-              this.reclaimLocalStorageSpace(saveData.metadata.id, true);
+              this.reclaimLocalStorageSpace(worldId, true);
               const fb3 = this.compactSaveDataForStorage(saveData, true, 2, true);
               writeEnvelope(fb3);
             }
@@ -1812,8 +2348,66 @@ export class SaveManager {
   }
 
   /**
-   * Guaranteed asynchronous save used during periodic auto-saves and exit-to-menu:
+   * Returns the authoritative compact `WorldSaveData` for cloud decomposition & upload without
+   * mutating `dirtyRev` or re-running `migrateSaveData`.
+   */
+  public static async getCompactWorldForCloud(
+    worldId: string
+  ): Promise<WorldSaveData | null> {
+    const inMem = this.memoryWorlds.get(worldId);
+    if (inMem && inMem.metadata) {
+      return inMem;
+    }
+    const loaded = await this.loadWorldGuaranteed(worldId);
+    if (!loaded) return null;
+    return (
+      this.memoryWorlds.get(worldId) ||
+      this.compactSaveDataForStorage(loaded, false, 18, false)
+    );
+  }
+
+  /**
+   * Marks a world as cloud-synchronized ONLY after the active revision has been confirmed
+   * in Cloud Firestore. If the local world was modified again while the upload was in flight,
+   * `syncPending` remains `true` so those newer changes are not skipped.
+   */
+  public static async markWorldCloudSynced(
+    worldId: string,
+    syncInfo: {
+      revisionId: string;
+      manifestHash: string;
+      contentHash?: string;
+      syncedAt?: number;
+    }
+  ): Promise<WorldMetadata | null> {
+    const world =
+      this.memoryWorlds.get(worldId) || (await this.loadWorldGuaranteed(worldId));
+    if (!world || !world.metadata) return null;
+
+    const currentContentHash =
+      world.metadata.contentHash || this.computeCanonicalSyncHash(world);
+    const syncedContentHash = syncInfo.contentHash || currentContentHash;
+    const syncedAt = syncInfo.syncedAt || Date.now();
+    const stillDirty = currentContentHash !== syncedContentHash;
+
+    world.metadata.contentHash = currentContentHash;
+    world.metadata.lastSyncedRevisionId = syncInfo.revisionId;
+    world.metadata.lastSyncedManifestHash = syncInfo.manifestHash;
+    world.metadata.lastSyncedContentHash = syncedContentHash;
+    world.metadata.lastSyncedAt = syncedAt;
+    world.metadata.syncPending = stillDirty;
+    world.metadata.conflictInfo = null;
+
+    this.saveWorldLocal(world, { preserveTimestampAndSyncState: true });
+    await this.writeWorldToIdb(world);
+    return { ...world.metadata };
+  }
+
+  /**
+   * Guaranteed asynchronous local save used during periodic auto-saves and exit-to-menu:
    * commits synchronously to `memoryWorlds` + `localStorage` AND awaits `IndexedDB` disk completion.
+   * Never blocks on remote cloud network transfers; if `skipCloudUpload` is false and the world has
+   * unsynced changes, it enqueues a non-blocking single-flight background sync.
    */
   public static async saveWorldGuaranteed(
     saveData: WorldSaveData,
@@ -1822,8 +2416,12 @@ export class SaveManager {
     const okSync = this.saveWorldLocal(saveData);
     const cached = this.memoryWorlds.get(saveData.metadata.id) || saveData;
     const okIdb = await this.writeWorldToIdb(cached);
-    if (!skipCloudUpload && auth?.currentUser) {
-      void firebaseCloudSync.uploadWorldToCloud(cached).catch(() => {});
+    if (
+      !skipCloudUpload &&
+      auth?.currentUser &&
+      cached.metadata.syncPending !== false
+    ) {
+      firebaseCloudSync.enqueueWorldSync(cached.metadata.id, 'auto_save');
     }
     return okSync || okIdb;
   }
@@ -1875,10 +2473,12 @@ export class SaveManager {
     this.compactChunkCache.delete(worldId);
     const migrated = migrateSaveData(best);
     if (!memWorld || localTs > memTs) {
-      this.memoryWorlds.set(
-        worldId,
-        this.compactSaveDataForStorage(migrated, false)
-      );
+      const compacted = this.compactSaveDataForStorage(migrated, false);
+      if (!compacted.metadata.contentHash) {
+        compacted.metadata.contentHash = this.computeCanonicalSyncHash(compacted);
+        migrated.metadata.contentHash = compacted.metadata.contentHash;
+      }
+      this.memoryWorlds.set(worldId, compacted);
     }
     return migrated;
   }
@@ -1906,11 +2506,13 @@ export class SaveManager {
     const newest = JSON.parse(JSON.stringify(candidates[0])) as WorldSaveData;
     this.compactChunkCache.delete(worldId);
     const migrated = migrateSaveData(newest);
-    this.memoryWorlds.set(
-      worldId,
-      this.compactSaveDataForStorage(migrated, false)
-    );
-    this.memoryWorldIndex.set(worldId, { ...migrated.metadata });
+    const compacted = this.compactSaveDataForStorage(migrated, false);
+    if (!compacted.metadata.contentHash) {
+      compacted.metadata.contentHash = this.computeCanonicalSyncHash(compacted);
+      migrated.metadata.contentHash = compacted.metadata.contentHash;
+    }
+    this.memoryWorlds.set(worldId, compacted);
+    this.memoryWorldIndex.set(worldId, { ...compacted.metadata });
     return migrated;
   }
 
@@ -1921,17 +2523,33 @@ export class SaveManager {
   ): WorldMetadata | null {
     const data = this.loadWorldLocal(worldId);
     if (!data) return null;
-    data.metadata.name = newName.trim() || data.metadata.name;
+    ensureWorldLineageMetadata(data.metadata);
+    const rawTrimmed = newName.trim();
+    if (rawTrimmed) {
+      const cleanBase = stripWorldCopySuffix(rawTrimmed);
+      data.metadata.baseWorldName = cleanBase;
+      data.metadata.name = formatWorldDisplayName(
+        cleanBase,
+        data.metadata.isCopy,
+        data.metadata.copyNumber
+      );
+    }
     data.metadata.difficulty = newDifficulty;
     data.metadata.updatedAt = Date.now();
-    this.saveWorldLocal(data);
+    this.saveWorldLocal(data, { forceSyncPending: true });
     if (auth?.currentUser) {
-      void firebaseCloudSync.uploadWorldToCloud(data).catch(() => {});
+      firebaseCloudSync.enqueueWorldSync(worldId, 'metadata_update');
     }
     return data.metadata;
   }
 
   public static deleteWorld(worldId: string, settings?: GameSettings): void {
+    const existingMeta =
+      this.memoryWorldIndex.get(worldId) ||
+      this.memoryWorlds.get(worldId)?.metadata ||
+      this.listWorlds().find((w) => w.id === worldId);
+    const deletedOriginId = existingMeta?.originWorldId || worldId;
+
     this.memoryWorlds.delete(worldId);
     this.memoryWorldIndex.delete(worldId);
     this.compactChunkCache.delete(worldId);
@@ -1944,6 +2562,15 @@ export class SaveManager {
     }
     const list = this.listWorlds().filter((w) => w.id !== worldId);
     this.saveWorldIndex(list);
+
+    // If no world from this origin lineage remains loaded, reset the lineage copy counter
+    // so re-importing this origin in the future starts cleanly as the primary instance (Situation 1).
+    const remainingOfOrigin = list.filter(
+      (w) => (w.originWorldId || w.id) === deletedOriginId
+    );
+    if (remainingOfOrigin.length === 0) {
+      this.resetLineageCopyCounter(deletedOriginId);
+    }
 
     if (auth?.currentUser) {
       void firebaseCloudSync.deleteWorldFromCloud(worldId).catch(() => {});
@@ -1962,20 +2589,19 @@ export class SaveManager {
     saveData: WorldSaveData,
     settings?: GameSettings
   ): Promise<{ ok: boolean; message: string }> {
-    let cloudSaved = false;
-    if (auth?.currentUser) {
-      try {
-        const cloudRes = await firebaseCloudSync.uploadWorldToCloud(saveData);
-        cloudSaved = cloudRes.ok;
-      } catch {
-        cloudSaved = false;
-      }
+    let cloudQueued = false;
+    if (auth?.currentUser && saveData?.metadata?.id) {
+      firebaseCloudSync.enqueueWorldSync(saveData.metadata.id, 'server_sync');
+      cloudQueued = true;
     }
 
     const cfg = settings || this.loadSettings();
     if (!cfg.serverSyncEnabled) {
-      return cloudSaved
-        ? { ok: true, message: 'Salvo no Firebase Cloud Firestore.' }
+      return cloudQueued
+        ? {
+            ok: true,
+            message: 'Sincronização com a nuvem agendada em segundo plano.',
+          }
         : { ok: false, message: 'Sincronização com servidor desativada.' };
     }
     const base = cfg.customServerUrl.trim().replace(/\/$/, '');
@@ -1995,20 +2621,26 @@ export class SaveManager {
       });
       window.clearTimeout(timeoutId);
       if (!res.ok) {
-        return cloudSaved
-          ? { ok: true, message: 'Salvo no Firebase Cloud Firestore.' }
+        return cloudQueued
+          ? {
+              ok: true,
+              message: 'Salvo localmente; sincronizando com a nuvem em segundo plano.',
+            }
           : { ok: false, message: `Erro HTTP ${res.status}` };
       }
       return {
         ok: true,
-        message: cloudSaved
-          ? 'Salvo no Firebase e no Servidor com sucesso.'
+        message: cloudQueued
+          ? 'Salvo no servidor e agendado na nuvem com sucesso.'
           : 'Salvo no servidor com sucesso.',
       };
     } catch {
       window.clearTimeout(timeoutId);
-      return cloudSaved
-        ? { ok: true, message: 'Salvo no Firebase Cloud Firestore.' }
+      return cloudQueued
+        ? {
+            ok: true,
+            message: 'Salvo localmente; sincronizando com a nuvem em segundo plano.',
+          }
         : {
             ok: false,
             message: 'Servidor offline (salvo localmente com segurança).',
@@ -2043,7 +2675,7 @@ export class SaveManager {
               !localMeta ||
               (entry.metadata.updatedAt || 0) > (localMeta.updatedAt || 0)
             ) {
-              await this.saveWorldGuaranteed(migrateSaveData(entry));
+              await this.saveWorldGuaranteed(migrateSaveData(entry), true);
             }
           } else if (entry && entry.id && entry.name && typeof entry.seed === 'number') {
             // Metadata entry from GET /api/worlds: fetch full world if newer than local
@@ -2060,7 +2692,8 @@ export class SaveManager {
                   const detailJson = await detailRes.json();
                   if (detailJson?.world?.metadata) {
                     await this.saveWorldGuaranteed(
-                      migrateSaveData(detailJson.world)
+                      migrateSaveData(detailJson.world),
+                      true
                     );
                   }
                 }
@@ -2078,12 +2711,15 @@ export class SaveManager {
   }
 
   public static downloadWorldFile(saveData: WorldSaveData): void {
+    ensureWorldLineageMetadata(saveData.metadata);
     const compactForExport = this.compactSaveDataForStorage(
       saveData,
       false,
       18,
       false
     );
+    compactForExport.metadata.contentHash =
+      this.computeCanonicalSyncHash(compactForExport);
     const serialized = JSON.stringify(compactForExport);
     const envelope: SaveEnvelope = {
       checksum: computeChecksum(serialized),
@@ -2107,16 +2743,85 @@ export class SaveManager {
     URL.revokeObjectURL(url);
   }
 
+  /**
+   * Creates an independent local copy instance when a cloud/local divergence conflict is detected,
+   * preserving 100% of both versions under the same `originWorldId` lineage.
+   */
+  public static async saveDivergentWorldAsCopy(
+    divergentSaveData: WorldSaveData,
+    parentWorldIdOrReason?: string,
+    maybeReason?: string
+  ): Promise<WorldSaveData> {
+    const reason = maybeReason || parentWorldIdOrReason || 'conflict';
+    const explicitParentId = maybeReason ? parentWorldIdOrReason : undefined;
+    const migrated = migrateSaveData(divergentSaveData);
+    const existingWorlds = this.listWorlds();
+    const originId =
+      migrated.metadata.originWorldId || migrated.metadata.id;
+    const sameOriginWorlds = existingWorlds.filter(
+      (w) => (w.originWorldId || w.id) === originId
+    );
+    const nextCopyNum = this.allocateNextCopyNumberForOrigin(
+      originId,
+      sameOriginWorlds
+    );
+    const now = Date.now();
+    let newInstanceId = `world_${now}_${Math.floor(Math.random() * 999999)}`;
+    const existingIds = new Set(existingWorlds.map((w) => w.id));
+    while (existingIds.has(newInstanceId)) {
+      newInstanceId = `world_${now}_${Math.floor(Math.random() * 999999)}`;
+    }
+
+    const cleanBase = stripWorldCopySuffix(
+      migrated.metadata.baseWorldName || migrated.metadata.name
+    );
+    migrated.metadata.parentInstanceId =
+      explicitParentId || migrated.metadata.id;
+    migrated.metadata.id = newInstanceId;
+    migrated.metadata.instanceId = newInstanceId;
+    migrated.metadata.originWorldId = originId;
+    migrated.metadata.isCopy = true;
+    migrated.metadata.copyNumber = nextCopyNum;
+    migrated.metadata.highestCopyNumberSeen = nextCopyNum;
+    migrated.metadata.baseWorldName = cleanBase;
+    migrated.metadata.name = formatWorldDisplayName(cleanBase, true, nextCopyNum);
+    migrated.metadata.lastSyncedRevisionId = null;
+    migrated.metadata.lastSyncedManifestHash = null;
+    migrated.metadata.lastSyncedContentHash = null;
+    migrated.metadata.lastSyncedAt = null;
+    migrated.metadata.syncPending = true;
+    migrated.metadata.conflictInfo = {
+      detectedAt: now,
+      cloudRevisionId: divergentSaveData.metadata?.lastSyncedRevisionId || '',
+      localRevisionId: null,
+      preservedCopyInstanceId: newInstanceId,
+      reason,
+    };
+
+    await this.saveWorldGuaranteed(migrated, false);
+    return migrated;
+  }
+
+  /**
+   * Imports a `.wildborn.json` world file following the 4 strict lineage & copy rules:
+   * - Never overwrites an existing loaded world.
+   * - Situation 4: If the imported file has identical effective gameplay content to any already-loaded
+   *   world, refuses the import with `"Este mundo já existe no jogo. Nenhum mundo foi alterado."`
+   * - Situation 1: If no currently loaded world shares `originWorldId`, imports as primary instance (`isCopy = false`, no `#N` suffix).
+   * - Situations 2 & 3: If at least one loaded world already shares `originWorldId`, creates a new
+   *   independent instance (`instanceId`) with `isCopy = true` and the next consistent copy number (`#1`, `#2`, `#3`, ...).
+   */
   public static importWorldFromJson(rawJson: string): {
     ok: boolean;
     world?: WorldSaveData;
     error?: string;
+    isDuplicateRefused?: boolean;
   } {
     try {
       const parsed = JSON.parse(rawJson);
-      let saveData: WorldSaveData;
+      let rawSaveData: WorldSaveData;
 
-      if (parsed.checksum && parsed.data) {
+      if (parsed && parsed.checksum && parsed.data) {
         const verify = computeChecksum(JSON.stringify(parsed.data));
         if (verify !== parsed.checksum) {
           return {
@@ -2124,15 +2829,153 @@ export class SaveManager {
             error: 'Arquivo corrompido: falha na verificação de checksum.',
           };
         }
-        saveData = parsed.data;
-      } else if (parsed.metadata && parsed.player && parsed.chunks) {
-        saveData = parsed;
+        rawSaveData = parsed.data;
+      } else if (parsed && parsed.metadata && parsed.player && parsed.chunks) {
+        rawSaveData = parsed;
       } else {
         return { ok: false, error: 'Formato de arquivo de mundo inválido.' };
       }
 
-      const migrated = migrateSaveData(saveData);
-      this.saveWorldLocal(migrated);
+      if (
+        !rawSaveData.metadata ||
+        typeof rawSaveData.metadata.seed !== 'number' ||
+        !rawSaveData.player ||
+        typeof rawSaveData.chunks !== 'object'
+      ) {
+        return { ok: false, error: 'Formato de arquivo de mundo inválido.' };
+      }
+
+      // Preserve raw lineage hints before migration
+      const rawOriginId =
+        typeof rawSaveData.metadata.originWorldId === 'string' &&
+        rawSaveData.metadata.originWorldId.trim()
+          ? rawSaveData.metadata.originWorldId.trim()
+          : typeof rawSaveData.metadata.id === 'string' &&
+            rawSaveData.metadata.id.trim()
+          ? rawSaveData.metadata.id.trim()
+          : `world_${Date.now()}_${Math.floor(Math.random() * 9999)}`;
+
+      const rawSourceInstanceId =
+        typeof rawSaveData.metadata.instanceId === 'string' &&
+        rawSaveData.metadata.instanceId.trim()
+          ? rawSaveData.metadata.instanceId.trim()
+          : typeof rawSaveData.metadata.id === 'string' &&
+            rawSaveData.metadata.id.trim()
+          ? rawSaveData.metadata.id.trim()
+          : rawOriginId;
+
+      const cleanBaseName = stripWorldCopySuffix(
+        rawSaveData.metadata.baseWorldName ||
+          rawSaveData.metadata.name ||
+          'Fronteira Selvagem'
+      );
+
+      const migrated = migrateSaveData(rawSaveData);
+      const importedGameplayHash = this.computeCanonicalGameplayHash(migrated);
+
+      const existingWorlds = this.listWorlds();
+      const existingIds = new Set(existingWorlds.map((w) => w.id));
+
+      // Situation 4: Check if any already-loaded world has the exact same effective gameplay content
+      for (const existingMeta of existingWorlds) {
+        const existingData =
+          this.memoryWorlds.get(existingMeta.id) ||
+          this.parseRawLocalWorld(existingMeta.id);
+        if (!existingData) continue;
+        const existingGameplayHash =
+          this.computeCanonicalGameplayHash(existingData);
+        if (existingGameplayHash === importedGameplayHash) {
+          return {
+            ok: false,
+            isDuplicateRefused: true,
+            error: 'Este mundo já existe no jogo. Nenhum mundo foi alterado.',
+          };
+        }
+      }
+
+      // Compare by originWorldId (never by display name!)
+      const sameOriginWorlds = existingWorlds.filter(
+        (w) => (w.originWorldId || w.id) === rawOriginId
+      );
+
+      const now = Date.now();
+      const generateUniqueInstanceId = (): string => {
+        let candidate = `world_${now}_${Math.floor(Math.random() * 999999)}`;
+        while (existingIds.has(candidate)) {
+          candidate = `world_${Date.now()}_${Math.floor(Math.random() * 999999)}`;
+        }
+        return candidate;
+      };
+
+      if (sameOriginWorlds.length === 0) {
+        // Situation 1: First import of an origin not currently present in loaded worlds
+        const primaryInstanceId = !existingIds.has(rawSourceInstanceId)
+          ? rawSourceInstanceId
+          : !existingIds.has(rawOriginId)
+          ? rawOriginId
+          : generateUniqueInstanceId();
+
+        this.resetLineageCopyCounter(rawOriginId);
+
+        migrated.metadata.id = primaryInstanceId;
+        migrated.metadata.instanceId = primaryInstanceId;
+        migrated.metadata.originWorldId = rawOriginId;
+        migrated.metadata.parentInstanceId =
+          rawSaveData.metadata.parentInstanceId || null;
+        migrated.metadata.isCopy = false;
+        migrated.metadata.copyNumber = null;
+        migrated.metadata.highestCopyNumberSeen = 0;
+        migrated.metadata.baseWorldName = cleanBaseName;
+        migrated.metadata.name = cleanBaseName;
+      } else {
+        // Situations 2 & 3: Origin already exists in loaded worlds -> create independent copy instance (#1, #2, #3...)
+        const newInstanceId = generateUniqueInstanceId();
+        const nextCopyNumber = this.allocateNextCopyNumberForOrigin(
+          rawOriginId,
+          sameOriginWorlds
+        );
+
+        // Update highestCopyNumberSeen on existing worlds of the same lineage
+        for (const w of sameOriginWorlds) {
+          w.highestCopyNumberSeen = Math.max(
+            w.highestCopyNumberSeen || 0,
+            nextCopyNumber
+          );
+          this.memoryWorldIndex.set(w.id, { ...w });
+          const memW = this.memoryWorlds.get(w.id);
+          if (memW?.metadata) {
+            memW.metadata.highestCopyNumberSeen = w.highestCopyNumberSeen;
+          }
+        }
+
+        migrated.metadata.id = newInstanceId;
+        migrated.metadata.instanceId = newInstanceId;
+        migrated.metadata.originWorldId = rawOriginId;
+        migrated.metadata.parentInstanceId = rawSourceInstanceId;
+        migrated.metadata.isCopy = true;
+        migrated.metadata.copyNumber = nextCopyNumber;
+        migrated.metadata.highestCopyNumberSeen = nextCopyNumber;
+        migrated.metadata.baseWorldName = cleanBaseName;
+        migrated.metadata.name = formatWorldDisplayName(
+          cleanBaseName,
+          true,
+          nextCopyNumber
+        );
+      }
+
+      // Reset cloud sync pointers on the newly imported instance so it syncs cleanly as its own document
+      migrated.metadata.updatedAt = now;
+      migrated.metadata.lastSyncedRevisionId = null;
+      migrated.metadata.lastSyncedManifestHash = null;
+      migrated.metadata.lastSyncedContentHash = null;
+      migrated.metadata.lastSyncedAt = null;
+      migrated.metadata.syncPending = true;
+      migrated.metadata.conflictInfo = null;
+
+      this.saveWorldLocal(migrated, { forceSyncPending: true });
+      if (auth?.currentUser) {
+        firebaseCloudSync.enqueueWorldSync(migrated.metadata.id, 'import');
+      }
       return { ok: true, world: migrated };
     } catch {
       return { ok: false, error: 'Não foi possível ler o arquivo JSON.' };

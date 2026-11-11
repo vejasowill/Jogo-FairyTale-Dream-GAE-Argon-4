@@ -425,11 +425,38 @@ export const CloudAccountModal: React.FC<CloudAccountModalProps> = ({
                     </div>
                   </div>
 
+                  {cloudSnap.lastSyncSummary && (
+                    <div className="bg-[#160e09] px-2.5 py-1.5 border border-[#3a2518] text-[10px] text-[#e5d5b5] flex flex-wrap items-center justify-between gap-2">
+                      <span>
+                        Último lote ({cloudSnap.lastSyncSummary.durationMs} ms):{' '}
+                        <strong className="text-emerald-300">
+                          {cloudSnap.lastSyncSummary.unchangedSkippedWorldIds.length} intacto(s)
+                        </strong>{' '}
+                        ·{' '}
+                        <strong className="text-sky-300">
+                          {cloudSnap.lastSyncSummary.incrementalUploadedWorldIds.length} incr.
+                        </strong>{' '}
+                        ·{' '}
+                        <strong className="text-amber-300">
+                          {cloudSnap.lastSyncSummary.newUploadedWorldIds.length} novo(s)
+                        </strong>{' '}
+                        ·{' '}
+                        <strong className="text-purple-300">
+                          {cloudSnap.lastSyncSummary.downloadedWorldIds.length} baixado(s)
+                        </strong>
+                      </span>
+                      <span className="font-mono text-[#c4ab7d]">
+                        {cloudSnap.lastSyncSummary.totalChunksUploaded} env. /{' '}
+                        {cloudSnap.lastSyncSummary.totalChunksSkipped} pulados
+                      </span>
+                    </div>
+                  )}
+
                   {/* Concurrency Control & Last Sync Timestamp */}
                   <div className="flex flex-wrap items-center justify-between gap-2 pt-1 text-[10px] text-[#c4ab7d]">
                     <div className="flex items-center gap-1.5">
                       <span>Uploads simultâneos:</span>
-                      {[1, 2, 4, 8].map((limit) => (
+                      {[4, 8, 12, 16].map((limit) => (
                         <button
                           key={limit}
                           type="button"

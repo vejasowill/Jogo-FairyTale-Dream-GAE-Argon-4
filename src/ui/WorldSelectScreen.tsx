@@ -128,7 +128,9 @@ export const WorldSelectScreen: React.FC<WorldSelectScreenProps> = ({
     setIsTransitioningWorld(true);
     setShowCreateModal(false);
     const newSave = SaveManager.createNewWorld(worldName, seedInput, difficulty);
-    void SaveManager.saveWorldGuaranteed(newSave);
+    void SaveManager.saveWorldGuaranteed(newSave, true).then(() => {
+      firebaseCloudSync.enqueueWorldSync(newSave.metadata.id, 'create_world');
+    });
     if (settings.serverSyncEnabled) {
       void SaveManager.syncWorldToServer(newSave, settings);
     }
@@ -201,11 +203,12 @@ export const WorldSelectScreen: React.FC<WorldSelectScreenProps> = ({
     e.preventDefault();
     if (!editingWorld) return;
     SaveManager.updateWorldMetadata(editingWorld.id, worldName, difficulty);
+    firebaseCloudSync.enqueueWorldSync(editingWorld.id, 'rename_world');
     const updated =
       (await SaveManager.loadWorldGuaranteed(editingWorld.id)) ||
       SaveManager.loadWorldLocal(editingWorld.id);
     if (updated && settings.serverSyncEnabled) {
-      SaveManager.syncWorldToServer(updated, settings);
+      void SaveManager.syncWorldToServer(updated, settings);
     }
     setWorlds(SaveManager.listWorlds());
     setEditingWorld(null);
@@ -243,12 +246,19 @@ export const WorldSelectScreen: React.FC<WorldSelectScreenProps> = ({
       const res = SaveManager.importWorldFromJson(raw);
       if (res.ok && res.world) {
         setWorlds(SaveManager.listWorlds());
+        firebaseCloudSync.enqueueWorldSync(res.world.metadata.id, 'import_world');
         if (settings.serverSyncEnabled) {
-          SaveManager.syncWorldToServer(res.world, settings);
+          void SaveManager.syncWorldToServer(res.world, settings);
         }
-        setStatusMessage(
-          `Mundo "${res.world.metadata.name}" importado (Compatível v1/v2)!`
-        );
+        if (res.world.metadata.isCopy) {
+          setStatusMessage(
+            `Mundo importado como nova instância "${res.world.metadata.name}" (Cópia #${res.world.metadata.copyNumber || 1}) sem sobrescrever mundos existentes!`
+          );
+        } else {
+          setStatusMessage(
+            `Mundo "${res.world.metadata.name}" importado com sucesso!`
+          );
+        }
       } else {
         setStatusMessage(res.error || 'Falha ao importar arquivo.');
       }
@@ -259,7 +269,7 @@ export const WorldSelectScreen: React.FC<WorldSelectScreenProps> = ({
 
   const openEditModal = (w: WorldMetadata) => {
     setEditingWorld(w);
-    setWorldName(w.name);
+    setWorldName(w.baseWorldName || w.name);
     setDifficulty(w.difficulty);
   };
 
@@ -571,16 +581,41 @@ export const WorldSelectScreen: React.FC<WorldSelectScreenProps> = ({
             </div>
           ) : (
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              {filteredWorlds.map((w) => (
+              {filteredWorlds.map((w) => {
+                const worldSync = cloudSnap.worldSyncStates?.[w.id];
+                const isSyncedInCloud =
+                  worldSync?.status === 'SYNCED' ||
+                  (w.syncPending === false &&
+                    Boolean(w.lastSyncedRevisionId || w.lastSyncedContentHash));
+                const isSyncingInCloud = worldSync?.status === 'SYNCING';
+                const isSyncError = worldSync?.status === 'ERROR';
+
+                return (
                 <div
                   key={w.id}
                   className="medieval-panel p-3.5 flex flex-col justify-between gap-3"
                 >
                   <div className="space-y-1.5">
                     <div className="flex items-start justify-between gap-2">
-                      <h3 className="font-pixel text-xs sm:text-sm font-bold text-white truncate">
-                        {w.name}
-                      </h3>
+                      <div className="flex items-center gap-1.5 min-w-0">
+                        <h3 className="font-pixel text-xs sm:text-sm font-bold text-white truncate">
+                          {w.name}
+                        </h3>
+                        {w.isCopy && (
+                          <span
+                            className="px-1.5 py-0.5 rounded bg-purple-950/90 border border-purple-400/40 text-[9px] font-mono font-bold text-purple-200 shrink-0"
+                            title={
+                              w.conflictInfo
+                                ? `Versão divergente preservada automaticamente com ID independente (${w.id})`
+                                : `Instância independente derivada da origem ${w.originWorldId || w.id}`
+                            }
+                          >
+                            {w.conflictInfo
+                              ? `Conflito #${w.copyNumber || 1}`
+                              : `Cópia #${w.copyNumber || 1}`}
+                          </span>
+                        )}
+                      </div>
                       <span className="text-[11px] text-amber-400 font-pixel shrink-0">
                         NV.{w.playerLevel || 1}
                       </span>
@@ -603,7 +638,7 @@ export const WorldSelectScreen: React.FC<WorldSelectScreenProps> = ({
                       </div>
                     </div>
 
-                    <div className="flex flex-wrap items-center gap-2 text-[10px] text-[#c4ab7d]">
+                    <div className="flex flex-wrap items-center gap-1.5 text-[10px] text-[#c4ab7d]">
                       <span
                         className={
                           w.difficulty === 'hardcore'
@@ -622,7 +657,7 @@ export const WorldSelectScreen: React.FC<WorldSelectScreenProps> = ({
                       </span>
                       <span>·</span>
                       <span className="text-sky-300 font-semibold">
-                        {w.exploredChunksCount || 1} Chunks Preservados
+                        {w.exploredChunksCount || 1} Chunks
                       </span>
                       <span>·</span>
                       <span
@@ -634,6 +669,36 @@ export const WorldSelectScreen: React.FC<WorldSelectScreenProps> = ({
                           ? `v${w.createdGameVersion} → v${w.gameVersion || GAME_VERSION}`
                           : `v${w.gameVersion || GAME_VERSION}`}
                       </span>
+                      {cloudSnap.user ? (
+                        isSyncingInCloud ? (
+                          <span className="px-1.5 py-0.5 rounded bg-sky-950/80 border border-sky-400/40 text-[9px] font-bold text-sky-200">
+                            Sincronizando...
+                          </span>
+                        ) : isSyncError ? (
+                          <button
+                            type="button"
+                            onClick={() =>
+                              firebaseCloudSync.enqueueWorldSync(w.id, 'manual_retry')
+                            }
+                            className="px-1.5 py-0.5 rounded bg-rose-950/80 border border-rose-400/50 text-[9px] font-bold text-rose-200 hover:bg-rose-900/90"
+                            title={worldSync?.error || 'Clique para retomar a sincronização'}
+                          >
+                            Falha — Retomar
+                          </button>
+                        ) : isSyncedInCloud ? (
+                          <span className="px-1.5 py-0.5 rounded bg-emerald-950/80 border border-emerald-400/40 text-[9px] font-bold text-emerald-300">
+                            Sincronizado
+                          </span>
+                        ) : (
+                          <span className="px-1.5 py-0.5 rounded bg-amber-950/80 border border-amber-400/40 text-[9px] font-bold text-amber-300">
+                            Sinc. pendente
+                          </span>
+                        )
+                      ) : (
+                        <span className="px-1.5 py-0.5 rounded bg-[#241810] border border-[#4a301e] text-[9px] text-[#c4ab7d]">
+                          Salvo local
+                        </span>
+                      )}
                     </div>
                   </div>
 
@@ -693,7 +758,8 @@ export const WorldSelectScreen: React.FC<WorldSelectScreenProps> = ({
                     </div>
                   )}
                 </div>
-              ))}
+                );
+              })}
             </div>
           )}
         </section>

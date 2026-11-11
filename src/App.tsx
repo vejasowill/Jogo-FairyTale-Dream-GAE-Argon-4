@@ -522,7 +522,7 @@ export default function App() {
       engineRef.current?.multiplayer.isOnline &&
         engineRef.current?.multiplayer.role === 'HOST'
     );
-    // Immediately close any open modal and go directly to the saving loading screen
+    // Immediately close any open modal and go directly to the local save confirmation screen
     setActiveModal('NONE');
     setIsEditingHud(false);
     setIsMountSaddlebagOpen(false);
@@ -530,10 +530,10 @@ export default function App() {
       active: true,
       title: 'SALVANDO E SAINDO PARA O MENU',
       subtitle: isHostOnline
-        ? 'Desconectando jogadores convidados e salvando o mundo...'
-        : 'Preservando inventário, construções e montaria integrada ao personagem...',
-      stepLabel: 'Gravando dados do mundo com segurança...',
-      progress: 50,
+        ? 'Desconectando convidados e gravando estado local do mundo...'
+        : 'Preservando inventário, construções e montaria no armazenamento local...',
+      stepLabel: 'Salvamento local em andamento...',
+      progress: 55,
     });
 
     try {
@@ -544,23 +544,23 @@ export default function App() {
         engineRef.current.endNpcInteraction(activeNpcId);
       }
       if (engineRef.current) {
-        // Freeze game loop and commit guaranteed save FIRST before disconnecting so Guest / Host roles and online states are intact!
+        // Freeze game loop, commit fast local save (IndexedDB + localStorage), and enqueue background cloud sync
         await engineRef.current.saveAndPrepareForExit();
         setTransitionState((prev) =>
           prev
             ? {
                 ...prev,
                 stepLabel: isHostOnline
-                  ? 'Notificando e desconectando convidados da sessão...'
-                  : 'Encerrando conexão da sessão...',
-                progress: 85,
+                  ? 'Salvamento local concluído! Encerrando sala online...'
+                  : 'Salvamento local concluído! Sincronização em nuvem continuará em segundo plano...',
+                progress: 90,
               }
             : null
         );
         if (engineRef.current.multiplayer.isOnline) {
           await Promise.race([
             engineRef.current.multiplayer.disconnectAndCloseRoom(),
-            new Promise((r) => window.setTimeout(r, 650)),
+            new Promise((r) => window.setTimeout(r, 450)),
           ]);
         }
       }
@@ -572,7 +572,7 @@ export default function App() {
       prev
         ? {
             ...prev,
-            stepLabel: 'Salvamento concluído!',
+            stepLabel: 'Salvamento local concluído!',
             progress: 100,
           }
         : null
@@ -585,7 +585,7 @@ export default function App() {
       setActiveWorldSave(null);
       setSnapshot(null);
       setTransitionState(null);
-    }, 280);
+    }, 120);
   };
 
   const handleRevertToLastAutoSaveAndExit = async () => {

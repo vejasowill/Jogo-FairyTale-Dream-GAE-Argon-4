@@ -22553,7 +22553,8 @@ export class GameEngine {
     this.world.pruneUnexploredDistantChunks(activePositions, 6);
 
     const data = this.buildSaveData();
-    const okLocal = await SaveManager.saveWorldGuaranteed(data);
+    // 1. Save locally to memory, localStorage, and IndexedDB without triggering inline cloud upload
+    const okLocal = await SaveManager.saveWorldGuaranteed(data, true);
     if (
       okLocal &&
       (isConnHealthy || this.isAuthoritativeLocalWorld() || forceExitSave)
@@ -22563,33 +22564,32 @@ export class GameEngine {
       this.lastAutoSaveWorldSnapshot = data;
     }
 
-    if (this.settings.serverSyncEnabled && (isConnHealthy || forceExitSave)) {
-      const serverRes = await SaveManager.syncWorldToServer(
-        data,
-        this.settings
+    // 2. Enqueue single-flight background cloud sync without blocking gameplay or world exit
+    if (
+      okLocal &&
+      (this.settings.serverSyncEnabled || firebaseCloudSync.getAuthenticatedUid())
+    ) {
+      firebaseCloudSync.enqueueWorldSync(
+        data.metadata.id,
+        forceExitSave ? 'world_exit' : isAuto ? 'autosave' : 'manual_save'
       );
-      this.lastSaveStatus = serverRes.ok
-        ? isAuto
-          ? 'Auto-salvo (v2)'
-          : 'Salvo no Servidor'
-        : okLocal
-        ? isAuto
-          ? 'Auto-salvo Localmente'
-          : 'Salvo Localmente'
-        : 'Erro ao salvar';
-    } else {
-      this.lastSaveStatus = okLocal
-        ? isAuto
-          ? 'Auto-salvo Localmente'
-          : 'Salvo Localmente'
-        : 'Erro ao salvar';
     }
+
+    if (this.settings.serverSyncEnabled && isConnHealthy && !forceExitSave) {
+      void SaveManager.syncWorldToServer(data, this.settings).catch(() => {});
+    }
+
+    this.lastSaveStatus = okLocal
+      ? isAuto
+        ? 'Auto-salvo Localmente'
+        : 'Salvo Localmente'
+      : 'Erro ao salvar';
     this.emitUiSnapshot();
   }
 
   /**
-   * Freezes the game loop immediately and performs a guaranteed, authoritative save to
-   * In-Memory Cache, IndexedDB, localStorage, and Server before exiting to the main menu.
+   * Freezes the game loop immediately, confirms local save completion (memory + localStorage + IndexedDB),
+   * enqueues background cloud synchronization, and returns immediately so the player never hangs on the exit screen.
    */
   public async saveAndPrepareForExit(): Promise<WorldSaveData> {
     this.isSavingOrExiting = true;
@@ -22604,8 +22604,11 @@ export class GameEngine {
     this.input.actionHeld = false;
     this.input.actionPressed = false;
 
-    await this.saveGame(false, true);
-    return this.buildSaveData();
+    await Promise.race([
+      this.saveGame(false, true),
+      new Promise<void>((resolve) => setTimeout(resolve, 1500)),
+    ]);
+    return this.lastAutoSaveWorldSnapshot || this.buildSaveData();
   }
 
   /**

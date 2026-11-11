@@ -38,8 +38,10 @@ import {
 } from './SaveManager';
 
 import {
+  CloudPublishTelemetry,
   CloudTransferProgress,
   cloudWorldStorageEngine,
+  persistentUploadQueue,
 } from './CloudWorldStorageEngine';
 
 const LEGACY_UID_STORAGE_KEY = 'wildborn_legacy_local_uid_v1';
@@ -58,6 +60,28 @@ export interface UserEntitlementRecord {
   grantedAt?: unknown;
 }
 
+export interface WorldCloudSyncState {
+  worldId: string;
+  status: 'SYNCED' | 'PENDING' | 'SYNCING' | 'ERROR';
+  error?: string | null;
+  updatedAt: number;
+  lastRevisionId?: string | null;
+  lastChunksUploaded?: number;
+  lastUnchangedChunksSkipped?: number;
+}
+
+export interface CloudSyncBatchSummary {
+  completedAt: number;
+  unchangedSkippedWorldIds: string[];
+  incrementalUploadedWorldIds: string[];
+  newUploadedWorldIds: string[];
+  downloadedWorldIds: string[];
+  conflictPreservedWorldIds: string[];
+  totalChunksUploaded: number;
+  totalChunksSkipped: number;
+  durationMs: number;
+}
+
 export interface CloudSyncSnapshot {
   user: {
     uid: string;
@@ -73,6 +97,9 @@ export interface CloudSyncSnapshot {
   cloudWorldsCount: number;
   entitlements: UserEntitlementRecord[];
   transferProgress: CloudTransferProgress | null;
+  worldSyncStates: Record<string, WorldCloudSyncState>;
+  pendingUploadsCount: number;
+  lastSyncSummary: CloudSyncBatchSummary | null;
 }
 
 type CloudSyncListener = (snapshot: CloudSyncSnapshot) => void;
@@ -137,6 +164,21 @@ class FirebaseCloudSyncService {
   private profileReadyForUid: string | null = null;
   private activeProfileSyncPromise: Promise<boolean> | null = null;
   private activeWorldsSyncPromise: Promise<WorldMetadata[]> | null = null;
+  private activeWorldUploads = new Map<
+    string,
+    Promise<{
+      ok: boolean;
+      message: string;
+      noNewRevisionCreated?: boolean;
+      chunksUploaded?: number;
+      unchangedChunksSkipped?: number;
+      telemetry?: CloudPublishTelemetry;
+    }>
+  >();
+  private pendingWorldSyncReasons = new Map<string, string>();
+  private worldSyncStates = new Map<string, WorldCloudSyncState>();
+  private isProcessingQueue = false;
+  private lastSyncSummary: CloudSyncBatchSummary | null = null;
 
   constructor() {
     if (typeof window !== 'undefined') {
@@ -158,6 +200,7 @@ class FirebaseCloudSyncService {
             await this.fetchUserEntitlements(user.uid);
             await this.syncAllWorldsWithCloud();
             await this.syncAllGuestProfilesWithCloud();
+            void this.processPendingWorldSyncQueue();
             this.syncStatus = 'SYNCED';
             this.lastSyncedAt = Date.now();
             this.statusMessage = 'Conta e mundos sincronizados na nuvem!';
@@ -187,7 +230,9 @@ class FirebaseCloudSyncService {
         this.statusMessage = progress.lastError;
       }
     } else if (progress.phase === 'COMPLETED') {
-      this.syncStatus = 'SYNCED';
+      if (this.pendingWorldSyncReasons.size === 0 && this.activeWorldUploads.size <= 1) {
+        this.syncStatus = 'SYNCED';
+      }
     } else if (progress.phase !== 'IDLE') {
       this.syncStatus = 'SYNCING';
     }
@@ -249,8 +294,45 @@ class FirebaseCloudSyncService {
     return candidateOwnerId === currentDeviceUid;
   }
 
+  public getWorldSyncState(worldId: string): WorldCloudSyncState {
+    const existing = this.worldSyncStates.get(worldId);
+    if (existing) return { ...existing };
+    const meta = SaveManager.listWorlds().find((w) => w.id === worldId);
+    if (meta) {
+      if (
+        meta.syncPending === false &&
+        Boolean(meta.lastSyncedRevisionId || meta.lastSyncedContentHash)
+      ) {
+        return {
+          worldId,
+          status: 'SYNCED',
+          error: null,
+          updatedAt: meta.lastSyncedAt || meta.updatedAt || Date.now(),
+          lastRevisionId: meta.lastSyncedRevisionId || null,
+        };
+      }
+    }
+    return {
+      worldId,
+      status: 'PENDING',
+      error: null,
+      updatedAt: meta?.updatedAt || Date.now(),
+      lastRevisionId: meta?.lastSyncedRevisionId || null,
+    };
+  }
+
   public getSnapshot(): CloudSyncSnapshot {
     const u = this.currentUser || auth.currentUser;
+    const statesRecord: Record<string, WorldCloudSyncState> = {};
+    for (const w of SaveManager.listWorlds()) {
+      statesRecord[w.id] = this.getWorldSyncState(w.id);
+    }
+    for (const [id, st] of this.worldSyncStates.entries()) {
+      statesRecord[id] = { ...st };
+    }
+    const pendingUploadsCount =
+      this.pendingWorldSyncReasons.size + this.activeWorldUploads.size;
+
     return {
       user: u
         ? {
@@ -269,6 +351,11 @@ class FirebaseCloudSyncService {
       entitlements: [...this.entitlements],
       transferProgress: this.transferProgress
         ? { ...this.transferProgress }
+        : null,
+      worldSyncStates: statesRecord,
+      pendingUploadsCount,
+      lastSyncSummary: this.lastSyncSummary
+        ? { ...this.lastSyncSummary }
         : null,
     };
   }
@@ -289,6 +376,90 @@ class FirebaseCloudSyncService {
       } catch {
         // ignore listener errors
       }
+    }
+  }
+
+  /**
+   * Enqueues a world for non-blocking background cloud synchronization.
+   * Deduplicates multiple requests for the same world so exiting a world or saving
+   * repeatedly never starts concurrent uploads for the same world.
+   */
+  public enqueueWorldSync(worldId: string, reason = 'background'): void {
+    if (!worldId) return;
+    const cleanWorldId = sanitizeValidId(worldId);
+    this.pendingWorldSyncReasons.set(cleanWorldId, reason);
+    const current = this.worldSyncStates.get(cleanWorldId);
+    if (!current || current.status !== 'SYNCING') {
+      this.worldSyncStates.set(cleanWorldId, {
+        worldId: cleanWorldId,
+        status: 'PENDING',
+        error: null,
+        updatedAt: Date.now(),
+        lastRevisionId: current?.lastRevisionId || null,
+      });
+    }
+    this.notifyListeners();
+
+    const user = this.currentUser || auth.currentUser;
+    if (user && user.uid && user.emailVerified) {
+      void this.processPendingWorldSyncQueue();
+    }
+  }
+
+  /**
+   * Processes queued per-world background uploads one by one without blocking UI navigation.
+   */
+  public async processPendingWorldSyncQueue(): Promise<void> {
+    if (this.isProcessingQueue) return;
+    const user = this.currentUser || auth.currentUser;
+    if (!user || !user.uid || !user.emailVerified) return;
+
+    this.isProcessingQueue = true;
+    try {
+      while (this.pendingWorldSyncReasons.size > 0) {
+        const nextEntry = this.pendingWorldSyncReasons.entries().next().value;
+        if (!nextEntry) break;
+        const [worldId] = nextEntry;
+        this.pendingWorldSyncReasons.delete(worldId);
+
+        const compactLocal = await SaveManager.getCompactWorldForCloud(worldId);
+        if (!compactLocal) {
+          this.worldSyncStates.delete(worldId);
+          continue;
+        }
+
+        const canonicalHash = SaveManager.computeCanonicalSyncHash(compactLocal);
+        if (
+          compactLocal.metadata.syncPending === false &&
+          compactLocal.metadata.lastSyncedContentHash === canonicalHash &&
+          compactLocal.metadata.lastSyncedRevisionId
+        ) {
+          this.worldSyncStates.set(worldId, {
+            worldId,
+            status: 'SYNCED',
+            error: null,
+            updatedAt: Date.now(),
+            lastRevisionId: compactLocal.metadata.lastSyncedRevisionId,
+          });
+          this.notifyListeners();
+          continue;
+        }
+
+        try {
+          await this.uploadWorldToCloud(compactLocal);
+        } catch (err: any) {
+          this.worldSyncStates.set(worldId, {
+            worldId,
+            status: 'ERROR',
+            error: err?.message || 'Falha ao sincronizar mundo em segundo plano.',
+            updatedAt: Date.now(),
+          });
+          this.notifyListeners();
+        }
+      }
+    } finally {
+      this.isProcessingQueue = false;
+      this.notifyListeners();
     }
   }
 
@@ -322,6 +493,7 @@ class FirebaseCloudSyncService {
       await this.fetchUserEntitlements(user.uid);
       await this.syncAllWorldsWithCloud();
       await this.syncAllGuestProfilesWithCloud();
+      void this.processPendingWorldSyncQueue();
 
       this.syncStatus = 'SYNCED';
       this.lastSyncedAt = Date.now();
@@ -706,40 +878,140 @@ class FirebaseCloudSyncService {
   }
 
   /**
-   * Uploads a world save incrementally using the v2 Hybrid Cloud Storage Engine:
+   * Uploads a world save incrementally using the v2 Hybrid Cloud Storage Engine with single-flight deduplication:
+   * - Never runs two concurrent uploads for the same `worldId`.
    * - Only modified chunks are uploaded to independent chunk/Storage objects.
-   * - `/users/{uid}/worlds/{worldId}` stores ONLY lightweight metadata & manifest pointers (~1.2 KB),
-   *   eliminating the 1 MB Firestore document limit for worlds of 3 MB, 50 MB, 100 MB, or 500 MB+.
+   * - Marks the local world as synced (`SaveManager.markWorldCloudSynced`) ONLY AFTER the Cloud Firestore
+   *   revision is confirmed.
    */
   public async uploadWorldToCloud(
-    saveData: WorldSaveData
-  ): Promise<{ ok: boolean; message: string }> {
+    saveDataOrWorldId: WorldSaveData | string
+  ): Promise<{
+    ok: boolean;
+    message: string;
+    noNewRevisionCreated?: boolean;
+    chunksUploaded?: number;
+    unchangedChunksSkipped?: number;
+    telemetry?: CloudPublishTelemetry;
+  }> {
+    const rawId =
+      typeof saveDataOrWorldId === 'string'
+        ? saveDataOrWorldId
+        : saveDataOrWorldId.metadata?.id;
+    const worldId = sanitizeValidId(rawId || `world_${Date.now()}`);
+
+    // Single-flight deduplication per worldId
+    const existingUpload = this.activeWorldUploads.get(worldId);
+    if (existingUpload) {
+      return existingUpload;
+    }
+
     const user = this.currentUser || auth.currentUser;
     if (!user || !user.uid || !user.emailVerified) {
+      this.pendingWorldSyncReasons.set(worldId, 'unauthenticated_retry');
+      this.worldSyncStates.set(worldId, {
+        worldId,
+        status: 'PENDING',
+        error: null,
+        updatedAt: Date.now(),
+      });
+      this.notifyListeners();
       return { ok: false, message: 'Usuário não autenticado no Firebase.' };
     }
 
-    const uid = sanitizeValidId(user.uid);
-    const profileOk = await this.ensureUserProfileSynced(user);
-    if (!profileOk) {
-      return { ok: false, message: 'Perfil Firebase ainda não sincronizado.' };
-    }
+    const uploadPromise = (async () => {
+      const uid = sanitizeValidId(user.uid);
+      this.worldSyncStates.set(worldId, {
+        worldId,
+        status: 'SYNCING',
+        error: null,
+        updatedAt: Date.now(),
+      });
+      this.syncStatus = 'SYNCING';
+      this.notifyListeners();
 
-    const legacyUid = this.getOrStoreLegacyLocalUid();
-    const result = await cloudWorldStorageEngine.publishWorldIncremental(
-      saveData,
-      uid,
-      legacyUid,
-      (prog) => this.updateTransferProgress(prog)
-    );
+      try {
+        const profileOk = await this.ensureUserProfileSynced(user);
+        if (!profileOk) {
+          throw new Error('Perfil Firebase ainda não sincronizado.');
+        }
 
-    this.lastSyncedAt = Date.now();
-    this.syncStatus = 'SYNCED';
-    this.notifyListeners();
-    return {
-      ok: result.ok,
-      message: `Mundo sincronizado (${result.chunksUploaded} parte(s) enviada(s), ${result.unchangedChunksSkipped} inalterada(s))!`,
-    };
+        // Always read the latest compact local state so coalesced saves upload the freshest snapshot
+        const latestCompact =
+          (await SaveManager.getCompactWorldForCloud(worldId)) ||
+          (typeof saveDataOrWorldId !== 'string'
+            ? SaveManager.compactSaveDataForStorage(saveDataOrWorldId, true, 14, true)
+            : null);
+
+        if (!latestCompact) {
+          throw new Error(`Mundo local ${worldId} não encontrado para sincronização.`);
+        }
+
+        const legacyUid = this.getOrStoreLegacyLocalUid();
+        const result = await cloudWorldStorageEngine.publishWorldIncremental(
+          latestCompact,
+          uid,
+          legacyUid,
+          (prog) => this.updateTransferProgress(prog)
+        );
+
+        // CRITICAL: Only mark the world as synced AFTER the revision is confirmed in Cloud Firestore
+        if (result.ok) {
+          await SaveManager.markWorldCloudSynced(worldId, {
+            revisionId: result.revisionId,
+            manifestHash: result.manifestHash,
+            contentHash: result.contentHash,
+          });
+          this.worldSyncStates.set(worldId, {
+            worldId,
+            status: 'SYNCED',
+            error: null,
+            updatedAt: Date.now(),
+            lastRevisionId: result.revisionId,
+            lastChunksUploaded: result.chunksUploaded,
+            lastUnchangedChunksSkipped: result.unchangedChunksSkipped,
+          });
+        }
+
+        this.lastSyncedAt = Date.now();
+        if (this.pendingWorldSyncReasons.size === 0 && this.activeWorldUploads.size <= 1) {
+          this.syncStatus = 'SYNCED';
+        }
+        this.notifyListeners();
+
+        const msg = result.noNewRevisionCreated
+          ? `Mundo "${latestCompact.metadata.name}" já estava idêntico na nuvem (0 partes enviadas).`
+          : `Mundo sincronizado (${result.chunksUploaded} parte(s) enviada(s), ${result.unchangedChunksSkipped} inalterada(s))!`;
+
+        return {
+          ok: result.ok,
+          message: msg,
+          noNewRevisionCreated: result.noNewRevisionCreated,
+          chunksUploaded: result.chunksUploaded,
+          unchangedChunksSkipped: result.unchangedChunksSkipped,
+          telemetry: result.telemetry,
+        };
+      } catch (err: any) {
+        const errMsg =
+          err?.message || 'Erro durante sincronização incremental do mundo.';
+        this.worldSyncStates.set(worldId, {
+          worldId,
+          status: 'ERROR',
+          error: errMsg,
+          updatedAt: Date.now(),
+        });
+        this.syncStatus = 'ERROR';
+        this.statusMessage = errMsg;
+        this.notifyListeners();
+        throw err;
+      } finally {
+        this.activeWorldUploads.delete(worldId);
+        this.notifyListeners();
+      }
+    })();
+
+    this.activeWorldUploads.set(worldId, uploadPromise);
+    return uploadPromise;
   }
 
   /**
@@ -840,6 +1112,9 @@ class FirebaseCloudSyncService {
     const uid = sanitizeValidId(user.uid);
     const cleanWorldId = sanitizeValidId(worldId);
 
+    this.pendingWorldSyncReasons.delete(cleanWorldId);
+    this.worldSyncStates.delete(cleanWorldId);
+
     await cloudWorldStorageEngine.deleteWorldAndChunksFromCloud(
       uid,
       cleanWorldId
@@ -850,10 +1125,13 @@ class FirebaseCloudSyncService {
   }
 
   /**
-   * Performs a non-destructive bi-directional migration & incremental sync between local storage (IndexedDB/localStorage)
+   * Performs intelligent, non-destructive 4-case synchronization between local storage (IndexedDB/localStorage)
    * and Cloud Firestore + Storage (`/users/{uid}/worlds/{worldId}` + `/chunks/{chunkKey}`):
-   * - Local worlds that are not yet in Cloud (or have a newer timestamp locally, or are still in v1 format) are uploaded incrementally.
-   * - Cloud worlds that are not on this device (or have a newer timestamp in Cloud) are reconstructed from their independent chunks and saved locally.
+   * - Case A (Already Synced & Unchanged): Recognizes identical content/revision immediately with 0 chunk transfers and no new revision.
+   * - Case B (Synced with Local Changes): Uploads ONLY modified chunks + updated entities/manifest.
+   * - Case C (New Local World): Uploads all initial units and registers cloud revision.
+   * - Case D (Cloud-Only World): Downloads & reconstructs locally without overwriting any local world.
+   * - Conflict (Divergent Local & Cloud Changes): Preserves both versions safely via `SaveManager.saveDivergentWorldAsCopy`.
    */
   public async syncAllWorldsWithCloud(): Promise<WorldMetadata[]> {
     const user = this.currentUser || auth.currentUser;
@@ -865,29 +1143,71 @@ class FirebaseCloudSyncService {
     }
 
     this.activeWorldsSyncPromise = (async () => {
+      const batchStartMs = performance.now();
+      const summary: CloudSyncBatchSummary = {
+        completedAt: Date.now(),
+        unchangedSkippedWorldIds: [],
+        incrementalUploadedWorldIds: [],
+        newUploadedWorldIds: [],
+        downloadedWorldIds: [],
+        conflictPreservedWorldIds: [],
+        totalChunksUploaded: 0,
+        totalChunksSkipped: 0,
+        durationMs: 0,
+      };
+
       const uid = sanitizeValidId(user.uid);
+      this.syncStatus = 'SYNCING';
+      this.statusMessage = 'Verificando mundos locais e na nuvem...';
+      this.notifyListeners();
+
       await SaveManager.hydrateFromIndexedDB();
       await this.ensureUserProfileSynced(user);
 
+      // Check for any interrupted upload queues for this user
+      const interruptedQueues = await persistentUploadQueue.listAllQueuesForUser(uid);
+      const interruptedWorldIds = new Set(interruptedQueues.map((q) => q.worldId));
+
       const worldsPath = `users/${uid}/worlds`;
       const worldsCol = collection(db, 'users', uid, 'worlds');
-      // Rule-compliant query: explicitly filters by ownerId == uid
       const q = query(worldsCol, where('ownerId', '==', uid));
 
-      let cloudDocs: {
+      interface CloudWorldSummaryDoc {
         id: string;
+        name: string;
         clientUpdatedAt: number;
         storageVersion: number;
-      }[] = [];
+        manifestHash: string;
+        activeRevisionId: string;
+        previousRevisionId: string;
+        contentHash: string;
+        gameplayHash: string;
+        originWorldId: string;
+        isCopy: boolean;
+        copyNumber: number;
+      }
+
+      let cloudDocs: CloudWorldSummaryDoc[] = [];
 
       try {
         const snap = await getDocs(q);
         cloudDocs = snap.docs.map((d) => {
           const data = d.data();
+          const summaryMap =
+            (data.chunkIndexSummary as Record<string, unknown> | undefined) || {};
           return {
             id: String(data.worldId || d.id),
+            name: String(data.name || 'Mundo'),
             clientUpdatedAt: Number(data.clientUpdatedAt || 0),
             storageVersion: Number(data.storageVersion || 1),
+            manifestHash: String(data.checksum || ''),
+            activeRevisionId: String(data.activeRevisionId || ''),
+            previousRevisionId: String(data.previousRevisionId || ''),
+            contentHash: String(summaryMap.contentHash || ''),
+            gameplayHash: String(summaryMap.gameplayHash || ''),
+            originWorldId: String(summaryMap.originWorldId || data.worldId || d.id),
+            isCopy: Boolean(summaryMap.isCopy),
+            copyNumber: Math.max(0, Math.floor(Number(summaryMap.copyNumber || 0))),
           };
         });
       } catch (err) {
@@ -898,11 +1218,12 @@ class FirebaseCloudSyncService {
       const localList = SaveManager.listWorlds();
       const localById = new Map(localList.map((w) => [w.id, w]));
 
-      // 1. Download any Cloud worlds that are missing locally or newer in Cloud
+      // 1. Handle Cloud-Only Worlds (Case D) and Bi-Directional Comparison (Cases A, B, and Conflict)
       for (const cloudEntry of cloudDocs) {
         const localMeta = localById.get(cloudEntry.id);
-        const localUpdatedAt = Number(localMeta?.updatedAt || 0);
-        if (!localMeta || cloudEntry.clientUpdatedAt > localUpdatedAt) {
+
+        if (!localMeta) {
+          // CASE D: World exists only in the cloud — download & reconstruct safely
           const reconstructed =
             await cloudWorldStorageEngine.downloadAndReconstructWorld(
               uid,
@@ -912,41 +1233,246 @@ class FirebaseCloudSyncService {
           if (reconstructed && reconstructed.metadata) {
             reconstructed.player.persistentPlayerId = uid;
             await SaveManager.saveWorldGuaranteed(reconstructed, true);
-            // If this cloud world was still in legacy v1 format, migrate it to v2 chunked format automatically!
+            const canonicalHash = SaveManager.computeCanonicalSyncHash(reconstructed);
+            await SaveManager.markWorldCloudSynced(reconstructed.metadata.id, {
+              revisionId:
+                reconstructed.metadata.lastSyncedRevisionId ||
+                cloudEntry.activeRevisionId ||
+                'rev_cloud',
+              manifestHash:
+                reconstructed.metadata.lastSyncedManifestHash ||
+                cloudEntry.manifestHash,
+              contentHash: cloudEntry.contentHash || canonicalHash,
+            });
+            this.worldSyncStates.set(reconstructed.metadata.id, {
+              worldId: reconstructed.metadata.id,
+              status: 'SYNCED',
+              error: null,
+              updatedAt: Date.now(),
+              lastRevisionId:
+                reconstructed.metadata.lastSyncedRevisionId ||
+                cloudEntry.activeRevisionId,
+            });
+            summary.downloadedWorldIds.push(reconstructed.metadata.id);
+
+            // If legacy v1 format in cloud, migrate to v2 chunked format
             if (cloudEntry.storageVersion !== 2) {
-              await this.uploadWorldToCloud(reconstructed);
+              const upRes = await this.uploadWorldToCloud(reconstructed);
+              summary.totalChunksUploaded += upRes.chunksUploaded || 0;
+              summary.totalChunksSkipped += upRes.unchangedChunksSkipped || 0;
             }
           }
+          continue;
         }
+
+        // Both Local and Cloud exist for `cloudEntry.id`
+        const fullLocal = await SaveManager.getCompactWorldForCloud(localMeta.id);
+        if (!fullLocal) continue;
+
+        const localContentHash = SaveManager.computeCanonicalSyncHash(fullLocal);
+        const cloudContentHash = cloudEntry.contentHash || '';
+        const hasInterruptedQueue = interruptedWorldIds.has(localMeta.id);
+
+        const contentIdentical =
+          !hasInterruptedQueue &&
+          cloudEntry.storageVersion === 2 &&
+          Boolean(cloudContentHash && localContentHash === cloudContentHash);
+
+        const localSyncedRev = localMeta.lastSyncedRevisionId || '';
+        const cloudActiveRev = cloudEntry.activeRevisionId || '';
+
+        const localModifiedSinceLastSync =
+          hasInterruptedQueue ||
+          localMeta.syncPending !== false ||
+          (Boolean(localMeta.lastSyncedContentHash) &&
+            localMeta.lastSyncedContentHash !== localContentHash);
+
+        const cloudModifiedSinceLastSync =
+          Boolean(
+            cloudActiveRev &&
+              localSyncedRev &&
+              cloudActiveRev !== localSyncedRev
+          ) && !contentIdentical;
+
+        // CASE A: World is already synchronized and unchanged
+        if (
+          contentIdentical ||
+          (!hasInterruptedQueue &&
+            cloudEntry.storageVersion === 2 &&
+            !localModifiedSinceLastSync &&
+            !cloudModifiedSinceLastSync &&
+            Boolean(localSyncedRev && localSyncedRev === cloudActiveRev))
+        ) {
+          await SaveManager.markWorldCloudSynced(localMeta.id, {
+            revisionId: cloudActiveRev || localSyncedRev || 'rev_synced',
+            manifestHash:
+              cloudEntry.manifestHash || localMeta.lastSyncedManifestHash || '',
+            contentHash: localContentHash,
+          });
+          this.worldSyncStates.set(localMeta.id, {
+            worldId: localMeta.id,
+            status: 'SYNCED',
+            error: null,
+            updatedAt: Date.now(),
+            lastRevisionId: cloudActiveRev || localSyncedRev,
+            lastChunksUploaded: 0,
+            lastUnchangedChunksSkipped: Object.keys(fullLocal.chunks || {}).length,
+          });
+          summary.unchangedSkippedWorldIds.push(localMeta.id);
+          summary.totalChunksSkipped +=
+            Object.keys(fullLocal.chunks || {}).length +
+            Object.keys(fullLocal.undergroundChunks || {}).length;
+          continue;
+        }
+
+        // DIVERGENCE CONFLICT: Both Local and Cloud were modified independently!
+        if (localModifiedSinceLastSync && cloudModifiedSinceLastSync) {
+          const cloudReconstructed =
+            await cloudWorldStorageEngine.downloadAndReconstructWorld(
+              uid,
+              cloudEntry.id,
+              (prog) => this.updateTransferProgress(prog)
+            );
+          if (cloudReconstructed && cloudReconstructed.metadata) {
+            cloudReconstructed.player.persistentPlayerId = uid;
+            const localUpdatedAt = Number(localMeta.updatedAt || 0);
+            const cloudUpdatedAt = Number(cloudEntry.clientUpdatedAt || 0);
+
+            if (localUpdatedAt >= cloudUpdatedAt) {
+              // Keep local as primary, preserve cloud version as a safe copy instance
+              const preservedCopy = await SaveManager.saveDivergentWorldAsCopy(
+                cloudReconstructed,
+                localMeta.id,
+                'cloud_conflict'
+              );
+              const primaryRes = await this.uploadWorldToCloud(fullLocal);
+              const copyRes = await this.uploadWorldToCloud(preservedCopy);
+              summary.conflictPreservedWorldIds.push(preservedCopy.metadata.id);
+              summary.incrementalUploadedWorldIds.push(localMeta.id);
+              summary.newUploadedWorldIds.push(preservedCopy.metadata.id);
+              summary.totalChunksUploaded +=
+                (primaryRes.chunksUploaded || 0) + (copyRes.chunksUploaded || 0);
+              summary.totalChunksSkipped +=
+                (primaryRes.unchangedChunksSkipped || 0) +
+                (copyRes.unchangedChunksSkipped || 0);
+            } else {
+              // Keep newer cloud version as primary, preserve local version as a safe copy instance
+              const preservedLocalCopy = await SaveManager.saveDivergentWorldAsCopy(
+                fullLocal,
+                localMeta.id,
+                'local_conflict'
+              );
+              await SaveManager.saveWorldGuaranteed(cloudReconstructed, true);
+              await SaveManager.markWorldCloudSynced(cloudReconstructed.metadata.id, {
+                revisionId: cloudActiveRev,
+                manifestHash: cloudEntry.manifestHash,
+                contentHash:
+                  cloudEntry.contentHash ||
+                  SaveManager.computeCanonicalSyncHash(cloudReconstructed),
+              });
+              const copyRes = await this.uploadWorldToCloud(preservedLocalCopy);
+              summary.conflictPreservedWorldIds.push(preservedLocalCopy.metadata.id);
+              summary.downloadedWorldIds.push(localMeta.id);
+              summary.newUploadedWorldIds.push(preservedLocalCopy.metadata.id);
+              summary.totalChunksUploaded += copyRes.chunksUploaded || 0;
+              summary.totalChunksSkipped += copyRes.unchangedChunksSkipped || 0;
+            }
+            continue;
+          }
+        }
+
+        // Cloud is strictly newer and local had no unsynced edits
+        if (!localModifiedSinceLastSync && cloudModifiedSinceLastSync) {
+          const reconstructed =
+            await cloudWorldStorageEngine.downloadAndReconstructWorld(
+              uid,
+              cloudEntry.id,
+              (prog) => this.updateTransferProgress(prog)
+            );
+          if (reconstructed && reconstructed.metadata) {
+            reconstructed.player.persistentPlayerId = uid;
+            await SaveManager.saveWorldGuaranteed(reconstructed, true);
+            await SaveManager.markWorldCloudSynced(reconstructed.metadata.id, {
+              revisionId: cloudActiveRev,
+              manifestHash: cloudEntry.manifestHash,
+              contentHash:
+                cloudEntry.contentHash ||
+                SaveManager.computeCanonicalSyncHash(reconstructed),
+            });
+            this.worldSyncStates.set(reconstructed.metadata.id, {
+              worldId: reconstructed.metadata.id,
+              status: 'SYNCED',
+              error: null,
+              updatedAt: Date.now(),
+              lastRevisionId: cloudActiveRev,
+            });
+            summary.downloadedWorldIds.push(reconstructed.metadata.id);
+          }
+          continue;
+        }
+
+        // CASE B: Synced world with local changes (or needs v1->v2 migration / interrupted upload resume)
+        const upRes = await this.uploadWorldToCloud(fullLocal);
+        if (upRes.noNewRevisionCreated) {
+          summary.unchangedSkippedWorldIds.push(localMeta.id);
+        } else {
+          summary.incrementalUploadedWorldIds.push(localMeta.id);
+        }
+        summary.totalChunksUploaded += upRes.chunksUploaded || 0;
+        summary.totalChunksSkipped += upRes.unchangedChunksSkipped || 0;
       }
 
-      // 2. Upload any Local worlds that are missing in Cloud, newer locally, or need v1->v2 migration
-      const updatedLocalList = SaveManager.listWorlds();
+      // 2. Handle New Local Worlds not yet in Cloud (Case C)
+      const currentLocalList = SaveManager.listWorlds();
       let totalInCloud = cloudById.size;
 
-      for (const localMeta of updatedLocalList) {
-        const cloudEntry = cloudById.get(localMeta.id);
-        const localUpdatedAt = Number(localMeta.updatedAt || 0);
-        const cloudUpdatedAt = Number(cloudEntry?.clientUpdatedAt || 0);
-        const needsMigrationToV2 =
-          cloudEntry !== undefined && cloudEntry.storageVersion !== 2;
+      for (const localMeta of currentLocalList) {
+        if (cloudById.has(localMeta.id)) continue;
+        // Skip if already uploaded during conflict resolution above
+        if (summary.newUploadedWorldIds.includes(localMeta.id)) {
+          totalInCloud += 1;
+          continue;
+        }
 
-        if (!cloudEntry || localUpdatedAt > cloudUpdatedAt || needsMigrationToV2) {
-          const fullLocal =
-            (await SaveManager.loadWorldGuaranteed(localMeta.id)) ||
-            SaveManager.loadWorldLocal(localMeta.id);
-          if (fullLocal) {
-            await this.uploadWorldToCloud(fullLocal);
-            if (!cloudEntry) {
-              totalInCloud += 1;
-            }
-          }
+        const fullLocal = await SaveManager.getCompactWorldForCloud(localMeta.id);
+        if (fullLocal) {
+          const upRes = await this.uploadWorldToCloud(fullLocal);
+          summary.newUploadedWorldIds.push(localMeta.id);
+          summary.totalChunksUploaded += upRes.chunksUploaded || 0;
+          summary.totalChunksSkipped += upRes.unchangedChunksSkipped || 0;
+          totalInCloud += 1;
         }
       }
 
+      summary.durationMs = Math.round(performance.now() - batchStartMs);
+      summary.completedAt = Date.now();
+      this.lastSyncSummary = summary;
       this.cloudWorldsCount = totalInCloud;
       this.lastSyncedAt = Date.now();
       this.syncStatus = 'SYNCED';
+
+      const partsSummary: string[] = [];
+      if (summary.unchangedSkippedWorldIds.length > 0) {
+        partsSummary.push(
+          `${summary.unchangedSkippedWorldIds.length} já sincronizado(s)`
+        );
+      }
+      if (summary.incrementalUploadedWorldIds.length > 0) {
+        partsSummary.push(
+          `${summary.incrementalUploadedWorldIds.length} atualizado(s) (${summary.totalChunksUploaded} partes)`
+        );
+      }
+      if (summary.newUploadedWorldIds.length > 0) {
+        partsSummary.push(`${summary.newUploadedWorldIds.length} novo(s) enviado(s)`);
+      }
+      if (summary.downloadedWorldIds.length > 0) {
+        partsSummary.push(`${summary.downloadedWorldIds.length} baixado(s)`);
+      }
+      this.statusMessage =
+        partsSummary.length > 0
+          ? `Sincronização concluída: ${partsSummary.join(', ')}.`
+          : 'Todos os mundos estão sincronizados na nuvem!';
+
       this.notifyListeners();
       return SaveManager.listWorlds();
     })();
