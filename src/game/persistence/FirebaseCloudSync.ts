@@ -443,23 +443,32 @@ class FirebaseCloudSyncService {
         const privPath = `users/${uid}/private/account`;
         const privRef = doc(db, 'users', uid, 'private', 'account');
         const cleanEmail = sanitizeString(user.email, 3, 254, 'user@example.com');
+        let privSnap;
         try {
-          const privSnap = await getDoc(privRef);
-          if (!privSnap.exists()) {
+          privSnap = await getDoc(privRef);
+        } catch (err) {
+          handleFirestoreError(err, OperationType.GET, privPath);
+        }
+        if (!privSnap.exists()) {
+          try {
             await setDoc(privRef, {
               uid,
               email: cleanEmail,
               createdAt: serverTimestamp(),
               updatedAt: serverTimestamp(),
             });
-          } else {
+          } catch (err) {
+            handleFirestoreError(err, OperationType.CREATE, privPath);
+          }
+        } else {
+          try {
             await updateDoc(privRef, {
               email: cleanEmail,
               updatedAt: serverTimestamp(),
             });
+          } catch (err) {
+            handleFirestoreError(err, OperationType.UPDATE, privPath);
           }
-        } catch (err) {
-          handleFirestoreError(err, OperationType.WRITE, privPath);
         }
       }
 
@@ -676,33 +685,109 @@ class FirebaseCloudSyncService {
     const worldPath = `users/${uid}/worlds/${worldId}`;
     const worldRef = doc(db, 'users', uid, 'worlds', worldId);
 
+    let existingSnap;
     try {
-      const existingSnap = await getDoc(worldRef);
-      if (!existingSnap.exists()) {
+      existingSnap = await getDoc(worldRef);
+    } catch (err) {
+      handleFirestoreError(err, OperationType.GET, worldPath);
+    }
+
+    if (!existingSnap.exists()) {
+      try {
         await setDoc(worldRef, {
           ...docFields,
           createdAt: serverTimestamp(),
           updatedAt: serverTimestamp(),
         });
-      } else {
-        // Update mutable fields only (preserving immutable worldId, ownerId, seed, createdAt)
-        const {
-          worldId: _w,
-          ownerId: _o,
-          seed: _s,
-          ...mutableFields
-        } = docFields;
+      } catch (err) {
+        handleFirestoreError(err, OperationType.CREATE, worldPath);
+      }
+    } else {
+      // Update mutable fields only (preserving immutable worldId, ownerId, seed, createdAt)
+      const {
+        worldId: _w,
+        ownerId: _o,
+        seed: _s,
+        ...mutableFields
+      } = docFields;
+      try {
         await updateDoc(worldRef, {
           ...mutableFields,
           updatedAt: serverTimestamp(),
         });
+      } catch (err) {
+        handleFirestoreError(err, OperationType.UPDATE, worldPath);
       }
-      this.lastSyncedAt = Date.now();
-      this.syncStatus = 'SYNCED';
-      this.notifyListeners();
-      return { ok: true, message: 'Mundo salvo no Cloud Firestore!' };
+    }
+
+    this.lastSyncedAt = Date.now();
+    this.syncStatus = 'SYNCED';
+    this.notifyListeners();
+    return { ok: true, message: 'Mundo salvo no Cloud Firestore!' };
+  }
+
+  /**
+   * Synchronizes an individual modified chunk document to `/users/{uid}/worlds/{worldId}/chunks/{chunkKey}`.
+   */
+  public async syncWorldChunkToCloud(
+    worldId: string,
+    rawChunkKey: string,
+    layer: 'surface' | 'underground',
+    chunkPayload: Record<string, unknown>,
+    clientUpdatedAt = Date.now()
+  ): Promise<void> {
+    const user = this.currentUser || auth.currentUser;
+    if (!user || !user.uid || !user.emailVerified) return;
+
+    const uid = sanitizeValidId(user.uid);
+    const cleanWorldId = sanitizeValidId(worldId);
+    const cleanChunkKey = sanitizeValidId(`${layer}_${rawChunkKey}`);
+    const chunkPath = `users/${uid}/worlds/${cleanWorldId}/chunks/${cleanChunkKey}`;
+    const chunkRef = doc(
+      db,
+      'users',
+      uid,
+      'worlds',
+      cleanWorldId,
+      'chunks',
+      cleanChunkKey
+    );
+
+    const sanitizedChunkData = sanitizeForFirestore(chunkPayload);
+    const clientUpdatedAtInt = Math.max(0, Math.floor(Number(clientUpdatedAt) || Date.now()));
+
+    let snap;
+    try {
+      snap = await getDoc(chunkRef);
     } catch (err) {
-      handleFirestoreError(err, OperationType.WRITE, worldPath);
+      handleFirestoreError(err, OperationType.GET, chunkPath);
+    }
+
+    if (!snap.exists()) {
+      try {
+        await setDoc(chunkRef, {
+          chunkKey: cleanChunkKey,
+          worldId: cleanWorldId,
+          ownerId: uid,
+          layer,
+          chunkData: sanitizedChunkData,
+          clientUpdatedAt: clientUpdatedAtInt,
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        });
+      } catch (err) {
+        handleFirestoreError(err, OperationType.CREATE, chunkPath);
+      }
+    } else {
+      try {
+        await updateDoc(chunkRef, {
+          chunkData: sanitizedChunkData,
+          clientUpdatedAt: clientUpdatedAtInt,
+          updatedAt: serverTimestamp(),
+        });
+      } catch (err) {
+        handleFirestoreError(err, OperationType.UPDATE, chunkPath);
+      }
     }
   }
 
@@ -859,9 +944,15 @@ class FirebaseCloudSyncService {
       Math.floor(Number(guestPlayer.savedAt || Date.now()))
     );
 
+    let snap;
     try {
-      const snap = await getDoc(guestRef);
-      if (!snap.exists()) {
+      snap = await getDoc(guestRef);
+    } catch (err) {
+      handleFirestoreError(err, OperationType.GET, guestPath);
+    }
+
+    if (!snap.exists()) {
+      try {
         await setDoc(guestRef, {
           worldId: cleanWorldId,
           ownerId: uid,
@@ -871,16 +962,20 @@ class FirebaseCloudSyncService {
           createdAt: serverTimestamp(),
           updatedAt: serverTimestamp(),
         });
-      } else {
+      } catch (err) {
+        handleFirestoreError(err, OperationType.CREATE, guestPath);
+      }
+    } else {
+      try {
         await updateDoc(guestRef, {
           playerLevel: playerLevelInt,
           clientUpdatedAt: clientUpdatedAtInt,
           playerPayload,
           updatedAt: serverTimestamp(),
         });
+      } catch (err) {
+        handleFirestoreError(err, OperationType.UPDATE, guestPath);
       }
-    } catch (err) {
-      handleFirestoreError(err, OperationType.WRITE, guestPath);
     }
   }
 

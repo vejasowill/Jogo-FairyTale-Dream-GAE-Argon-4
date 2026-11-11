@@ -4,17 +4,19 @@
 
 1. **Master Gate & Ownership Isolation**:
    - Every `/users/{userId}` document can only be read, created, or updated by the authenticated user whose `request.auth.uid == userId` and `request.auth.token.email_verified == true`.
-   - Every sub-document in `/users/{userId}/private/{docId}`, `/users/{userId}/worlds/{worldId}`, and `/users/{userId}/guestProfiles/{worldId}` requires:
+   - Every sub-document in `/users/{userId}/private/{docId}`, `/users/{userId}/worlds/{worldId}`, `/users/{userId}/worlds/{worldId}/chunks/{chunkKey}`, and `/users/{userId}/guestProfiles/{worldId}` requires:
      - `request.auth != null` and `request.auth.uid == userId`
-     - Parent `/users/{userId}` existence (`exists(/databases/$(database)/documents/users/$(userId))`) and `get(/databases/$(database)/documents/users/$(userId)).data.uid == request.auth.uid` on single-document writes (`create`, `update`, `delete`) and `get`.
+     - On `allow get`: `(resource == null || existing().uid == request.auth.uid)` (for `/private/{docId}`) or `(resource == null || existing().ownerId == request.auth.uid)` (for `/worlds/{worldId}`, `/worlds/{worldId}/chunks/{chunkKey}`, `/guestProfiles/{worldId}`, and `/entitlements/{entitlementId}`) so that `getDoc` before `setDoc` on a non-existent document succeeds for the authenticated owner (`userId == request.auth.uid`) while blocking any other user.
+     - Parent `/users/{userId}` existence (`exists(/databases/$(database)/documents/users/$(userId)) || existsAfter(/databases/$(database)/documents/users/$(userId))`) and ownership check on single-document writes (`create`, `update`, `delete`).
+     - Parent `/users/{userId}/worlds/{worldId}` existence (`exists` or `existsAfter`) on `/chunks/{chunkKey}` writes.
      - Explicit `resource.data.ownerId == request.auth.uid` check on `list` queries (without `get()` inside `allow list` to prevent $O(n)$ read cost attacks).
 2. **PII Split Collection Strategy**:
-   - Email (`email`) is strictly isolated in `/users/{userId}/private/{docId}` (`docId == 'account'`) and never stored in `/users/{userId}`. Access is strictly restricted to `isOwner(userId)`.
+   - Email (`email`) is strictly isolated in `/users/{userId}/private/{docId}` (`docId == 'account'`) and never stored in `/users/{userId}`. Access is strictly restricted to `isOwner(userId)` and only fields `['uid', 'email', 'createdAt', 'updatedAt']` are allowed.
 3. **Immutable Identity & Creation Timestamps**:
-   - `uid`, `ownerId`, `worldId`, and `createdAt` are strictly immutable across all `update` operations.
+   - `uid`, `ownerId`, `worldId`, `chunkKey`, and `createdAt` are strictly immutable across all `update` operations.
    - `createdAt` on `create` and `updatedAt` on `create`/`update` must equal `request.time`.
 4. **System-Only Entitlements (Microtransaction & Exclusive Content Readiness)**:
-   - `/users/{userId}/entitlements/{entitlementId}` is strictly read-only (`get`, `list`) for the authenticated owner (`request.auth.uid == userId && resource.data.ownerId == request.auth.uid`).
+   - `/users/{userId}/entitlements/{entitlementId}` is strictly read-only (`get`, `list`) for the authenticated owner (`request.auth.uid == userId && (resource == null || resource.data.ownerId == request.auth.uid)`).
    - All client writes (`create`, `update`, `delete`) to `/users/{userId}/entitlements/{entitlementId}` are unconditionally denied (`if false;`), ensuring only the backend Firebase Admin SDK can grant or revoke purchases and exclusive items.
 
 ---

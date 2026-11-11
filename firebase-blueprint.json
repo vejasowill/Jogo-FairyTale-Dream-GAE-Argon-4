@@ -323,6 +323,70 @@
         "status",
         "grantedAt"
       ]
+    },
+    "CloudWorldChunk": {
+      "title": "CloudWorldChunk",
+      "description": "Individual modified chunk document belonging to a saved world in Cloud Firestore.",
+      "type": "object",
+      "properties": {
+        "chunkKey": {
+          "type": "string",
+          "description": "Chunk coordinate identifier (e.g., surface_0_0 or underground_0_0).",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "worldId": {
+          "type": "string",
+          "description": "Parent world identifier.",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "ownerId": {
+          "type": "string",
+          "description": "Firebase Auth UID of the world owner.",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "layer": {
+          "type": "string",
+          "description": "World layer of this chunk.",
+          "enum": [
+            "surface",
+            "underground"
+          ]
+        },
+        "chunkData": {
+          "type": "object",
+          "description": "Serialized ChunkData deltas (tiles, natureNodes, placeables)."
+        },
+        "clientUpdatedAt": {
+          "type": "integer",
+          "description": "Client epoch timestamp (ms) when this chunk was saved."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when the chunk document was created."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when the chunk document was last updated."
+        }
+      },
+      "required": [
+        "chunkKey",
+        "worldId",
+        "ownerId",
+        "layer",
+        "chunkData",
+        "clientUpdatedAt",
+        "createdAt",
+        "updatedAt"
+      ]
     }
   },
   "firestore": {
@@ -337,6 +401,10 @@
     "/users/{userId}/worlds/{worldId}": {
       "schema": "CloudWorldSave",
       "description": "Player's saved worlds subcollection."
+    },
+    "/users/{userId}/worlds/{worldId}/chunks/{chunkKey}": {
+      "schema": "CloudWorldChunk",
+      "description": "Modified chunks subcollection belonging to a saved world."
     },
     "/users/{userId}/guestProfiles/{worldId}": {
       "schema": "CloudGuestProfile",

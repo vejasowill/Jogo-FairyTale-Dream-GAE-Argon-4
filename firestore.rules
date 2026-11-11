@@ -37,8 +37,23 @@ service cloud.firestore {
     }
 
     function parentUserExists(userId) {
-      return exists(/databases/$(database)/documents/users/$(userId)) &&
-        get(/databases/$(database)/documents/users/$(userId)).data.uid == request.auth.uid;
+      return (
+        exists(/databases/$(database)/documents/users/$(userId)) &&
+        get(/databases/$(database)/documents/users/$(userId)).data.uid == request.auth.uid
+      ) || (
+        existsAfter(/databases/$(database)/documents/users/$(userId)) &&
+        getAfter(/databases/$(database)/documents/users/$(userId)).data.uid == request.auth.uid
+      );
+    }
+
+    function parentWorldExists(userId, worldId) {
+      return (
+        exists(/databases/$(database)/documents/users/$(userId)/worlds/$(worldId)) &&
+        get(/databases/$(database)/documents/users/$(userId)/worlds/$(worldId)).data.ownerId == request.auth.uid
+      ) || (
+        existsAfter(/databases/$(database)/documents/users/$(userId)/worlds/$(worldId)) &&
+        getAfter(/databases/$(database)/documents/users/$(userId)/worlds/$(worldId)).data.ownerId == request.auth.uid
+      );
     }
 
     // =========================================================================
@@ -82,9 +97,9 @@ service cloud.firestore {
         data.legacyLocalUid.size() <= 128 &&
         data.legacyLocalUid.matches('^[a-zA-Z0-9_\\-]+$') &&
         data.appearance is map &&
-        data.appearance.size() <= 20 &&
+        data.appearance.size() <= 30 &&
         data.settings is map &&
-        data.settings.size() <= 30 &&
+        data.settings.size() <= 50 &&
         data.createdAt is timestamp &&
         data.updatedAt is timestamp;
     }
@@ -158,37 +173,37 @@ service cloud.firestore {
         data.name is string &&
         data.name.size() >= 1 &&
         data.name.size() <= 64 &&
-        data.seed is int &&
+        (data.seed is int || data.seed is float) &&
         data.seed >= 0 &&
-        data.seed <= 999999999 &&
+        data.seed <= 2147483647 &&
         data.seedText is string &&
         data.seedText.size() >= 1 &&
         data.seedText.size() <= 64 &&
         data.difficulty is string &&
         data.difficulty.size() <= 16 &&
         data.difficulty in ['normal', 'survival', 'hardcore'] &&
-        data.dayCount is int &&
+        (data.dayCount is int || data.dayCount is float) &&
         data.dayCount >= 1 &&
         data.dayCount <= 1000000 &&
         (data.timeOfDay is int || data.timeOfDay is float) &&
         data.timeOfDay >= 0 &&
         data.timeOfDay <= 24 &&
-        data.playerLevel is int &&
+        (data.playerLevel is int || data.playerLevel is float) &&
         data.playerLevel >= 1 &&
         data.playerLevel <= 9999 &&
-        data.exploredChunksCount is int &&
+        (data.exploredChunksCount is int || data.exploredChunksCount is float) &&
         data.exploredChunksCount >= 0 &&
         data.exploredChunksCount <= 100000 &&
         data.gameVersion is string &&
         data.gameVersion.size() >= 1 &&
         data.gameVersion.size() <= 32 &&
-        data.worldGenVersion is int &&
+        (data.worldGenVersion is int || data.worldGenVersion is float) &&
         data.worldGenVersion >= 1 &&
         data.worldGenVersion <= 1000 &&
         data.checksum is string &&
         data.checksum.size() >= 1 &&
         data.checksum.size() <= 32 &&
-        data.clientUpdatedAt is int &&
+        (data.clientUpdatedAt is int || data.clientUpdatedAt is float) &&
         data.clientUpdatedAt >= 0 &&
         data.savePayload is map &&
         data.savePayload.keys().hasAll(['version', 'metadata', 'player', 'chunks']) &&
@@ -204,6 +219,54 @@ service cloud.firestore {
           'waypoints',
           'deathBags'
         ]) &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidCloudWorldChunk(data, userId, worldId, chunkKey) {
+      return data.keys().hasAll([
+          'chunkKey',
+          'worldId',
+          'ownerId',
+          'layer',
+          'chunkData',
+          'clientUpdatedAt',
+          'createdAt',
+          'updatedAt'
+        ]) &&
+        data.keys().hasOnly([
+          'chunkKey',
+          'worldId',
+          'ownerId',
+          'layer',
+          'chunkData',
+          'clientUpdatedAt',
+          'createdAt',
+          'updatedAt'
+        ]) &&
+        data.chunkKey is string &&
+        data.chunkKey.size() >= 1 &&
+        data.chunkKey.size() <= 128 &&
+        data.chunkKey.matches('^[a-zA-Z0-9_\\-]+$') &&
+        data.chunkKey == chunkKey &&
+        data.worldId is string &&
+        data.worldId.size() >= 1 &&
+        data.worldId.size() <= 128 &&
+        data.worldId.matches('^[a-zA-Z0-9_\\-]+$') &&
+        data.worldId == worldId &&
+        data.ownerId is string &&
+        data.ownerId.size() >= 1 &&
+        data.ownerId.size() <= 128 &&
+        data.ownerId.matches('^[a-zA-Z0-9_\\-]+$') &&
+        data.ownerId == request.auth.uid &&
+        data.ownerId == userId &&
+        data.layer is string &&
+        data.layer.size() <= 16 &&
+        data.layer in ['surface', 'underground'] &&
+        data.chunkData is map &&
+        data.chunkData.size() <= 30 &&
+        (data.clientUpdatedAt is int || data.clientUpdatedAt is float) &&
+        data.clientUpdatedAt >= 0 &&
         data.createdAt is timestamp &&
         data.updatedAt is timestamp;
     }
@@ -238,13 +301,13 @@ service cloud.firestore {
         data.ownerId.matches('^[a-zA-Z0-9_\\-]+$') &&
         data.ownerId == request.auth.uid &&
         data.ownerId == userId &&
-        data.playerLevel is int &&
+        (data.playerLevel is int || data.playerLevel is float) &&
         data.playerLevel >= 1 &&
         data.playerLevel <= 9999 &&
-        data.clientUpdatedAt is int &&
+        (data.clientUpdatedAt is int || data.clientUpdatedAt is float) &&
         data.clientUpdatedAt >= 0 &&
         data.playerPayload is map &&
-        data.playerPayload.size() <= 60 &&
+        data.playerPayload.size() <= 80 &&
         data.createdAt is timestamp &&
         data.updatedAt is timestamp;
     }
@@ -292,8 +355,7 @@ service cloud.firestore {
           isOwner(userId) &&
           isValidId(userId) &&
           isValidId(docId) &&
-          existing().uid == request.auth.uid &&
-          parentUserExists(userId);
+          (resource == null || existing().uid == request.auth.uid);
 
         allow list: if false;
 
@@ -331,8 +393,7 @@ service cloud.firestore {
           isOwner(userId) &&
           isValidId(userId) &&
           isValidId(worldId) &&
-          existing().ownerId == request.auth.uid &&
-          parentUserExists(userId);
+          (resource == null || existing().ownerId == request.auth.uid);
 
         // Cost-optimized list rule: checks resource.data.ownerId without O(n) get() calls
         allow list: if isSignedIn() &&
@@ -382,8 +443,64 @@ service cloud.firestore {
           isOwner(userId) &&
           isValidId(userId) &&
           isValidId(worldId) &&
-          existing().ownerId == request.auth.uid &&
+          (resource == null || existing().ownerId == request.auth.uid) &&
           parentUserExists(userId);
+
+        // 3.3.1 Modified Chunks Subcollection (/users/{userId}/worlds/{worldId}/chunks/{chunkKey})
+        match /chunks/{chunkKey} {
+          allow get: if isSignedIn() &&
+            isOwner(userId) &&
+            isValidId(userId) &&
+            isValidId(worldId) &&
+            isValidId(chunkKey) &&
+            (resource == null || existing().ownerId == request.auth.uid);
+
+          allow list: if isSignedIn() &&
+            isOwner(userId) &&
+            existing().ownerId == request.auth.uid;
+
+          allow create: if isVerifiedUser() &&
+            isOwner(userId) &&
+            isValidId(userId) &&
+            isValidId(worldId) &&
+            isValidId(chunkKey) &&
+            isValidCloudWorldChunk(incoming(), userId, worldId, chunkKey) &&
+            incoming().createdAt == request.time &&
+            incoming().updatedAt == request.time &&
+            parentUserExists(userId) &&
+            parentWorldExists(userId, worldId);
+
+          allow update: if isVerifiedUser() &&
+            isOwner(userId) &&
+            isValidId(userId) &&
+            isValidId(worldId) &&
+            isValidId(chunkKey) &&
+            isValidCloudWorldChunk(incoming(), userId, worldId, chunkKey) &&
+            incoming().chunkKey == existing().chunkKey &&
+            incoming().worldId == existing().worldId &&
+            incoming().ownerId == existing().ownerId &&
+            incoming().layer == existing().layer &&
+            incoming().createdAt == existing().createdAt &&
+            incoming().updatedAt == request.time &&
+            (
+              // Action: Sync Modified Chunk Data
+              incoming().diff(existing()).affectedKeys().hasOnly([
+                'chunkData',
+                'clientUpdatedAt',
+                'updatedAt'
+              ])
+            ) &&
+            parentUserExists(userId) &&
+            parentWorldExists(userId, worldId);
+
+          allow delete: if isVerifiedUser() &&
+            isOwner(userId) &&
+            isValidId(userId) &&
+            isValidId(worldId) &&
+            isValidId(chunkKey) &&
+            (resource == null || existing().ownerId == request.auth.uid) &&
+            parentUserExists(userId);
+        }
       }
 
       // 3.4 Cloud Guest Character Saves (/users/{userId}/guestProfiles/{worldId})
@@ -392,8 +509,7 @@ service cloud.firestore {
           isOwner(userId) &&
           isValidId(userId) &&
           isValidId(worldId) &&
-          existing().ownerId == request.auth.uid &&
-          parentUserExists(userId);
+          (resource == null || existing().ownerId == request.auth.uid);
 
         allow list: if isSignedIn() &&
           isOwner(userId) &&
@@ -432,7 +548,7 @@ service cloud.firestore {
           isOwner(userId) &&
           isValidId(userId) &&
           isValidId(worldId) &&
-          existing().ownerId == request.auth.uid &&
+          (resource == null || existing().ownerId == request.auth.uid) &&
           parentUserExists(userId);
       }
 
@@ -443,8 +559,7 @@ service cloud.firestore {
           isOwner(userId) &&
           isValidId(userId) &&
           isValidId(entitlementId) &&
-          existing().ownerId == request.auth.uid &&
-          parentUserExists(userId);
+          (resource == null || existing().ownerId == request.auth.uid);
 
         allow list: if isSignedIn() &&
           isOwner(userId) &&
