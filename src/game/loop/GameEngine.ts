@@ -58,6 +58,7 @@ import {
   TOTAL_INVENTORY_SIZE,
   ToolType,
   WeatherState,
+  WorldJoinRequestInfo,
   WorldMetadata,
   WorldSaveData,
 } from '../core/types';
@@ -110,6 +111,8 @@ export interface HudSnapshot {
   innocentFireEnabled: boolean;
   onlineSession: OnlineSessionInfo;
   remotePlayers: RemotePlayerState[];
+  pendingJoinRequests: WorldJoinRequestInfo[];
+  pendingOfflineDeactivation: boolean;
 }
 
 export class GameEngine {
@@ -127,6 +130,9 @@ export class GameEngine {
   public settings: GameSettings;
   public multiplayer: MultiplayerManager;
   public remotePlayersList: RemotePlayerState[] = [];
+  public pendingJoinRequests: WorldJoinRequestInfo[] = [];
+  public pendingOfflineDeactivation = false;
+  private presenceTimerId: number | null = null;
 
   public isPaused = false;
   private uiPauseRequested = false;
@@ -510,14 +516,25 @@ export class GameEngine {
       );
     }
 
-    if (this.multiplayer.role !== 'GUEST' && !this.multiplayer.isOnline) {
-      this.openOnlineInviteSession();
+    if (
+      this.multiplayer.role !== 'GUEST' &&
+      !this.multiplayer.isOnline &&
+      Boolean(this.metadata.onlineEnabled)
+    ) {
+      void this.openOnlineInviteSession();
     } else if (this.multiplayer.role === 'GUEST') {
       this.remotePlayersList = Array.from(
         this.multiplayer.remotePlayers.values()
       );
       this.multiplayer.sendPlayerState(this.player);
       this.multiplayer.sendGuestProfileSave(this.player);
+    }
+
+    if (typeof window !== 'undefined') {
+      void this.reportLivePresence();
+      this.presenceTimerId = window.setInterval(() => {
+        void this.reportLivePresence();
+      }, 6000);
     }
 
     this.emitUiSnapshot();
@@ -528,6 +545,10 @@ export class GameEngine {
     if (typeof window !== 'undefined') {
       window.removeEventListener('beforeunload', this.boundHandlePageUnload);
       window.removeEventListener('pagehide', this.boundHandlePageUnload);
+      if (this.presenceTimerId !== null) {
+        window.clearInterval(this.presenceTimerId);
+        this.presenceTimerId = null;
+      }
     }
     if (typeof document !== 'undefined') {
       document.removeEventListener(
@@ -21758,7 +21779,9 @@ export class GameEngine {
           this.multiplayer.remotePlayers.values()
         );
         this.reconcileRemotePlayerMounts();
+        this.checkPendingOfflineDeactivation();
         this.syncPauseState();
+        void this.reportLivePresence();
         this.emitUiSnapshot();
       },
       onRemotePlayersChanged: () => {
@@ -21766,11 +21789,22 @@ export class GameEngine {
           this.multiplayer.remotePlayers.values()
         );
         this.reconcileRemotePlayerMounts();
+        this.checkPendingOfflineDeactivation();
         this.syncPauseState();
         this.emitUiSnapshot();
       },
       onPeerLeft: (peerId) => {
         this.handleRemotePeerLeft(peerId);
+        this.checkPendingOfflineDeactivation();
+      },
+      onJoinRequestReceived: (req: WorldJoinRequestInfo) => {
+        if (!req || !req.requestId) return;
+        if (
+          !this.pendingJoinRequests.some((r) => r.requestId === req.requestId)
+        ) {
+          this.pendingJoinRequests = [...this.pendingJoinRequests, req];
+          this.emitUiSnapshot();
+        }
       },
       onGuestMountEventReceived: (peerId, event) => {
         this.handleGuestMountEvent(peerId, event);
@@ -22178,22 +22212,165 @@ export class GameEngine {
     if (this.multiplayer.role === 'GUEST') return;
     this.multiplayer.disconnect(true);
     this.remotePlayersList = [];
+    this.pendingJoinRequests = [];
     this.addFloatingText(
       '🔒 Sessão online encerrada (Modo Offline)',
       this.player.x,
       this.player.y - 24,
       '#fbbf24'
     );
+    void this.reportLivePresence();
     this.emitUiSnapshot();
+  }
+
+  /**
+   * Checks if a deferred offline deactivation was requested while guests were present
+   * and completes it automatically as soon as the world becomes empty of guests.
+   */
+  private checkPendingOfflineDeactivation(): void {
+    if (
+      this.pendingOfflineDeactivation &&
+      this.multiplayer.role !== 'GUEST' &&
+      !this.hasConnectedNetworkPlayers()
+    ) {
+      this.pendingOfflineDeactivation = false;
+      this.metadata.onlineEnabled = false;
+      SaveManager.updateWorldOnlineAvailability(this.metadata.id, false);
+      if (this.multiplayer.isOnline) {
+        this.closeOnlineInviteSession();
+      }
+      this.emitUiSnapshot();
+    }
+  }
+
+  /**
+   * Sets the online availability (`onlineEnabled`) of the current world from the in-world Pause Menu.
+   * Enforces the strict rule (Section 5.4):
+   * An online-enabled world CANNOT have its online availability deactivated while any guest player
+   * is inside the world. The world must be empty of other players for online availability to be deactivated.
+   */
+  public setWorldOnlineAvailability(enabled: boolean): {
+    ok: boolean;
+    deferred?: boolean;
+    message?: string;
+  } {
+    if (this.multiplayer.role === 'GUEST') {
+      return {
+        ok: false,
+        message: 'Apenas o anfitrião pode alterar a disponibilidade online.',
+      };
+    }
+
+    if (enabled) {
+      this.pendingOfflineDeactivation = false;
+      this.metadata.onlineEnabled = true;
+      SaveManager.updateWorldOnlineAvailability(this.metadata.id, true);
+      if (
+        !this.multiplayer.isOnline &&
+        this.multiplayer.activationState !== 'ACTIVATING'
+      ) {
+        void this.openOnlineInviteSession(undefined, true);
+      }
+      void this.reportLivePresence();
+      this.emitUiSnapshot();
+      return { ok: true };
+    }
+
+    // Requesting deactivation (enabled === false)
+    if (this.hasConnectedNetworkPlayers()) {
+      this.pendingOfflineDeactivation = true;
+      this.emitUiSnapshot();
+      return {
+        ok: false,
+        deferred: true,
+        message:
+          'O mundo precisa estar vazio de outros jogadores para que a disponibilidade online seja desativada.',
+      };
+    }
+
+    this.pendingOfflineDeactivation = false;
+    this.metadata.onlineEnabled = false;
+    SaveManager.updateWorldOnlineAvailability(this.metadata.id, false);
+    if (this.multiplayer.isOnline) {
+      this.closeOnlineInviteSession();
+    }
+    void this.reportLivePresence();
+    this.emitUiSnapshot();
+    return { ok: true };
+  }
+
+  public async reportLivePresence(): Promise<void> {
+    if (this.isSavingOrExiting) return;
+    try {
+      const publicId = SaveManager.getPlayerPublicId();
+      const username = SaveManager.getEffectiveUsername();
+      const inOpenWorld = Boolean(
+        this.multiplayer.role === 'HOST' &&
+          this.multiplayer.isOnline &&
+          this.metadata.onlineEnabled &&
+          this.multiplayer.inviteCode
+      );
+      const res = await fetch('/api/social/presence', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          playerPublicId: publicId,
+          username,
+          isOnline: true,
+          inOpenWorld,
+          worldId: this.metadata.id,
+          worldName: this.metadata.name,
+          inviteCode: inOpenWorld ? this.multiplayer.inviteCode : null,
+        }),
+      });
+      if (res.ok) {
+        const json = await res.json();
+        if (Array.isArray(json?.pendingJoinRequests)) {
+          const incoming = json.pendingJoinRequests as WorldJoinRequestInfo[];
+          const prevIds = this.pendingJoinRequests
+            .map((r) => r.requestId)
+            .join(',');
+          const nextIds = incoming.map((r) => r.requestId).join(',');
+          if (prevIds !== nextIds) {
+            this.pendingJoinRequests = incoming;
+            this.emitUiSnapshot();
+          }
+        }
+      }
+    } catch {
+      // ignore offline presence heartbeat error
+    }
+  }
+
+  public async respondToJoinRequest(
+    requestId: string,
+    accept: boolean
+  ): Promise<void> {
+    this.pendingJoinRequests = this.pendingJoinRequests.filter(
+      (r) => r.requestId !== requestId
+    );
+    this.emitUiSnapshot();
+    try {
+      await fetch('/api/social/join-request/respond', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          requestId,
+          accept,
+        }),
+      });
+    } catch {
+      // ignore
+    }
   }
 
   public toggleOnlineSession(): void {
     if (this.multiplayer.role === 'GUEST') return;
     if (this.multiplayer.activationState === 'ACTIVATING') return;
-    if (this.multiplayer.isOnline) {
-      this.closeOnlineInviteSession();
+    if (this.multiplayer.isOnline || this.metadata.onlineEnabled) {
+      this.setWorldOnlineAvailability(false);
     } else {
-      void this.openOnlineInviteSession(undefined, true);
+      this.setWorldOnlineAvailability(true);
     }
   }
 
@@ -22201,6 +22378,8 @@ export class GameEngine {
     if (this.multiplayer.role === 'GUEST') return;
     if (this.multiplayer.activationState === 'ACTIVATING') return;
     this.multiplayer.inviteCode = null;
+    this.metadata.onlineEnabled = true;
+    SaveManager.updateWorldOnlineAvailability(this.metadata.id, true);
     void this.openOnlineInviteSession('', true);
   }
 
@@ -22731,6 +22910,8 @@ export class GameEngine {
       innocentFireEnabled: this.innocentFireEnabled,
       onlineSession: this.multiplayer.getSessionInfo(),
       remotePlayers: this.remotePlayersList,
+      pendingJoinRequests: this.pendingJoinRequests,
+      pendingOfflineDeactivation: this.pendingOfflineDeactivation,
     };
   }
 

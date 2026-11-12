@@ -53,6 +53,7 @@ export interface MultiplayerCallbacks {
     persistentPlayerId: string,
     playerState: PlayerState
   ) => void;
+  onJoinRequestReceived?: (request: any) => void;
 }
 
 const INVITE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
@@ -3340,6 +3341,13 @@ export class MultiplayerManager {
         this.isP2PReconnecting = false;
         this.disconnect(false);
         this.callbacks.onRoomClosedByHost?.(reason);
+        break;
+      }
+
+      case 'join_request_received': {
+        if (this.role === 'HOST' && msg.request) {
+          this.callbacks.onJoinRequestReceived?.(msg.request);
+        }
         break;
       }
     }

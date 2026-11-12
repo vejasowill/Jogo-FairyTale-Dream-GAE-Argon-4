@@ -1,9 +1,11 @@
 import {
+  AppearancePresetSlot,
   BiomeType,
   CHEST_STORAGE_SIZE,
   ChunkData,
   CreatureKind,
   CURRENT_WORLD_GEN_VERSION,
+  FriendProfileEntry,
   GAME_VERSION,
   GameSettings,
   HOTBAR_SIZE,
@@ -119,8 +121,31 @@ export function computeDeterministicHash256(payload: string): string {
   );
 }
 
+export function computePlayerPublicIdFromSeed(seedStr: string): string {
+  const alphabet = '23456789ABCDEFGHJKLMNPQRSTUVWXYZ';
+  const clean = (seedStr || 'default_seed').trim();
+  let h1 = 0x811c9dc5 | 0;
+  let h2 = 0x6a09e667 | 0;
+  for (let i = 0; i < clean.length; i++) {
+    const c = clean.charCodeAt(i);
+    h1 = Math.imul(h1 ^ c, 0x01000193);
+    h2 = Math.imul(h2 ^ (c + i * 17), 0x85ebca6b);
+  }
+  let p1 = '';
+  let p2 = '';
+  let v1 = h1 >>> 0;
+  let v2 = h2 >>> 0;
+  for (let i = 0; i < 4; i++) {
+    p1 += alphabet[v1 % alphabet.length];
+    v1 = Math.floor(v1 / alphabet.length) ^ ((h2 >>> (i * 4)) & 0xff);
+    p2 += alphabet[v2 % alphabet.length];
+    v2 = Math.floor(v2 / alphabet.length) ^ ((h1 >>> (i * 4)) & 0xff);
+  }
+  return `SE-${p1}-${p2}`;
+}
+
 /**
- * Strips a trailing ` #N` copy indicator suffix from a world name to recover the clean base name.
+ * Strips any legacy trailing ` #N` suffix from a world name to recover the clean base name.
  */
 export function stripWorldCopySuffix(rawName: string): string {
   const trimmed = (rawName || '').trim() || 'Fronteira Selvagem';
@@ -128,7 +153,8 @@ export function stripWorldCopySuffix(rawName: string): string {
 }
 
 /**
- * Extracts a trailing `#N` copy number if present at the end of a world display name.
+ * Legacy helper retained for internal migration compatibility only.
+ * Never used to determine `isCopy` or alter visual names.
  */
 export function extractCopyNumberFromSuffix(rawName: string): number | null {
   const m = (rawName || '').trim().match(/\s+#(\d+)$/);
@@ -138,24 +164,22 @@ export function extractCopyNumberFromSuffix(rawName: string): number | null {
 }
 
 /**
- * Formats the display name of a world from its `baseWorldName` and copy status,
- * preventing `#1 #1` or `#1 #2` suffix stacking.
+ * Formats the display name of a world.
+ * Per Section 8: Copy identification is strictly internal (`isCopy`, `originWorldId`, `instanceId`).
+ * Visual names NEVER receive `#1`, `#2`, `#3` or `Cópia` suffixes.
  */
 export function formatWorldDisplayName(
   baseName: string,
-  isCopy?: boolean,
-  copyNumber?: number | null
+  _isCopy?: boolean,
+  _copyNumber?: number | null
 ): string {
-  const cleanBase = stripWorldCopySuffix(baseName);
-  if (isCopy && typeof copyNumber === 'number' && copyNumber >= 1) {
-    return `${cleanBase} #${Math.floor(copyNumber)}`;
-  }
-  return cleanBase;
+  return stripWorldCopySuffix(baseName);
 }
 
 /**
- * Ensures a `WorldMetadata` object has consistent lineage and copy fields (`originWorldId`,
- * `instanceId`, `baseWorldName`, `isCopy`, `copyNumber`, `name`).
+ * Ensures a `WorldMetadata` object has consistent internal lineage and copy fields (`originWorldId`,
+ * `instanceId`, `baseWorldName`, `isCopy`, `copyNumber`, `name`) without ever using the world's
+ * name to infer copy status or adding visual `#N` suffixes to the name.
  */
 export function ensureWorldLineageMetadata(meta: WorldMetadata): void {
   if (!meta) return;
@@ -170,24 +194,25 @@ export function ensureWorldLineageMetadata(meta: WorldMetadata): void {
   if (!meta.originWorldId) {
     meta.originWorldId = meta.id;
   }
-  const suffixNum = extractCopyNumberFromSuffix(meta.name);
   if (typeof meta.isCopy !== 'boolean') {
-    meta.isCopy = suffixNum !== null && meta.originWorldId !== meta.instanceId;
+    meta.isCopy = Boolean(
+      meta.originWorldId &&
+        meta.instanceId &&
+        meta.originWorldId !== meta.instanceId
+    );
   }
   if (meta.isCopy) {
     const resolvedCopyNum =
       typeof meta.copyNumber === 'number' && meta.copyNumber >= 1
         ? Math.floor(meta.copyNumber)
-        : suffixNum !== null
-        ? suffixNum
         : 1;
     meta.copyNumber = resolvedCopyNum;
   } else {
     meta.copyNumber = null;
   }
-  const cleanBase = stripWorldCopySuffix(meta.baseWorldName || meta.name);
-  meta.baseWorldName = cleanBase;
-  meta.name = formatWorldDisplayName(cleanBase, meta.isCopy, meta.copyNumber);
+  const cleanName = stripWorldCopySuffix(meta.name || meta.baseWorldName || 'Fronteira Selvagem');
+  meta.baseWorldName = cleanName;
+  meta.name = cleanName;
   if (meta.parentInstanceId === undefined) {
     meta.parentInstanceId = null;
   }
@@ -1063,9 +1088,17 @@ export class SaveManager {
       ...partial,
     };
     const settings = this.loadSettings();
+    const slotsState = this.getAppearanceSlots();
+    const updatedSlots = slotsState.slots.map((s, idx) =>
+      idx === slotsState.activeIndex
+        ? { ...s, appearance: { ...updated }, updatedAt: Date.now() }
+        : s
+    );
     this.saveSettings({
       ...settings,
       accountAppearance: updated,
+      appearanceSlots: updatedSlots,
+      activeAppearanceSlotIndex: slotsState.activeIndex,
     });
     // Also update any cached guest profiles so online sessions reflect the universal appearance
     try {
@@ -1087,6 +1120,271 @@ export class SaveManager {
     }
     void firebaseCloudSync.syncProfileAppearanceAndSettings();
     return updated;
+  }
+
+  public static getAppearanceSlots(): {
+    slots: AppearancePresetSlot[];
+    activeIndex: number;
+  } {
+    const settings = this.loadSettings();
+    const baseApp =
+      settings.accountAppearance && settings.accountAppearance.skinColor
+        ? { ...DEFAULT_ACCOUNT_APPEARANCE, ...settings.accountAppearance }
+        : { ...DEFAULT_ACCOUNT_APPEARANCE };
+
+    const defaultPresets: PlayerAppearance[] = [
+      baseApp,
+      {
+        gender: 'feminino',
+        skinColor: '#fde68a',
+        skinMark: 'freckles',
+        hairColor: '#991b1b',
+        hairStyle: 'braided',
+        eyeStyle: 'large',
+        eyeColor: '#047857',
+      },
+      {
+        gender: 'masculino',
+        skinColor: '#d97706',
+        skinMark: 'eye_scar',
+        hairColor: '#1e293b',
+        hairStyle: 'warrior_crest',
+        eyeStyle: 'sharp',
+        eyeColor: '#b45309',
+      },
+      {
+        gender: 'feminino',
+        skinColor: '#f5d0fe',
+        skinMark: 'none',
+        hairColor: '#f8fafc',
+        hairStyle: 'noble_waves',
+        eyeStyle: 'mystic',
+        eyeColor: '#6d28d9',
+      },
+      {
+        gender: 'masculino',
+        skinColor: '#78350f',
+        skinMark: 'beard_stubble',
+        hairColor: '#0f172a',
+        hairStyle: 'samurai_bun',
+        eyeStyle: 'calm',
+        eyeColor: '#0284c7',
+      },
+    ];
+
+    let slots: AppearancePresetSlot[] = [];
+    if (Array.isArray(settings.appearanceSlots) && settings.appearanceSlots.length > 0) {
+      for (let i = 0; i < 5; i++) {
+        const existing = settings.appearanceSlots.find((s) => s && s.slotIndex === i) || settings.appearanceSlots[i];
+        if (existing && existing.appearance && existing.appearance.skinColor) {
+          slots.push({
+            id: existing.id || `slot_${i}`,
+            slotIndex: i,
+            name: (existing.name || '').trim() || `Aparência ${i + 1}`,
+            appearance: {
+              ...DEFAULT_ACCOUNT_APPEARANCE,
+              ...existing.appearance,
+            },
+            updatedAt: existing.updatedAt || Date.now(),
+          });
+        } else {
+          slots.push({
+            id: `slot_${i}`,
+            slotIndex: i,
+            name: `Aparência ${i + 1}`,
+            appearance: { ...defaultPresets[i] },
+            updatedAt: Date.now(),
+          });
+        }
+      }
+    } else {
+      slots = defaultPresets.map((preset, i) => ({
+        id: `slot_${i}`,
+        slotIndex: i,
+        name: `Aparência ${i + 1}`,
+        appearance: { ...preset },
+        updatedAt: Date.now(),
+      }));
+    }
+
+    const activeIndex =
+      typeof settings.activeAppearanceSlotIndex === 'number' &&
+      settings.activeAppearanceSlotIndex >= 0 &&
+      settings.activeAppearanceSlotIndex < 5
+        ? Math.floor(settings.activeAppearanceSlotIndex)
+        : 0;
+
+    return { slots, activeIndex };
+  }
+
+  public static selectAppearanceSlot(slotIndex: number): PlayerAppearance {
+    const clamped = Math.max(0, Math.min(4, Math.floor(slotIndex)));
+    const { slots } = this.getAppearanceSlots();
+    const chosen = slots[clamped]?.appearance || DEFAULT_ACCOUNT_APPEARANCE;
+    const settings = this.loadSettings();
+    this.saveSettings({
+      ...settings,
+      activeAppearanceSlotIndex: clamped,
+      accountAppearance: { ...chosen },
+      appearanceSlots: slots,
+    });
+    void firebaseCloudSync.syncProfileAppearanceAndSettings();
+    return { ...chosen };
+  }
+
+  public static renameAppearanceSlot(
+    slotIndex: number,
+    newName: string
+  ): AppearancePresetSlot[] {
+    const clamped = Math.max(0, Math.min(4, Math.floor(slotIndex)));
+    const { slots, activeIndex } = this.getAppearanceSlots();
+    const cleanName = newName.trim().slice(0, 22) || `Aparência ${clamped + 1}`;
+    slots[clamped] = {
+      ...slots[clamped],
+      name: cleanName,
+      updatedAt: Date.now(),
+    };
+    const settings = this.loadSettings();
+    this.saveSettings({
+      ...settings,
+      appearanceSlots: slots,
+      activeAppearanceSlotIndex: activeIndex,
+    });
+    void firebaseCloudSync.syncProfileAppearanceAndSettings();
+    return slots;
+  }
+
+  /**
+   * Returns a persistent `"Convidado" + 4 digits` username for players not signed in with Google.
+   */
+  public static getOrCreateGuestUsername(): string {
+    const settings = this.loadSettings();
+    if (
+      settings.guestUsername &&
+      /^Convidado\d{4}$/.test(settings.guestUsername)
+    ) {
+      return settings.guestUsername;
+    }
+    const random4 = String(Math.floor(1000 + Math.random() * 9000));
+    const generated = `Convidado${random4}`;
+    this.saveSettings({
+      ...settings,
+      guestUsername: generated,
+    });
+    return generated;
+  }
+
+  /**
+   * Returns the active player username according to authentication rules:
+   * - Guest (not signed in with Google): Always `"Convidado" + 4 digits`, read-only.
+   * - Signed in with Google: Returns the account's user-defined `accountUsername` (never derived from email).
+   */
+  public static getEffectiveUsername(isGoogleSignedIn?: boolean): string {
+    const signedIn =
+      typeof isGoogleSignedIn === 'boolean'
+        ? isGoogleSignedIn
+        : Boolean(auth?.currentUser);
+    if (!signedIn) {
+      return this.getOrCreateGuestUsername();
+    }
+    const settings = this.loadSettings();
+    if (settings.accountUsername && settings.accountUsername.trim()) {
+      return settings.accountUsername.trim().slice(0, 22);
+    }
+    const fallback = 'Aventureiro';
+    this.saveSettings({
+      ...settings,
+      accountUsername: fallback,
+      playerName: fallback,
+    });
+    return fallback;
+  }
+
+  /**
+   * Updates the account username (only allowed when signed in with Google).
+   */
+  public static setAccountUsername(newUsername: string): string {
+    if (!auth?.currentUser) {
+      return this.getOrCreateGuestUsername();
+    }
+    const clean = newUsername.trim().slice(0, 22) || 'Aventureiro';
+    const settings = this.loadSettings();
+    this.saveSettings({
+      ...settings,
+      accountUsername: clean,
+      playerName: clean,
+    });
+    void firebaseCloudSync.syncProfileAppearanceAndSettings();
+    return clean;
+  }
+
+  /**
+   * Returns the unique, shareable Player ID (`SE-XXXX-XXXX`) permanently linked to the Google account
+   * (or local device when guest), never exposing email or sensitive credentials.
+   */
+  public static getPlayerPublicId(explicitUid?: string | null): string {
+    const uid = explicitUid || auth?.currentUser?.uid || null;
+    if (uid) {
+      const derived = computePlayerPublicIdFromSeed(`google_uid_${uid}`);
+      const settings = this.loadSettings();
+      if (settings.playerPublicId !== derived) {
+        this.saveSettings({
+          ...settings,
+          playerPublicId: derived,
+        });
+      }
+      return derived;
+    }
+    const settings = this.loadSettings();
+    if (settings.playerPublicId && /^SE-[A-Z0-9]{4}-[A-Z0-9]{4}$/.test(settings.playerPublicId)) {
+      return settings.playerPublicId;
+    }
+    const localSeed = getOrCreateLocalDevicePlayerUid();
+    const derived = computePlayerPublicIdFromSeed(`local_uid_${localSeed}`);
+    this.saveSettings({
+      ...settings,
+      playerPublicId: derived,
+    });
+    return derived;
+  }
+
+  public static getFriendsList(): FriendProfileEntry[] {
+    const settings = this.loadSettings();
+    return Array.isArray(settings.friendsList) ? settings.friendsList : [];
+  }
+
+  public static setFriendsList(friends: FriendProfileEntry[]): void {
+    const settings = this.loadSettings();
+    this.saveSettings({
+      ...settings,
+      friendsList: friends,
+    });
+    void firebaseCloudSync.syncProfileAppearanceAndSettings();
+  }
+
+  public static getDeletedWorldIds(): Set<string> {
+    const settings = this.loadSettings();
+    return new Set(
+      Array.isArray(settings.deletedWorldIds) ? settings.deletedWorldIds : []
+    );
+  }
+
+  public static isWorldDeleted(worldId: string): boolean {
+    if (!worldId) return false;
+    return this.getDeletedWorldIds().has(worldId);
+  }
+
+  public static markWorldDeleted(worldId: string): void {
+    if (!worldId) return;
+    const settings = this.loadSettings();
+    const set = new Set(
+      Array.isArray(settings.deletedWorldIds) ? settings.deletedWorldIds : []
+    );
+    set.add(worldId);
+    this.saveSettings({
+      ...settings,
+      deletedWorldIds: Array.from(set),
+    });
   }
 
   private static memoryWorlds = new Map<string, WorldSaveData>();
@@ -1572,10 +1870,15 @@ export class SaveManager {
           }
         });
 
+      const deletedIds = this.getDeletedWorldIds();
       for (const rec of records) {
         if (!rec || !rec.data || !rec.data.metadata?.id) continue;
         ensureWorldLineageMetadata(rec.data.metadata);
         const id = rec.data.metadata.id;
+        if (deletedIds.has(id)) {
+          void this.deleteWorldFromIdb(id);
+          continue;
+        }
         const idbTs = this.getSaveTimestamp(rec.data);
         const memExisting = this.memoryWorlds.get(id);
         const memTs = this.getSaveTimestamp(memExisting);
@@ -1598,13 +1901,14 @@ export class SaveManager {
 
   public static listWorlds(): WorldMetadata[] {
     const byId = new Map<string, WorldMetadata>();
+    const deletedIds = this.getDeletedWorldIds();
     try {
       const raw = localStorage.getItem(INDEX_KEY);
       if (raw) {
         const list = JSON.parse(raw) as WorldMetadata[];
         if (Array.isArray(list)) {
           for (const item of list) {
-            if (item && item.id) {
+            if (item && item.id && !deletedIds.has(item.id)) {
               ensureWorldLineageMetadata(item);
               byId.set(item.id, item);
             }
@@ -1616,6 +1920,7 @@ export class SaveManager {
     }
 
     for (const [id, meta] of this.memoryWorldIndex.entries()) {
+      if (deletedIds.has(id)) continue;
       ensureWorldLineageMetadata(meta);
       const existing = byId.get(id);
       if (!existing || (meta.updatedAt || 0) >= (existing.updatedAt || 0)) {
@@ -1624,7 +1929,7 @@ export class SaveManager {
     }
 
     for (const [id, world] of this.memoryWorlds.entries()) {
-      if (!world?.metadata) continue;
+      if (!world?.metadata || deletedIds.has(id)) continue;
       ensureWorldLineageMetadata(world.metadata);
       const existing = byId.get(id);
       if (
@@ -1657,7 +1962,8 @@ export class SaveManager {
   public static createNewWorld(
     name: string,
     seedInput: string,
-    difficulty: 'normal' | 'survival' | 'hardcore'
+    difficulty: 'normal' | 'survival' | 'hardcore',
+    onlineEnabled = false
   ): WorldSaveData {
     const seed = seedFromText(seedInput);
     const now = Date.now();
@@ -1691,6 +1997,7 @@ export class SaveManager {
       copyNumber: null,
       highestCopyNumberSeen: 0,
       syncPending: true,
+      onlineEnabled: Boolean(onlineEnabled),
       seed,
       seedText: seedInput.trim() || String(seed),
       difficulty,
@@ -2570,7 +2877,8 @@ export class SaveManager {
   public static updateWorldMetadata(
     worldId: string,
     newName: string,
-    newDifficulty: 'normal' | 'survival' | 'hardcore'
+    newDifficulty: 'normal' | 'survival' | 'hardcore',
+    onlineEnabled?: boolean
   ): WorldMetadata | null {
     const data = this.loadWorldLocal(worldId);
     if (!data) return null;
@@ -2579,19 +2887,55 @@ export class SaveManager {
     if (rawTrimmed) {
       const cleanBase = stripWorldCopySuffix(rawTrimmed);
       data.metadata.baseWorldName = cleanBase;
-      data.metadata.name = formatWorldDisplayName(
-        cleanBase,
-        data.metadata.isCopy,
-        data.metadata.copyNumber
-      );
+      data.metadata.name = cleanBase;
     }
     data.metadata.difficulty = newDifficulty;
+    if (typeof onlineEnabled === 'boolean') {
+      data.metadata.onlineEnabled = onlineEnabled;
+    }
     data.metadata.updatedAt = Date.now();
     this.saveWorldLocal(data, { forceSyncPending: true });
     if (auth?.currentUser) {
       firebaseCloudSync.enqueueWorldSync(worldId, 'metadata_update');
     }
     return data.metadata;
+  }
+
+  public static updateWorldOnlineAvailability(
+    worldId: string,
+    onlineEnabled: boolean
+  ): WorldMetadata | null {
+    const data = this.loadWorldLocal(worldId);
+    if (!data) return null;
+    ensureWorldLineageMetadata(data.metadata);
+    data.metadata.onlineEnabled = Boolean(onlineEnabled);
+    data.metadata.updatedAt = Date.now();
+    this.saveWorldLocal(data, { forceSyncPending: true });
+    if (auth?.currentUser) {
+      firebaseCloudSync.enqueueWorldSync(worldId, 'metadata_update');
+    }
+    return data.metadata;
+  }
+
+  /**
+   * Creates an independent copy of an existing world.
+   * Per Section 8: `isCopy = true`, `originWorldId`, `instanceId`, `parentInstanceId` are set internally,
+   * while the visual world name remains clean (without `#1`, `#2`, or `"Cópia"` suffixes).
+   */
+  public static async duplicateWorld(
+    worldId: string
+  ): Promise<WorldSaveData | null> {
+    const source = await this.loadWorldGuaranteed(worldId);
+    if (!source) return null;
+    const cloned = await this.saveDivergentWorldAsCopy(
+      source,
+      source.metadata.id,
+      'manual_copy'
+    );
+    if (auth?.currentUser) {
+      firebaseCloudSync.enqueueWorldSync(cloned.metadata.id, 'manual_save');
+    }
+    return cloned;
   }
 
   public static deleteWorld(worldId: string, settings?: GameSettings): void {
@@ -2601,6 +2945,7 @@ export class SaveManager {
       this.listWorlds().find((w) => w.id === worldId);
     const deletedOriginId = existingMeta?.originWorldId || worldId;
 
+    this.markWorldDeleted(worldId);
     this.memoryWorlds.delete(worldId);
     this.memoryWorldIndex.delete(worldId);
     this.compactChunkCache.delete(worldId);
@@ -2625,6 +2970,7 @@ export class SaveManager {
 
     if (auth?.currentUser) {
       void firebaseCloudSync.deleteWorldFromCloud(worldId).catch(() => {});
+      void firebaseCloudSync.syncProfileAppearanceAndSettings();
     }
 
     const cfg = settings || this.loadSettings();
@@ -2718,9 +3064,11 @@ export class SaveManager {
       if (!res.ok) return this.listWorlds();
       const json = await res.json();
       if (Array.isArray(json.worlds)) {
+        const deletedIds = this.getDeletedWorldIds();
         const localById = new Map(this.listWorlds().map((w) => [w.id, w]));
         for (const entry of json.worlds as any[]) {
           if (entry && entry.metadata && entry.metadata.id) {
+            if (deletedIds.has(entry.metadata.id)) continue;
             const localMeta = localById.get(entry.metadata.id);
             if (
               !localMeta ||
@@ -2729,6 +3077,7 @@ export class SaveManager {
               await this.saveWorldGuaranteed(migrateSaveData(entry), true);
             }
           } else if (entry && entry.id && entry.name && typeof entry.seed === 'number') {
+            if (deletedIds.has(entry.id)) continue;
             // Metadata entry from GET /api/worlds: fetch full world if newer than local
             const localMeta = localById.get(entry.id);
             if (

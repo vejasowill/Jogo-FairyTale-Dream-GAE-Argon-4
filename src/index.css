@@ -6,6 +6,7 @@
     --font-display: 'Silkscreen', 'Outfit', system-ui, sans-serif;
     --font-sans: 'Plus Jakarta Sans', system-ui, sans-serif;
     --font-mono: 'JetBrains Mono', monospace;
+    --font-geologica: 'Geologica', 'Outfit', system-ui, sans-serif;
   }
 
   body {
@@ -42,6 +43,10 @@
 
   .font-pixel {
     font-family: var(--font-pixel);
+  }
+
+  .font-geologica {
+    font-family: var(--font-geologica);
   }
 
   .font-mono-tabular {

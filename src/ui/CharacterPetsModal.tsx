@@ -1,6 +1,9 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
+  Check,
+  Edit3,
   Heart,
+  Lock,
   Palette,
   Plus,
   RotateCw,
@@ -13,6 +16,7 @@ import {
 } from 'lucide-react';
 import { ITEMS } from '../game/core/ItemRegistry';
 import {
+  AppearancePresetSlot,
   CreatureEntity,
   CreatureKind,
   Direction,
@@ -27,6 +31,7 @@ import {
   SkinMarkId,
 } from '../game/core/types';
 import { GameEngine } from '../game/loop/GameEngine';
+import { firebaseCloudSync } from '../game/persistence/FirebaseCloudSync';
 import { SaveManager } from '../game/persistence/SaveManager';
 import {
   DEFAULT_PLAYER_APPEARANCE,
@@ -1360,22 +1365,97 @@ export const CharacterPetsModal: React.FC<CharacterPetsModalProps> = ({
 interface AccountAppearanceModalProps {
   onClose: () => void;
   onAppearanceSaved?: (updated: PlayerAppearance) => void;
+  onUsernameSaved?: (newUsername: string) => void;
 }
 
 export const AccountAppearanceModal: React.FC<AccountAppearanceModalProps> = ({
   onClose,
   onAppearanceSaved,
+  onUsernameSaved,
 }) => {
+  const [slotsData, setSlotsData] = useState<{
+    slots: AppearancePresetSlot[];
+    activeIndex: number;
+  }>(() => SaveManager.getAppearanceSlots());
   const [app, setApp] = useState<PlayerAppearance>(() =>
     SaveManager.getAccountAppearance()
   );
+  const [slotNameDraft, setSlotNameDraft] = useState<string>(
+    () =>
+      SaveManager.getAppearanceSlots().slots[
+        SaveManager.getAppearanceSlots().activeIndex
+      ]?.name || 'Aparência 1'
+  );
+  const [isEditingSlotName, setIsEditingSlotName] = useState(false);
+
+  const [isGoogleLoggedIn, setIsGoogleLoggedIn] = useState<boolean>(() =>
+    Boolean(firebaseCloudSync.getSnapshot().user)
+  );
+  const [usernameDraft, setUsernameDraft] = useState<string>(() =>
+    SaveManager.getEffectiveUsername(
+      Boolean(firebaseCloudSync.getSnapshot().user)
+    )
+  );
+  const [usernameSavedFeedback, setUsernameSavedFeedback] = useState(false);
+
   const [appearanceCat, setAppearanceCat] = useState<'skin' | 'hair' | 'eyes'>(
     'skin'
   );
   const [previewDir, setPreviewDir] = useState<Direction>('down');
 
+  useEffect(() => {
+    const unsub = firebaseCloudSync.subscribe((snap) => {
+      const signedIn = Boolean(snap.user);
+      setIsGoogleLoggedIn(signedIn);
+      setUsernameDraft(SaveManager.getEffectiveUsername(signedIn));
+      const latestSlots = SaveManager.getAppearanceSlots();
+      setSlotsData(latestSlots);
+      setApp(SaveManager.getAccountAppearance());
+    });
+    return unsub;
+  }, []);
+
+  const handleSelectSlot = (index: number) => {
+    const selectedApp = SaveManager.selectAppearanceSlot(index);
+    const refreshed = SaveManager.getAppearanceSlots();
+    setSlotsData(refreshed);
+    setApp({ ...selectedApp });
+    setSlotNameDraft(
+      refreshed.slots[index]?.name || `Aparência ${index + 1}`
+    );
+    setIsEditingSlotName(false);
+    onAppearanceSaved?.(selectedApp);
+  };
+
+  const handleCommitSlotName = () => {
+    const updatedSlots = SaveManager.renameAppearanceSlot(
+      slotsData.activeIndex,
+      slotNameDraft
+    );
+    setSlotsData({
+      slots: updatedSlots,
+      activeIndex: slotsData.activeIndex,
+    });
+    setSlotNameDraft(
+      updatedSlots[slotsData.activeIndex]?.name ||
+        `Aparência ${slotsData.activeIndex + 1}`
+    );
+    setIsEditingSlotName(false);
+  };
+
+  const handleSaveUsername = () => {
+    if (!isGoogleLoggedIn) return;
+    const saved = SaveManager.setAccountUsername(usernameDraft);
+    setUsernameDraft(saved);
+    setUsernameSavedFeedback(true);
+    onUsernameSaved?.(saved);
+    window.setTimeout(() => setUsernameSavedFeedback(false), 1800);
+  };
+
   const updateAccountAppearance = (partial: Partial<PlayerAppearance>) => {
     const updated = SaveManager.saveAccountAppearance(partial);
+    const refreshed = SaveManager.getAppearanceSlots();
+    setSlotsData(refreshed);
     setApp({ ...updated });
     onAppearanceSaved?.(updated);
   };
@@ -1446,18 +1526,19 @@ export const AccountAppearanceModal: React.FC<AccountAppearanceModalProps> = ({
       onClick={onClose}
     >
       <div
-        className="w-full max-w-2xl medieval-panel flex flex-col max-h-[94dvh] overflow-hidden"
+        className="w-full max-w-3xl medieval-panel flex flex-col max-h-[94dvh] overflow-hidden"
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="flex items-center justify-between gap-2 px-3 py-2 bg-[#1a110b] border-b-2 border-[#4a301e] shrink-0">
+        {/* Header */}
+        <div className="flex items-center justify-between gap-2 px-3 py-2.5 bg-[#1a110b] border-b-2 border-[#4a301e] shrink-0">
           <div className="flex items-center gap-2">
             <Palette className="w-4 h-4 text-amber-400" />
             <div>
               <h2 className="font-pixel text-xs font-bold text-amber-400 uppercase">
-                Aparência do Personagem
+                Personalização do Personagem
               </h2>
               <p className="text-[10px] text-[#c4ab7d]">
-                Aparência universal da sua conta para todos os mundos
+                5 slots de aparência e username da conta sincronizados
               </p>
             </div>
           </div>
@@ -1469,9 +1550,128 @@ export const AccountAppearanceModal: React.FC<AccountAppearanceModalProps> = ({
           </button>
         </div>
 
+        {/* Account Username & 5 Appearance Slots Bar */}
+        <div className="px-3 pt-2.5 pb-1 bg-[#140d08] border-b border-[#3d2616] space-y-2 shrink-0">
+          {/* Account Username Row */}
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 bg-[#1c120b] p-2 border border-[#4a301e]">
+            <div className="flex items-center gap-2">
+              <User className="w-4 h-4 text-amber-400 shrink-0" />
+              <div>
+                <div className="text-[10px] font-pixel font-bold text-amber-300 uppercase">
+                  Username da Conta
+                </div>
+                <div className="text-[10px] text-[#c4ab7d]">
+                  {isGoogleLoggedIn
+                    ? 'Vinculado à sua conta para todos os mundos e aparências'
+                    : 'Modo convidado — conecte sua conta Google para alterar'}
+                </div>
+              </div>
+            </div>
+
+            {isGoogleLoggedIn ? (
+              <div className="flex items-center gap-1.5">
+                <input
+                  type="text"
+                  value={usernameDraft}
+                  maxLength={22}
+                  onChange={(e) => setUsernameDraft(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') handleSaveUsername();
+                  }}
+                  placeholder="Seu username..."
+                  className="px-2.5 py-1.5 bg-[#0e0905] border border-[#6e4930] text-xs font-bold text-[#f3e5c8] focus:outline-none focus:border-amber-400 w-44"
+                />
+                <button
+                  onClick={handleSaveUsername}
+                  className="px-2.5 py-1.5 medieval-btn-emerald text-[10px] font-pixel font-bold uppercase flex items-center gap-1"
+                >
+                  <Check className="w-3.5 h-3.5" />
+                  <span>{usernameSavedFeedback ? 'Salvo!' : 'Salvar'}</span>
+                </button>
+              </div>
+            ) : (
+              <div className="flex items-center gap-1.5 px-2.5 py-1.5 bg-[#0e0905] border border-[#4a301e] text-xs font-mono font-bold text-[#c4ab7d]">
+                <Lock className="w-3.5 h-3.5 text-amber-500/80" />
+                <span>{usernameDraft}</span>
+              </div>
+            )}
+          </div>
+
+          {/* 5 Appearance Preset Slots */}
+          <div className="space-y-1">
+            <div className="flex items-center justify-between">
+              <span className="text-[10px] font-pixel font-bold text-amber-300 uppercase">
+                Slots de Aparência (5 Predefinições)
+              </span>
+              <span className="text-[10px] text-[#c4ab7d]">
+                Ativo: {slotsData.slots[slotsData.activeIndex]?.name}
+              </span>
+            </div>
+            <div className="grid grid-cols-5 gap-1.5">
+              {slotsData.slots.map((slot, idx) => {
+                const isActive = idx === slotsData.activeIndex;
+                return (
+                  <button
+                    key={slot.id}
+                    onClick={() => handleSelectSlot(idx)}
+                    className={`py-1.5 px-2 text-center transition-all flex flex-col items-center justify-center gap-0.5 ${
+                      isActive ? 'medieval-btn-gold' : 'medieval-btn-wood'
+                    }`}
+                  >
+                    <span className="text-[9px] font-pixel font-bold uppercase">
+                      Slot {idx + 1}
+                    </span>
+                    <span className="text-[10px] font-semibold truncate w-full">
+                      {slot.name}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+
         <div className="flex-1 overflow-y-auto p-3 grid grid-cols-1 sm:grid-cols-12 gap-3 items-start">
           {/* Preview Column */}
           <div className="sm:col-span-4 medieval-inset p-3 flex flex-col items-center justify-center gap-2.5">
+            {/* Slot Name Editor */}
+            <div className="w-full">
+              {isEditingSlotName ? (
+                <div className="flex items-center gap-1">
+                  <input
+                    type="text"
+                    value={slotNameDraft}
+                    maxLength={20}
+                    onChange={(e) => setSlotNameDraft(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') handleCommitSlotName();
+                    }}
+                    className="w-full px-2 py-1 bg-[#0e0905] border border-amber-400 text-xs font-bold text-[#f3e5c8] focus:outline-none"
+                    autoFocus
+                  />
+                  <button
+                    onClick={handleCommitSlotName}
+                    className="p-1.5 medieval-btn-emerald"
+                    title="Salvar nome do slot"
+                  >
+                    <Check className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              ) : (
+                <button
+                  onClick={() => setIsEditingSlotName(true)}
+                  className="w-full py-1 px-2 bg-[#23160d] border border-[#5c3c24] hover:border-amber-400/70 flex items-center justify-between gap-1.5 text-xs font-bold text-amber-200"
+                  title="Renomear este slot de aparência"
+                >
+                  <span className="truncate">
+                    {slotsData.slots[slotsData.activeIndex]?.name ||
+                      `Aparência ${slotsData.activeIndex + 1}`}
+                  </span>
+                  <Edit3 className="w-3 h-3 text-amber-400 shrink-0" />
+                </button>
+              )}
+            </div>
+
             <span className="px-2 py-0.5 bg-[#2a1b10] border border-[#6e4930] text-[10px] font-bold text-amber-300 rounded">
               {(app.gender ?? 'masculino') === 'feminino'
                 ? '♀ Feminino'
@@ -1495,7 +1695,7 @@ export const AccountAppearanceModal: React.FC<AccountAppearanceModalProps> = ({
               onClick={() => updateAccountAppearance(DEFAULT_PLAYER_APPEARANCE)}
               className="text-[10px] text-[#c4ab7d] hover:text-amber-300 underline pt-1"
             >
-              Restaurar Padrão
+              Restaurar Padrão neste Slot
             </button>
           </div>
 

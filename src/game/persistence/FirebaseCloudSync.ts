@@ -1192,6 +1192,76 @@ class FirebaseCloudSyncService {
 
       const settings = SaveManager.loadSettings();
       const appearance = SaveManager.getAccountAppearance();
+      const publicId = SaveManager.getPlayerPublicId(uid);
+
+      // 1. Always sync profile, 5 appearance slots, username, friends, and deletedWorldIds with /api/social/sync-profile
+      try {
+        const slotsInfo = SaveManager.getAppearanceSlots();
+        const res = await fetch('/api/social/sync-profile', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            uid,
+            playerPublicId: publicId,
+            username: settings.accountUsername || undefined,
+            appearanceSlots: settings.appearanceSlots,
+            activeAppearanceSlotIndex: slotsInfo.activeIndex,
+            accountAppearance: settings.accountAppearance,
+            friendsList: SaveManager.getFriendsList(),
+            deletedWorldIds: Array.from(SaveManager.getDeletedWorldIds()),
+          }),
+        });
+        if (res.ok) {
+          const json = await res.json();
+          const remoteProf = json?.profile;
+          if (remoteProf) {
+            const currentSettings = SaveManager.loadSettings();
+            const mergedDeleted = Array.from(
+              new Set([
+                ...(currentSettings.deletedWorldIds || []),
+                ...(Array.isArray(remoteProf.deletedWorldIds)
+                  ? remoteProf.deletedWorldIds
+                  : []),
+              ])
+            );
+            SaveManager.saveSettings({
+              ...currentSettings,
+              playerPublicId: publicId,
+              accountUsername:
+                currentSettings.accountUsername ||
+                remoteProf.username ||
+                'Aventureiro',
+              playerName:
+                currentSettings.accountUsername ||
+                remoteProf.username ||
+                'Aventureiro',
+              appearanceSlots:
+                Array.isArray(currentSettings.appearanceSlots) &&
+                currentSettings.appearanceSlots.length > 0
+                  ? currentSettings.appearanceSlots
+                  : Array.isArray(remoteProf.appearanceSlots)
+                  ? remoteProf.appearanceSlots
+                  : undefined,
+              activeAppearanceSlotIndex:
+                typeof currentSettings.activeAppearanceSlotIndex === 'number'
+                  ? currentSettings.activeAppearanceSlotIndex
+                  : typeof remoteProf.activeAppearanceSlotIndex === 'number'
+                  ? remoteProf.activeAppearanceSlotIndex
+                  : 0,
+              accountAppearance:
+                currentSettings.accountAppearance ||
+                remoteProf.accountAppearance ||
+                appearance,
+              friendsList: Array.isArray(remoteProf.friendsList)
+                ? remoteProf.friendsList
+                : currentSettings.friendsList || [],
+              deletedWorldIds: mergedDeleted,
+            });
+          }
+        }
+      } catch {
+        // ignore offline social sync error
+      }
 
       let existingSnap;
       try {
@@ -1217,14 +1287,70 @@ class FirebaseCloudSyncService {
 
       if (existingSnap && existingSnap.exists()) {
         const remoteData = existingSnap.data();
+        const remoteSettings = (remoteData?.settings || {}) as Record<
+          string,
+          any
+        >;
+        const latestLocal = SaveManager.loadSettings();
+
         if (
           remoteData?.appearance &&
           typeof remoteData.appearance === 'object' &&
-          !settings.accountAppearance
+          !latestLocal.accountAppearance
         ) {
           SaveManager.saveAccountAppearance(
             remoteData.appearance as Partial<PlayerAppearance>
           );
+        }
+
+        const updatedLocal = SaveManager.loadSettings();
+        let needsLocalSave = false;
+        if (
+          !updatedLocal.accountUsername &&
+          typeof remoteSettings.accountUsername === 'string' &&
+          remoteSettings.accountUsername.trim()
+        ) {
+          updatedLocal.accountUsername = remoteSettings.accountUsername.trim();
+          updatedLocal.playerName = updatedLocal.accountUsername;
+          needsLocalSave = true;
+        }
+        if (
+          (!updatedLocal.appearanceSlots ||
+            updatedLocal.appearanceSlots.length === 0) &&
+          Array.isArray(remoteSettings.appearanceSlots) &&
+          remoteSettings.appearanceSlots.length > 0
+        ) {
+          updatedLocal.appearanceSlots = remoteSettings.appearanceSlots;
+          if (typeof remoteSettings.activeAppearanceSlotIndex === 'number') {
+            updatedLocal.activeAppearanceSlotIndex =
+              remoteSettings.activeAppearanceSlotIndex;
+          }
+          needsLocalSave = true;
+        }
+        if (
+          (!updatedLocal.friendsList ||
+            updatedLocal.friendsList.length === 0) &&
+          Array.isArray(remoteSettings.friendsList) &&
+          remoteSettings.friendsList.length > 0
+        ) {
+          updatedLocal.friendsList = remoteSettings.friendsList;
+          needsLocalSave = true;
+        }
+        if (
+          Array.isArray(remoteSettings.deletedWorldIds) &&
+          remoteSettings.deletedWorldIds.length > 0
+        ) {
+          const mergedSet = new Set([
+            ...(updatedLocal.deletedWorldIds || []),
+            ...remoteSettings.deletedWorldIds.map(String),
+          ]);
+          if (mergedSet.size !== (updatedLocal.deletedWorldIds || []).length) {
+            updatedLocal.deletedWorldIds = Array.from(mergedSet);
+            needsLocalSave = true;
+          }
+        }
+        if (needsLocalSave) {
+          SaveManager.saveSettings(updatedLocal);
         }
 
         // Fast-path on login: profile already exists in Cloud Firestore -> 0 writes needed!
@@ -1247,37 +1373,47 @@ class FirebaseCloudSyncService {
         return true;
       }
 
+      const freshSettings = SaveManager.loadSettings();
+      const freshAppearance = SaveManager.getAccountAppearance();
+      const slotsData = SaveManager.getAppearanceSlots();
+
       const cleanAppearance = sanitizeForFirestore({
-        gender: appearance.gender || 'masculino',
-        skinColor: String(appearance.skinColor || '#fdba74').slice(0, 32),
-        skinMark: String(appearance.skinMark || 'none').slice(0, 32),
-        hairColor: String(appearance.hairColor || '#451a03').slice(0, 32),
-        hairStyle: String(appearance.hairStyle || 'adventurer').slice(0, 32),
-        eyeStyle: String(appearance.eyeStyle || 'classic').slice(0, 32),
-        eyeColor: String(appearance.eyeColor || '#0f172a').slice(0, 32),
+        gender: freshAppearance.gender || 'masculino',
+        skinColor: String(freshAppearance.skinColor || '#fdba74').slice(0, 32),
+        skinMark: String(freshAppearance.skinMark || 'none').slice(0, 32),
+        hairColor: String(freshAppearance.hairColor || '#451a03').slice(0, 32),
+        hairStyle: String(freshAppearance.hairStyle || 'adventurer').slice(0, 32),
+        eyeStyle: String(freshAppearance.eyeStyle || 'classic').slice(0, 32),
+        eyeColor: String(freshAppearance.eyeColor || '#0f172a').slice(0, 32),
       });
 
+      const resolvedUsername = SaveManager.getEffectiveUsername(true);
+
       const cleanSettings = sanitizeForFirestore({
-        soundEnabled: Boolean(settings.soundEnabled),
-        soundVolume: Number(settings.soundVolume ?? 0.35),
-        ambientVolume: Number(settings.ambientVolume ?? 0.45),
-        musicVolume: Number(settings.musicVolume ?? 0.2),
-        autoSaveIntervalSec: Number(settings.autoSaveIntervalSec ?? 20),
-        serverSyncEnabled: Boolean(settings.serverSyncEnabled),
-        showTouchControls: Boolean(settings.showTouchControls),
-        cameraZoom: Number(settings.cameraZoom ?? 1.15),
-        hudScale: Number(settings.hudScale ?? 1.0),
-        hudOpacity: Number(settings.hudOpacity ?? 0.96),
-        playerName: sanitizeString(
-          settings.playerName || user.displayName,
-          1,
-          32,
-          'Viajante'
+        soundEnabled: Boolean(freshSettings.soundEnabled),
+        soundVolume: Number(freshSettings.soundVolume ?? 0.35),
+        ambientVolume: Number(freshSettings.ambientVolume ?? 0.45),
+        musicVolume: Number(freshSettings.musicVolume ?? 0.2),
+        autoSaveIntervalSec: Number(freshSettings.autoSaveIntervalSec ?? 20),
+        serverSyncEnabled: Boolean(freshSettings.serverSyncEnabled),
+        showTouchControls: Boolean(freshSettings.showTouchControls),
+        cameraZoom: Number(freshSettings.cameraZoom ?? 1.15),
+        hudScale: Number(freshSettings.hudScale ?? 1.0),
+        hudOpacity: Number(freshSettings.hudOpacity ?? 0.96),
+        playerName: sanitizeString(resolvedUsername, 1, 32, 'Aventureiro'),
+        accountUsername: sanitizeString(resolvedUsername, 1, 32, 'Aventureiro'),
+        playerPublicId: publicId,
+        activeAppearanceSlotIndex: slotsData.activeIndex,
+        appearanceSlots: slotsData.slots.slice(0, 5),
+        friendsList: SaveManager.getFriendsList().slice(0, 100),
+        deletedWorldIds: Array.from(SaveManager.getDeletedWorldIds()).slice(
+          0,
+          200
         ),
       });
 
       const displayName = sanitizeString(
-        user.displayName || settings.playerName,
+        resolvedUsername || user.displayName,
         1,
         64,
         'Aventureiro'
@@ -2002,6 +2138,20 @@ class FirebaseCloudSyncService {
       });
 
       await SaveManager.hydrateFromIndexedDB();
+      const deletedWorldIds = SaveManager.getDeletedWorldIds();
+      // Purge any cloud worlds that were permanently deleted by the user
+      if (deletedWorldIds.size > 0) {
+        const survivingCloudDocs: CloudWorldSummaryDoc[] = [];
+        for (const cDoc of cloudDocs) {
+          if (deletedWorldIds.has(cDoc.id)) {
+            void this.deleteWorldFromCloud(cDoc.id).catch(() => {});
+          } else {
+            survivingCloudDocs.push(cDoc);
+          }
+        }
+        cloudDocs = survivingCloudDocs;
+      }
+
       const localList = SaveManager.listWorlds();
       const localById = new Map(localList.map((w) => [w.id, w]));
       const cloudById = new Map(cloudDocs.map((c) => [c.id, c]));

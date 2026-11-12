@@ -1208,6 +1208,18 @@ async function startServer() {
       return;
     }
     try {
+      const deletedSet = new Set<string>();
+      const deletedFile = path.join(userVaultDir, 'deleted_worlds.json');
+      if (fs.existsSync(deletedFile)) {
+        try {
+          const parsedDel = JSON.parse(fs.readFileSync(deletedFile, 'utf-8'));
+          if (Array.isArray(parsedDel)) {
+            for (const id of parsedDel) deletedSet.add(String(id));
+          }
+        } catch {
+          // ignore
+        }
+      }
       const files = fs
         .readdirSync(userVaultDir)
         .filter((f) => f.endsWith('.meta.json'));
@@ -1216,14 +1228,14 @@ async function startServer() {
         try {
           const raw = fs.readFileSync(path.join(userVaultDir, f), 'utf-8');
           const parsed = JSON.parse(raw);
-          if (parsed && parsed.worldId) {
+          if (parsed && parsed.worldId && !deletedSet.has(parsed.worldId)) {
             worlds.push(parsed);
           }
         } catch {
           // ignore
         }
       }
-      res.json({ ok: true, worlds });
+      res.json({ ok: true, worlds, deletedWorldIds: Array.from(deletedSet) });
     } catch (err: any) {
       res.status(500).json({ ok: false, error: err?.message || 'List error' });
     }
@@ -1322,14 +1334,642 @@ async function startServer() {
       'worlds_vault'
     );
     try {
+      fs.mkdirSync(userVaultDir, { recursive: true });
       const metaPath = path.join(userVaultDir, `${rawWorldId}.meta.json`);
       const dataPath = path.join(userVaultDir, `${rawWorldId}.data.json`);
       if (fs.existsSync(metaPath)) fs.unlinkSync(metaPath);
       if (fs.existsSync(dataPath)) fs.unlinkSync(dataPath);
+
+      const deletedFile = path.join(userVaultDir, 'deleted_worlds.json');
+      const deletedSet = new Set<string>();
+      if (fs.existsSync(deletedFile)) {
+        try {
+          const arr = JSON.parse(fs.readFileSync(deletedFile, 'utf-8'));
+          if (Array.isArray(arr)) {
+            for (const item of arr) deletedSet.add(String(item));
+          }
+        } catch {
+          // ignore
+        }
+      }
+      deletedSet.add(rawWorldId);
+      fs.writeFileSync(
+        deletedFile,
+        JSON.stringify(Array.from(deletedSet)),
+        'utf-8'
+      );
+
+      // Also delete legacy worlds_data chunk folder if present
+      const chunksDir = path.resolve(
+        CLOUD_OBJECTS_DIR,
+        'users',
+        authResult.uid,
+        'worlds_data',
+        rawWorldId
+      );
+      if (fs.existsSync(chunksDir)) {
+        fs.rmSync(chunksDir, { recursive: true, force: true });
+      }
+
       res.json({ ok: true });
     } catch {
       res.json({ ok: false });
     }
+  });
+
+  // ==========================================================================
+  // SOCIAL, PLAYER IDENTIFICATION, FRIENDS & JOIN REQUESTS (/api/social/*)
+  // ==========================================================================
+  const SOCIAL_PROFILES_FILE = path.join(DATA_DIR, 'social_profiles.json');
+
+  interface ServerSocialProfile {
+    uid?: string | null;
+    playerPublicId: string;
+    username: string;
+    appearanceSlots?: any[];
+    activeAppearanceSlotIndex?: number;
+    accountAppearance?: any;
+    friendsList: { playerPublicId: string; username: string; addedAt: number }[];
+    deletedWorldIds: string[];
+    presence?: {
+      isOnline: boolean;
+      inOpenWorld: boolean;
+      worldId?: string | null;
+      worldName?: string | null;
+      inviteCode?: string | null;
+      updatedAt: number;
+    };
+    updatedAt: number;
+  }
+
+  interface SocialStoreData {
+    profilesByPublicId: Record<string, ServerSocialProfile>;
+    publicIdByUid: Record<string, string>;
+  }
+
+  let socialStoreCache: SocialStoreData | null = null;
+
+  function readSocialStore(): SocialStoreData {
+    if (socialStoreCache) return socialStoreCache;
+    try {
+      if (fs.existsSync(SOCIAL_PROFILES_FILE)) {
+        const parsed = JSON.parse(fs.readFileSync(SOCIAL_PROFILES_FILE, 'utf-8'));
+        if (parsed && typeof parsed === 'object') {
+          socialStoreCache = {
+            profilesByPublicId: parsed.profilesByPublicId || {},
+            publicIdByUid: parsed.publicIdByUid || {},
+          };
+          return socialStoreCache;
+        }
+      }
+    } catch {
+      // ignore
+    }
+    socialStoreCache = { profilesByPublicId: {}, publicIdByUid: {} };
+    return socialStoreCache;
+  }
+
+  function writeSocialStore(store: SocialStoreData): void {
+    socialStoreCache = store;
+    try {
+      fs.writeFileSync(SOCIAL_PROFILES_FILE, JSON.stringify(store), 'utf-8');
+    } catch {
+      // ignore
+    }
+  }
+
+  interface ServerJoinRequest {
+    requestId: string;
+    requesterPublicId: string;
+    requesterName: string;
+    targetPublicId: string;
+    worldId: string;
+    worldName: string;
+    inviteCode: string;
+    status: 'PENDING' | 'ACCEPTED' | 'DECLINED';
+    createdAt: number;
+  }
+
+  const activeJoinRequests = new Map<string, ServerJoinRequest>();
+
+  function computeLiveStatusForPublicId(
+    store: SocialStoreData,
+    publicId: string,
+    fallbackUsername = 'Aventureiro'
+  ) {
+    const cleanId = String(publicId || '').trim().toUpperCase();
+    const prof = store.profilesByPublicId[cleanId];
+    const now = Date.now();
+    const username = prof?.username || fallbackUsername;
+    const pres = prof?.presence;
+    const isRecent = Boolean(pres && now - (pres.updatedAt || 0) < 45000);
+    if (!isRecent || !pres?.isOnline) {
+      return {
+        playerPublicId: cleanId,
+        username,
+        isOnline: false,
+        inOpenWorld: false,
+        worldName: null,
+        inviteCode: null,
+        lastSeenAt: pres?.updatedAt || prof?.updatedAt || 0,
+      };
+    }
+
+    const code = String(pres.inviteCode || '')
+      .toUpperCase()
+      .replace(/[^A-Z0-9]/g, '');
+    const activeRoom = code ? activeRooms.get(code) : undefined;
+    const inOpenWorld = Boolean(pres.inOpenWorld && activeRoom);
+
+    return {
+      playerPublicId: cleanId,
+      username,
+      isOnline: true,
+      inOpenWorld,
+      worldName: inOpenWorld
+        ? activeRoom?.worldName || pres.worldName || 'Mundo Online'
+        : null,
+      inviteCode: inOpenWorld ? code : null,
+      lastSeenAt: pres.updatedAt,
+    };
+  }
+
+  app.post('/api/social/sync-profile', (req, res) => {
+    try {
+      const store = readSocialStore();
+      const {
+        uid,
+        playerPublicId: rawPubId,
+        username: rawUsername,
+        appearanceSlots,
+        activeAppearanceSlotIndex,
+        accountAppearance,
+        friendsList,
+        deletedWorldIds,
+        presence,
+      } = req.body || {};
+
+      const cleanPubId = String(rawPubId || '')
+        .trim()
+        .toUpperCase();
+      if (!cleanPubId) {
+        res.status(400).json({ ok: false, error: 'Missing playerPublicId' });
+        return;
+      }
+
+      if (uid && typeof uid === 'string') {
+        store.publicIdByUid[uid] = cleanPubId;
+      }
+
+      const existing = store.profilesByPublicId[cleanPubId];
+      const cleanUsername =
+        String(rawUsername || existing?.username || 'Aventureiro')
+          .trim()
+          .slice(0, 22) || 'Aventureiro';
+
+      // Merge friends lists
+      const friendMap = new Map<
+        string,
+        { playerPublicId: string; username: string; addedAt: number }
+      >();
+      if (Array.isArray(existing?.friendsList)) {
+        for (const f of existing.friendsList) {
+          if (f && f.playerPublicId) {
+            const fId = String(f.playerPublicId).trim().toUpperCase();
+            const targetProf = store.profilesByPublicId[fId];
+            friendMap.set(fId, {
+              playerPublicId: fId,
+              username: targetProf?.username || f.username || 'Aventureiro',
+              addedAt: f.addedAt || Date.now(),
+            });
+          }
+        }
+      }
+      if (Array.isArray(friendsList)) {
+        for (const f of friendsList) {
+          if (f && f.playerPublicId) {
+            const fId = String(f.playerPublicId).trim().toUpperCase();
+            if (fId === cleanPubId) continue;
+            const targetProf = store.profilesByPublicId[fId];
+            friendMap.set(fId, {
+              playerPublicId: fId,
+              username: targetProf?.username || f.username || 'Aventureiro',
+              addedAt: f.addedAt || Date.now(),
+            });
+          }
+        }
+      }
+
+      // Merge deletedWorldIds
+      const delSet = new Set<string>(
+        Array.isArray(existing?.deletedWorldIds) ? existing.deletedWorldIds : []
+      );
+      if (Array.isArray(deletedWorldIds)) {
+        for (const wId of deletedWorldIds) {
+          if (wId && typeof wId === 'string') delSet.add(wId);
+        }
+      }
+
+      const mergedProfile: ServerSocialProfile = {
+        uid: uid || existing?.uid || null,
+        playerPublicId: cleanPubId,
+        username: cleanUsername,
+        appearanceSlots:
+          Array.isArray(appearanceSlots) && appearanceSlots.length > 0
+            ? appearanceSlots
+            : existing?.appearanceSlots,
+        activeAppearanceSlotIndex:
+          typeof activeAppearanceSlotIndex === 'number'
+            ? activeAppearanceSlotIndex
+            : existing?.activeAppearanceSlotIndex ?? 0,
+        accountAppearance: accountAppearance || existing?.accountAppearance,
+        friendsList: Array.from(friendMap.values()),
+        deletedWorldIds: Array.from(delSet),
+        presence: presence
+          ? {
+              isOnline: Boolean(presence.isOnline),
+              inOpenWorld: Boolean(presence.inOpenWorld),
+              worldId: presence.worldId || null,
+              worldName: presence.worldName || null,
+              inviteCode: presence.inviteCode || null,
+              updatedAt: Date.now(),
+            }
+          : existing?.presence,
+        updatedAt: Date.now(),
+      };
+
+      store.profilesByPublicId[cleanPubId] = mergedProfile;
+      writeSocialStore(store);
+
+      const friendsStatus = mergedProfile.friendsList.map((f) =>
+        computeLiveStatusForPublicId(store, f.playerPublicId, f.username)
+      );
+
+      res.json({
+        ok: true,
+        profile: mergedProfile,
+        friendsStatus,
+      });
+    } catch (err: any) {
+      res.status(500).json({ ok: false, error: err?.message || 'Sync error' });
+    }
+  });
+
+  app.get('/api/social/search', (req, res) => {
+    try {
+      const store = readSocialStore();
+      const playerIdQuery = String(req.query.playerId || '')
+        .trim()
+        .toUpperCase();
+      const usernameQuery = String(req.query.username || '')
+        .trim()
+        .toLowerCase();
+      const excludeId = String(req.query.excludeId || '')
+        .trim()
+        .toUpperCase();
+
+      const results: { playerPublicId: string; username: string }[] = [];
+
+      if (playerIdQuery) {
+        const exact = store.profilesByPublicId[playerIdQuery];
+        if (exact && exact.playerPublicId !== excludeId) {
+          results.push({
+            playerPublicId: exact.playerPublicId,
+            username: exact.username,
+          });
+        }
+      } else if (usernameQuery) {
+        const all = Object.values(store.profilesByPublicId);
+        const matches = all.filter(
+          (p) =>
+            p &&
+            p.playerPublicId &&
+            p.playerPublicId !== excludeId &&
+            (p.username || '').toLowerCase().includes(usernameQuery)
+        );
+        matches.sort((a, b) => {
+          const aExact = a.username.toLowerCase() === usernameQuery ? 0 : 1;
+          const bExact = b.username.toLowerCase() === usernameQuery ? 0 : 1;
+          if (aExact !== bExact) return aExact - bExact;
+          return (b.updatedAt || 0) - (a.updatedAt || 0);
+        });
+        for (const m of matches.slice(0, 25)) {
+          results.push({
+            playerPublicId: m.playerPublicId,
+            username: m.username,
+          });
+        }
+      }
+
+      res.json({ ok: true, results });
+    } catch (err: any) {
+      res.status(500).json({ ok: false, error: err?.message || 'Search error' });
+    }
+  });
+
+  app.post('/api/social/friends/add', (req, res) => {
+    try {
+      const store = readSocialStore();
+      const myPublicId = String(req.body?.myPublicId || '')
+        .trim()
+        .toUpperCase();
+      const myUsername =
+        String(req.body?.myUsername || 'Aventureiro')
+          .trim()
+          .slice(0, 22) || 'Aventureiro';
+      const targetPublicId = String(req.body?.targetPublicId || '')
+        .trim()
+        .toUpperCase();
+
+      if (!myPublicId || !targetPublicId) {
+        res.status(400).json({ ok: false, error: 'ID de jogador inválido.' });
+        return;
+      }
+      if (myPublicId === targetPublicId) {
+        res
+          .status(400)
+          .json({ ok: false, error: 'Você não pode adicionar seu próprio ID.' });
+        return;
+      }
+
+      const targetProfile = store.profilesByPublicId[targetPublicId];
+      if (!targetProfile) {
+        res.status(404).json({
+          ok: false,
+          error: 'Nenhum jogador encontrado com este ID de jogador.',
+        });
+        return;
+      }
+
+      let myProfile = store.profilesByPublicId[myPublicId];
+      if (!myProfile) {
+        myProfile = {
+          playerPublicId: myPublicId,
+          username: myUsername,
+          friendsList: [],
+          deletedWorldIds: [],
+          updatedAt: Date.now(),
+        };
+        store.profilesByPublicId[myPublicId] = myProfile;
+      }
+
+      const now = Date.now();
+      if (
+        !myProfile.friendsList.some((f) => f.playerPublicId === targetPublicId)
+      ) {
+        myProfile.friendsList.push({
+          playerPublicId: targetPublicId,
+          username: targetProfile.username,
+          addedAt: now,
+        });
+      }
+      if (
+        !targetProfile.friendsList.some((f) => f.playerPublicId === myPublicId)
+      ) {
+        targetProfile.friendsList.push({
+          playerPublicId: myPublicId,
+          username: myProfile.username,
+          addedAt: now,
+        });
+      }
+
+      writeSocialStore(store);
+
+      const friendsStatus = myProfile.friendsList.map((f) =>
+        computeLiveStatusForPublicId(store, f.playerPublicId, f.username)
+      );
+
+      res.json({
+        ok: true,
+        friendsList: myProfile.friendsList,
+        friendsStatus,
+      });
+    } catch (err: any) {
+      res.status(500).json({ ok: false, error: err?.message || 'Erro ao adicionar amigo.' });
+    }
+  });
+
+  app.post('/api/social/friends/remove', (req, res) => {
+    try {
+      const store = readSocialStore();
+      const myPublicId = String(req.body?.myPublicId || '')
+        .trim()
+        .toUpperCase();
+      const targetPublicId = String(req.body?.targetPublicId || '')
+        .trim()
+        .toUpperCase();
+
+      const myProfile = store.profilesByPublicId[myPublicId];
+      if (myProfile) {
+        myProfile.friendsList = myProfile.friendsList.filter(
+          (f) => f.playerPublicId !== targetPublicId
+        );
+      }
+      const targetProfile = store.profilesByPublicId[targetPublicId];
+      if (targetProfile) {
+        targetProfile.friendsList = targetProfile.friendsList.filter(
+          (f) => f.playerPublicId !== myPublicId
+        );
+      }
+      writeSocialStore(store);
+
+      const friendsList = myProfile?.friendsList || [];
+      const friendsStatus = friendsList.map((f) =>
+        computeLiveStatusForPublicId(store, f.playerPublicId, f.username)
+      );
+      res.json({ ok: true, friendsList, friendsStatus });
+    } catch (err: any) {
+      res.status(500).json({ ok: false, error: err?.message || 'Remove error' });
+    }
+  });
+
+  app.post('/api/social/presence', (req, res) => {
+    try {
+      const store = readSocialStore();
+      const {
+        playerPublicId: rawPubId,
+        username: rawUsername,
+        isOnline,
+        inOpenWorld,
+        worldId,
+        worldName,
+        inviteCode,
+      } = req.body || {};
+
+      const cleanPubId = String(rawPubId || '')
+        .trim()
+        .toUpperCase();
+      if (!cleanPubId) {
+        res.status(400).json({ ok: false, error: 'Missing playerPublicId' });
+        return;
+      }
+
+      const now = Date.now();
+      let prof = store.profilesByPublicId[cleanPubId];
+      if (!prof) {
+        prof = {
+          playerPublicId: cleanPubId,
+          username:
+            String(rawUsername || 'Aventureiro')
+              .trim()
+              .slice(0, 22) || 'Aventureiro',
+          friendsList: [],
+          deletedWorldIds: [],
+          updatedAt: now,
+        };
+        store.profilesByPublicId[cleanPubId] = prof;
+      } else if (rawUsername && String(rawUsername).trim()) {
+        prof.username = String(rawUsername).trim().slice(0, 22);
+      }
+
+      prof.presence = {
+        isOnline: Boolean(isOnline),
+        inOpenWorld: Boolean(inOpenWorld),
+        worldId: worldId || null,
+        worldName: worldName || null,
+        inviteCode: inviteCode || null,
+        updatedAt: now,
+      };
+      prof.updatedAt = now;
+
+      // Refresh friend usernames
+      for (const f of prof.friendsList) {
+        const fProf = store.profilesByPublicId[f.playerPublicId];
+        if (fProf?.username) {
+          f.username = fProf.username;
+        }
+      }
+
+      const friendsStatus = prof.friendsList.map((f) =>
+        computeLiveStatusForPublicId(store, f.playerPublicId, f.username)
+      );
+
+      // Clean expired join requests (> 90s) and collect pending requests for this host
+      const pendingJoinRequests: ServerJoinRequest[] = [];
+      for (const [reqId, jr] of activeJoinRequests.entries()) {
+        if (now - jr.createdAt > 90000) {
+          activeJoinRequests.delete(reqId);
+          continue;
+        }
+        if (jr.targetPublicId === cleanPubId && jr.status === 'PENDING') {
+          pendingJoinRequests.push(jr);
+        }
+      }
+
+      res.json({
+        ok: true,
+        friendsList: prof.friendsList,
+        friendsStatus,
+        pendingJoinRequests,
+      });
+    } catch (err: any) {
+      res.status(500).json({ ok: false, error: err?.message || 'Presence error' });
+    }
+  });
+
+  app.post('/api/social/join-request', (req, res) => {
+    try {
+      const store = readSocialStore();
+      const requesterPublicId = String(req.body?.requesterPublicId || '')
+        .trim()
+        .toUpperCase();
+      const requesterName =
+        String(req.body?.requesterName || 'Amigo')
+          .trim()
+          .slice(0, 22) || 'Amigo';
+      const targetPublicId = String(req.body?.targetPublicId || '')
+        .trim()
+        .toUpperCase();
+
+      if (!requesterPublicId || !targetPublicId) {
+        res.status(400).json({ ok: false, error: 'Dados de solicitação inválidos.' });
+        return;
+      }
+
+      const targetStatus = computeLiveStatusForPublicId(store, targetPublicId);
+      if (!targetStatus.inOpenWorld || !targetStatus.inviteCode) {
+        res.status(400).json({
+          ok: false,
+          error:
+            'Este amigo não está em um mundo com disponibilidade online ativada no momento.',
+        });
+        return;
+      }
+
+      // Reuse existing pending request if present
+      for (const existing of activeJoinRequests.values()) {
+        if (
+          existing.requesterPublicId === requesterPublicId &&
+          existing.targetPublicId === targetPublicId &&
+          existing.status === 'PENDING'
+        ) {
+          res.json({ ok: true, request: existing });
+          return;
+        }
+      }
+
+      const requestId = `jreq_${Date.now()}_${Math.random()
+        .toString(36)
+        .slice(2, 8)}`;
+      const joinReq: ServerJoinRequest = {
+        requestId,
+        requesterPublicId,
+        requesterName,
+        targetPublicId,
+        worldId:
+          store.profilesByPublicId[targetPublicId]?.presence?.worldId || 'world',
+        worldName: targetStatus.worldName || 'Mundo Online',
+        inviteCode: targetStatus.inviteCode,
+        status: 'PENDING',
+        createdAt: Date.now(),
+      };
+
+      activeJoinRequests.set(requestId, joinReq);
+
+      // Push real-time notification directly to the host peer in the active room if connected
+      const room = activeRooms.get(targetStatus.inviteCode);
+      if (room) {
+        const hostPeer = room.peers.get(room.hostPeerId);
+        if (hostPeer) {
+          pushEventToPeer(room, hostPeer, {
+            type: 'join_request_received',
+            request: joinReq,
+          });
+        }
+      }
+
+      res.json({ ok: true, request: joinReq });
+    } catch (err: any) {
+      res.status(500).json({ ok: false, error: err?.message || 'Join request error' });
+    }
+  });
+
+  app.get('/api/social/join-request/:requestId', (req, res) => {
+    const reqId = String(req.params.requestId || '').trim();
+    const joinReq = activeJoinRequests.get(reqId);
+    if (!joinReq) {
+      res.status(404).json({
+        ok: false,
+        error: 'Solicitação expirada ou não encontrada.',
+      });
+      return;
+    }
+    res.json({ ok: true, request: joinReq });
+  });
+
+  app.post('/api/social/join-request/respond', (req, res) => {
+    const reqId = String(req.body?.requestId || '').trim();
+    const accept = Boolean(req.body?.accept);
+    const joinReq = activeJoinRequests.get(reqId);
+    if (!joinReq) {
+      res.status(404).json({
+        ok: false,
+        error: 'Solicitação não encontrada.',
+      });
+      return;
+    }
+    joinReq.status = accept ? 'ACCEPTED' : 'DECLINED';
+    res.json({ ok: true, request: joinReq });
   });
 
   // ==========================================================================

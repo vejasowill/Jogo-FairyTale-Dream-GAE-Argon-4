@@ -879,12 +879,10 @@ export default function App() {
           settings={settings}
           isFullscreen={isFullscreen}
           onToggleFullscreen={toggleFullscreen}
+          onOpenHudEditorFromMenu={handleOpenHudEditor}
           onUpdateSettings={handleUpdateSettings}
-          onStartWorld={(saveData) => {
-            handleStartWorldWithTransition(saveData, null);
-          }}
-          onJoinOnlineWorld={(saveData, mpManager) => {
-            handleStartWorldWithTransition(saveData, mpManager);
+          onStartWorld={(saveData, mpManager) => {
+            handleStartWorldWithTransition(saveData, mpManager || null);
           }}
         />
       ) : (
@@ -914,6 +912,54 @@ export default function App() {
               </div>
             </div>
           )}
+
+          {/* Discreet Non-Blocking Friend Join Request Notification Popup (Host Approval) */}
+          {snapshot &&
+            snapshot.pendingJoinRequests &&
+            snapshot.pendingJoinRequests.length > 0 &&
+            engineRef.current && (
+              <div className="fixed top-14 right-3 z-[65] flex flex-col gap-2 max-w-[290px] w-[88vw] pointer-events-auto">
+                {snapshot.pendingJoinRequests.slice(0, 2).map((req) => (
+                  <div
+                    key={req.requestId}
+                    className="medieval-panel px-3 py-2.5 border border-amber-500/75 shadow-xl bg-[#18100a]/95 space-y-2"
+                  >
+                    <div className="text-[11px] text-[#f5e7c6] leading-snug">
+                      <strong className="text-amber-300 font-pixel text-[10px]">
+                        {req.requesterName}
+                      </strong>{' '}
+                      deseja entrar no seu mundo.
+                    </div>
+                    <div className="flex items-center justify-end gap-2">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          void engineRef.current?.respondToJoinRequest(
+                            req.requestId,
+                            false
+                          );
+                        }}
+                        className="min-h-[28px] px-2.5 medieval-btn-crimson font-pixel text-[9px] font-bold"
+                      >
+                        Recusar
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          void engineRef.current?.respondToJoinRequest(
+                            req.requestId,
+                            true
+                          );
+                        }}
+                        className="min-h-[28px] px-3 medieval-btn-emerald font-pixel text-[9px] font-bold"
+                      >
+                        Aceitar
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
 
           {/* Responsive Medieval Pixel Mobile HUD + Live WYSIWYG Control Editor */}
           {engineRef.current && snapshot && (

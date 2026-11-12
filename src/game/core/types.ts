@@ -956,8 +956,44 @@ export interface OnlineActivationStep {
 }
 
 // REGRA PERMANENTE: A cada nova atualização do jogo, incremente a versão para o número seguinte da beta (ex: 0.4.4-beta -> 0.4.5-beta).
-export const GAME_VERSION = '0.8.4-beta';
+export const GAME_VERSION = '0.8.5-beta';
 export const CURRENT_WORLD_GEN_VERSION = 5;
+
+export interface AppearancePresetSlot {
+  id: string;
+  slotIndex: number; // 0..4
+  name: string;
+  appearance: PlayerAppearance;
+  updatedAt: number;
+}
+
+export interface FriendProfileEntry {
+  playerPublicId: string;
+  username: string;
+  addedAt: number;
+}
+
+export interface FriendLiveStatus {
+  playerPublicId: string;
+  username: string;
+  isOnline: boolean;
+  inOpenWorld: boolean;
+  worldName?: string | null;
+  inviteCode?: string | null;
+  lastSeenAt?: number;
+}
+
+export interface WorldJoinRequestInfo {
+  requestId: string;
+  requesterPublicId: string;
+  requesterName: string;
+  targetPublicId: string;
+  worldId: string;
+  worldName: string;
+  inviteCode: string;
+  status: 'PENDING' | 'ACCEPTED' | 'DECLINED';
+  createdAt: number;
+}
 
 export interface OnlineSessionInfo {
   isOnline: boolean;
@@ -1009,6 +1045,7 @@ export interface WorldMetadata {
   lastSyncedAt?: number | null;
   syncPending?: boolean;
   conflictInfo?: WorldSyncConflictInfo | null;
+  onlineEnabled?: boolean;
   seed: number;
   seedText: string;
   difficulty: 'normal' | 'survival' | 'hardcore';
@@ -1063,7 +1100,14 @@ export type HudControlLayout = Record<HudElementKey, HudElementPlacement>;
 
 export interface GameSettings {
   playerName?: string;
+  accountUsername?: string;
+  guestUsername?: string;
+  playerPublicId?: string;
   accountAppearance?: PlayerAppearance;
+  appearanceSlots?: AppearancePresetSlot[];
+  activeAppearanceSlotIndex?: number;
+  friendsList?: FriendProfileEntry[];
+  deletedWorldIds?: string[];
   soundEnabled: boolean;
   soundVolume: number;
   ambientVolume: number;
@@ -1077,4 +1121,5 @@ export interface GameSettings {
   hudOpacity: number; // Global HUD opacity (0.45 to 1.0)
   controlLayout: HudControlLayout;
 }
+
 
