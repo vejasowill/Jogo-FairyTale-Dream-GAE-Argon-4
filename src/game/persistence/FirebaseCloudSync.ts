@@ -35,6 +35,7 @@ import {
   CloudTransferProgress,
   cloudWorldStorageEngine,
   persistentUploadQueue,
+  withFirestoreTimeout,
 } from './CloudWorldStorageEngine';
 import {
   computeChecksum,
@@ -390,8 +391,17 @@ class FirebaseCloudSyncService {
     this.notifyListeners();
   }
 
+  private formatTransferSpeed(bytesPerSec: number): string {
+    if (!bytesPerSec || bytesPerSec <= 0) return '';
+    if (bytesPerSec >= 1024 * 1024) {
+      return ` · ${(bytesPerSec / (1024 * 1024)).toFixed(2)} MB/s`;
+    }
+    return ` · ${Math.max(1, Math.round(bytesPerSec / 1024))} KB/s`;
+  }
+
   private updateReconciliation(
-    patch: Partial<ReconciliationProgressState>
+    patch: Partial<ReconciliationProgressState>,
+    skipNotify = false
   ): void {
     const nextStage = patch.stageNumber ?? this.reconciliation.stageNumber;
     const nextCompleted =
@@ -414,7 +424,9 @@ class FirebaseCloudSyncService {
       totalUnits: nextTotal,
       progressPercent: computedPercent,
     };
-    this.notifyListeners();
+    if (!skipNotify) {
+      this.notifyListeners();
+    }
   }
 
   private setWorldDetailedState(
@@ -426,6 +438,7 @@ class FirebaseCloudSyncService {
       lastRevisionId?: string | null;
       lastChunksUploaded?: number;
       lastUnchangedChunksSkipped?: number;
+      skipNotify?: boolean;
     }
   ): void {
     const prev = this.worldSyncStates.get(worldId);
@@ -466,7 +479,9 @@ class FirebaseCloudSyncService {
           ? options.lastUnchangedChunksSkipped
           : prev?.lastUnchangedChunksSkipped,
     });
-    this.notifyListeners();
+    if (!options?.skipNotify) {
+      this.notifyListeners();
+    }
   }
 
   /**
@@ -621,6 +636,9 @@ class FirebaseCloudSyncService {
     this.transferProgress = { ...progress };
     const wId = progress.worldId;
     const wName = progress.worldName || 'Mundo';
+    const speedSuffix = this.formatTransferSpeed(
+      progress.transferSpeedBytesPerSec
+    );
 
     if (progress.phase === 'PAUSED_INTERRUPTED' || progress.phase === 'ERROR') {
       this.syncStatus = 'ERROR';
@@ -631,49 +649,68 @@ class FirebaseCloudSyncService {
         this.setWorldDetailedState(wId, 'SYNC_ERROR', {
           worldName: wName,
           error: progress.lastError,
+          skipNotify: true,
         });
       }
     } else if (progress.phase === 'UPLOADING_CHUNKS') {
       this.syncStatus = 'SYNCING';
       if (wId) {
-        this.setWorldDetailedState(wId, 'UPLOADING', { worldName: wName });
+        this.setWorldDetailedState(wId, 'UPLOADING', {
+          worldName: wName,
+          skipNotify: true,
+        });
       }
       if (this.reconciliation.active) {
-        this.updateReconciliation({
-          stageNumber: 5,
-          stageLabel: STAGE_LABELS[5],
-          currentWorldId: wId,
-          currentWorldName: wName,
-          microDetail: `Enviando mundo: ${wName} · Enviando chunks: ${progress.chunksUploaded} de ${Math.max(1, progress.chunksTotal)}`,
-        });
+        this.updateReconciliation(
+          {
+            stageNumber: 5,
+            stageLabel: STAGE_LABELS[5],
+            currentWorldId: wId,
+            currentWorldName: wName,
+            microDetail: `Enviando mundo: ${wName} · Enviando pacotes: ${progress.chunksUploaded} de ${Math.max(1, progress.chunksTotal)}${speedSuffix}`,
+          },
+          true
+        );
       }
     } else if (progress.phase === 'DOWNLOADING_CHUNKS') {
       this.syncStatus = 'SYNCING';
       if (wId) {
-        this.setWorldDetailedState(wId, 'DOWNLOADING', { worldName: wName });
+        this.setWorldDetailedState(wId, 'DOWNLOADING', {
+          worldName: wName,
+          skipNotify: true,
+        });
       }
       if (this.reconciliation.active) {
-        this.updateReconciliation({
-          stageNumber: 6,
-          stageLabel: STAGE_LABELS[6],
-          currentWorldId: wId,
-          currentWorldName: wName,
-          microDetail: `Baixando mundo: ${wName} · Baixando partes: ${progress.chunksUploaded} de ${Math.max(1, progress.chunksTotal)}`,
-        });
+        this.updateReconciliation(
+          {
+            stageNumber: 6,
+            stageLabel: STAGE_LABELS[6],
+            currentWorldId: wId,
+            currentWorldName: wName,
+            microDetail: `Baixando mundo: ${wName} · Baixando partes: ${progress.chunksUploaded} de ${Math.max(1, progress.chunksTotal)}${speedSuffix}`,
+          },
+          true
+        );
       }
     } else if (progress.phase === 'RECONSTRUCTING_WORLD') {
       this.syncStatus = 'SYNCING';
       if (wId) {
-        this.setWorldDetailedState(wId, 'RECONSTRUCTING', { worldName: wName });
+        this.setWorldDetailedState(wId, 'RECONSTRUCTING', {
+          worldName: wName,
+          skipNotify: true,
+        });
       }
       if (this.reconciliation.active) {
-        this.updateReconciliation({
-          stageNumber: 7,
-          stageLabel: STAGE_LABELS[7],
-          currentWorldId: wId,
-          currentWorldName: wName,
-          microDetail: `Reconstruindo no armazenamento local: ${wName} (${progress.chunksTotal} partes)`,
-        });
+        this.updateReconciliation(
+          {
+            stageNumber: 7,
+            stageLabel: STAGE_LABELS[7],
+            currentWorldId: wId,
+            currentWorldName: wName,
+            microDetail: `Reconstruindo no armazenamento local: ${wName} (${progress.chunksTotal} partes)`,
+          },
+          true
+        );
       }
     } else if (
       progress.phase === 'VERIFYING_INTEGRITY' ||
@@ -683,16 +720,20 @@ class FirebaseCloudSyncService {
       if (wId) {
         this.setWorldDetailedState(wId, 'VERIFYING_INTEGRITY', {
           worldName: wName,
+          skipNotify: true,
         });
       }
       if (this.reconciliation.active) {
-        this.updateReconciliation({
-          stageNumber: 8,
-          stageLabel: STAGE_LABELS[8],
-          currentWorldId: wId,
-          currentWorldName: wName,
-          microDetail: `Validando integridade: ${progress.chunksUploaded} de ${Math.max(1, progress.chunksTotal)} partes (${wName})`,
-        });
+        this.updateReconciliation(
+          {
+            stageNumber: 8,
+            stageLabel: STAGE_LABELS[8],
+            currentWorldId: wId,
+            currentWorldName: wName,
+            microDetail: `Validando integridade: ${progress.chunksUploaded} de ${Math.max(1, progress.chunksTotal)} partes (${wName})`,
+          },
+          true
+        );
       }
     } else if (progress.phase === 'COMPLETED') {
       if (
@@ -1304,7 +1345,11 @@ class FirebaseCloudSyncService {
    *   revision is confirmed.
    */
   public async uploadWorldToCloud(
-    saveDataOrWorldId: WorldSaveData | string
+    saveDataOrWorldId: WorldSaveData | string,
+    uploadOptions?: {
+      existingWorldDataHint?: Record<string, unknown> | null;
+      worldKnownNotInCloud?: boolean;
+    }
   ): Promise<{
     ok: boolean;
     message: string;
@@ -1342,7 +1387,6 @@ class FirebaseCloudSyncService {
       const uid = sanitizeValidId(user.uid);
       this.setWorldDetailedState(worldId, 'UPLOADING');
       this.syncStatus = 'SYNCING';
-      this.notifyListeners();
 
       try {
         const profileOk = await this.ensureUserProfileSynced(user);
@@ -1373,7 +1417,8 @@ class FirebaseCloudSyncService {
           latestCompact,
           uid,
           legacyUid,
-          (prog) => this.updateTransferProgress(prog)
+          (prog) => this.updateTransferProgress(prog),
+          uploadOptions
         );
 
         // CRITICAL: Only mark the world as synced AFTER the revision is confirmed in Cloud Firestore
@@ -1647,6 +1692,7 @@ class FirebaseCloudSyncService {
         isCopy: boolean;
         copyNumber: number;
         sourceDb: Firestore;
+        rawDocData: Record<string, unknown>;
       }
 
       const queryWorldsFromDb = async (
@@ -1654,7 +1700,11 @@ class FirebaseCloudSyncService {
       ): Promise<CloudWorldSummaryDoc[]> => {
         const worldsCol = collection(targetDb, 'users', uid, 'worlds');
         const q = query(worldsCol, where('ownerId', '==', uid));
-        const snap = await getDocs(q);
+        const snap = await withFirestoreTimeout(
+          getDocs(q),
+          18_000,
+          'listCloudWorlds'
+        );
         return snap.docs.map((d) => {
           const data = d.data();
           const summaryMap =
@@ -1679,6 +1729,7 @@ class FirebaseCloudSyncService {
               Math.floor(Number(summaryMap.copyNumber || 0))
             ),
             sourceDb: targetDb,
+            rawDocData: data as Record<string, unknown>,
           };
         });
       };
@@ -2107,7 +2158,11 @@ class FirebaseCloudSyncService {
             5,
             `Enviando alterações do mundo: ${localMeta.name}...`
           );
-          const upRes = await this.uploadWorldToCloud(fullLocal);
+          await new Promise((r) => setTimeout(r, 0));
+          const upRes = await this.uploadWorldToCloud(fullLocal, {
+            existingWorldDataHint:
+              cloudEntry.sourceDb === db ? cloudEntry.rawDocData : null,
+          });
           if (upRes.noNewRevisionCreated) {
             summary.unchangedSkippedWorldIds.push(localMeta.id);
           } else {
@@ -2160,6 +2215,7 @@ class FirebaseCloudSyncService {
         }
 
         try {
+          await new Promise((r) => setTimeout(r, 0));
           const fullLocal = await SaveManager.getCompactWorldForCloud(
             localMeta.id
           );
@@ -2168,7 +2224,9 @@ class FirebaseCloudSyncService {
               5,
               `Enviando novo mundo local: ${localMeta.name}...`
             );
-            const upRes = await this.uploadWorldToCloud(fullLocal);
+            const upRes = await this.uploadWorldToCloud(fullLocal, {
+              worldKnownNotInCloud: true,
+            });
             summary.newUploadedWorldIds.push(localMeta.id);
             summary.totalChunksUploaded += upRes.chunksUploaded || 0;
             summary.totalChunksSkipped += upRes.unchangedChunksSkipped || 0;
@@ -2183,6 +2241,14 @@ class FirebaseCloudSyncService {
             worldName: localMeta.name,
             error: errMsg,
           });
+          this.appendLog(
+            'UPLOAD_NEW_WORLD',
+            localMeta.id,
+            localMeta.name,
+            'uploadWorldToCloud',
+            'ERROR',
+            errMsg
+          );
         }
 
         processedWorldsCount++;

@@ -1410,6 +1410,17 @@ export class SaveManager {
     }
     if (this.idbPromise) return this.idbPromise;
     this.idbPromise = new Promise((resolve) => {
+      let settled = false;
+      const finish = (dbInstance: IDBDatabase | null) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        if (!dbInstance) {
+          this.idbPromise = null;
+        }
+        resolve(dbInstance);
+      };
+      const timer = setTimeout(() => finish(null), 1500);
       try {
         const req = window.indexedDB.open('wildborn_idb_v1', 1);
         req.onupgradeneeded = () => {
@@ -1418,10 +1429,11 @@ export class SaveManager {
             db.createObjectStore('worlds', { keyPath: 'id' });
           }
         };
-        req.onsuccess = () => resolve(req.result);
-        req.onerror = () => resolve(null);
+        req.onsuccess = () => finish(req.result);
+        req.onerror = () => finish(null);
+        req.onblocked = () => finish(null);
       } catch {
-        resolve(null);
+        finish(null);
       }
     });
     return this.idbPromise;
@@ -1437,6 +1449,14 @@ export class SaveManager {
         const latestInMemory =
           this.memoryWorlds.get(saveData.metadata.id) || saveData;
         return new Promise<boolean>((resolve) => {
+          let settled = false;
+          const finish = (ok: boolean) => {
+            if (settled) return;
+            settled = true;
+            clearTimeout(timer);
+            resolve(ok);
+          };
+          const timer = setTimeout(() => finish(false), 1800);
           try {
             const tx = db.transaction('worlds', 'readwrite');
             const store = tx.objectStore('worlds');
@@ -1445,11 +1465,11 @@ export class SaveManager {
               savedAt: this.getSaveTimestamp(latestInMemory) || Date.now(),
               data: latestInMemory,
             });
-            tx.oncomplete = () => resolve(true);
-            tx.onerror = () => resolve(false);
-            tx.onabort = () => resolve(false);
+            tx.oncomplete = () => finish(true);
+            tx.onerror = () => finish(false);
+            tx.onabort = () => finish(false);
           } catch {
-            resolve(false);
+            finish(false);
           }
         });
       });
@@ -1463,6 +1483,14 @@ export class SaveManager {
     const db = await this.openIdb();
     if (!db || !worldId) return null;
     return new Promise((resolve) => {
+      let settled = false;
+      const finish = (val: WorldSaveData | null) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        resolve(val);
+      };
+      const timer = setTimeout(() => finish(null), 1500);
       try {
         const tx = db.transaction('worlds', 'readonly');
         const store = tx.objectStore('worlds');
@@ -1470,14 +1498,16 @@ export class SaveManager {
         req.onsuccess = () => {
           const rec = req.result;
           if (rec && rec.data && rec.data.metadata) {
-            resolve(rec.data as WorldSaveData);
+            finish(rec.data as WorldSaveData);
           } else {
-            resolve(null);
+            finish(null);
           }
         };
-        req.onerror = () => resolve(null);
+        req.onerror = () => finish(null);
+        tx.onabort = () => finish(null);
+        tx.onerror = () => finish(null);
       } catch {
-        resolve(null);
+        finish(null);
       }
     });
   }
@@ -1486,14 +1516,23 @@ export class SaveManager {
     const db = await this.openIdb();
     if (!db || !worldId) return;
     return new Promise((resolve) => {
+      let settled = false;
+      const finish = () => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        resolve();
+      };
+      const timer = setTimeout(finish, 1500);
       try {
         const tx = db.transaction('worlds', 'readwrite');
         const store = tx.objectStore('worlds');
         store.delete(worldId);
-        tx.oncomplete = () => resolve();
-        tx.onerror = () => resolve();
+        tx.oncomplete = () => finish();
+        tx.onerror = () => finish();
+        tx.onabort = () => finish();
       } catch {
-        resolve();
+        finish();
       }
     });
   }
@@ -1509,15 +1548,27 @@ export class SaveManager {
       if (!db) return this.listWorlds();
       const records: { id: string; savedAt: number; data: WorldSaveData }[] =
         await new Promise((resolve) => {
+          let settled = false;
+          const finish = (
+            list: { id: string; savedAt: number; data: WorldSaveData }[]
+          ) => {
+            if (settled) return;
+            settled = true;
+            clearTimeout(timer);
+            resolve(list);
+          };
+          const timer = setTimeout(() => finish([]), 1800);
           try {
             const tx = db.transaction('worlds', 'readonly');
             const store = tx.objectStore('worlds');
             const req = store.getAll();
             req.onsuccess = () =>
-              resolve(Array.isArray(req.result) ? req.result : []);
-            req.onerror = () => resolve([]);
+              finish(Array.isArray(req.result) ? req.result : []);
+            req.onerror = () => finish([]);
+            tx.onabort = () => finish([]);
+            tx.onerror = () => finish([]);
           } catch {
-            resolve([]);
+            finish([]);
           }
         });
 
