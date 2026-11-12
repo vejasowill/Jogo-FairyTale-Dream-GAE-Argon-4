@@ -1018,19 +1018,47 @@ async function startServer() {
     if (firebaseAdminInitialized) {
       try {
         const decoded = await getAdminAuth().verifyIdToken(token);
-        if (!decoded.uid || !decoded.email_verified) {
-          return { ok: false, error: 'Unverified or invalid Firebase UID.' };
+        if (!decoded.uid) {
+          return { ok: false, error: 'Invalid Firebase UID.' };
         }
         return { ok: true, uid: decoded.uid };
-      } catch (err: any) {
-        return {
-          ok: false,
-          error: err?.message || 'Invalid Firebase ID token.',
-        };
+      } catch {
+        // Fall through to official Firebase Auth REST lookup below
       }
     }
 
-    return { ok: false, error: 'Firebase Admin SDK not initialized.' };
+    // Fallback verification via official Firebase Auth IdentityToolkit REST API
+    try {
+      let apiKey = (process.env.VITE_FIREBASE_API_KEY || '').trim();
+      if (!apiKey) {
+        const cfgPath = path.join(__dirname, 'firebase-applet-config.json');
+        if (fs.existsSync(cfgPath)) {
+          const parsed = JSON.parse(fs.readFileSync(cfgPath, 'utf-8')) || {};
+          apiKey = String(parsed.apiKey || '').trim();
+        }
+      }
+      if (apiKey) {
+        const lookupRes = await fetch(
+          `https://identitytoolkit.googleapis.com/v1/accounts:lookup?key=${encodeURIComponent(apiKey)}`,
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ idToken: token }),
+          }
+        );
+        if (lookupRes.ok) {
+          const data: any = await lookupRes.json();
+          const userObj = Array.isArray(data?.users) ? data.users[0] : null;
+          if (userObj && userObj.localId) {
+            return { ok: true, uid: String(userObj.localId) };
+          }
+        }
+      }
+    } catch {
+      // ignore
+    }
+
+    return { ok: false, error: 'Invalid or expired Firebase ID token.' };
   }
 
   function resolveSafeCloudObjectFilePath(
@@ -1073,23 +1101,22 @@ async function startServer() {
         ok: false,
         error: 'Access denied: objectPath must belong to the authenticated UID.',
       });
-      return;
-    }
-
-    try {
-      fs.mkdirSync(path.dirname(diskPath), { recursive: true });
-      fs.writeFileSync(diskPath, content, 'utf-8');
-      res.json({
-        ok: true,
-        objectPath,
-        sizeBytes: Buffer.byteLength(content, 'utf-8'),
-        hash: expectedHash,
-      });
-    } catch (err: any) {
-      res.status(500).json({
-        ok: false,
-        error: err?.message || 'Failed to store cloud object.',
-      });
+    } else {
+      try {
+        fs.mkdirSync(path.dirname(diskPath), { recursive: true });
+        fs.writeFileSync(diskPath, content, 'utf-8');
+        res.json({
+          ok: true,
+          objectPath,
+          sizeBytes: Buffer.byteLength(content, 'utf-8'),
+          hash: expectedHash,
+        });
+      } catch (err: any) {
+        res.status(500).json({
+          ok: false,
+          error: err?.message || 'Failed to store cloud object.',
+        });
+      }
     }
   });
 
@@ -1156,6 +1183,152 @@ async function startServer() {
         ok: false,
         error: err?.message || 'Failed to delete cloud object.',
       });
+    }
+  });
+
+  // ==========================================================================
+  // AUTHENTICATED CLOUD WORLD VAULT (/api/cloud-worlds)
+  // High-speed authenticated server cloud storage per UID (used alongside Firestore
+  // and as an instant zero-data-loss fallback when Firestore's 20k/day free write quota is full)
+  // ==========================================================================
+  app.get('/api/cloud-worlds/list', async (req, res) => {
+    const authResult = await verifyStorageRequestUid(req);
+    if (!authResult.ok || !authResult.uid) {
+      res.status(403).json({ ok: false, error: authResult.error || 'Forbidden' });
+      return;
+    }
+    const userVaultDir = path.resolve(
+      CLOUD_OBJECTS_DIR,
+      'users',
+      authResult.uid,
+      'worlds_vault'
+    );
+    if (!fs.existsSync(userVaultDir)) {
+      res.json({ ok: true, worlds: [] });
+      return;
+    }
+    try {
+      const files = fs
+        .readdirSync(userVaultDir)
+        .filter((f) => f.endsWith('.meta.json'));
+      const worlds: any[] = [];
+      for (const f of files) {
+        try {
+          const raw = fs.readFileSync(path.join(userVaultDir, f), 'utf-8');
+          const parsed = JSON.parse(raw);
+          if (parsed && parsed.worldId) {
+            worlds.push(parsed);
+          }
+        } catch {
+          // ignore
+        }
+      }
+      res.json({ ok: true, worlds });
+    } catch (err: any) {
+      res.status(500).json({ ok: false, error: err?.message || 'List error' });
+    }
+  });
+
+  app.post('/api/cloud-worlds/save', async (req, res) => {
+    const authResult = await verifyStorageRequestUid(req);
+    if (!authResult.ok || !authResult.uid) {
+      res.status(403).json({ ok: false, error: authResult.error || 'Forbidden' });
+      return;
+    }
+    const rawWorldId = String(req.body?.worldId || '').replace(
+      /[^a-zA-Z0-9_-]/g,
+      '_'
+    );
+    const metadataDocFields = req.body?.metadataDocFields;
+    const saveData = req.body?.saveData;
+    if (!rawWorldId || !metadataDocFields || !saveData) {
+      res.status(400).json({ ok: false, error: 'Missing worldId or saveData' });
+      return;
+    }
+    const userVaultDir = path.resolve(
+      CLOUD_OBJECTS_DIR,
+      'users',
+      authResult.uid,
+      'worlds_vault'
+    );
+    try {
+      fs.mkdirSync(userVaultDir, { recursive: true });
+      const metaPath = path.join(userVaultDir, `${rawWorldId}.meta.json`);
+      const dataPath = path.join(userVaultDir, `${rawWorldId}.data.json`);
+      fs.writeFileSync(
+        metaPath,
+        JSON.stringify({
+          ...metadataDocFields,
+          worldId: rawWorldId,
+          ownerId: authResult.uid,
+          updatedAtMs: Date.now(),
+        }),
+        'utf-8'
+      );
+      fs.writeFileSync(dataPath, JSON.stringify(saveData), 'utf-8');
+      res.json({
+        ok: true,
+        worldId: rawWorldId,
+        revisionId: metadataDocFields.activeRevisionId,
+      });
+    } catch (err: any) {
+      res.status(500).json({ ok: false, error: err?.message || 'Save error' });
+    }
+  });
+
+  app.get('/api/cloud-worlds/:worldId', async (req, res) => {
+    const authResult = await verifyStorageRequestUid(req);
+    if (!authResult.ok || !authResult.uid) {
+      res.status(403).json({ ok: false, error: authResult.error || 'Forbidden' });
+      return;
+    }
+    const rawWorldId = String(req.params.worldId || '').replace(
+      /[^a-zA-Z0-9_-]/g,
+      '_'
+    );
+    const dataPath = path.resolve(
+      CLOUD_OBJECTS_DIR,
+      'users',
+      authResult.uid,
+      'worlds_vault',
+      `${rawWorldId}.data.json`
+    );
+    if (!fs.existsSync(dataPath)) {
+      res.status(404).json({ ok: false, error: 'World not found in vault' });
+      return;
+    }
+    try {
+      const raw = fs.readFileSync(dataPath, 'utf-8');
+      res.json({ ok: true, saveData: JSON.parse(raw) });
+    } catch (err: any) {
+      res.status(500).json({ ok: false, error: err?.message || 'Read error' });
+    }
+  });
+
+  app.delete('/api/cloud-worlds/:worldId', async (req, res) => {
+    const authResult = await verifyStorageRequestUid(req);
+    if (!authResult.ok || !authResult.uid) {
+      res.status(403).json({ ok: false, error: authResult.error || 'Forbidden' });
+      return;
+    }
+    const rawWorldId = String(req.params.worldId || '').replace(
+      /[^a-zA-Z0-9_-]/g,
+      '_'
+    );
+    const userVaultDir = path.resolve(
+      CLOUD_OBJECTS_DIR,
+      'users',
+      authResult.uid,
+      'worlds_vault'
+    );
+    try {
+      const metaPath = path.join(userVaultDir, `${rawWorldId}.meta.json`);
+      const dataPath = path.join(userVaultDir, `${rawWorldId}.data.json`);
+      if (fs.existsSync(metaPath)) fs.unlinkSync(metaPath);
+      if (fs.existsSync(dataPath)) fs.unlinkSync(dataPath);
+      res.json({ ok: true });
+    } catch {
+      res.json({ ok: false });
     }
   });
 

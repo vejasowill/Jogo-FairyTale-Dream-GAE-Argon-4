@@ -181,6 +181,82 @@ export function getClientFirebaseDiagnostics() {
 
 let connectionTested = false;
 let lastConnectionResult = false;
+let firestoreWriteQuotaExhausted = false;
+const quotaExhaustedListeners = new Set<(reason: string) => void>();
+
+export function isFirestoreWriteQuotaExhausted(): boolean {
+  return firestoreWriteQuotaExhausted;
+}
+
+export function markFirestoreWriteQuotaExhausted(
+  reason = 'RESOURCE_EXHAUSTED: Cota diária gratuita de gravações do Firestore atingida.'
+): void {
+  if (!firestoreWriteQuotaExhausted) {
+    firestoreWriteQuotaExhausted = true;
+  }
+  for (const listener of Array.from(quotaExhaustedListeners)) {
+    try {
+      listener(reason);
+    } catch {
+      // ignore
+    }
+  }
+}
+
+export function onFirestoreWriteQuotaExhausted(
+  listener: (reason: string) => void
+): () => void {
+  quotaExhaustedListeners.add(listener);
+  if (firestoreWriteQuotaExhausted) {
+    listener(
+      'RESOURCE_EXHAUSTED: Cota diária gratuita de gravações do Firestore atingida.'
+    );
+  }
+  return () => {
+    quotaExhaustedListeners.delete(listener);
+  };
+}
+
+// Intercept @firebase/firestore's internal GrpcConnection / WebChannel 'Write' stream
+// RESOURCE_EXHAUSTED log messages so pending write promises abort in < 5ms instead of
+// hanging indefinitely in Firebase SDK's 60s maximum backoff loop.
+(() => {
+  const checkArgsForQuotaError = (args: unknown[]) => {
+    for (const arg of args) {
+      const str = typeof arg === 'string' ? arg : String(arg ?? '');
+      if (
+        (str.includes('@firebase/firestore') ||
+          str.includes('Firestore') ||
+          str.includes('RESOURCE_EXHAUSTED') ||
+          str.includes('resource-exhausted')) &&
+        (str.includes('RESOURCE_EXHAUSTED') ||
+          str.includes('resource-exhausted') ||
+          str.includes('Quota limit exceeded') ||
+          str.includes('Quota exceeded') ||
+          str.includes('Using maximum backoff delay'))
+      ) {
+        markFirestoreWriteQuotaExhausted(
+          'RESOURCE_EXHAUSTED: Limite diário de gravações do plano gratuito do Firestore atingido.'
+        );
+        return true;
+      }
+    }
+    return false;
+  };
+
+  if (typeof console !== 'undefined') {
+    const origError = console.error.bind(console);
+    const origWarn = console.warn.bind(console);
+    console.error = (...args: unknown[]) => {
+      checkArgsForQuotaError(args);
+      origError(...args);
+    };
+    console.warn = (...args: unknown[]) => {
+      checkArgsForQuotaError(args);
+      origWarn(...args);
+    };
+  }
+})();
 
 export async function testFirestoreConnection(force = false): Promise<boolean> {
   if (connectionTested && !force) return lastConnectionResult;
@@ -205,3 +281,4 @@ export async function testFirestoreConnection(force = false): Promise<boolean> {
     return true;
   }
 }
+

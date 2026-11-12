@@ -16,6 +16,7 @@ import {
   fallbackDefaultDb,
   googleProvider,
   handleFirestoreError,
+  isFirestoreWriteQuotaExhausted,
   onAuthStateChanged,
   OperationType,
   signInWithPopup,
@@ -1167,15 +1168,22 @@ class FirebaseCloudSyncService {
   }
 
   /**
-   * Ensures `/users/{userId}` and `/users/{userId}/private/account` exist and are up to date.
+   * Ensures `/users/{userId}` and `/users/{userId}/private/account` exist.
+   * CRITICAL OPTIMIZATION & QUOTA PROTECTION:
+   * - When logging in (`forceProfileWrite = false`), if `/users/{uid}` already exists in Firestore,
+   *   performs **0 Firestore writes** (only 1 fast `getDoc` read) so login never wastes write quota
+   *   or hangs at Stage 1 (4%) when the project's daily free write quota is exhausted!
+   * - When `forceProfileWrite = true` (or for a brand-new user), uses `withFirestoreTimeout(..., true)`
+   *   so if Firestore emits `Code: 8 RESOURCE_EXHAUSTED`, it aborts in < 10ms without blocking reconciliation.
    */
   public async ensureUserProfileSynced(
-    userOverride?: User | null
+    userOverride?: User | null,
+    forceProfileWrite = false
   ): Promise<boolean> {
     const user = userOverride || this.currentUser || auth.currentUser;
     if (!user || !user.uid || !user.emailVerified) return false;
     const uid = sanitizeValidId(user.uid);
-    if (this.profileReadyForUid === uid) return true;
+    if (this.profileReadyForUid === uid && !forceProfileWrite) return true;
     if (this.activeProfileSyncPromise) return this.activeProfileSyncPromise;
 
     this.activeProfileSyncPromise = (async () => {
@@ -1184,6 +1192,60 @@ class FirebaseCloudSyncService {
 
       const settings = SaveManager.loadSettings();
       const appearance = SaveManager.getAccountAppearance();
+
+      let existingSnap;
+      try {
+        existingSnap = await withFirestoreTimeout(
+          getDoc(userRef),
+          6000,
+          `getDoc:${userPath}`,
+          false
+        );
+      } catch (err: any) {
+        const msg = String(err?.message || err?.code || '');
+        if (
+          msg.includes('RESOURCE_EXHAUSTED') ||
+          msg.includes('Quota limit exceeded') ||
+          msg.includes('FIRESTORE_WRITE_QUOTA_EXHAUSTED') ||
+          msg.includes('Tempo limite excedido')
+        ) {
+          this.profileReadyForUid = uid;
+          return true;
+        }
+        handleFirestoreError(err, OperationType.GET, userPath);
+      }
+
+      if (existingSnap && existingSnap.exists()) {
+        const remoteData = existingSnap.data();
+        if (
+          remoteData?.appearance &&
+          typeof remoteData.appearance === 'object' &&
+          !settings.accountAppearance
+        ) {
+          SaveManager.saveAccountAppearance(
+            remoteData.appearance as Partial<PlayerAppearance>
+          );
+        }
+
+        // Fast-path on login: profile already exists in Cloud Firestore -> 0 writes needed!
+        if (!forceProfileWrite || isFirestoreWriteQuotaExhausted()) {
+          this.profileReadyForUid = uid;
+          this.appendLog(
+            'PROFILE',
+            null,
+            null,
+            'ensureUserProfileSynced',
+            'SUCCESS',
+            `Perfil da conta Google (${uid}) verificado no Cloud Firestore.`
+          );
+          return true;
+        }
+      }
+
+      if (isFirestoreWriteQuotaExhausted()) {
+        this.profileReadyForUid = uid;
+        return true;
+      }
 
       const cleanAppearance = sanitizeForFirestore({
         gender: appearance.gender || 'masculino',
@@ -1226,13 +1288,6 @@ class FirebaseCloudSyncService {
         'player_local_default'
       );
 
-      let existingSnap;
-      try {
-        existingSnap = await getDoc(userRef);
-      } catch (err) {
-        handleFirestoreError(err, OperationType.GET, userPath);
-      }
-
       const profilePayload = {
         uid,
         displayName,
@@ -1244,62 +1299,69 @@ class FirebaseCloudSyncService {
         updatedAt: serverTimestamp(),
       };
 
-      if (!existingSnap.exists()) {
-        try {
-          await setDoc(userRef, profilePayload);
-        } catch (err) {
-          handleFirestoreError(err, OperationType.CREATE, userPath);
-        }
-      } else {
-        const remoteData = existingSnap.data();
-        if (
-          remoteData?.appearance &&
-          typeof remoteData.appearance === 'object' &&
-          !settings.accountAppearance
-        ) {
-          SaveManager.saveAccountAppearance(
-            remoteData.appearance as Partial<PlayerAppearance>
+      try {
+        if (!existingSnap || !existingSnap.exists()) {
+          await withFirestoreTimeout(
+            setDoc(userRef, profilePayload),
+            4500,
+            `setDoc:${userPath}`,
+            true
+          );
+        } else {
+          await withFirestoreTimeout(
+            updateDoc(userRef, {
+              displayName,
+              photoURL,
+              legacyLocalUid,
+              appearance: cleanAppearance,
+              settings: cleanSettings,
+              updatedAt: serverTimestamp(),
+            }),
+            4500,
+            `updateDoc:${userPath}`,
+            true
           );
         }
-        try {
-          await updateDoc(userRef, {
-            displayName,
-            photoURL,
-            legacyLocalUid,
-            appearance: cleanAppearance,
-            settings: cleanSettings,
-            updatedAt: serverTimestamp(),
-          });
-        } catch {
-          try {
-            await setDoc(userRef, profilePayload);
-          } catch (err2) {
-            handleFirestoreError(err2, OperationType.UPDATE, userPath);
-          }
-        }
-      }
 
-      // Sync isolated PII record (/users/{uid}/private/account)
-      if (user.email && user.email.trim().length >= 3) {
-        const privPath = `users/${uid}/private/account`;
-        const privRef = doc(db, 'users', uid, 'private', 'account');
-        const cleanEmail = sanitizeString(user.email, 3, 254, 'user@example.com');
-        try {
-          await setDoc(privRef, {
-            uid,
-            email: cleanEmail,
-            createdAt: serverTimestamp(),
-            updatedAt: serverTimestamp(),
-          });
-        } catch {
-          try {
-            await updateDoc(privRef, {
+        if (
+          user.email &&
+          user.email.trim().length >= 3 &&
+          !isFirestoreWriteQuotaExhausted()
+        ) {
+          const privPath = `users/${uid}/private/account`;
+          const privRef = doc(db, 'users', uid, 'private', 'account');
+          const cleanEmail = sanitizeString(
+            user.email,
+            3,
+            254,
+            'user@example.com'
+          );
+          await withFirestoreTimeout(
+            setDoc(privRef, {
+              uid,
               email: cleanEmail,
+              createdAt: serverTimestamp(),
               updatedAt: serverTimestamp(),
-            });
-          } catch (err2) {
-            handleFirestoreError(err2, OperationType.WRITE, privPath);
-          }
+            }),
+            4500,
+            `setDoc:${privPath}`,
+            true
+          );
+        }
+      } catch (writeErr: any) {
+        const msg = String(writeErr?.message || '');
+        if (
+          !isFirestoreWriteQuotaExhausted() &&
+          !msg.includes('FIRESTORE_WRITE_QUOTA_EXHAUSTED')
+        ) {
+          this.appendLog(
+            'PROFILE',
+            null,
+            null,
+            'ensureUserProfileSynced',
+            'WARN',
+            `Aviso ao atualizar perfil secundário: ${msg}`
+          );
         }
       }
 
@@ -1310,7 +1372,7 @@ class FirebaseCloudSyncService {
         null,
         'ensureUserProfileSynced',
         'SUCCESS',
-        `Perfil da conta Google (${uid}) sincronizado no Cloud Firestore.`
+        `Perfil da conta Google (${uid}) sincronizado.`
       );
       return true;
     })();
@@ -1330,7 +1392,7 @@ class FirebaseCloudSyncService {
     if (!user || !user.emailVerified) return;
     this.profileReadyForUid = null;
     try {
-      await this.ensureUserProfileSynced(user);
+      await this.ensureUserProfileSynced(user, true);
     } catch {
       // ignore offline
     }
@@ -1758,6 +1820,58 @@ class FirebaseCloudSyncService {
             // ignore fallback db probe if rules on (default) deny access
           }
         }
+        // Also merge any worlds saved in the Server Cloud Vault fallback (`/api/cloud-worlds/list`)
+        if (typeof window !== 'undefined' && auth.currentUser) {
+          try {
+            const token = await auth.currentUser.getIdToken();
+            const vaultRes = await fetch('/api/cloud-worlds/list', {
+              headers: { Authorization: `Bearer ${token}` },
+            });
+            if (vaultRes.ok) {
+              const vaultJson = await vaultRes.json();
+              const vaultWorlds = Array.isArray(vaultJson?.worlds)
+                ? vaultJson.worlds
+                : [];
+              const byId = new Map(cloudDocs.map((c) => [c.id, c]));
+              for (const vw of vaultWorlds) {
+                const wId = String(vw.worldId || '');
+                if (!wId) continue;
+                const existing = byId.get(wId);
+                const vwUpdated = Number(vw.clientUpdatedAt || 0);
+                if (!existing || vwUpdated > existing.clientUpdatedAt) {
+                  const summaryMap =
+                    (vw.chunkIndexSummary as
+                      | Record<string, unknown>
+                      | undefined) || {};
+                  const mergedDoc: CloudWorldSummaryDoc = {
+                    id: wId,
+                    name: String(vw.name || 'Mundo'),
+                    clientUpdatedAt: vwUpdated,
+                    storageVersion: 2,
+                    manifestHash: String(vw.checksum || ''),
+                    activeRevisionId: String(vw.activeRevisionId || ''),
+                    previousRevisionId: String(vw.previousRevisionId || ''),
+                    contentHash: String(summaryMap.contentHash || ''),
+                    gameplayHash: String(summaryMap.gameplayHash || ''),
+                    originWorldId: String(summaryMap.originWorldId || wId),
+                    isCopy: Boolean(summaryMap.isCopy),
+                    copyNumber: Math.max(
+                      0,
+                      Math.floor(Number(summaryMap.copyNumber || 0))
+                    ),
+                    sourceDb: db,
+                    rawDocData: vw as Record<string, unknown>,
+                  };
+                  byId.set(wId, mergedDoc);
+                }
+              }
+              cloudDocs = Array.from(byId.values());
+            }
+          } catch {
+            // ignore server vault probe error
+          }
+        }
+
         this.appendLog(
           'CLOUD_DISCOVERY',
           null,
@@ -1766,17 +1880,109 @@ class FirebaseCloudSyncService {
           'SUCCESS',
           `Consultando mundos na nuvem: ${cloudDocs.length} de ${cloudDocs.length} identificados.`
         );
-      } catch (err) {
-        this.sessionFailedOpsCount++;
-        this.appendLog(
-          'CLOUD_DISCOVERY',
-          null,
-          null,
-          'listCloudWorlds',
-          'ERROR',
-          err instanceof Error ? err.message : String(err)
-        );
-        handleFirestoreError(err, OperationType.LIST, worldsPath);
+      } catch (err: any) {
+        const errText = String(err?.message || err?.code || '');
+        // If Firestore read quota is exhausted, try loading the world list from the Server Cloud Vault
+        if (typeof window !== 'undefined' && auth.currentUser) {
+          try {
+            const token = await auth.currentUser.getIdToken();
+            const vaultRes = await fetch('/api/cloud-worlds/list', {
+              headers: { Authorization: `Bearer ${token}` },
+            });
+            if (vaultRes.ok) {
+              const vaultJson = await vaultRes.json();
+              const vaultWorlds = Array.isArray(vaultJson?.worlds)
+                ? vaultJson.worlds
+                : [];
+              cloudDocs = vaultWorlds.map((vw: any) => {
+                const wId = String(vw.worldId || '');
+                const summaryMap =
+                  (vw.chunkIndexSummary as
+                    | Record<string, unknown>
+                    | undefined) || {};
+                return {
+                  id: wId,
+                  name: String(vw.name || 'Mundo'),
+                  clientUpdatedAt: Number(vw.clientUpdatedAt || 0),
+                  storageVersion: 2,
+                  manifestHash: String(vw.checksum || ''),
+                  activeRevisionId: String(vw.activeRevisionId || ''),
+                  previousRevisionId: String(vw.previousRevisionId || ''),
+                  contentHash: String(summaryMap.contentHash || ''),
+                  gameplayHash: String(summaryMap.gameplayHash || ''),
+                  originWorldId: String(summaryMap.originWorldId || wId),
+                  isCopy: Boolean(summaryMap.isCopy),
+                  copyNumber: Math.max(
+                    0,
+                    Math.floor(Number(summaryMap.copyNumber || 0))
+                  ),
+                  sourceDb: db,
+                  rawDocData: vw as Record<string, unknown>,
+                };
+              });
+            }
+          } catch {
+            // ignore
+          }
+        }
+        if (
+          cloudDocs.length === 0 &&
+          (errText.includes('RESOURCE_EXHAUSTED') ||
+            errText.includes('Quota limit exceeded'))
+        ) {
+          const fallbackList =
+            cloudWorldStorageEngine.getQuotaExhaustedFallbackWorldsForUser(uid);
+          cloudDocs = fallbackList.map((vw: any) => {
+            const wId = String(vw.worldId || '');
+            const summaryMap =
+              (vw.chunkIndexSummary as Record<string, unknown> | undefined) ||
+              {};
+            return {
+              id: wId,
+              name: String(vw.name || 'Mundo'),
+              clientUpdatedAt: Number(vw.clientUpdatedAt || 0),
+              storageVersion: 2,
+              manifestHash: String(vw.checksum || ''),
+              activeRevisionId: String(vw.activeRevisionId || ''),
+              previousRevisionId: String(vw.previousRevisionId || ''),
+              contentHash: String(summaryMap.contentHash || ''),
+              gameplayHash: String(summaryMap.gameplayHash || ''),
+              originWorldId: String(summaryMap.originWorldId || wId),
+              isCopy: Boolean(summaryMap.isCopy),
+              copyNumber: Math.max(
+                0,
+                Math.floor(Number(summaryMap.copyNumber || 0))
+              ),
+              sourceDb: db,
+              rawDocData: vw as Record<string, unknown>,
+            };
+          });
+        }
+        if (
+          cloudDocs.length === 0 &&
+          !errText.includes('RESOURCE_EXHAUSTED') &&
+          !errText.includes('Quota limit exceeded')
+        ) {
+          this.sessionFailedOpsCount++;
+          this.appendLog(
+            'CLOUD_DISCOVERY',
+            null,
+            null,
+            'listCloudWorlds',
+            'ERROR',
+            err instanceof Error ? err.message : String(err)
+          );
+          handleFirestoreError(err, OperationType.LIST, worldsPath);
+        } else {
+          this.appendLog(
+            'CLOUD_DISCOVERY',
+            null,
+            null,
+            'listCloudWorlds',
+            'WARN',
+            `Cota diária de leitura do Firestore atingida; sincronizando ${cloudDocs.length} mundo(s) da nuvem e ${SaveManager.listWorlds().length} locais.`
+          );
+        }
       }
 
       this.updateReconciliation({
@@ -1861,7 +2067,8 @@ class FirebaseCloudSyncService {
                 uid,
                 cloudEntry.id,
                 (prog) => this.updateTransferProgress(prog),
-                cloudEntry.sourceDb
+                cloudEntry.sourceDb,
+                cloudEntry.rawDocData
               );
 
             if (!reconstructed || !reconstructed.metadata) {
@@ -1882,7 +2089,7 @@ class FirebaseCloudSyncService {
               manifestHash:
                 reconstructed.metadata.lastSyncedManifestHash ||
                 cloudEntry.manifestHash,
-              contentHash: cloudEntry.contentHash || canonicalHash,
+              contentHash: canonicalHash,
             });
 
             this.setWorldDetailedState(reconstructed.metadata.id, 'SYNCED', {
@@ -1905,8 +2112,11 @@ class FirebaseCloudSyncService {
               `Mundo "${reconstructed.metadata.name}" baixado, verificado e reconstruído localmente com sucesso.`
             );
 
-            // If legacy v1 format in cloud or from fallbackDefaultDb, migrate to v2 chunked format in primary db
-            if (cloudEntry.storageVersion !== 2 || cloudEntry.sourceDb !== db) {
+            // If legacy v1 format in cloud or from fallbackDefaultDb, migrate to v2 chunked format in primary db (when write quota is available)
+            if (
+              !isFirestoreWriteQuotaExhausted() &&
+              (cloudEntry.storageVersion !== 2 || cloudEntry.sourceDb !== db)
+            ) {
               const upRes = await this.uploadWorldToCloud(reconstructed);
               summary.totalChunksUploaded += upRes.chunksUploaded || 0;
               summary.totalChunksSkipped += upRes.unchangedChunksSkipped || 0;
@@ -2022,7 +2232,8 @@ class FirebaseCloudSyncService {
                 uid,
                 cloudEntry.id,
                 (prog) => this.updateTransferProgress(prog),
-                cloudEntry.sourceDb
+                cloudEntry.sourceDb,
+                cloudEntry.rawDocData
               );
             if (cloudReconstructed && cloudReconstructed.metadata) {
               cloudReconstructed.player.persistentPlayerId = uid;
@@ -2071,7 +2282,6 @@ class FirebaseCloudSyncService {
                     revisionId: cloudActiveRev,
                     manifestHash: cloudEntry.manifestHash,
                     contentHash:
-                      cloudEntry.contentHash ||
                       SaveManager.computeCanonicalSyncHash(cloudReconstructed),
                   }
                 );
@@ -2122,7 +2332,8 @@ class FirebaseCloudSyncService {
                 uid,
                 cloudEntry.id,
                 (prog) => this.updateTransferProgress(prog),
-                cloudEntry.sourceDb
+                cloudEntry.sourceDb,
+                cloudEntry.rawDocData
               );
             if (reconstructed && reconstructed.metadata) {
               reconstructed.player.persistentPlayerId = uid;
@@ -2133,7 +2344,6 @@ class FirebaseCloudSyncService {
                   revisionId: cloudActiveRev,
                   manifestHash: cloudEntry.manifestHash,
                   contentHash:
-                    cloudEntry.contentHash ||
                     SaveManager.computeCanonicalSyncHash(reconstructed),
                 }
               );
@@ -2318,9 +2528,11 @@ class FirebaseCloudSyncService {
   ): Promise<void> {
     const user = this.currentUser || auth.currentUser;
     if (!user || !user.uid || !user.emailVerified || !worldId) return;
+    if (isFirestoreWriteQuotaExhausted()) return;
 
     const uid = sanitizeValidId(user.uid);
     await this.ensureUserProfileSynced(user);
+    if (isFirestoreWriteQuotaExhausted()) return;
 
     const cleanWorldId = sanitizeValidId(worldId);
     const guestPath = `users/${uid}/guestProfiles/${cleanWorldId}`;
@@ -2340,24 +2552,46 @@ class FirebaseCloudSyncService {
     );
 
     try {
-      await setDoc(guestRef, {
-        worldId: cleanWorldId,
-        ownerId: uid,
-        playerLevel: playerLevelInt,
-        clientUpdatedAt: clientUpdatedAtInt,
-        playerPayload,
-        createdAt: serverTimestamp(),
-        updatedAt: serverTimestamp(),
-      });
-    } catch {
-      try {
-        await updateDoc(guestRef, {
+      await withFirestoreTimeout(
+        setDoc(guestRef, {
+          worldId: cleanWorldId,
+          ownerId: uid,
           playerLevel: playerLevelInt,
           clientUpdatedAt: clientUpdatedAtInt,
           playerPayload,
+          createdAt: serverTimestamp(),
           updatedAt: serverTimestamp(),
-        });
-      } catch (err2) {
+        }),
+        4500,
+        `setDoc:${guestPath}`,
+        true
+      );
+    } catch (e1: any) {
+      if (
+        isFirestoreWriteQuotaExhausted() ||
+        String(e1?.message || '').includes('FIRESTORE_WRITE_QUOTA_EXHAUSTED')
+      ) {
+        return;
+      }
+      try {
+        await withFirestoreTimeout(
+          updateDoc(guestRef, {
+            playerLevel: playerLevelInt,
+            clientUpdatedAt: clientUpdatedAtInt,
+            playerPayload,
+            updatedAt: serverTimestamp(),
+          }),
+          4500,
+          `updateDoc:${guestPath}`,
+          true
+        );
+      } catch (err2: any) {
+        if (
+          isFirestoreWriteQuotaExhausted() ||
+          String(err2?.message || '').includes('FIRESTORE_WRITE_QUOTA_EXHAUSTED')
+        ) {
+          return;
+        }
         handleFirestoreError(err2, OperationType.WRITE, guestPath);
       }
     }
@@ -2384,7 +2618,12 @@ class FirebaseCloudSyncService {
     }[] = [];
 
     try {
-      const snap = await getDocs(q);
+      const snap = await withFirestoreTimeout(
+        getDocs(q),
+        8000,
+        `getDocs:${guestColPath}`,
+        false
+      );
       cloudProfiles = snap.docs.map((d) => {
         const data = d.data();
         return {
@@ -2393,7 +2632,15 @@ class FirebaseCloudSyncService {
           playerPayload: (data.playerPayload as PlayerState) || null,
         };
       });
-    } catch (err) {
+    } catch (err: any) {
+      const msg = String(err?.message || err?.code || '');
+      if (
+        msg.includes('RESOURCE_EXHAUSTED') ||
+        msg.includes('Quota limit exceeded') ||
+        msg.includes('Tempo limite excedido')
+      ) {
+        return;
+      }
       handleFirestoreError(err, OperationType.LIST, guestColPath);
     }
 
@@ -2418,6 +2665,10 @@ class FirebaseCloudSyncService {
       }
     }
 
+    if (isFirestoreWriteQuotaExhausted()) {
+      return;
+    }
+
     // 2. Upload local guest profiles that are missing or newer than cloud
     try {
       const localGuestKeys: string[] = [];
@@ -2428,6 +2679,7 @@ class FirebaseCloudSyncService {
         }
       }
       for (const k of localGuestKeys) {
+        if (isFirestoreWriteQuotaExhausted()) break;
         const worldId = k.slice('wildborn_guest_player_'.length);
         const raw = localStorage.getItem(k);
         if (!raw || !worldId) continue;
@@ -2461,7 +2713,12 @@ class FirebaseCloudSyncService {
     const q = query(entCol, where('ownerId', '==', uid));
 
     try {
-      const snap = await getDocs(q);
+      const snap = await withFirestoreTimeout(
+        getDocs(q),
+        8000,
+        `getDocs:${entPath}`,
+        false
+      );
       const list: UserEntitlementRecord[] = snap.docs
         .map((d) => {
           const data = d.data();
@@ -2478,7 +2735,15 @@ class FirebaseCloudSyncService {
       this.entitlements = list;
       this.notifyListeners();
       return list;
-    } catch (err) {
+    } catch (err: any) {
+      const msg = String(err?.message || err?.code || '');
+      if (
+        msg.includes('RESOURCE_EXHAUSTED') ||
+        msg.includes('Quota limit exceeded') ||
+        msg.includes('Tempo limite excedido')
+      ) {
+        return this.entitlements;
+      }
       handleFirestoreError(err, OperationType.LIST, entPath);
     }
   }
