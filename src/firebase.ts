@@ -5,9 +5,14 @@ import {
   onAuthStateChanged,
   signInWithPopup,
   signOut,
-  User,
+  type User,
 } from 'firebase/auth';
-import { doc, getDocFromServer, getFirestore } from 'firebase/firestore';
+import {
+  doc,
+  type Firestore,
+  getDocFromServer,
+  getFirestore,
+} from 'firebase/firestore';
 import {
   deleteObject,
   getBytes,
@@ -18,48 +23,80 @@ import {
 import appletFirebaseConfig from '../firebase-applet-config.json';
 
 const env = (import.meta as any).env || {};
+const rawEnvDbId = env.VITE_FIREBASE_FIRESTORE_DATABASE_ID;
+const resolvedProjectId =
+  env.VITE_FIREBASE_PROJECT_ID || appletFirebaseConfig.projectId;
 
-function resolveClientDatabaseId(
-  envDbId: string | undefined,
-  appletDbId: string | undefined
-): string | undefined {
-  const raw = (envDbId || '').trim();
-  if (!raw || raw.toLowerCase() === 'default' || raw === '(default)') {
-    return appletDbId || undefined;
+/**
+ * Resolves the Cloud Firestore database ID safely across AI Studio and external deployments (e.g. Vercel):
+ * - If unset, `(default)`, `default`, or accidentally set to the `projectId` (`fairytale-dream`),
+ *   uses the provisioned AI Studio Firestore database ID (`appletFirebaseConfig.firestoreDatabaseId`).
+ */
+function resolveClientDatabaseId(raw: string | undefined): string {
+  const cleaned = (raw || '').trim();
+  if (
+    !cleaned ||
+    cleaned === '(default)' ||
+    cleaned.toLowerCase() === 'default' ||
+    cleaned === resolvedProjectId
+  ) {
+    return appletFirebaseConfig.firestoreDatabaseId || '(default)';
   }
-  return raw;
+  return cleaned;
 }
 
 const resolvedConfig = {
   apiKey: env.VITE_FIREBASE_API_KEY || appletFirebaseConfig.apiKey,
   authDomain: env.VITE_FIREBASE_AUTH_DOMAIN || appletFirebaseConfig.authDomain,
-  projectId: env.VITE_FIREBASE_PROJECT_ID || appletFirebaseConfig.projectId,
+  projectId: resolvedProjectId,
   storageBucket:
     env.VITE_FIREBASE_STORAGE_BUCKET || appletFirebaseConfig.storageBucket,
   messagingSenderId:
     env.VITE_FIREBASE_MESSAGING_SENDER_ID ||
     appletFirebaseConfig.messagingSenderId,
   appId: env.VITE_FIREBASE_APP_ID || appletFirebaseConfig.appId,
-  firestoreDatabaseId: resolveClientDatabaseId(
-    env.VITE_FIREBASE_FIRESTORE_DATABASE_ID,
-    appletFirebaseConfig.firestoreDatabaseId
-  ),
+  firestoreDatabaseId: resolveClientDatabaseId(rawEnvDbId),
 };
 
 export const firebaseApp = initializeApp(resolvedConfig);
 
-export const db = resolvedConfig.firestoreDatabaseId
-  ? getFirestore(firebaseApp, resolvedConfig.firestoreDatabaseId)
-  : getFirestore(firebaseApp);
-
-export const storage = getStorage(firebaseApp);
-
 export const auth = getAuth(firebaseApp);
-
 export const googleProvider = new GoogleAuthProvider();
 googleProvider.setCustomParameters({
   prompt: 'select_account',
 });
+
+export const db: Firestore =
+  resolvedConfig.firestoreDatabaseId === '(default)'
+    ? getFirestore(firebaseApp)
+    : getFirestore(firebaseApp, resolvedConfig.firestoreDatabaseId);
+
+/**
+ * Secondary reference to the `(default)` Firestore database when the primary database is a named
+ * instance, allowing discovery fallback if any world was previously stored in `(default)`.
+ */
+export const fallbackDefaultDb: Firestore | null =
+  resolvedConfig.firestoreDatabaseId !== '(default)'
+    ? getFirestore(firebaseApp)
+    : null;
+
+export const storage = getStorage(
+  firebaseApp,
+  resolvedConfig.storageBucket
+    ? `gs://${resolvedConfig.storageBucket}`
+    : undefined
+);
+
+export {
+  deleteObject,
+  getBytes,
+  onAuthStateChanged,
+  signInWithPopup,
+  signOut,
+  storageRef,
+  uploadBytesResumable,
+  type User,
+};
 
 export enum OperationType {
   CREATE = 'create',
@@ -74,17 +111,18 @@ export interface FirestoreErrorInfo {
   error: string;
   operationType: OperationType;
   path: string | null;
+  databaseId: string;
   authInfo: {
-    userId?: string | null;
-    email?: string | null;
-    emailVerified?: boolean | null;
-    isAnonymous?: boolean | null;
-    tenantId?: string | null;
-    providerInfo?: {
-      providerId?: string | null;
-      email?: string | null;
-      displayName?: string | null;
-      photoUrl?: string | null;
+    userId: string | undefined;
+    email: string | null | undefined;
+    emailVerified: boolean | undefined;
+    isAnonymous: boolean | undefined;
+    tenantId: string | null | undefined;
+    providerInfo: {
+      providerId: string;
+      displayName: string | null;
+      email: string | null;
+      photoUrl: string | null;
     }[];
   };
 }
@@ -103,88 +141,67 @@ export function handleFirestoreError(
       isAnonymous: auth.currentUser?.isAnonymous,
       tenantId: auth.currentUser?.tenantId,
       providerInfo:
-        auth.currentUser?.providerData?.map((provider) => ({
+        auth.currentUser?.providerData.map((provider) => ({
           providerId: provider.providerId,
-          email: provider.email,
           displayName: provider.displayName,
+          email: provider.email,
           photoUrl: provider.photoURL,
         })) || [],
     },
     operationType,
     path,
+    databaseId: resolvedConfig.firestoreDatabaseId,
   };
-  console.error('Firestore Error: ', JSON.stringify(errInfo));
+  console.error(
+    'Firestore Error: ',
+    JSON.stringify(errInfo)
+  );
   throw new Error(JSON.stringify(errInfo));
 }
 
+/**
+ * Returns non-sensitive client-side configuration diagnostics to confirm whether
+ * `VITE_FIREBASE_*` variables are loaded and that no `FIREBASE_ADMIN_*` secrets leak to the frontend.
+ */
+export function getClientFirebaseDiagnostics() {
+  const exposedAdminKeys = Object.keys(env).filter((k) =>
+    k.toUpperCase().includes('ADMIN') || k.toUpperCase().includes('PRIVATE_KEY')
+  );
+  return {
+    projectId: resolvedConfig.projectId,
+    authDomain: resolvedConfig.authDomain,
+    storageBucket: resolvedConfig.storageBucket,
+    firestoreDatabaseId: resolvedConfig.firestoreDatabaseId,
+    usingViteEnvConfig: Boolean(
+      env.VITE_FIREBASE_API_KEY && env.VITE_FIREBASE_PROJECT_ID
+    ),
+    adminSecretsAbsentFromFrontend: exposedAdminKeys.length === 0,
+  };
+}
+
 let connectionTested = false;
-let lastFirestorePingOk = false;
+let lastConnectionResult = false;
 
 export async function testFirestoreConnection(force = false): Promise<boolean> {
-  if (connectionTested && !force) return lastFirestorePingOk;
+  if (connectionTested && !force) return lastConnectionResult;
   connectionTested = true;
   try {
-    await getDocFromServer(doc(db, 'test', 'connection'));
-    lastFirestorePingOk = true;
+    await getDocFromServer(doc(db, '_connection_health', 'ping'));
+    lastConnectionResult = true;
     return true;
   } catch (error) {
     if (
       error instanceof Error &&
       error.message.includes('the client is offline')
     ) {
-      console.error('Please check your Firebase configuration.');
-      lastFirestorePingOk = false;
+      console.error(
+        'Please check your Firebase configuration. The client appears to be offline.'
+      );
+      lastConnectionResult = false;
       return false;
     }
-    // Permission denied on /test/connection is expected because of default-deny security rules,
-    // which confirms the Firestore server responded and is reachable!
-    lastFirestorePingOk = true;
+    // Permission-denied or not-found on the health probe still proves Firestore is reachable
+    lastConnectionResult = true;
     return true;
   }
 }
-
-export interface ClientFirebaseDiagnostics {
-  projectId: string;
-  authDomain: string;
-  storageBucket: string;
-  firestoreDatabaseId: string;
-  clientConfigComplete: boolean;
-  adminSecretsAbsentFromFrontend: boolean;
-}
-
-export function getClientFirebaseDiagnostics(): ClientFirebaseDiagnostics {
-  const envKeys = Object.keys(env);
-  const leakedAdminKey = envKeys.some(
-    (k) =>
-      k.includes('ADMIN_PRIVATE_KEY') ||
-      k.includes('ADMIN_CLIENT_EMAIL') ||
-      k === 'FIREBASE_ADMIN_PROJECT_ID'
-  );
-  return {
-    projectId: resolvedConfig.projectId || '',
-    authDomain: resolvedConfig.authDomain || '',
-    storageBucket: resolvedConfig.storageBucket || '',
-    firestoreDatabaseId: resolvedConfig.firestoreDatabaseId || '(default)',
-    clientConfigComplete: Boolean(
-      resolvedConfig.apiKey &&
-        resolvedConfig.authDomain &&
-        resolvedConfig.projectId &&
-        resolvedConfig.appId
-    ),
-    adminSecretsAbsentFromFrontend: !leakedAdminKey,
-  };
-}
-
-void testFirestoreConnection();
-
-export {
-  deleteObject,
-  getBytes,
-  onAuthStateChanged,
-  signInWithPopup,
-  signOut,
-  storageRef,
-  uploadBytesResumable,
-};
-export type { User };
-

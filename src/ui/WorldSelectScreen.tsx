@@ -516,6 +516,50 @@ export const WorldSelectScreen: React.FC<WorldSelectScreenProps> = ({
           </div>
         )}
 
+        {/* Active Background Cloud Sync Banner (shown when modal is dismissed while syncing) */}
+        {cloudSnap.user &&
+          cloudSnap.reconciliation.active &&
+          !cloudSnap.reconciliation.showModal && (
+            <div className="medieval-panel px-3.5 py-2.5 border border-sky-500/40 bg-sky-950/30 space-y-1.5">
+              <div className="flex items-center justify-between gap-2 text-xs">
+                <div className="flex items-center gap-2 text-sky-200 font-bold">
+                  <RefreshCw className="w-3.5 h-3.5 animate-spin text-sky-300 shrink-0" />
+                  <span>
+                    Sincronizando seus mundos — Etapa{' '}
+                    {cloudSnap.reconciliation.stageNumber} de 9:{' '}
+                    {cloudSnap.reconciliation.stageLabel}
+                  </span>
+                </div>
+                <div className="flex items-center gap-2 shrink-0">
+                  <span className="font-mono text-amber-300 font-bold">
+                    {cloudSnap.reconciliation.progressPercent}%
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setShowCloudModal(true)}
+                    className="px-2 py-0.5 rounded bg-sky-900/80 border border-sky-400/40 text-[10px] text-sky-200 hover:bg-sky-800"
+                  >
+                    Detalhes
+                  </button>
+                </div>
+              </div>
+              <div className="w-full h-2 rounded bg-[#120b07] border border-[#4a301e] overflow-hidden">
+                <div
+                  className="h-full bg-gradient-to-r from-amber-500 to-emerald-400 transition-all duration-200"
+                  style={{
+                    width: `${Math.max(
+                      2,
+                      Math.min(100, cloudSnap.reconciliation.progressPercent)
+                    )}%`,
+                  }}
+                />
+              </div>
+              <div className="text-[10px] font-mono text-sky-200/90">
+                {cloudSnap.reconciliation.microDetail}
+              </div>
+            </div>
+          )}
+
         {/* Worlds Filter & Search Bar */}
         <section className="space-y-3">
           <div className="flex flex-wrap items-center justify-between gap-2">
@@ -583,12 +627,29 @@ export const WorldSelectScreen: React.FC<WorldSelectScreenProps> = ({
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               {filteredWorlds.map((w) => {
                 const worldSync = cloudSnap.worldSyncStates?.[w.id];
-                const isSyncedInCloud =
-                  worldSync?.status === 'SYNCED' ||
-                  (w.syncPending === false &&
-                    Boolean(w.lastSyncedRevisionId || w.lastSyncedContentHash));
-                const isSyncingInCloud = worldSync?.status === 'SYNCING';
-                const isSyncError = worldSync?.status === 'ERROR';
+                const isSyncedByMeta =
+                  w.syncPending === false &&
+                  Boolean(w.lastSyncedRevisionId || w.lastSyncedContentHash);
+
+                const detailedStatus =
+                  worldSync?.detailedStatus ||
+                  (w.conflictInfo
+                    ? 'VERSION_CONFLICT'
+                    : !cloudSnap.user
+                    ? 'LOCAL_ONLY'
+                    : isSyncedByMeta
+                    ? 'SYNCED'
+                    : 'PENDING_UPLOAD');
+
+                const detailedLabel =
+                  worldSync?.detailedLabel ||
+                  (detailedStatus === 'VERSION_CONFLICT'
+                    ? 'Conflito de versões'
+                    : detailedStatus === 'SYNCED'
+                    ? 'Sincronizado'
+                    : detailedStatus === 'PENDING_UPLOAD'
+                    ? 'Aguardando envio'
+                    : 'Apenas local');
 
                 return (
                 <div
@@ -669,34 +730,53 @@ export const WorldSelectScreen: React.FC<WorldSelectScreenProps> = ({
                           ? `v${w.createdGameVersion} → v${w.gameVersion || GAME_VERSION}`
                           : `v${w.gameVersion || GAME_VERSION}`}
                       </span>
-                      {cloudSnap.user ? (
-                        isSyncingInCloud ? (
-                          <span className="px-1.5 py-0.5 rounded bg-sky-950/80 border border-sky-400/40 text-[9px] font-bold text-sky-200">
-                            Sincronizando...
-                          </span>
-                        ) : isSyncError ? (
-                          <button
-                            type="button"
-                            onClick={() =>
-                              firebaseCloudSync.enqueueWorldSync(w.id, 'manual_retry')
-                            }
-                            className="px-1.5 py-0.5 rounded bg-rose-950/80 border border-rose-400/50 text-[9px] font-bold text-rose-200 hover:bg-rose-900/90"
-                            title={worldSync?.error || 'Clique para retomar a sincronização'}
-                          >
-                            Falha — Retomar
-                          </button>
-                        ) : isSyncedInCloud ? (
-                          <span className="px-1.5 py-0.5 rounded bg-emerald-950/80 border border-emerald-400/40 text-[9px] font-bold text-emerald-300">
-                            Sincronizado
-                          </span>
-                        ) : (
-                          <span className="px-1.5 py-0.5 rounded bg-amber-950/80 border border-amber-400/40 text-[9px] font-bold text-amber-300">
-                            Sinc. pendente
-                          </span>
-                        )
+                      {detailedStatus === 'SYNC_ERROR' ? (
+                        <button
+                          type="button"
+                          onClick={() =>
+                            firebaseCloudSync.enqueueWorldSync(w.id, 'manual_retry')
+                          }
+                          className="px-1.5 py-0.5 rounded bg-rose-950/80 border border-rose-400/50 text-[9px] font-bold text-rose-200 hover:bg-rose-900/90"
+                          title={worldSync?.error || 'Clique para retomar a sincronização'}
+                        >
+                          {detailedLabel} — Retomar
+                        </button>
+                      ) : detailedStatus === 'UPLOADING' ||
+                        detailedStatus === 'DOWNLOADING' ||
+                        detailedStatus === 'RECONSTRUCTING' ||
+                        detailedStatus === 'VERIFYING_INTEGRITY' ? (
+                        <span
+                          className="px-1.5 py-0.5 rounded bg-sky-950/80 border border-sky-400/40 text-[9px] font-bold text-sky-200"
+                          title={detailedLabel}
+                        >
+                          {detailedLabel}
+                          {cloudSnap.transferProgress?.worldId === w.id &&
+                          cloudSnap.transferProgress.chunksTotal > 0
+                            ? ` (${Math.min(
+                                100,
+                                Math.round(
+                                  (cloudSnap.transferProgress.chunksUploaded /
+                                    cloudSnap.transferProgress.chunksTotal) *
+                                    100
+                                )
+                              )}%)`
+                            : ''}
+                        </span>
+                      ) : detailedStatus === 'SYNCED' ? (
+                        <span className="px-1.5 py-0.5 rounded bg-emerald-950/80 border border-emerald-400/40 text-[9px] font-bold text-emerald-300">
+                          {detailedLabel}
+                        </span>
+                      ) : detailedStatus === 'VERSION_CONFLICT' ? (
+                        <span className="px-1.5 py-0.5 rounded bg-purple-950/80 border border-purple-400/40 text-[9px] font-bold text-purple-200">
+                          {detailedLabel}
+                        </span>
+                      ) : detailedStatus === 'PENDING_UPLOAD' ? (
+                        <span className="px-1.5 py-0.5 rounded bg-amber-950/80 border border-amber-400/40 text-[9px] font-bold text-amber-300">
+                          {detailedLabel}
+                        </span>
                       ) : (
                         <span className="px-1.5 py-0.5 rounded bg-[#241810] border border-[#4a301e] text-[9px] text-[#c4ab7d]">
-                          Salvo local
+                          {detailedLabel}
                         </span>
                       )}
                     </div>
@@ -1231,6 +1311,171 @@ export const WorldSelectScreen: React.FC<WorldSelectScreenProps> = ({
             setWorlds(SaveManager.listWorlds());
           }}
         />
+      )}
+
+      {/* Automatic Post-Login Real-Time Reconciliation Loading Screen */}
+      {cloudSnap.reconciliation.showModal && !showCloudModal && (
+        <div className="fixed inset-0 z-50 bg-black/85 flex items-center justify-center p-3">
+          <div className="w-full max-w-lg medieval-panel p-4 sm:p-5 space-y-4 border-2 border-amber-500/60">
+            <div className="flex items-center justify-between border-b border-[#4a301e] pb-2.5">
+              <div className="flex items-center gap-2.5">
+                <div className="w-8 h-8 rounded bg-amber-950/80 border border-amber-500/50 flex items-center justify-center shrink-0">
+                  <RefreshCw
+                    className={`w-4 h-4 text-amber-300 ${
+                      cloudSnap.reconciliation.active ? 'animate-spin' : ''
+                    }`}
+                  />
+                </div>
+                <div>
+                  <h3 className="font-pixel text-xs sm:text-sm font-bold text-amber-400">
+                    Sincronizando seus mundos
+                  </h3>
+                  <p className="text-[10px] text-[#c4ab7d]">
+                    Reconciliação real entre o dispositivo local e o Firebase Cloud
+                  </p>
+                </div>
+              </div>
+
+              {(!cloudSnap.reconciliation.active ||
+                cloudSnap.reconciliation.canDismissToPlayLocal) && (
+                <button
+                  type="button"
+                  onClick={() => firebaseCloudSync.dismissReconciliationModal()}
+                  className="min-h-[32px] min-w-[32px] medieval-btn-wood flex items-center justify-center"
+                  title="Minimizar para barra superior"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              )}
+            </div>
+
+            <div className="medieval-inset p-3.5 space-y-2.5">
+              <div className="flex items-center justify-between gap-2 text-xs">
+                <span className="font-bold text-amber-200">
+                  Etapa {cloudSnap.reconciliation.stageNumber} de 9:{' '}
+                  {cloudSnap.reconciliation.stageLabel}
+                </span>
+                <span className="font-mono text-sm font-bold text-emerald-300">
+                  {cloudSnap.reconciliation.progressPercent}%
+                </span>
+              </div>
+
+              {/* Real 0% to 100% progress bar */}
+              <div className="w-full h-3.5 rounded bg-[#120b07] border border-[#4a301e] overflow-hidden">
+                <div
+                  className="h-full bg-gradient-to-r from-amber-500 via-amber-400 to-emerald-400 transition-all duration-200"
+                  style={{
+                    width: `${Math.max(
+                      2,
+                      Math.min(100, cloudSnap.reconciliation.progressPercent)
+                    )}%`,
+                  }}
+                />
+              </div>
+
+              {/* Micro-progress beneath the bar */}
+              <div className="text-[11px] font-mono text-sky-200 leading-snug">
+                {cloudSnap.reconciliation.microDetail}
+              </div>
+
+              {cloudSnap.reconciliation.errorSummary && (
+                <div className="p-2 rounded bg-rose-950/60 border border-rose-500/50 text-[11px] text-rose-200 leading-snug">
+                  <strong>Aviso:</strong> {cloudSnap.reconciliation.errorSummary}
+                </div>
+              )}
+            </div>
+
+            {/* Real-Time Diagnostic Counters */}
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-center">
+              <div className="medieval-inset p-2">
+                <div className="text-[9px] text-[#c4ab7d] uppercase">
+                  Mundos Locais
+                </div>
+                <div className="font-mono text-xs font-bold text-white">
+                  {cloudSnap.diagnostics.localWorldsCount}
+                </div>
+              </div>
+              <div className="medieval-inset p-2">
+                <div className="text-[9px] text-[#c4ab7d] uppercase">
+                  Mundos na Nuvem
+                </div>
+                <div className="font-mono text-xs font-bold text-sky-300">
+                  {cloudSnap.diagnostics.cloudWorldsCount}
+                </div>
+              </div>
+              <div className="medieval-inset p-2">
+                <div className="text-[9px] text-[#c4ab7d] uppercase">
+                  Baixados
+                </div>
+                <div className="font-mono text-xs font-bold text-amber-300">
+                  {cloudSnap.diagnostics.downloadedWorldsCount}
+                </div>
+              </div>
+              <div className="medieval-inset p-2">
+                <div className="text-[9px] text-[#c4ab7d] uppercase">
+                  Sincronizados
+                </div>
+                <div className="font-mono text-xs font-bold text-emerald-300">
+                  {cloudSnap.diagnostics.syncedWorldsCount}
+                </div>
+              </div>
+            </div>
+
+            {/* Balanced Blocking vs Non-Blocking Actions */}
+            <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
+              <button
+                type="button"
+                onClick={() => {
+                  firebaseCloudSync.dismissReconciliationModal();
+                  setShowCloudModal(true);
+                }}
+                className="min-h-[38px] px-3 py-1.5 medieval-btn-wood text-[11px] font-bold"
+              >
+                Ver Diagnóstico Completo
+              </button>
+
+              {cloudSnap.reconciliation.active ? (
+                cloudSnap.reconciliation.canDismissToPlayLocal ? (
+                  <button
+                    type="button"
+                    onClick={() =>
+                      firebaseCloudSync.dismissReconciliationModal()
+                    }
+                    className="min-h-[38px] px-3.5 py-1.5 medieval-btn-gold text-[11px] font-bold"
+                  >
+                    Acessar Mundos Locais Enquanto Sincroniza
+                  </button>
+                ) : (
+                  <span className="text-[10px] text-[#c4ab7d] italic">
+                    Aguarde a verificação/reconstrução dos mundos da nuvem...
+                  </span>
+                )
+              ) : (
+                <div className="flex items-center gap-2">
+                  {cloudSnap.reconciliation.errorSummary && (
+                    <button
+                      type="button"
+                      onClick={() => void firebaseCloudSync.syncAllWorldsWithCloud()}
+                      className="min-h-[38px] px-3 py-1.5 medieval-btn-gold text-[11px] font-bold flex items-center gap-1.5"
+                    >
+                      <RefreshCw className="w-3.5 h-3.5" />
+                      <span>Tentar Novamente</span>
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() =>
+                      firebaseCloudSync.dismissReconciliationModal()
+                    }
+                    className="min-h-[38px] px-4 py-1.5 medieval-btn-emerald font-pixel text-xs font-bold"
+                  >
+                    CONCLUIR
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

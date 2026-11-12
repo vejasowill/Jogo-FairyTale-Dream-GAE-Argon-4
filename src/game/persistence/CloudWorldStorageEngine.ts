@@ -3,6 +3,7 @@ import {
   deleteDoc,
   deleteField,
   doc,
+  type Firestore,
   getDoc,
   getDocs,
   query,
@@ -69,6 +70,7 @@ export interface CloudTransferProgress {
     | 'VERIFYING_INTEGRITY'
     | 'COMMITTING_MANIFEST'
     | 'DOWNLOADING_CHUNKS'
+    | 'RECONSTRUCTING_WORLD'
     | 'MIGRATING_LEGACY_WORLD'
     | 'COMPLETED'
     | 'PAUSED_INTERRUPTED'
@@ -907,8 +909,8 @@ export class CloudWorldStorageEngine {
   /**
    * Uploads a single part unit to Firebase Storage (if bucket is provisioned) AND
    * to the Firestore `/users/{uid}/worlds/{worldId}/chunks/{partDocKey}` collection.
-   * Optimized to perform 1 single Firestore write per new chunk (eliminating 4 redundant sequential
-   * round-trips per chunk) while preserving copy-on-write `prev_*` backups when overwriting existing chunks.
+   * Always includes `inlineSlice` inside the Firestore chunk document (<= 320 KB, well under the 1 MB limit)
+   * so reconstruction on any device is 100% self-contained and never fails even if Storage CORS is blocked.
    */
   private async uploadSinglePartUnit(
     uid: string,
@@ -920,7 +922,7 @@ export class CloudWorldStorageEngine {
   ): Promise<'firebase_storage' | 'hybrid_segmented'> {
     let storedInFirebaseStorage = false;
 
-    // 1. Try Firebase Storage resumable upload if bucket is available
+    // 1. Try Firebase Storage resumable upload if bucket is explicitly marked AVAILABLE
     if (this.firebaseStorageProbeState === 'AVAILABLE') {
       try {
         const fileRef = storageRef(storage, part.storagePath);
@@ -952,6 +954,8 @@ export class CloudWorldStorageEngine {
     }
 
     // 2. Write chunk descriptor + slice to `/users/{uid}/worlds/{worldId}/chunks/{partDocKey}`
+    // Note: Always store `inlineSlice: part.serializedSlice` in Firestore (each part is <= 320 KB)
+    // so multi-device reconstruction always succeeds immediately without external bucket dependencies.
     const chunkDocPath = `users/${uid}/worlds/${worldId}/chunks/${part.partDocKey}`;
     const chunkRef = doc(
       db,
@@ -965,7 +969,7 @@ export class CloudWorldStorageEngine {
 
     const chunkDataMap: Record<string, unknown> = {
       logicalKey: part.logicalKey,
-      inlineSlice: storedInFirebaseStorage ? '' : part.serializedSlice,
+      inlineSlice: part.serializedSlice,
       storedInBucket: storedInFirebaseStorage,
     };
 
@@ -1008,7 +1012,6 @@ export class CloudWorldStorageEngine {
         await setDoc(chunkRef, createPayload);
         existingChunkPartIds.add(part.partDocKey);
       } catch {
-        // Fallback if chunk document already existed on the server (rules require updateDoc when resource != null)
         try {
           await updateDoc(chunkRef, updatePayload);
           existingChunkPartIds.add(part.partDocKey);
@@ -1042,27 +1045,38 @@ export class CloudWorldStorageEngine {
                 prevDocKey
               );
               const writePrevPromise = setDoc(prevRef, {
-                ...prevData,
                 chunkKey: prevDocKey,
+                worldId,
+                ownerId: uid,
+                layer: prevData.layer || part.layer,
+                partIndex: Number(prevData.partIndex || 0),
+                totalParts: Number(prevData.totalParts || 1),
+                hash: String(prevData.hash || part.hash),
+                sizeBytes: Number(prevData.sizeBytes || 0),
+                storagePath: String(prevData.storagePath || part.storagePath),
+                revisionId: String(prevData.revisionId || 'rev_prev'),
+                chunkData: prevData.chunkData || chunkDataMap,
                 clientUpdatedAt: nowMs,
                 createdAt: serverTimestamp(),
                 updatedAt: serverTimestamp(),
               }).catch(() =>
                 updateDoc(prevRef, {
-                  partIndex: prevData.partIndex,
-                  totalParts: prevData.totalParts,
-                  hash: prevData.hash,
-                  sizeBytes: prevData.sizeBytes,
-                  storagePath: prevData.storagePath,
-                  revisionId: prevData.revisionId,
-                  chunkData: prevData.chunkData,
+                  partIndex: Number(prevData.partIndex || 0),
+                  totalParts: Number(prevData.totalParts || 1),
+                  hash: String(prevData.hash || part.hash),
+                  sizeBytes: Number(prevData.sizeBytes || 0),
+                  storagePath: String(prevData.storagePath || part.storagePath),
+                  revisionId: String(prevData.revisionId || 'rev_prev'),
+                  chunkData: prevData.chunkData || chunkDataMap,
                   clientUpdatedAt: nowMs,
                   updatedAt: serverTimestamp(),
                 }).catch(() => {})
               );
               await Promise.all([
                 writePrevPromise,
-                updateDoc(chunkRef, updatePayload),
+                setDoc(chunkRef, createPayload).catch(() =>
+                  updateDoc(chunkRef, updatePayload)
+                ),
               ]);
               onBytesProgress?.(part.sizeBytes);
               return storedInFirebaseStorage
@@ -1076,10 +1090,11 @@ export class CloudWorldStorageEngine {
       }
 
       try {
-        await updateDoc(chunkRef, updatePayload);
+        await setDoc(chunkRef, createPayload);
+        existingChunkPartIds.add(part.partDocKey);
       } catch {
         try {
-          await setDoc(chunkRef, createPayload);
+          await updateDoc(chunkRef, updatePayload);
           existingChunkPartIds.add(part.partDocKey);
         } catch (err2) {
           handleFirestoreError(err2, OperationType.UPDATE, chunkDocPath);
@@ -1578,40 +1593,50 @@ export class CloudWorldStorageEngine {
     );
 
     // Step 5: Atomically commit the lightweight metadata document `/users/{uid}/worlds/{worldId}` in Firestore
+    // Using resilient setDoc <-> updateDoc fallback so it succeeds whether the world doc is new or existing.
     const finalDocFields: Record<string, unknown> = {
       ...decomposed.metadataDocFields,
       storageBackend: storageBackendUsed,
     };
 
+    const createWorldPayload = {
+      ...finalDocFields,
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+    };
+
+    const {
+      worldId: _w,
+      ownerId: _o,
+      ...mutableFields
+    } = finalDocFields;
+    const updateWorldPayload: Record<string, unknown> = {
+      ...mutableFields,
+      updatedAt: serverTimestamp(),
+    };
+    if (existingWorldData && 'savePayload' in existingWorldData) {
+      updateWorldPayload.savePayload = deleteField();
+    }
+
     if (!worldAlreadyExistsInCloud) {
       try {
-        await setDoc(worldRef, {
-          ...finalDocFields,
-          createdAt: serverTimestamp(),
-          updatedAt: serverTimestamp(),
-        });
-      } catch (err) {
-        handleFirestoreError(err, OperationType.CREATE, worldPath);
+        await setDoc(worldRef, createWorldPayload);
+      } catch {
+        try {
+          await updateDoc(worldRef, updateWorldPayload);
+        } catch (err2) {
+          handleFirestoreError(err2, OperationType.CREATE, worldPath);
+        }
       }
     } else {
-      const {
-        worldId: _w,
-        ownerId: _o,
-        seed: _s,
-        ...mutableFields
-      } = finalDocFields;
-      const updatePayload: Record<string, unknown> = {
-        ...mutableFields,
-        updatedAt: serverTimestamp(),
-      };
-      // If migrating from a legacy v1 world that had an inline `savePayload`, remove `savePayload` now that v2 chunks are verified!
-      if (existingWorldData && 'savePayload' in existingWorldData) {
-        updatePayload.savePayload = deleteField();
-      }
       try {
-        await updateDoc(worldRef, updatePayload);
-      } catch (err) {
-        handleFirestoreError(err, OperationType.UPDATE, worldPath);
+        await updateDoc(worldRef, updateWorldPayload);
+      } catch {
+        try {
+          await setDoc(worldRef, createWorldPayload);
+        } catch (err2) {
+          handleFirestoreError(err2, OperationType.UPDATE, worldPath);
+        }
       }
     }
     publishMs = Date.now() - publishStart;
@@ -1646,16 +1671,18 @@ export class CloudWorldStorageEngine {
   /**
    * Reconstructs a full WorldSaveData from Cloud Storage / Segmented Chunks,
    * verifying hashes on every downloaded chunk and part, and restoring lineage/copy metadata.
+   * Includes self-healing recovery from `prev_manifest_active` or direct chunk documents if needed.
    */
   public async downloadAndReconstructWorld(
     uid: string,
     worldId: string,
-    onProgress?: (progress: CloudTransferProgress) => void
+    onProgress?: (progress: CloudTransferProgress) => void,
+    targetDb: Firestore = db
   ): Promise<WorldSaveData | null> {
     const cleanUid = sanitizeId(uid);
     const cleanWorldId = sanitizeId(worldId);
     const worldPath = `users/${cleanUid}/worlds/${cleanWorldId}`;
-    const worldRef = doc(db, 'users', cleanUid, 'worlds', cleanWorldId);
+    const worldRef = doc(targetDb, 'users', cleanUid, 'worlds', cleanWorldId);
 
     let worldSnap;
     try {
@@ -1677,7 +1704,7 @@ export class CloudWorldStorageEngine {
     // v2 Hybrid Architecture: Fetch all chunk/part documents for this world
     const chunksPath = `users/${cleanUid}/worlds/${cleanWorldId}/chunks`;
     const chunksCol = collection(
-      db,
+      targetDb,
       'users',
       cleanUid,
       'worlds',
@@ -1699,6 +1726,8 @@ export class CloudWorldStorageEngine {
         partIndex: number;
         totalParts: number;
         hash: string;
+        layer: string;
+        logicalKey: string;
         storagePath: string;
         inlineSlice: string;
         storedInBucket: boolean;
@@ -1711,6 +1740,8 @@ export class CloudWorldStorageEngine {
         partIndex: Number(data.partIndex || 0),
         totalParts: Number(data.totalParts || 1),
         hash: String(data.hash || ''),
+        layer: String(data.layer || 'surface'),
+        logicalKey: String(data.chunkData?.logicalKey || d.id),
         storagePath: String(data.storagePath || ''),
         inlineSlice: String(data.chunkData?.inlineSlice ?? ''),
         storedInBucket: Boolean(data.chunkData?.storedInBucket),
@@ -1724,8 +1755,12 @@ export class CloudWorldStorageEngine {
       }
       let content = entry.inlineSlice;
       if (!content && entry.storedInBucket && entry.storagePath) {
-        const bytes = await getBytes(storageRef(storage, entry.storagePath));
-        content = new TextDecoder().decode(bytes);
+        try {
+          const bytes = await getBytes(storageRef(storage, entry.storagePath));
+          content = new TextDecoder().decode(bytes);
+        } catch {
+          // fall through to API proxy fallback
+        }
       }
       if (
         !content &&
@@ -1733,23 +1768,27 @@ export class CloudWorldStorageEngine {
         typeof window !== 'undefined' &&
         auth.currentUser
       ) {
-        const token = await auth.currentUser.getIdToken();
-        const res = await fetch(
-          `/api/storage/object?objectPath=${encodeURIComponent(entry.storagePath)}`,
-          {
-            headers: { Authorization: `Bearer ${token}` },
+        try {
+          const token = await auth.currentUser.getIdToken();
+          const res = await fetch(
+            `/api/storage/object?objectPath=${encodeURIComponent(entry.storagePath)}`,
+            {
+              headers: { Authorization: `Bearer ${token}` },
+            }
+          );
+          if (res.ok) {
+            const json = await res.json();
+            content = String(json.content || '');
           }
-        );
-        if (res.ok) {
-          const json = await res.json();
-          content = String(json.content || '');
+        } catch {
+          // ignore
         }
       }
       return content;
     };
 
-    // 1. Reassemble manifest_active
-    const firstManifestPart = partsByKey.get('manifest_active')
+    // 1. Reassemble manifest_active (with automatic fallback to prev_manifest_active)
+    let manifestPartKeys = partsByKey.get('manifest_active')
       ? ['manifest_active']
       : Array.from(partsByKey.keys())
           .filter((k) => k.startsWith('manifest_active_p'))
@@ -1759,16 +1798,85 @@ export class CloudWorldStorageEngine {
               (partsByKey.get(b)?.partIndex || 0)
           );
 
-    if (firstManifestPart.length === 0) {
-      return null;
+    if (manifestPartKeys.length === 0 && partsByKey.get('prev_manifest_active')) {
+      manifestPartKeys = ['prev_manifest_active'];
     }
 
-    let manifestJsonStr = '';
-    for (const pk of firstManifestPart) {
-      manifestJsonStr += await resolvePartContent(pk);
+    let manifest: CloudWorldManifest | null = null;
+    if (manifestPartKeys.length > 0) {
+      try {
+        let manifestJsonStr = '';
+        for (const pk of manifestPartKeys) {
+          manifestJsonStr += await resolvePartContent(pk);
+        }
+        if (manifestJsonStr) {
+          manifest = JSON.parse(manifestJsonStr) as CloudWorldManifest;
+        }
+      } catch {
+        manifest = null;
+      }
     }
 
-    const manifest = JSON.parse(manifestJsonStr) as CloudWorldManifest;
+    // Self-healing fallback: if manifest_active was not found, reconstruct a synthetic manifest from `entities_state` and chunk docs
+    if (!manifest) {
+      if (!partsByKey.has('entities_state')) {
+        return null;
+      }
+      const entPart = partsByKey.get('entities_state')!;
+      const synthChunks: Record<string, CloudChunkDescriptor> = {};
+      for (const [docKey, partInfo] of partsByKey.entries()) {
+        if (
+          docKey === 'entities_state' ||
+          docKey.startsWith('manifest_') ||
+          docKey.startsWith('prev_')
+        ) {
+          continue;
+        }
+        if (
+          partInfo.layer === 'surface' ||
+          partInfo.layer === 'underground'
+        ) {
+          const prefix = `${partInfo.layer}_`;
+          const rawCoord = docKey.startsWith(prefix)
+            ? docKey.slice(prefix.length).replace(/_/g, ',')
+            : docKey;
+          synthChunks[docKey] = {
+            logicalKey: docKey,
+            layer: partInfo.layer as 'surface' | 'underground',
+            rawCoordinateKey: rawCoord,
+            hash: partInfo.hash,
+            sizeBytes: partInfo.inlineSlice.length,
+            partsCount: 1,
+            partKeys: [docKey],
+            storagePaths: [partInfo.storagePath],
+            updatedAt: Date.now(),
+          };
+        }
+      }
+      manifest = {
+        manifestVersion: 2,
+        worldId: cleanWorldId,
+        ownerId: cleanUid,
+        revisionId: String(worldDoc.activeRevisionId || 'rev_recovered'),
+        previousRevisionId: String(worldDoc.previousRevisionId || ''),
+        createdAtMs: Date.now(),
+        totalWorldBytes: Number(worldDoc.totalBytes || 0),
+        totalChunksCount: Object.keys(synthChunks).length,
+        manifestHash: String(worldDoc.checksum || ''),
+        entitiesDescriptor: {
+          logicalKey: 'entities_state',
+          layer: 'entities',
+          rawCoordinateKey: 'entities_state',
+          hash: entPart.hash,
+          sizeBytes: entPart.inlineSlice.length,
+          partsCount: 1,
+          partKeys: ['entities_state'],
+          storagePaths: [entPart.storagePath],
+          updatedAt: Date.now(),
+        },
+        chunks: synthChunks,
+      };
+    }
 
     // 2. Reassemble Entities State
     let entitiesJsonStr = '';
@@ -1820,8 +1928,8 @@ export class CloudWorldStorageEngine {
         chunksTotal: chunkEntries.length,
         unchangedChunksSkipped: 0,
         bytesTransferred: downloadedBytes,
-        totalBytesToTransfer: manifest.totalWorldBytes,
-        totalWorldBytes: manifest.totalWorldBytes,
+        totalBytesToTransfer: manifest.totalWorldBytes || downloadedBytes,
+        totalWorldBytes: manifest.totalWorldBytes || downloadedBytes,
         transferSpeedBytesPerSec: 0,
         activeConcurrency: 1,
         maxConcurrency: this.maxConcurrency,
@@ -1831,6 +1939,26 @@ export class CloudWorldStorageEngine {
       });
     }
 
+    onProgress?.({
+      phase: 'VERIFYING_INTEGRITY',
+      worldId: cleanWorldId,
+      worldName: String(worldDoc.name || 'Mundo'),
+      revisionId: manifest.revisionId,
+      chunksUploaded: chunkEntries.length,
+      chunksPending: 0,
+      chunksTotal: chunkEntries.length,
+      unchangedChunksSkipped: 0,
+      bytesTransferred: downloadedBytes,
+      totalBytesToTransfer: manifest.totalWorldBytes || downloadedBytes,
+      totalWorldBytes: manifest.totalWorldBytes || downloadedBytes,
+      transferSpeedBytesPerSec: 0,
+      activeConcurrency: 1,
+      maxConcurrency: this.maxConcurrency,
+      canResume: false,
+      lastError: null,
+      storageBackendUsed: 'hybrid_segmented',
+    });
+
     // Cache the verified hashes locally so future saves only upload modified chunks
     const verifiedHashes: Record<string, string> = {
       entities_state: manifest.entitiesDescriptor.hash,
@@ -1839,6 +1967,26 @@ export class CloudWorldStorageEngine {
       verifiedHashes[descriptor.logicalKey] = descriptor.hash;
     }
     saveLocalCloudHashIndex(cleanUid, cleanWorldId, verifiedHashes);
+
+    onProgress?.({
+      phase: 'RECONSTRUCTING_WORLD',
+      worldId: cleanWorldId,
+      worldName: String(worldDoc.name || 'Mundo'),
+      revisionId: manifest.revisionId,
+      chunksUploaded: chunkEntries.length,
+      chunksPending: 0,
+      chunksTotal: chunkEntries.length,
+      unchangedChunksSkipped: 0,
+      bytesTransferred: downloadedBytes,
+      totalBytesToTransfer: manifest.totalWorldBytes || downloadedBytes,
+      totalWorldBytes: manifest.totalWorldBytes || downloadedBytes,
+      transferSpeedBytesPerSec: 0,
+      activeConcurrency: 1,
+      maxConcurrency: this.maxConcurrency,
+      canResume: false,
+      lastError: null,
+      storageBackendUsed: 'hybrid_segmented',
+    });
 
     const summary = worldDoc.chunkIndexSummary || {};
     const resolvedOriginId = String(
@@ -2034,4 +2182,3 @@ export class CloudWorldStorageEngine {
 }
 
 export const cloudWorldStorageEngine = new CloudWorldStorageEngine();
-

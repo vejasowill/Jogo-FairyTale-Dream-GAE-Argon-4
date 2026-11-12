@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import {
+  Activity,
   AlertTriangle,
   CheckCircle2,
   Cloud,
@@ -9,6 +10,7 @@ import {
   LogOut,
   RefreshCw,
   ShieldCheck,
+  Terminal,
   UserCheck,
   X,
 } from 'lucide-react';
@@ -53,6 +55,7 @@ export const CloudAccountModal: React.FC<CloudAccountModalProps> = ({
   );
   const [feedback, setFeedback] = useState<string | null>(null);
   const [isBusy, setIsBusy] = useState(false);
+  const [showLogs, setShowLogs] = useState(false);
   const [concurrency, setConcurrency] = useState<number>(() =>
     firebaseCloudSync.getMaxUploadConcurrency()
   );
@@ -126,15 +129,16 @@ export const CloudAccountModal: React.FC<CloudAccountModalProps> = ({
     if (isBusy || !cloudSnap.user) return;
     setIsBusy(true);
     setFeedback(
-      'Iniciando sincronização incremental de chunks e metadados na nuvem...'
+      'Iniciando reconciliação completa de mundos e verificação de integridade...'
     );
     try {
-      await firebaseCloudSync.syncAllWorldsWithCloud();
-      await firebaseCloudSync.syncAllGuestProfilesWithCloud();
-      await firebaseCloudSync.fetchUserEntitlements();
+      await firebaseCloudSync.runPostLoginReconciliation(
+        undefined,
+        'manual_sync'
+      );
       onWorldsUpdated?.();
       setFeedback(
-        'Sincronização incremental concluída! Chunks modificados e metadados estão atualizados e verificados por hash.'
+        'Reconciliação concluída! Todos os mundos na nuvem e no dispositivo foram verificados.'
       );
     } catch (err: any) {
       setFeedback(
@@ -156,20 +160,27 @@ export const CloudAccountModal: React.FC<CloudAccountModalProps> = ({
     setFeedback(`UID copiado: ${uidToCopy}`);
   };
 
-  const localWorldsCount = SaveManager.listWorlds().length;
+  const localWorldsList = SaveManager.listWorlds();
+  const localWorldsCount = localWorldsList.length;
   const legacyDeviceUid = getOrCreateLocalDevicePlayerUid();
   const prog = cloudSnap.transferProgress;
-  const progressPercent =
-    prog && prog.chunksTotal > 0
-      ? Math.min(100, Math.round((prog.chunksUploaded / prog.chunksTotal) * 100))
-      : prog?.phase === 'COMPLETED'
-      ? 100
-      : 0;
+  const recon = cloudSnap.reconciliation;
+  const diag = cloudSnap.diagnostics;
+
+  const progressPercent = recon.active
+    ? recon.progressPercent
+    : prog && prog.chunksTotal > 0
+    ? Math.min(100, Math.round((prog.chunksUploaded / prog.chunksTotal) * 100))
+    : prog?.phase === 'COMPLETED'
+    ? 100
+    : 100;
+
   const hasErrorOrResume =
     Boolean(prog?.canResume) ||
     prog?.phase === 'PAUSED_INTERRUPTED' ||
     prog?.phase === 'ERROR' ||
-    cloudSnap.syncStatus === 'ERROR';
+    cloudSnap.syncStatus === 'ERROR' ||
+    recon.hasErrors;
 
   return (
     <div
@@ -177,7 +188,7 @@ export const CloudAccountModal: React.FC<CloudAccountModalProps> = ({
       onClick={onClose}
     >
       <div
-        className="w-full max-w-xl max-h-[94dvh] medieval-panel flex flex-col overflow-hidden"
+        className="w-full max-w-2xl max-h-[94dvh] medieval-panel flex flex-col overflow-hidden"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
@@ -185,7 +196,7 @@ export const CloudAccountModal: React.FC<CloudAccountModalProps> = ({
           <div className="flex items-center gap-2">
             <Cloud className="w-4 h-4 text-sky-400" />
             <h2 className="font-pixel text-xs sm:text-sm font-bold text-amber-400">
-              CONTA GOOGLE & NUVEM FIREBASE
+              CONTA GOOGLE & SINCRONIZAÇÃO MULTIDISPOSITIVO
             </h2>
           </div>
           <button
@@ -231,7 +242,7 @@ export const CloudAccountModal: React.FC<CloudAccountModalProps> = ({
                     ENTRE COM SUA CONTA GOOGLE
                   </div>
                   <p className="text-xs text-[#e5d5b5] leading-relaxed">
-                    Vincule seus mundos, aparência universal, montarias domesticadas e futuros conteúdos exclusivos ao seu <strong>UID único do Firebase</strong> para jogar em qualquer celular ou computador.
+                    Vincule seus mundos, aparência universal, montarias domesticadas e futuros conteúdos exclusivos ao seu <strong>UID único do Firebase</strong> para jogar em qualquer celular, guia anônima ou computador.
                   </p>
                 </div>
               </div>
@@ -250,7 +261,7 @@ export const CloudAccountModal: React.FC<CloudAccountModalProps> = ({
                   </span>
                 </div>
                 <p className="text-[10px] text-emerald-300 pt-1">
-                  ✓ Seus mundos locais atuais serão migrados e preservados automaticamente ao fazer login!
+                  ✓ Ao entrar, seus mundos locais serão enviados para a nuvem e qualquer mundo já salvo na sua conta Google será baixado e reconstruído automaticamente!
                 </p>
               </div>
 
@@ -289,9 +300,23 @@ export const CloudAccountModal: React.FC<CloudAccountModalProps> = ({
                         <span className="font-pixel text-xs font-bold text-white truncate">
                           {cloudSnap.user.displayName}
                         </span>
-                        <span className="px-1.5 py-0.5 rounded bg-emerald-950/90 border border-emerald-500/50 text-[9px] font-bold text-emerald-300 flex items-center gap-1">
+                        <span
+                          className={`px-1.5 py-0.5 rounded border text-[9px] font-bold flex items-center gap-1 ${
+                            cloudSnap.syncStatus === 'SYNCING' || recon.active
+                              ? 'bg-sky-950/90 border-sky-400/50 text-sky-300'
+                              : cloudSnap.syncStatus === 'ERROR'
+                              ? 'bg-rose-950/90 border-rose-400/50 text-rose-300'
+                              : 'bg-emerald-950/90 border-emerald-500/50 text-emerald-300'
+                          }`}
+                        >
                           <CheckCircle2 className="w-2.5 h-2.5" />
-                          <span>CONECTADO</span>
+                          <span>
+                            {cloudSnap.syncStatus === 'SYNCING' || recon.active
+                              ? 'SINCRONIZANDO...'
+                              : cloudSnap.syncStatus === 'ERROR'
+                              ? 'ATENÇÃO NA SINC.'
+                              : 'SINCRONIZADO'}
+                          </span>
                         </span>
                       </div>
                       {cloudSnap.user.email && (
@@ -313,7 +338,7 @@ export const CloudAccountModal: React.FC<CloudAccountModalProps> = ({
                   </button>
                 </div>
 
-                {/* UID & Sync Telemetry */}
+                {/* UID & Primary Counters */}
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-2 border-t border-[#3d281a] text-[11px]">
                   <div className="mc-slot p-2 flex items-center justify-between gap-2">
                     <div className="min-w-0">
@@ -337,22 +362,118 @@ export const CloudAccountModal: React.FC<CloudAccountModalProps> = ({
                   <div className="mc-slot p-2 flex items-center justify-between gap-2">
                     <div>
                       <div className="text-[9px] text-[#c4ab7d] uppercase font-bold">
-                        Mundos na Nuvem (Híbrido v2)
+                        Banco Cloud Firestore Ativo
                       </div>
-                      <div className="font-bold text-sky-300 text-xs">
-                        {Math.max(cloudSnap.cloudWorldsCount, localWorldsCount)}{' '}
-                        mundo(s) sincronizado(s)
+                      <div className="font-mono text-[10px] text-sky-300 truncate max-w-[210px]">
+                        {clientDiag.firestoreDatabaseId}
                       </div>
                     </div>
                     <ShieldCheck className="w-4 h-4 text-emerald-400 shrink-0" />
                   </div>
                 </div>
 
-                {/* Real-time Incremental Transfer Progress & Telemetry */}
+                {/* Global Reconciliation & World Diagnostics (7 Mandatory Counters) */}
+                <div className="mc-slot p-2.5 space-y-2 border border-[#4a301e]">
+                  <div className="flex items-center justify-between text-[10px]">
+                    <span className="font-pixel text-amber-300 font-bold uppercase flex items-center gap-1.5">
+                      <Activity className="w-3.5 h-3.5 text-amber-400" />
+                      <span>Diagnóstico Global de Mundos</span>
+                    </span>
+                    <span className="font-mono text-emerald-300 font-bold">
+                      {diag.syncedWorldsCount}/{diag.localWorldsCount} sincronizados
+                    </span>
+                  </div>
+
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5 text-[10px]">
+                    <div className="bg-[#160e09] px-2 py-1 border border-[#3a2518]">
+                      <div className="text-[#a89068] text-[9px]">
+                        Mundos Locais
+                      </div>
+                      <div className="font-mono font-bold text-white">
+                        {diag.localWorldsCount}
+                      </div>
+                    </div>
+
+                    <div className="bg-[#160e09] px-2 py-1 border border-[#3a2518]">
+                      <div className="text-[#a89068] text-[9px]">
+                        Mundos na Nuvem
+                      </div>
+                      <div className="font-mono font-bold text-sky-300">
+                        {diag.cloudWorldsCount}
+                      </div>
+                    </div>
+
+                    <div className="bg-[#160e09] px-2 py-1 border border-[#3a2518]">
+                      <div className="text-[#a89068] text-[9px]">
+                        Sincronizados
+                      </div>
+                      <div className="font-mono font-bold text-emerald-300">
+                        {diag.syncedWorldsCount}
+                      </div>
+                    </div>
+
+                    <div className="bg-[#160e09] px-2 py-1 border border-[#3a2518]">
+                      <div className="text-[#a89068] text-[9px]">
+                        Pendentes / Fila
+                      </div>
+                      <div className="font-mono font-bold text-amber-300">
+                        {diag.pendingWorldsCount}
+                      </div>
+                    </div>
+
+                    <div className="bg-[#160e09] px-2 py-1 border border-[#3a2518]">
+                      <div className="text-[#a89068] text-[9px]">
+                        Baixados na Sessão
+                      </div>
+                      <div className="font-mono font-bold text-purple-300">
+                        {diag.downloadedWorldsCount}
+                      </div>
+                    </div>
+
+                    <div className="bg-[#160e09] px-2 py-1 border border-[#3a2518]">
+                      <div className="text-[#a89068] text-[9px]">
+                        Operações Concluídas
+                      </div>
+                      <div className="font-mono font-bold text-emerald-300">
+                        {diag.completedOperationsCount}
+                      </div>
+                    </div>
+
+                    <div className="bg-[#160e09] px-2 py-1 border border-[#3a2518]">
+                      <div className="text-[#a89068] text-[9px]">
+                        Falhas Registradas
+                      </div>
+                      <div
+                        className={`font-mono font-bold ${
+                          diag.failedOperationsCount > 0
+                            ? 'text-rose-400'
+                            : 'text-[#c4ab7d]'
+                        }`}
+                      >
+                        {diag.failedOperationsCount}
+                      </div>
+                    </div>
+
+                    <div className="bg-[#160e09] px-2 py-1 border border-[#3a2518]">
+                      <div className="text-[#a89068] text-[9px]">
+                        Velocidade / Fluxo
+                      </div>
+                      <div className="font-mono font-bold text-amber-200">
+                        {prog
+                          ? formatTransferSpeed(prog.transferSpeedBytesPerSec)
+                          : '—'}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Real-time Incremental Transfer Progress & Stage Telemetry */}
                 <div className="mc-slot p-2.5 space-y-2 border border-[#4a301e]">
                   <div className="flex items-center justify-between text-[10px]">
                     <span className="font-pixel text-amber-300 font-bold uppercase">
-                      {prog && prog.phase !== 'IDLE'
+                      {recon.active
+                        ? `Etapa ${recon.stageNumber}/9: ${recon.stageLabel}`
+                        : prog && prog.phase !== 'IDLE'
                         ? prog.phase === 'COMPLETED'
                           ? `Sincronizado (${prog.worldName || 'Mundo'})`
                           : prog.phase === 'PAUSED_INTERRUPTED' ||
@@ -362,7 +483,7 @@ export const CloudAccountModal: React.FC<CloudAccountModalProps> = ({
                         : 'Sincronização Incremental de Chunks'}
                     </span>
                     <span className="font-mono text-emerald-300 font-bold">
-                      {prog ? `${progressPercent}%` : 'Pronto'}
+                      { `${progressPercent}%` }
                     </span>
                   </div>
 
@@ -374,81 +495,54 @@ export const CloudAccountModal: React.FC<CloudAccountModalProps> = ({
                           ? 'bg-red-500'
                           : 'bg-gradient-to-r from-emerald-600 to-amber-400'
                       }`}
-                      style={{ width: `${prog ? progressPercent : 100}%` }}
+                      style={{ width: `${progressPercent}%` }}
                     />
                   </div>
 
-                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5 text-[10px]">
-                    <div className="bg-[#160e09] px-2 py-1 border border-[#3a2518]">
-                      <div className="text-[#a89068] text-[9px]">
-                        Chunks Enviados
-                      </div>
-                      <div className="font-mono font-bold text-emerald-300">
-                        {prog ? prog.chunksUploaded : 0}
-                        {prog && prog.unchangedChunksSkipped > 0
-                          ? ` (+${prog.unchangedChunksSkipped} intactos)`
-                          : ''}
-                      </div>
-                    </div>
-
-                    <div className="bg-[#160e09] px-2 py-1 border border-[#3a2518]">
-                      <div className="text-[#a89068] text-[9px]">
-                        Chunks Pendentes
-                      </div>
-                      <div className="font-mono font-bold text-amber-300">
-                        {prog ? prog.chunksPending : 0}
-                      </div>
-                    </div>
-
-                    <div className="bg-[#160e09] px-2 py-1 border border-[#3a2518]">
-                      <div className="text-[#a89068] text-[9px]">
-                        Transferido / Mundo
-                      </div>
-                      <div className="font-mono font-bold text-sky-300 truncate">
-                        {prog
-                          ? `${formatByteSize(prog.bytesTransferred)} / ${formatByteSize(
-                              prog.totalWorldBytes
-                            )}`
-                          : '0 B'}
-                      </div>
-                    </div>
-
-                    <div className="bg-[#160e09] px-2 py-1 border border-[#3a2518]">
-                      <div className="text-[#a89068] text-[9px]">
-                        Velocidade
-                      </div>
-                      <div className="font-mono font-bold text-amber-200">
-                        {prog
-                          ? formatTransferSpeed(prog.transferSpeedBytesPerSec)
-                          : '—'}
-                      </div>
-                    </div>
+                  {/* Micro-progress subtitle */}
+                  <div className="text-[11px] text-[#e5d5b5] font-mono">
+                    {recon.microDetail ||
+                      (prog
+                        ? `Partes processadas: ${prog.chunksUploaded}/${prog.chunksTotal} (${formatByteSize(
+                            prog.bytesTransferred
+                          )})`
+                        : 'Todos os manifestos e chunks verificados por hash.')}
                   </div>
 
-                  {cloudSnap.lastSyncSummary && (
-                    <div className="bg-[#160e09] px-2.5 py-1.5 border border-[#3a2518] text-[10px] text-[#e5d5b5] flex flex-wrap items-center justify-between gap-2">
-                      <span>
-                        Último lote ({cloudSnap.lastSyncSummary.durationMs} ms):{' '}
-                        <strong className="text-emerald-300">
-                          {cloudSnap.lastSyncSummary.unchangedSkippedWorldIds.length} intacto(s)
-                        </strong>{' '}
-                        ·{' '}
-                        <strong className="text-sky-300">
-                          {cloudSnap.lastSyncSummary.incrementalUploadedWorldIds.length} incr.
-                        </strong>{' '}
-                        ·{' '}
-                        <strong className="text-amber-300">
-                          {cloudSnap.lastSyncSummary.newUploadedWorldIds.length} novo(s)
-                        </strong>{' '}
-                        ·{' '}
-                        <strong className="text-purple-300">
-                          {cloudSnap.lastSyncSummary.downloadedWorldIds.length} baixado(s)
-                        </strong>
-                      </span>
-                      <span className="font-mono text-[#c4ab7d]">
-                        {cloudSnap.lastSyncSummary.totalChunksUploaded} env. /{' '}
-                        {cloudSnap.lastSyncSummary.totalChunksSkipped} pulados
-                      </span>
+                  {/* Per-World Status List */}
+                  {localWorldsList.length > 0 && (
+                    <div className="pt-1 space-y-1 max-h-32 overflow-y-auto">
+                      {localWorldsList.map((w) => {
+                        const st = cloudSnap.worldSyncStates[w.id];
+                        const label = st?.detailedLabel || 'Aguardando envio';
+                        const isSynced = st?.detailedStatus === 'SYNCED';
+                        const isErr = st?.detailedStatus === 'SYNC_ERROR';
+                        const isConflict =
+                          st?.detailedStatus === 'VERSION_CONFLICT';
+                        return (
+                          <div
+                            key={w.id}
+                            className="bg-[#160e09] px-2 py-1 border border-[#3a2518] flex items-center justify-between gap-2 text-[10px]"
+                          >
+                            <span className="font-bold text-white truncate">
+                              {w.name}
+                            </span>
+                            <span
+                              className={`font-mono px-1.5 py-0.5 rounded border shrink-0 ${
+                                isSynced
+                                  ? 'bg-emerald-950/80 border-emerald-500/40 text-emerald-300'
+                                  : isErr
+                                  ? 'bg-rose-950/80 border-rose-500/40 text-rose-300'
+                                  : isConflict
+                                  ? 'bg-purple-950/80 border-purple-500/40 text-purple-200'
+                                  : 'bg-sky-950/80 border-sky-500/40 text-sky-200'
+                              }`}
+                            >
+                              {label}
+                            </span>
+                          </div>
+                        );
+                      })}
                     </div>
                   )}
 
@@ -483,11 +577,11 @@ export const CloudAccountModal: React.FC<CloudAccountModalProps> = ({
                     </span>
                   </div>
 
-                  {hasErrorOrResume && prog?.lastError && (
+                  {hasErrorOrResume && (prog?.lastError || recon.errorSummary) && (
                     <div className="p-2 bg-red-950/60 border border-red-500/40 text-[10px] text-red-200 flex items-center justify-between gap-2">
                       <div className="flex items-center gap-1.5">
                         <AlertTriangle className="w-3.5 h-3.5 text-red-400 shrink-0" />
-                        <span>{prog.lastError}</span>
+                        <span>{prog?.lastError || recon.errorSummary}</span>
                       </div>
                       <button
                         type="button"
@@ -501,7 +595,20 @@ export const CloudAccountModal: React.FC<CloudAccountModalProps> = ({
                   )}
                 </div>
 
-                <div className="flex flex-wrap items-center justify-end gap-2 pt-1">
+                <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
+                  <button
+                    type="button"
+                    onClick={() => setShowLogs((v) => !v)}
+                    className="min-h-[34px] px-2.5 medieval-btn-wood text-[10px] font-bold flex items-center gap-1.5"
+                  >
+                    <Terminal className="w-3.5 h-3.5 text-amber-300" />
+                    <span>
+                      {showLogs
+                        ? 'Ocultar Log de Etapas'
+                        : `Ver Log de Sincronização (${cloudSnap.diagnosticLogs.length})`}
+                    </span>
+                  </button>
+
                   <button
                     type="button"
                     disabled={isBusy}
@@ -518,6 +625,51 @@ export const CloudAccountModal: React.FC<CloudAccountModalProps> = ({
                     </span>
                   </button>
                 </div>
+
+                {/* Structured Stage Diagnostic Logs */}
+                {showLogs && (
+                  <div className="bg-[#110a06] border border-[#4a301e] p-2.5 space-y-1.5 max-h-44 overflow-y-auto font-mono text-[10px]">
+                    <div className="flex items-center justify-between border-b border-[#3a2518] pb-1">
+                      <span className="text-amber-300 font-bold">
+                        LOG ESTRUTURADO POR ETAPA (SEM CREDENCIAIS)
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => firebaseCloudSync.clearDiagnosticLogs()}
+                        className="text-[9px] text-[#c4ab7d] hover:text-white underline"
+                      >
+                        Limpar
+                      </button>
+                    </div>
+                    {cloudSnap.diagnosticLogs.length === 0 ? (
+                      <div className="text-[#8c6d46] py-2">
+                        Nenhum evento registrado nesta sessão.
+                      </div>
+                    ) : (
+                      cloudSnap.diagnosticLogs.map((entry) => (
+                        <div
+                          key={entry.id}
+                          className={`py-0.5 border-b border-[#24160e] ${
+                            entry.level === 'ERROR'
+                              ? 'text-rose-300'
+                              : entry.level === 'WARN'
+                              ? 'text-amber-300'
+                              : entry.level === 'SUCCESS'
+                              ? 'text-emerald-300'
+                              : 'text-[#e5d5b5]'
+                          }`}
+                        >
+                          <span className="text-[#8c6d46]">
+                            [{new Date(entry.timestamp).toLocaleTimeString()}]
+                          </span>{' '}
+                          <span className="font-bold">[{entry.stage}]</span>{' '}
+                          {entry.worldName ? `(${entry.worldName}) ` : ''}
+                          <span>{entry.message}</span>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                )}
               </div>
 
               {/* Account Entitlements & Exclusive Content Linked to UID */}
@@ -639,4 +791,3 @@ export const CloudAccountModal: React.FC<CloudAccountModalProps> = ({
     </div>
   );
 };
-
