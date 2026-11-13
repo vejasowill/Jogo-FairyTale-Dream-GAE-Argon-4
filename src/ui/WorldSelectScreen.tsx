@@ -1,8 +1,10 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
+  AlertTriangle,
   ArrowLeft,
   Check,
   CheckCircle2,
+  Clock,
   Cloud,
   Copy,
   Download,
@@ -21,11 +23,17 @@ import {
   Sparkles,
   Trash2,
   Upload,
+  UserCheck,
   UserPlus,
   Users,
   Wifi,
   X,
 } from 'lucide-react';
+import {
+  FirestoreQuotaResetInfo,
+  getFirestoreQuotaResetInfo,
+  onFirestoreWriteQuotaExhausted,
+} from '../firebase';
 import {
   Direction,
   FriendLiveStatus,
@@ -42,10 +50,7 @@ import {
   CloudSyncSnapshot,
   firebaseCloudSync,
 } from '../game/persistence/FirebaseCloudSync';
-import {
-  createInitialPlayerState,
-  SaveManager,
-} from '../game/persistence/SaveManager';
+import { SaveManager } from '../game/persistence/SaveManager';
 import { spriteAtlas } from '../game/rendering/SpriteAtlas';
 import { AccountAppearanceModal } from './CharacterPetsModal';
 import { CloudAccountModal, CloudSyncAutoModal } from './CloudAccountModal';
@@ -61,6 +66,14 @@ interface WorldSelectScreenProps {
     saveData: WorldSaveData,
     existingMultiplayer?: MultiplayerManager | null
   ) => void;
+}
+
+interface SearchResultEntry {
+  playerPublicId: string;
+  username: string;
+  isOnline?: boolean;
+  inOpenWorld?: boolean;
+  worldName?: string | null;
 }
 
 const DIFFICULTY_INFO: Record<
@@ -92,14 +105,24 @@ export const WorldSelectScreen: React.FC<WorldSelectScreenProps> = ({
   onUpdateSettings,
   onStartWorld,
 }) => {
-  const [viewMode, setViewMode] = useState<'home' | 'play'>('home');
+  // Navigation views:
+  // - 'home': Initial Screen (SONHO ENCANTADO)
+  // - 'play': Jogar Screen (Tab 1: Mundos | Tab 2: Amigos - Mundos Abertos & Convites)
+  // - 'friends_hub': Hub Social de Amigos (Opened from Amigos button on Initial Screen)
+  const [viewMode, setViewMode] = useState<'home' | 'play' | 'friends_hub'>(
+    'home'
+  );
   const [playTab, setPlayTab] = useState<'worlds' | 'friends'>('worlds');
+  const [hubSection, setHubSection] = useState<'manage' | 'search'>('manage');
 
   const [worlds, setWorlds] = useState<WorldMetadata[]>(() =>
     SaveManager.listWorlds()
   );
   const [cloudSnap, setCloudSnap] = useState<CloudSyncSnapshot>(() =>
     firebaseCloudSync.getSnapshot()
+  );
+  const [quotaInfo, setQuotaInfo] = useState<FirestoreQuotaResetInfo>(() =>
+    getFirestoreQuotaResetInfo()
   );
   const [accountAppearance, setAccountAppearance] = useState<PlayerAppearance>(
     () => SaveManager.getAccountAppearance()
@@ -151,6 +174,7 @@ export const WorldSelectScreen: React.FC<WorldSelectScreenProps> = ({
     SaveManager.getEffectiveUsername()
   );
   const [copiedMyId, setCopiedMyId] = useState(false);
+  const [copiedFriendId, setCopiedFriendId] = useState<string | null>(null);
 
   const [friendsList, setFriendsList] = useState<FriendProfileEntry[]>(() =>
     SaveManager.getFriendsList()
@@ -160,12 +184,20 @@ export const WorldSelectScreen: React.FC<WorldSelectScreenProps> = ({
   >({});
   const [isLoadingFriendsStatus, setIsLoadingFriendsStatus] = useState(false);
 
+  // Dedicated Search State in Hub Social de Amigos
   const [searchIdInput, setSearchIdInput] = useState('');
   const [searchUsernameInput, setSearchUsernameInput] = useState('');
-  const [searchResults, setSearchResults] = useState<
-    { playerPublicId: string; username: string }[]
-  >([]);
+  const [searchResults, setSearchResults] = useState<SearchResultEntry[]>([]);
   const [isSearchingPlayers, setIsSearchingPlayers] = useState(false);
+  const [searchFeedback, setSearchFeedback] = useState<{
+    performed: boolean;
+    mode: 'id' | 'username';
+    query: string;
+    count: number;
+    error?: string;
+  } | null>(null);
+  const [addingFriendId, setAddingFriendId] = useState<string | null>(null);
+
   const [friendsMessage, setFriendsMessage] = useState<{
     type: 'info' | 'error' | 'success';
     text: string;
@@ -192,6 +224,7 @@ export const WorldSelectScreen: React.FC<WorldSelectScreenProps> = ({
   useEffect(() => {
     const unsub = firebaseCloudSync.subscribe((snap) => {
       setCloudSnap(snap);
+      setQuotaInfo(getFirestoreQuotaResetInfo());
       const signedIn = Boolean(snap.user);
       setMyPublicId(SaveManager.getPlayerPublicId(snap.user?.uid));
       setMyUsername(SaveManager.getEffectiveUsername(signedIn));
@@ -199,59 +232,70 @@ export const WorldSelectScreen: React.FC<WorldSelectScreenProps> = ({
       setFriendsList(SaveManager.getFriendsList());
       setWorlds(SaveManager.listWorlds());
     });
-    return unsub;
+    const unsubQuota = onFirestoreWriteQuotaExhausted(() => {
+      setQuotaInfo(getFirestoreQuotaResetInfo());
+    });
+    const quotaTimer = window.setInterval(() => {
+      setQuotaInfo(getFirestoreQuotaResetInfo());
+    }, 30000);
+    return () => {
+      unsub();
+      unsubQuota();
+      window.clearInterval(quotaTimer);
+    };
   }, []);
 
   // Report presence on menu and sync profile on mount
-  useEffect(() => {
-    const syncInitialPresence = async () => {
-      try {
-        const pubId = SaveManager.getPlayerPublicId();
-        const uname = SaveManager.getEffectiveUsername();
-        const slotsInfo = SaveManager.getAppearanceSlots();
-        const res = await fetch('/api/social/sync-profile', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            uid: cloudSnap.user?.uid || null,
-            playerPublicId: pubId,
-            username: uname,
-            appearanceSlots: slotsInfo.slots,
-            activeAppearanceSlotIndex: slotsInfo.activeIndex,
-            accountAppearance: SaveManager.getAccountAppearance(),
-            friendsList: SaveManager.getFriendsList(),
-            deletedWorldIds: Array.from(SaveManager.getDeletedWorldIds()),
-            presence: {
-              isOnline: true,
-              inOpenWorld: false,
-              worldId: null,
-              worldName: null,
-              inviteCode: null,
-            },
-          }),
-        });
-        if (res.ok) {
-          const json = await res.json();
-          if (Array.isArray(json?.profile?.friendsList)) {
-            SaveManager.setFriendsList(json.profile.friendsList);
-            setFriendsList(json.profile.friendsList);
-          }
-          if (Array.isArray(json?.friendsStatus)) {
-            const map: Record<string, FriendLiveStatus> = {};
-            for (const st of json.friendsStatus) {
-              if (st && st.playerPublicId) map[st.playerPublicId] = st;
-            }
-            setFriendsStatusMap(map);
-          }
+  const syncMySocialProfileWithServer = useCallback(async () => {
+    try {
+      const pubId = SaveManager.getPlayerPublicId(cloudSnap.user?.uid);
+      const uname = SaveManager.getEffectiveUsername(Boolean(cloudSnap.user));
+      const slotsInfo = SaveManager.getAppearanceSlots();
+      const res = await fetch('/api/social/sync-profile', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          uid: cloudSnap.user?.uid || null,
+          playerPublicId: pubId,
+          username: uname,
+          appearanceSlots: slotsInfo.slots,
+          activeAppearanceSlotIndex: slotsInfo.activeIndex,
+          accountAppearance: SaveManager.getAccountAppearance(),
+          friendsList: SaveManager.getFriendsList(),
+          deletedWorldIds: Array.from(SaveManager.getDeletedWorldIds()),
+          presence: {
+            isOnline: true,
+            inOpenWorld: false,
+            worldId: null,
+            worldName: null,
+            inviteCode: null,
+          },
+        }),
+      });
+      if (res.ok) {
+        const json = await res.json();
+        if (Array.isArray(json?.profile?.friendsList)) {
+          SaveManager.setFriendsList(json.profile.friendsList);
+          setFriendsList(json.profile.friendsList);
         }
-      } catch {
-        // ignore offline
+        if (Array.isArray(json?.friendsStatus)) {
+          const map: Record<string, FriendLiveStatus> = {};
+          for (const st of json.friendsStatus) {
+            if (st && st.playerPublicId) map[st.playerPublicId] = st;
+          }
+          setFriendsStatusMap(map);
+        }
       }
-    };
-    void syncInitialPresence();
-  }, [cloudSnap.user?.uid]);
+    } catch {
+      // ignore offline
+    }
+  }, [cloudSnap.user]);
 
-  // Section 6.1: Poll friends presence ONLY when the Friends section is open
+  useEffect(() => {
+    void syncMySocialProfileWithServer();
+  }, [syncMySocialProfileWithServer]);
+
+  // Poll friends presence when either Friends Hub or Play->Friends tab is open
   const pollFriendsPresence = useCallback(async () => {
     setIsLoadingFriendsStatus(true);
     try {
@@ -272,8 +316,11 @@ export const WorldSelectScreen: React.FC<WorldSelectScreenProps> = ({
       });
       if (res.ok) {
         const json = await res.json();
-        if (Array.isArray(json?.friendsList)) {
+        if (Array.isArray(json?.friendsList) && json.friendsList.length > 0) {
+          SaveManager.setFriendsList(json.friendsList);
           setFriendsList(json.friendsList);
+        } else {
+          setFriendsList(SaveManager.getFriendsList());
         }
         if (Array.isArray(json?.friendsStatus)) {
           const nextMap: Record<string, FriendLiveStatus> = {};
@@ -293,7 +340,11 @@ export const WorldSelectScreen: React.FC<WorldSelectScreenProps> = ({
   }, []);
 
   useEffect(() => {
-    if (viewMode !== 'play' || playTab !== 'friends') return;
+    const isFriendsAreaActive =
+      viewMode === 'friends_hub' ||
+      (viewMode === 'play' && playTab === 'friends');
+    if (!isFriendsAreaActive) return;
+
     void pollFriendsPresence();
     const intervalId = window.setInterval(() => {
       void pollFriendsPresence();
@@ -301,7 +352,7 @@ export const WorldSelectScreen: React.FC<WorldSelectScreenProps> = ({
     return () => window.clearInterval(intervalId);
   }, [viewMode, playTab, pollFriendsPresence]);
 
-  // Section 6.2: Poll active join request when waiting for host authorization
+  // Poll active join request when waiting for host authorization
   useEffect(() => {
     if (!activeJoinRequest || activeJoinRequest.status !== 'PENDING') return;
     let cancelled = false;
@@ -399,15 +450,16 @@ export const WorldSelectScreen: React.FC<WorldSelectScreenProps> = ({
 
   const handleDynamicFriendsOrLoginButton = async () => {
     if (cloudSnap.user) {
-      setPlayTab('friends');
-      setViewMode('play');
+      setViewMode('friends_hub');
       return;
     }
     setIsLoggingIn(true);
     try {
       const ok = await firebaseCloudSync.signInWithGoogle();
+      setQuotaInfo(getFirestoreQuotaResetInfo());
       if (ok) {
         refreshLocalWorlds();
+        setViewMode('friends_hub');
       }
     } finally {
       setIsLoggingIn(false);
@@ -529,12 +581,42 @@ export const WorldSelectScreen: React.FC<WorldSelectScreenProps> = ({
     window.setTimeout(() => setCopiedMyId(false), 1800);
   };
 
+  const handleCopyFriendId = (id: string) => {
+    navigator.clipboard?.writeText(id).catch(() => {});
+    setCopiedFriendId(id);
+    window.setTimeout(() => setCopiedFriendId(null), 1600);
+  };
+
+  const normalizeCandidatePublicId = (raw: string): string => {
+    const trimmed = raw.trim().toUpperCase();
+    const alnum = trimmed.replace(/[^A-Z0-9]/g, '');
+    if (alnum.length === 10 && alnum.startsWith('SE')) {
+      return `SE-${alnum.slice(2, 6)}-${alnum.slice(6, 10)}`;
+    }
+    if (alnum.length === 8) {
+      return `SE-${alnum.slice(0, 4)}-${alnum.slice(4, 8)}`;
+    }
+    return trimmed;
+  };
+
   const handleSearchById = async () => {
     const clean = searchIdInput.trim().toUpperCase();
-    if (!clean) return;
+    if (!clean) {
+      setSearchFeedback({
+        performed: true,
+        mode: 'id',
+        query: '',
+        count: 0,
+        error: 'Digite o ID do jogador (ex: SE-XXXX-XXXX) antes de buscar.',
+      });
+      return;
+    }
+
     setIsSearchingPlayers(true);
     setFriendsMessage(null);
+    setSearchFeedback(null);
     try {
+      await syncMySocialProfileWithServer();
       const res = await fetch(
         `/api/social/search?playerId=${encodeURIComponent(
           clean
@@ -542,19 +624,34 @@ export const WorldSelectScreen: React.FC<WorldSelectScreenProps> = ({
       );
       if (res.ok) {
         const json = await res.json();
-        const list = Array.isArray(json?.results) ? json.results : [];
+        const list: SearchResultEntry[] = Array.isArray(json?.results)
+          ? json.results
+          : [];
         setSearchResults(list);
-        if (list.length === 0) {
-          setFriendsMessage({
-            type: 'info',
-            text: 'Nenhum jogador encontrado com este ID.',
-          });
-        }
+        setSearchFeedback({
+          performed: true,
+          mode: 'id',
+          query: clean,
+          count: list.length,
+        });
+      } else {
+        setSearchResults([]);
+        setSearchFeedback({
+          performed: true,
+          mode: 'id',
+          query: clean,
+          count: 0,
+          error: 'Não foi possível consultar o servidor no momento.',
+        });
       }
     } catch {
-      setFriendsMessage({
-        type: 'error',
-        text: 'Erro ao buscar jogador por ID.',
+      setSearchResults([]);
+      setSearchFeedback({
+        performed: true,
+        mode: 'id',
+        query: clean,
+        count: 0,
+        error: 'Erro de conexão ao buscar jogador por ID.',
       });
     } finally {
       setIsSearchingPlayers(false);
@@ -563,10 +660,22 @@ export const WorldSelectScreen: React.FC<WorldSelectScreenProps> = ({
 
   const handleSearchByUsername = async () => {
     const clean = searchUsernameInput.trim();
-    if (!clean) return;
+    if (!clean) {
+      setSearchFeedback({
+        performed: true,
+        mode: 'username',
+        query: '',
+        count: 0,
+        error: 'Digite o nome de usuário (username) antes de buscar.',
+      });
+      return;
+    }
+
     setIsSearchingPlayers(true);
     setFriendsMessage(null);
+    setSearchFeedback(null);
     try {
+      await syncMySocialProfileWithServer();
       const res = await fetch(
         `/api/social/search?username=${encodeURIComponent(
           clean
@@ -574,26 +683,55 @@ export const WorldSelectScreen: React.FC<WorldSelectScreenProps> = ({
       );
       if (res.ok) {
         const json = await res.json();
-        const list = Array.isArray(json?.results) ? json.results : [];
+        const list: SearchResultEntry[] = Array.isArray(json?.results)
+          ? json.results
+          : [];
         setSearchResults(list);
-        if (list.length === 0) {
-          setFriendsMessage({
-            type: 'info',
-            text: 'Nenhum jogador encontrado com este username.',
-          });
-        }
+        setSearchFeedback({
+          performed: true,
+          mode: 'username',
+          query: clean,
+          count: list.length,
+        });
+      } else {
+        setSearchResults([]);
+        setSearchFeedback({
+          performed: true,
+          mode: 'username',
+          query: clean,
+          count: 0,
+          error: 'Não foi possível consultar o servidor no momento.',
+        });
       }
     } catch {
-      setFriendsMessage({
-        type: 'error',
-        text: 'Erro ao buscar jogadores por username.',
+      setSearchResults([]);
+      setSearchFeedback({
+        performed: true,
+        mode: 'username',
+        query: clean,
+        count: 0,
+        error: 'Erro de conexão ao buscar jogadores por username.',
       });
     } finally {
       setIsSearchingPlayers(false);
     }
   };
 
-  const handleAddFriend = async (targetPublicId: string) => {
+  const handleAddFriend = async (
+    rawTargetPublicId: string,
+    fallbackUsername?: string
+  ) => {
+    const targetPublicId = normalizeCandidatePublicId(rawTargetPublicId);
+    if (!targetPublicId) return;
+    if (targetPublicId === myPublicId) {
+      setFriendsMessage({
+        type: 'error',
+        text: 'Você não pode adicionar seu próprio ID como amigo.',
+      });
+      return;
+    }
+
+    setAddingFriendId(targetPublicId);
     setFriendsMessage(null);
     try {
       const res = await fetch('/api/social/friends/add', {
@@ -603,6 +741,7 @@ export const WorldSelectScreen: React.FC<WorldSelectScreenProps> = ({
           myPublicId,
           myUsername,
           targetPublicId,
+          targetUsername: fallbackUsername || undefined,
         }),
       });
       const json = await res.json();
@@ -613,10 +752,27 @@ export const WorldSelectScreen: React.FC<WorldSelectScreenProps> = ({
         });
         return;
       }
+
       if (Array.isArray(json.friendsList)) {
         SaveManager.setFriendsList(json.friendsList);
         setFriendsList(json.friendsList);
+      } else {
+        const current = SaveManager.getFriendsList();
+        if (!current.some((f) => f.playerPublicId === targetPublicId)) {
+          const next = [
+            ...current,
+            {
+              playerPublicId: targetPublicId,
+              username:
+                fallbackUsername || `Aventureiro (${targetPublicId.slice(-4)})`,
+              addedAt: Date.now(),
+            },
+          ];
+          SaveManager.setFriendsList(next);
+          setFriendsList(next);
+        }
       }
+
       if (Array.isArray(json.friendsStatus)) {
         const nextMap: Record<string, FriendLiveStatus> = {};
         for (const st of json.friendsStatus) {
@@ -624,19 +780,47 @@ export const WorldSelectScreen: React.FC<WorldSelectScreenProps> = ({
         }
         setFriendsStatusMap(nextMap);
       }
+
+      void firebaseCloudSync.ensureUserProfileSynced(undefined, true);
       setFriendsMessage({
         type: 'success',
-        text: 'Amigo adicionado e sincronizado com sua conta!',
+        text: `Jogador ${
+          fallbackUsername || targetPublicId
+        } adicionado com sucesso à sua lista de amigos!`,
       });
     } catch {
+      // Fallback: Save locally so the player never loses the friend addition
+      const current = SaveManager.getFriendsList();
+      if (!current.some((f) => f.playerPublicId === targetPublicId)) {
+        const next = [
+          ...current,
+          {
+            playerPublicId: targetPublicId,
+            username:
+              fallbackUsername || `Aventureiro (${targetPublicId.slice(-4)})`,
+            addedAt: Date.now(),
+          },
+        ];
+        SaveManager.setFriendsList(next);
+        setFriendsList(next);
+        void firebaseCloudSync.ensureUserProfileSynced(undefined, true);
+      }
       setFriendsMessage({
-        type: 'error',
-        text: 'Erro de conexão ao adicionar amigo.',
+        type: 'success',
+        text: `Amigo (${targetPublicId}) salvo na sua lista!`,
       });
+    } finally {
+      setAddingFriendId(null);
     }
   };
 
   const handleRemoveFriend = async (targetPublicId: string) => {
+    const filtered = SaveManager.getFriendsList().filter(
+      (f) => f.playerPublicId !== targetPublicId
+    );
+    SaveManager.setFriendsList(filtered);
+    setFriendsList(filtered);
+
     try {
       const res = await fetch('/api/social/friends/remove', {
         method: 'POST',
@@ -651,8 +835,9 @@ export const WorldSelectScreen: React.FC<WorldSelectScreenProps> = ({
         SaveManager.setFriendsList(json.friendsList);
         setFriendsList(json.friendsList);
       }
+      void firebaseCloudSync.ensureUserProfileSynced(undefined, true);
     } catch {
-      // ignore
+      // ignore offline
     }
   };
 
@@ -726,6 +911,27 @@ export const WorldSelectScreen: React.FC<WorldSelectScreenProps> = ({
   const isSyncing =
     cloudSnap.syncStatus === 'SYNCING' || cloudSnap.reconciliation.active;
 
+  const hasQuotaOrInternalError =
+    quotaInfo.isExhausted ||
+    cloudSnap.syncStatus === 'ERROR' ||
+    cloudSnap.reconciliation.hasErrors;
+
+  const errorExplanationText = quotaInfo.isExhausted
+    ? quotaInfo.errorReason
+    : cloudSnap.reconciliation.errorSummary ||
+      cloudSnap.statusMessage ||
+      'Falha interna na sincronização com o banco de dados na nuvem.';
+
+  // Friends currently playing in an open world (for Jogar -> Amigos tab)
+  const friendsInOpenWorlds = friendsList.filter((friend) => {
+    const live = friendsStatusMap[friend.playerPublicId];
+    return Boolean(live?.isOnline && live?.inOpenWorld);
+  });
+
+  const onlineFriendsCount = friendsList.filter((friend) =>
+    Boolean(friendsStatusMap[friend.playerPublicId]?.isOnline)
+  ).length;
+
   return (
     <div className="fixed inset-0 bg-[#0d0805] text-[#f3e5c8] flex flex-col overflow-hidden select-none">
       {/* Subtle atmospheric background */}
@@ -751,8 +957,27 @@ export const WorldSelectScreen: React.FC<WorldSelectScreenProps> = ({
          ==================================================================== */}
       {viewMode === 'home' && (
         <div className="relative z-10 flex-1 flex flex-col justify-between p-4 sm:p-6">
-          {/* Top spacer for balanced vertical centering */}
-          <div className="h-4 shrink-0" />
+          {/* Top bar: Quota / Internal Error warning if present */}
+          <div className="shrink-0">
+            {hasQuotaOrInternalError && (
+              <div
+                onClick={() => setShowAccountModal(true)}
+                className="max-w-3xl mx-auto p-2.5 bg-amber-950/90 border border-amber-500/70 flex flex-wrap items-center justify-between gap-2 text-xs cursor-pointer hover:border-amber-400"
+              >
+                <div className="flex items-center gap-2 min-w-0">
+                  <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0" />
+                  <span className="text-[#f3e5c8] truncate">
+                    <strong>Aviso Interno:</strong> {errorExplanationText}
+                  </span>
+                </div>
+                <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-[#140c07] border border-amber-500/40 text-[11px] font-mono font-bold text-amber-300 shrink-0">
+                  <Clock className="w-3 h-3" />
+                  Reinicia em {quotaInfo.formattedCountdown} (às{' '}
+                  {quotaInfo.resetLocalTimeFormatted})
+                </span>
+              </div>
+            )}
+          </div>
 
           {/* Main Split Area: Center (Title + 3 Buttons) & Right (Character + Pencil) */}
           <div className="flex-1 flex items-center justify-center">
@@ -790,7 +1015,7 @@ export const WorldSelectScreen: React.FC<WorldSelectScreenProps> = ({
                     <span>Opções</span>
                   </button>
 
-                  {/* 3. Amigos / Login (Dynamic) */}
+                  {/* 3. Amigos (Hub Social) / Login (Dynamic) */}
                   <button
                     onClick={handleDynamicFriendsOrLoginButton}
                     disabled={isLoggingIn}
@@ -851,8 +1076,8 @@ export const WorldSelectScreen: React.FC<WorldSelectScreenProps> = ({
             </div>
           </div>
 
-          {/* 1.3. Bottom-Left Corner: Discreet Account Button */}
-          <div className="flex items-center justify-between pt-2 shrink-0">
+          {/* 1.3. Bottom-Left Corner: Discreet Account Button + Hub Social Shortcut */}
+          <div className="flex items-center justify-between pt-2 shrink-0 gap-2">
             <button
               onClick={() => setShowAccountModal(true)}
               className="medieval-panel px-3 py-2 bg-[#18100a]/95 hover:border-amber-500/70 transition-colors flex items-center gap-2.5"
@@ -888,12 +1113,595 @@ export const WorldSelectScreen: React.FC<WorldSelectScreenProps> = ({
                 </div>
               )}
             </button>
+
+            {!cloudSnap.user && (
+              <button
+                onClick={() => setViewMode('friends_hub')}
+                className="px-3 py-2 medieval-btn-wood text-[11px] font-pixel font-bold uppercase flex items-center gap-1.5"
+              >
+                <Users className="w-3.5 h-3.5 text-amber-300" />
+                <span>Hub de Amigos</span>
+              </button>
+            )}
           </div>
         </div>
       )}
 
       {/* ====================================================================
-          VIEW 2: TELA DE JOGAR (1. MUNDOS | 2. AMIGOS)
+          VIEW 2: HUB SOCIAL DE AMIGOS (Acessado pelo botão Amigos da Tela Inicial)
+          Separado em duas seções próprias:
+          1. Meus Amigos (Gerenciar amigos existentes)
+          2. Buscar e Adicionar Amigos (Busca com carregamento e feedback claro)
+         ==================================================================== */}
+      {viewMode === 'friends_hub' && (
+        <div className="relative z-10 flex-1 flex flex-col overflow-hidden">
+          {/* Top Bar */}
+          <div className="px-3 sm:px-5 py-2.5 bg-[#160f0a] border-b-2 border-[#4a301e] flex flex-wrap items-center justify-between gap-2 shrink-0">
+            <div className="flex items-center gap-2.5">
+              <button
+                onClick={() => setViewMode('home')}
+                className="min-h-[36px] px-3 medieval-btn-wood text-xs font-pixel font-bold flex items-center gap-1.5"
+              >
+                <ArrowLeft className="w-3.5 h-3.5" />
+                <span>Início</span>
+              </button>
+
+              <div className="flex items-center gap-2">
+                <div className="w-8 h-8 bg-[#2a1b10] border border-[#8c6d46] flex items-center justify-center">
+                  <Users className="w-4 h-4 text-amber-400" />
+                </div>
+                <div>
+                  <h2 className="font-pixel text-xs sm:text-sm font-bold text-amber-300 uppercase">
+                    Hub Social de Amigos
+                  </h2>
+                  <p className="text-[11px] text-[#c4ab7d] hidden sm:block">
+                    Gerencie sua lista de amigos e busque novos jogadores por ID
+                    ou Username
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => {
+                  setPlayTab('friends');
+                  setViewMode('play');
+                }}
+                className="min-h-[36px] px-3 medieval-btn-emerald text-[11px] font-pixel font-bold uppercase flex items-center gap-1.5"
+                title="Ver mundos abertos de amigos e código de convite"
+              >
+                <Globe className="w-3.5 h-3.5" />
+                <span>Mundos de Amigos / Convite</span>
+              </button>
+            </div>
+          </div>
+
+          {/* Hub Content */}
+          <div className="flex-1 overflow-y-auto p-3 sm:p-5">
+            <div className="max-w-4xl mx-auto space-y-4">
+              {/* Player Identity Card */}
+              <div className="medieval-panel p-3.5 bg-[#18100a]/95 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <div className="flex items-center gap-3">
+                  <div className="w-12 h-12 bg-[#120b07] border-2 border-[#6e4930] flex items-center justify-center shrink-0">
+                    <img
+                      src={characterSpriteUrl}
+                      alt={myUsername}
+                      className="w-10 h-10 pixelated"
+                    />
+                  </div>
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm font-bold text-[#f3e5c8]">
+                        {myUsername}
+                      </span>
+                      <span className="px-2 py-0.5 bg-emerald-950/80 border border-emerald-500/40 text-[10px] font-bold text-emerald-300">
+                        {friendsList.length} Amigo(s) • {onlineFriendsCount}{' '}
+                        Online
+                      </span>
+                    </div>
+                    <div className="text-[11px] text-[#c4ab7d] mt-0.5">
+                      Compartilhe seu ID abaixo para que seus amigos possam te
+                      encontrar:
+                    </div>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <div className="px-3 py-2 bg-[#0e0905] border border-[#5c3c24] font-mono text-xs sm:text-sm font-bold text-amber-300 tracking-wider select-text">
+                    {myPublicId}
+                  </div>
+                  <button
+                    onClick={handleCopyMyId}
+                    className="min-h-[38px] px-3 medieval-btn-gold text-xs font-pixel font-bold uppercase flex items-center gap-1.5 shrink-0"
+                  >
+                    {copiedMyId ? (
+                      <>
+                        <Check className="w-3.5 h-3.5" />
+                        <span>Copiado</span>
+                      </>
+                    ) : (
+                      <>
+                        <Copy className="w-3.5 h-3.5" />
+                        <span>Copiar ID</span>
+                      </>
+                    )}
+                  </button>
+                </div>
+              </div>
+
+              {/* Active Join Request Banner */}
+              {activeJoinRequest && (
+                <div className="medieval-panel p-3.5 border-2 border-amber-500/70 bg-[#23160c] flex items-center justify-between gap-3">
+                  <div className="flex items-center gap-3">
+                    <RefreshCw className="w-5 h-5 text-amber-400 animate-spin shrink-0" />
+                    <div>
+                      <div className="font-pixel text-xs font-bold text-amber-300 uppercase">
+                        Aguardando autorização do anfitrião...
+                      </div>
+                      <div className="text-xs text-[#e5d5b5]">
+                        Solicitação enviada para entrar em{' '}
+                        <strong>{activeJoinRequest.worldName}</strong>.
+                      </div>
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => setActiveJoinRequest(null)}
+                    className="px-3 py-1.5 medieval-btn-crimson text-xs font-bold shrink-0"
+                  >
+                    Cancelar
+                  </button>
+                </div>
+              )}
+
+              {/* Feedback Message Banner */}
+              {friendsMessage && (
+                <div
+                  className={`p-3 border text-xs font-bold flex items-center justify-between ${
+                    friendsMessage.type === 'success'
+                      ? 'bg-emerald-950/90 border-emerald-500/60 text-emerald-300'
+                      : friendsMessage.type === 'error'
+                      ? 'bg-rose-950/90 border-rose-500/60 text-rose-300'
+                      : 'bg-amber-950/90 border-amber-500/60 text-amber-200'
+                  }`}
+                >
+                  <span>{friendsMessage.text}</span>
+                  <button onClick={() => setFriendsMessage(null)}>
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              )}
+
+              {/* Hub Section Selector Tabs:
+                  1. Meus Amigos (Gerenciar Amigos Existentes)
+                  2. Buscar e Adicionar Amigos (Seção Própria de Busca) */}
+              <div className="grid grid-cols-2 gap-2 bg-[#120b07] p-1.5 border-2 border-[#4a301e]">
+                <button
+                  onClick={() => setHubSection('manage')}
+                  className={`min-h-[42px] py-2 px-3 font-pixel text-xs font-bold uppercase flex items-center justify-center gap-2 ${
+                    hubSection === 'manage'
+                      ? 'medieval-btn-gold'
+                      : 'medieval-btn-wood'
+                  }`}
+                >
+                  <UserCheck className="w-4 h-4" />
+                  <span>Meus Amigos ({friendsList.length})</span>
+                </button>
+                <button
+                  onClick={() => setHubSection('search')}
+                  className={`min-h-[42px] py-2 px-3 font-pixel text-xs font-bold uppercase flex items-center justify-center gap-2 ${
+                    hubSection === 'search'
+                      ? 'medieval-btn-gold'
+                      : 'medieval-btn-wood'
+                  }`}
+                >
+                  <Search className="w-4 h-4" />
+                  <span>Buscar e Adicionar Amigos</span>
+                </button>
+              </div>
+
+              {/* ==============================================================
+                  SEÇÃO 1 DO HUB: MEUS AMIGOS (GERENCIAR AMIGOS EXISTENTES)
+                 ============================================================== */}
+              {hubSection === 'manage' && (
+                <div className="medieval-panel p-4 space-y-3">
+                  <div className="flex items-center justify-between border-b border-[#3d2616] pb-2.5">
+                    <div>
+                      <h3 className="font-pixel text-xs font-bold text-amber-300 uppercase flex items-center gap-2">
+                        <Users className="w-4 h-4 text-amber-400" />
+                        <span>Gerenciar Amigos ({friendsList.length})</span>
+                      </h3>
+                      <p className="text-[11px] text-[#c4ab7d] mt-0.5">
+                        Acompanhe o status dos seus amigos adicionados ou remova
+                        conexões.
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={() => void pollFriendsPresence()}
+                        className="px-3 py-1.5 medieval-btn-wood text-[11px] font-bold flex items-center gap-1.5"
+                      >
+                        <RefreshCw
+                          className={`w-3.5 h-3.5 ${
+                            isLoadingFriendsStatus ? 'animate-spin' : ''
+                          }`}
+                        />
+                        <span>Atualizar Status</span>
+                      </button>
+                      <button
+                        onClick={() => setHubSection('search')}
+                        className="px-3 py-1.5 medieval-btn-emerald text-[11px] font-pixel font-bold uppercase flex items-center gap-1.5"
+                      >
+                        <UserPlus className="w-3.5 h-3.5" />
+                        <span>+ Buscar Amigo</span>
+                      </button>
+                    </div>
+                  </div>
+
+                  {friendsList.length === 0 ? (
+                    <div className="medieval-inset p-8 text-center space-y-3">
+                      <Users className="w-8 h-8 text-amber-400/80 mx-auto" />
+                      <div className="space-y-1">
+                        <div className="font-pixel text-xs font-bold text-amber-300 uppercase">
+                          Você ainda não adicionou amigos
+                        </div>
+                        <p className="text-xs text-[#c4ab7d] max-w-md mx-auto">
+                          Use a seção &ldquo;Buscar e Adicionar Amigos&rdquo;
+                          para procurar jogadores pelo ID ou Username, ou
+                          adicione jogadores que estiverem no mesmo mundo online
+                          que você!
+                        </p>
+                      </div>
+                      <button
+                        onClick={() => setHubSection('search')}
+                        className="px-4 py-2.5 medieval-btn-emerald font-pixel text-xs font-bold uppercase inline-flex items-center gap-2"
+                      >
+                        <Search className="w-3.5 h-3.5" />
+                        <span>Ir para Buscar e Adicionar Amigos</span>
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="space-y-2">
+                      {friendsList.map((friend) => {
+                        const live = friendsStatusMap[friend.playerPublicId];
+                        const isOnline = Boolean(live?.isOnline);
+                        const inOpenWorld = Boolean(live?.inOpenWorld);
+
+                        return (
+                          <div
+                            key={friend.playerPublicId}
+                            className="medieval-inset p-3 flex flex-col sm:flex-row sm:items-center justify-between gap-3"
+                          >
+                            <div className="space-y-1">
+                              <div className="flex flex-wrap items-center gap-2">
+                                <span
+                                  className={`w-2.5 h-2.5 rounded-full ${
+                                    isOnline ? 'bg-emerald-400' : 'bg-slate-600'
+                                  }`}
+                                />
+                                <span className="text-sm font-bold text-[#f3e5c8]">
+                                  {live?.username || friend.username}
+                                </span>
+                                <span className="px-2 py-0.5 bg-[#0e0905] border border-[#3d2616] text-[10px] font-mono text-amber-300">
+                                  {friend.playerPublicId}
+                                </span>
+                                <button
+                                  onClick={() =>
+                                    handleCopyFriendId(friend.playerPublicId)
+                                  }
+                                  className="text-[10px] text-[#c4ab7d] hover:text-white flex items-center gap-0.5"
+                                  title="Copiar ID deste amigo"
+                                >
+                                  {copiedFriendId === friend.playerPublicId ? (
+                                    <Check className="w-3 h-3 text-emerald-400" />
+                                  ) : (
+                                    <Copy className="w-3 h-3" />
+                                  )}
+                                </button>
+                              </div>
+
+                              <div className="text-xs pl-4">
+                                {!isOnline ? (
+                                  <span className="text-[#8b7355]">
+                                    Offline
+                                  </span>
+                                ) : inOpenWorld ? (
+                                  <span className="text-emerald-400 font-semibold">
+                                    Jogando em mundo aberto
+                                    {live?.worldName
+                                      ? `: ${live.worldName}`
+                                      : ''}
+                                  </span>
+                                ) : (
+                                  <span className="text-sky-300 font-semibold">
+                                    Online no menu
+                                  </span>
+                                )}
+                              </div>
+                            </div>
+
+                            <div className="flex items-center gap-2 self-end sm:self-center">
+                              {isOnline && inOpenWorld && (
+                                <button
+                                  onClick={() =>
+                                    void handleRequestJoinFriendWorld(
+                                      friend.playerPublicId
+                                    )
+                                  }
+                                  disabled={Boolean(activeJoinRequest)}
+                                  className="px-3.5 py-2 medieval-btn-emerald text-[11px] font-pixel font-bold uppercase flex items-center gap-1.5 disabled:opacity-50"
+                                >
+                                  <Wifi className="w-3.5 h-3.5" />
+                                  <span>Solicitar entrada</span>
+                                </button>
+                              )}
+                              <button
+                                onClick={() =>
+                                  void handleRemoveFriend(friend.playerPublicId)
+                                }
+                                title="Remover amigo da sua lista"
+                                className="px-2.5 py-2 medieval-btn-crimson text-[11px] font-bold flex items-center gap-1"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                                <span className="hidden sm:inline">
+                                  Remover
+                                </span>
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* ==============================================================
+                  SEÇÃO 2 DO HUB: BUSCAR E ADICIONAR AMIGOS (SEÇÃO PRÓPRIA)
+                 ============================================================== */}
+              {hubSection === 'search' && (
+                <div className="medieval-panel p-4 space-y-4">
+                  <div className="border-b border-[#3d2616] pb-2.5">
+                    <h3 className="font-pixel text-xs font-bold text-amber-300 uppercase flex items-center gap-2">
+                      <Search className="w-4 h-4 text-amber-400" />
+                      <span>Procurar e Adicionar Jogadores</span>
+                    </h3>
+                    <p className="text-[11px] text-[#c4ab7d] mt-0.5">
+                      Busque pelo ID único do jogador (ex: SE-A1B2-C3D4) ou pelo
+                      nome de usuário (Username).
+                    </p>
+                  </div>
+
+                  {/* Two Search Boxes: By ID & By Username */}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    {/* Box 1: Search by Player ID */}
+                    <div className="medieval-inset p-3 space-y-2">
+                      <label className="text-[11px] font-pixel font-bold text-amber-300 uppercase block">
+                        1. Buscar por ID de Jogador
+                      </label>
+                      <div className="flex items-center gap-2">
+                        <input
+                          type="text"
+                          value={searchIdInput}
+                          onChange={(e) =>
+                            setSearchIdInput(e.target.value.toUpperCase())
+                          }
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') void handleSearchById();
+                          }}
+                          placeholder="Ex: SE-1A2B-3C4D"
+                          className="flex-1 px-3 py-2 bg-[#0e0905] border border-[#5c3c24] text-xs font-mono text-[#f3e5c8] uppercase focus:outline-none focus:border-amber-400"
+                        />
+                        <button
+                          onClick={() => void handleSearchById()}
+                          disabled={isSearchingPlayers}
+                          className="min-h-[38px] px-3.5 medieval-btn-gold text-xs font-pixel font-bold uppercase flex items-center gap-1.5 disabled:opacity-50"
+                        >
+                          {isSearchingPlayers ? (
+                            <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                          ) : (
+                            <Search className="w-3.5 h-3.5" />
+                          )}
+                          <span>Buscar ID</span>
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Box 2: Search by Username */}
+                    <div className="medieval-inset p-3 space-y-2">
+                      <label className="text-[11px] font-pixel font-bold text-amber-300 uppercase block">
+                        2. Buscar por Username
+                      </label>
+                      <div className="flex items-center gap-2">
+                        <input
+                          type="text"
+                          value={searchUsernameInput}
+                          onChange={(e) =>
+                            setSearchUsernameInput(e.target.value)
+                          }
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter')
+                              void handleSearchByUsername();
+                          }}
+                          placeholder="Digite o nome do jogador..."
+                          className="flex-1 px-3 py-2 bg-[#0e0905] border border-[#5c3c24] text-xs text-[#f3e5c8] focus:outline-none focus:border-amber-400"
+                        />
+                        <button
+                          onClick={() => void handleSearchByUsername()}
+                          disabled={isSearchingPlayers}
+                          className="min-h-[38px] px-3.5 medieval-btn-gold text-xs font-pixel font-bold uppercase flex items-center gap-1.5 disabled:opacity-50"
+                        >
+                          {isSearchingPlayers ? (
+                            <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                          ) : (
+                            <Search className="w-3.5 h-3.5" />
+                          )}
+                          <span>Buscar Nome</span>
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Search Loading & Feedback Panel */}
+                  <div className="medieval-inset p-3.5 space-y-3">
+                    {isSearchingPlayers ? (
+                      <div className="py-6 flex flex-col items-center justify-center gap-2 text-amber-300">
+                        <RefreshCw className="w-6 h-6 animate-spin" />
+                        <span className="font-pixel text-xs font-bold uppercase">
+                          Buscando jogadores no servidor...
+                        </span>
+                      </div>
+                    ) : !searchFeedback ? (
+                      <div className="py-4 text-center text-xs text-[#c4ab7d]">
+                        Digite um ID ou Username acima e clique em buscar para
+                        ver os resultados aqui.
+                      </div>
+                    ) : searchFeedback.error ? (
+                      <div className="p-3 bg-rose-950/70 border border-rose-500/50 text-xs text-rose-200 flex items-center gap-2">
+                        <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0" />
+                        <span>{searchFeedback.error}</span>
+                      </div>
+                    ) : searchResults.length === 0 ? (
+                      <div className="p-4 bg-[#120b07] border border-[#3d2616] space-y-3 text-center">
+                        <div className="space-y-1">
+                          <div className="font-pixel text-xs font-bold text-amber-300 uppercase">
+                            Nenhum jogador listado no diretório para &ldquo;
+                            {searchFeedback.query}&rdquo;
+                          </div>
+                          <p className="text-xs text-[#c4ab7d]">
+                            {searchFeedback.mode === 'id'
+                              ? 'O jogador pode ainda não ter conectado hoje neste servidor, mas você pode adicioná-lo diretamente pelo ID abaixo:'
+                              : 'Verifique se o nome está correto ou peça o ID de Jogador (SE-XXXX-XXXX) do seu amigo para adicioná-lo diretamente.'}
+                          </p>
+                        </div>
+
+                        {searchFeedback.mode === 'id' &&
+                          searchFeedback.query.length >= 4 && (
+                            <div className="pt-1 flex justify-center">
+                              <button
+                                onClick={() =>
+                                  void handleAddFriend(
+                                    normalizeCandidatePublicId(
+                                      searchFeedback.query
+                                    )
+                                  )
+                                }
+                                disabled={Boolean(addingFriendId)}
+                                className="px-4 py-2.5 medieval-btn-emerald font-pixel text-xs font-bold uppercase flex items-center gap-2"
+                              >
+                                <UserPlus className="w-4 h-4" />
+                                <span>
+                                  Adicionar Diretamente pelo ID (
+                                  {normalizeCandidatePublicId(
+                                    searchFeedback.query
+                                  )}
+                                  )
+                                </span>
+                              </button>
+                            </div>
+                          )}
+                      </div>
+                    ) : (
+                      <div className="space-y-2">
+                        <div className="flex items-center justify-between text-[11px] font-pixel text-emerald-300 uppercase">
+                          <span>
+                            Busca concluída: {searchResults.length} jogador(es)
+                            encontrado(s) para &ldquo;{searchFeedback.query}
+                            &rdquo;
+                          </span>
+                          <button
+                            onClick={() => {
+                              setSearchResults([]);
+                              setSearchFeedback(null);
+                            }}
+                            className="text-[#c4ab7d] hover:text-white text-[10px]"
+                          >
+                            Limpar busca
+                          </button>
+                        </div>
+
+                        <div className="space-y-2 max-h-60 overflow-y-auto">
+                          {searchResults.map((resItem) => {
+                            const alreadyFriend = friendsList.some(
+                              (f) => f.playerPublicId === resItem.playerPublicId
+                            );
+                            const isAddingThis =
+                              addingFriendId === resItem.playerPublicId;
+
+                            return (
+                              <div
+                                key={resItem.playerPublicId}
+                                className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 p-3 bg-[#120b07] border border-[#4a301e]"
+                              >
+                                <div className="space-y-0.5">
+                                  <div className="flex items-center gap-2">
+                                    <span
+                                      className={`w-2 h-2 rounded-full ${
+                                        resItem.isOnline
+                                          ? 'bg-emerald-400'
+                                          : 'bg-slate-600'
+                                      }`}
+                                    />
+                                    <span className="text-sm font-bold text-[#f3e5c8]">
+                                      {resItem.username}
+                                    </span>
+                                    {resItem.isOnline && (
+                                      <span className="text-[10px] font-bold text-emerald-400">
+                                        {resItem.inOpenWorld
+                                          ? `• Em Mundo Aberto (${
+                                              resItem.worldName || 'Online'
+                                            })`
+                                          : '• Online'}
+                                      </span>
+                                    )}
+                                  </div>
+                                  <div className="text-[11px] font-mono text-amber-400 pl-4">
+                                    ID: {resItem.playerPublicId}
+                                  </div>
+                                </div>
+
+                                <div className="flex items-center gap-2 self-end sm:self-center">
+                                  {alreadyFriend ? (
+                                    <span className="px-3 py-1.5 bg-emerald-950/80 border border-emerald-500/40 text-[10px] font-pixel font-bold text-emerald-300 uppercase flex items-center gap-1">
+                                      <Check className="w-3.5 h-3.5" />
+                                      <span>Já é seu amigo</span>
+                                    </span>
+                                  ) : (
+                                    <button
+                                      onClick={() =>
+                                        void handleAddFriend(
+                                          resItem.playerPublicId,
+                                          resItem.username
+                                        )
+                                      }
+                                      disabled={isAddingThis}
+                                      className="px-3.5 py-2 medieval-btn-emerald text-[11px] font-pixel font-bold uppercase flex items-center gap-1.5 disabled:opacity-50"
+                                    >
+                                      <UserPlus className="w-3.5 h-3.5" />
+                                      <span>
+                                        {isAddingThis
+                                          ? 'Adicionando...'
+                                          : 'Adicionar Amigo'}
+                                      </span>
+                                    </button>
+                                  )}
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ====================================================================
+          VIEW 3: TELA DE JOGAR (1. MUNDOS | 2. AMIGOS — MUNDOS ABERTOS & CONVITE)
          ==================================================================== */}
       {viewMode === 'play' && (
         <div className="relative z-10 flex-1 flex flex-col overflow-hidden">
@@ -908,7 +1716,7 @@ export const WorldSelectScreen: React.FC<WorldSelectScreenProps> = ({
                 <span className="hidden sm:inline">Início</span>
               </button>
 
-              {/* Section Tabs: 1. Mundos | 2. Amigos */}
+              {/* Section Tabs: 1. Mundos | 2. Amigos (Mundos Online & Convite) */}
               <div className="flex items-center gap-1.5 bg-[#0e0905] p-1 border border-[#4a301e]">
                 <button
                   onClick={() => setPlayTab('worlds')}
@@ -931,6 +1739,11 @@ export const WorldSelectScreen: React.FC<WorldSelectScreenProps> = ({
                 >
                   <Users className="w-3.5 h-3.5" />
                   <span>Amigos</span>
+                  {friendsInOpenWorlds.length > 0 && (
+                    <span className="px-1.5 py-0.2 bg-emerald-600 text-white text-[10px] rounded-full">
+                      {friendsInOpenWorlds.length}
+                    </span>
+                  )}
                 </button>
               </div>
             </div>
@@ -941,7 +1754,14 @@ export const WorldSelectScreen: React.FC<WorldSelectScreenProps> = ({
               className="px-2.5 py-1.5 bg-[#1f140d] border border-[#5c3c24] hover:border-amber-400/60 flex items-center gap-2 text-[11px]"
               title="Ver status da conta e sincronização"
             >
-              {cloudSnap.user ? (
+              {hasQuotaOrInternalError ? (
+                <>
+                  <AlertTriangle className="w-3.5 h-3.5 text-amber-400" />
+                  <span className="text-amber-300 font-semibold">
+                    Cota reinicia em {quotaInfo.formattedCountdown}
+                  </span>
+                </>
+              ) : cloudSnap.user ? (
                 isSyncing ? (
                   <>
                     <RefreshCw className="w-3.5 h-3.5 text-amber-400 animate-spin" />
@@ -974,6 +1794,38 @@ export const WorldSelectScreen: React.FC<WorldSelectScreenProps> = ({
           {playTab === 'worlds' && (
             <div className="flex-1 overflow-y-auto p-3 sm:p-5">
               <div className="max-w-4xl mx-auto space-y-3">
+                {/* Quota / Internal Error Diagnostic Banner inside Worlds */}
+                {hasQuotaOrInternalError && (
+                  <div className="medieval-panel p-3 border-2 border-amber-500/70 bg-[#23150b] flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 text-xs">
+                    <div className="flex items-start gap-2.5">
+                      <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+                      <div className="space-y-0.5">
+                        <div className="font-pixel text-[11px] font-bold text-amber-300 uppercase">
+                          Aviso de Sincronização na Nuvem
+                        </div>
+                        <div className="text-[#f3e5c8]">
+                          <strong>Erro:</strong> {errorExplanationText}
+                        </div>
+                        <div className="text-amber-200/90 text-[11px]">
+                          A sincronização com o Firebase será retomada quando a
+                          cota diária reiniciar em{' '}
+                          <strong className="font-mono text-amber-300">
+                            {quotaInfo.formattedCountdown}
+                          </strong>{' '}
+                          (às {quotaInfo.resetLocalTimeFormatted}). Seus mundos
+                          continuam salvos localmente e no servidor secundário.
+                        </div>
+                      </div>
+                    </div>
+                    <button
+                      onClick={() => setShowAccountModal(true)}
+                      className="px-3 py-1.5 medieval-btn-gold text-[10px] font-pixel font-bold uppercase shrink-0 self-end sm:self-center"
+                    >
+                      Detalhes
+                    </button>
+                  </div>
+                )}
+
                 {/* Action Bar: Criar novo mundo + Importar */}
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <button
@@ -1102,7 +1954,9 @@ export const WorldSelectScreen: React.FC<WorldSelectScreenProps> = ({
           )}
 
           {/* ================================================================
-              TAB 2: AMIGOS (Sections 4, 6, 7)
+              TAB 2 (DENTRO DE JOGAR): MUNDOS ABERTOS DE AMIGOS & CONVITE
+              Focado em mostrar mundos disponíveis de amigos online para pedir
+              para entrar + anexar código de convite direto.
              ================================================================ */}
           {playTab === 'friends' && (
             <div className="flex-1 overflow-y-auto p-3 sm:p-5">
@@ -1148,288 +2002,158 @@ export const WorldSelectScreen: React.FC<WorldSelectScreenProps> = ({
                   </div>
                 )}
 
-                {/* Top Grid: My Player ID + Direct Invite Code Entry */}
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  {/* Section 4: My Player ID */}
-                  <div className="medieval-panel p-3.5 space-y-2">
-                    <div className="flex items-center justify-between">
-                      <span className="font-pixel text-[10px] font-bold text-amber-400 uppercase">
-                        Seu ID de Jogador
-                      </span>
-                      <span className="text-[11px] font-bold text-[#e5d5b5]">
-                        {myUsername}
-                      </span>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <div className="flex-1 px-3 py-2 bg-[#0e0905] border border-[#5c3c24] font-mono text-sm font-bold text-amber-300 tracking-wider select-text">
-                        {myPublicId}
-                      </div>
-                      <button
-                        onClick={handleCopyMyId}
-                        className="min-h-[38px] px-3 medieval-btn-gold text-xs font-pixel font-bold uppercase flex items-center gap-1.5"
-                      >
-                        {copiedMyId ? (
-                          <>
-                            <Check className="w-3.5 h-3.5" />
-                            <span>Copiado</span>
-                          </>
-                        ) : (
-                          <>
-                            <Copy className="w-3.5 h-3.5" />
-                            <span>Copiar</span>
-                          </>
-                        )}
-                      </button>
+                {/* 1. Anexar / Entrar com Código de Convite de Mundo */}
+                <div className="medieval-panel p-4 space-y-2.5 border-2 border-emerald-500/40 bg-[#142018]/75">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div>
+                      <h3 className="font-pixel text-xs font-bold text-emerald-300 uppercase flex items-center gap-2">
+                        <KeyRound className="w-4 h-4 text-emerald-400" />
+                        <span>Anexar Código de Convite de Mundo</span>
+                      </h3>
+                      <p className="text-[11px] text-[#c4ab7d] mt-0.5">
+                        Recebeu um código de convite de 6 caracteres de um
+                        amigo? Digite abaixo para entrar diretamente no mundo:
+                      </p>
                     </div>
                   </div>
 
-                  {/* Section 7: Direct Join by World Invite Code */}
-                  <div className="medieval-panel p-3.5 space-y-2">
-                    <div className="flex items-center justify-between">
-                      <span className="font-pixel text-[10px] font-bold text-emerald-400 uppercase flex items-center gap-1.5">
-                        <KeyRound className="w-3.5 h-3.5" />
-                        <span>Código de Convite de Mundo</span>
-                      </span>
-                      <span className="text-[10px] text-[#c4ab7d]">
-                        Entrada direta
-                      </span>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <input
-                        type="text"
-                        value={inviteCodeInput}
-                        maxLength={8}
-                        onChange={(e) =>
-                          setInviteCodeInput(e.target.value.toUpperCase())
+                  <div className="flex items-center gap-2 max-w-md">
+                    <input
+                      type="text"
+                      value={inviteCodeInput}
+                      maxLength={8}
+                      onChange={(e) =>
+                        setInviteCodeInput(e.target.value.toUpperCase())
+                      }
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') {
+                          void handleConnectToInviteCode(inviteCodeInput);
                         }
-                        onKeyDown={(e) => {
-                          if (e.key === 'Enter') {
-                            void handleConnectToInviteCode(inviteCodeInput);
-                          }
-                        }}
-                        placeholder="Ex: AB12CD"
-                        className="flex-1 px-3 py-2 bg-[#0e0905] border border-[#5c3c24] font-mono text-sm font-bold text-white uppercase focus:outline-none focus:border-emerald-400"
-                      />
-                      <button
-                        onClick={() =>
-                          void handleConnectToInviteCode(inviteCodeInput)
-                        }
-                        disabled={isJoiningByCode}
-                        className="min-h-[38px] px-3.5 medieval-btn-emerald text-xs font-pixel font-bold uppercase flex items-center gap-1.5 disabled:opacity-50"
-                      >
-                        <Play className="w-3.5 h-3.5 fill-current" />
-                        <span>{isJoiningByCode ? 'Entrando...' : 'Entrar'}</span>
-                      </button>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Section 4 & 5: Search Players by Player ID or by Username */}
-                <div className="medieval-panel p-3.5 space-y-3">
-                  <div className="font-pixel text-xs font-bold text-amber-300 uppercase">
-                    Adicionar e Buscar Amigos
-                  </div>
-
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-                    {/* Search/Add by Player ID */}
-                    <div className="flex items-center gap-1.5">
-                      <input
-                        type="text"
-                        value={searchIdInput}
-                        onChange={(e) =>
-                          setSearchIdInput(e.target.value.toUpperCase())
-                        }
-                        onKeyDown={(e) => {
-                          if (e.key === 'Enter') void handleSearchById();
-                        }}
-                        placeholder="Buscar por ID (ex: SE-XXXX-XXXX)"
-                        className="flex-1 px-2.5 py-2 bg-[#0e0905] border border-[#5c3c24] text-xs font-mono text-[#f3e5c8] uppercase focus:outline-none focus:border-amber-400"
-                      />
-                      <button
-                        onClick={() => void handleSearchById()}
-                        disabled={isSearchingPlayers}
-                        className="min-h-[36px] px-3 medieval-btn-gold text-xs font-bold flex items-center gap-1"
-                      >
-                        <Search className="w-3.5 h-3.5" />
-                        <span>ID</span>
-                      </button>
-                    </div>
-
-                    {/* Search by Username */}
-                    <div className="flex items-center gap-1.5">
-                      <input
-                        type="text"
-                        value={searchUsernameInput}
-                        onChange={(e) => setSearchUsernameInput(e.target.value)}
-                        onKeyDown={(e) => {
-                          if (e.key === 'Enter') void handleSearchByUsername();
-                        }}
-                        placeholder="Buscar por Username..."
-                        className="flex-1 px-2.5 py-2 bg-[#0e0905] border border-[#5c3c24] text-xs text-[#f3e5c8] focus:outline-none focus:border-amber-400"
-                      />
-                      <button
-                        onClick={() => void handleSearchByUsername()}
-                        disabled={isSearchingPlayers}
-                        className="min-h-[36px] px-3 medieval-btn-gold text-xs font-bold flex items-center gap-1"
-                      >
-                        <Search className="w-3.5 h-3.5" />
-                        <span>Buscar</span>
-                      </button>
-                    </div>
-                  </div>
-
-                  {/* Search Results */}
-                  {searchResults.length > 0 && (
-                    <div className="medieval-inset p-2.5 space-y-1.5">
-                      <div className="flex items-center justify-between text-[10px] font-pixel text-amber-300 uppercase">
-                        <span>Resultados encontrados ({searchResults.length})</span>
-                        <button
-                          onClick={() => setSearchResults([])}
-                          className="text-[#c4ab7d] hover:text-white"
-                        >
-                          Limpar
-                        </button>
-                      </div>
-                      <div className="space-y-1.5 max-h-44 overflow-y-auto">
-                        {searchResults.map((resItem) => {
-                          const alreadyFriend = friendsList.some(
-                            (f) => f.playerPublicId === resItem.playerPublicId
-                          );
-                          return (
-                            <div
-                              key={resItem.playerPublicId}
-                              className="flex items-center justify-between gap-2 p-2 bg-[#120b07] border border-[#3d2616]"
-                            >
-                              <div>
-                                <div className="text-xs font-bold text-[#f3e5c8]">
-                                  {resItem.username}
-                                </div>
-                                <div className="text-[10px] font-mono text-amber-400">
-                                  ID: {resItem.playerPublicId}
-                                </div>
-                              </div>
-                              {alreadyFriend ? (
-                                <span className="px-2.5 py-1 text-[10px] font-bold text-emerald-400">
-                                  Já é amigo
-                                </span>
-                              ) : (
-                                <button
-                                  onClick={() =>
-                                    void handleAddFriend(resItem.playerPublicId)
-                                  }
-                                  className="px-3 py-1.5 medieval-btn-emerald text-[10px] font-pixel font-bold uppercase flex items-center gap-1"
-                                >
-                                  <UserPlus className="w-3.5 h-3.5" />
-                                  <span>Adicionar</span>
-                                </button>
-                              )}
-                            </div>
-                          );
-                        })}
-                      </div>
-                    </div>
-                  )}
-                </div>
-
-                {/* Section 6: Friends List & Live Status */}
-                <div className="medieval-panel p-3.5 space-y-2.5">
-                  <div className="flex items-center justify-between">
-                    <h3 className="font-pixel text-xs font-bold text-amber-300 uppercase flex items-center gap-2">
-                      <Users className="w-4 h-4 text-amber-400" />
-                      <span>Lista de Amigos ({friendsList.length})</span>
-                    </h3>
+                      }}
+                      placeholder="Ex: AB12CD"
+                      className="flex-1 px-3.5 py-2.5 bg-[#0e0905] border border-emerald-500/50 font-mono text-sm font-bold text-amber-300 tracking-widest uppercase focus:outline-none focus:border-emerald-400"
+                    />
                     <button
-                      onClick={() => void pollFriendsPresence()}
-                      className="px-2.5 py-1 medieval-btn-wood text-[10px] font-bold flex items-center gap-1"
+                      onClick={() =>
+                        void handleConnectToInviteCode(inviteCodeInput)
+                      }
+                      disabled={isJoiningByCode}
+                      className="min-h-[42px] px-5 medieval-btn-emerald text-xs font-pixel font-bold uppercase flex items-center gap-2 disabled:opacity-50"
                     >
-                      <RefreshCw
-                        className={`w-3 h-3 ${
-                          isLoadingFriendsStatus ? 'animate-spin' : ''
-                        }`}
-                      />
-                      <span>Atualizar</span>
+                      <Play className="w-3.5 h-3.5 fill-current" />
+                      <span>
+                        {isJoiningByCode ? 'Conectando...' : 'Entrar no Mundo'}
+                      </span>
                     </button>
                   </div>
+                </div>
 
-                  {friendsList.length === 0 ? (
-                    <div className="medieval-inset p-6 text-center text-xs text-[#c4ab7d]">
-                      Sua lista de amigos está vazia. Busque pelo ID de jogador
-                      ou pelo username acima para adicionar seus amigos.
+                {/* 2. Mundos Abertos de Amigos Online */}
+                <div className="medieval-panel p-4 space-y-3">
+                  <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[#3d2616] pb-2.5">
+                    <div>
+                      <h3 className="font-pixel text-xs font-bold text-amber-300 uppercase flex items-center gap-2">
+                        <Globe className="w-4 h-4 text-emerald-400" />
+                        <span>
+                          Mundos Disponíveis de Amigos Online (
+                          {friendsInOpenWorlds.length})
+                        </span>
+                      </h3>
+                      <p className="text-[11px] text-[#c4ab7d] mt-0.5">
+                        Mundos que seus amigos estão hospedando com modo online
+                        aberto neste momento.
+                      </p>
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={() => void pollFriendsPresence()}
+                        className="px-2.5 py-1.5 medieval-btn-wood text-[10px] font-bold flex items-center gap-1"
+                      >
+                        <RefreshCw
+                          className={`w-3 h-3 ${
+                            isLoadingFriendsStatus ? 'animate-spin' : ''
+                          }`}
+                        />
+                        <span>Atualizar</span>
+                      </button>
+
+                      <button
+                        onClick={() => setViewMode('friends_hub')}
+                        className="px-3 py-1.5 medieval-btn-gold text-[10px] font-pixel font-bold uppercase flex items-center gap-1.5"
+                      >
+                        <Users className="w-3.5 h-3.5" />
+                        <span>Hub Social de Amigos</span>
+                      </button>
+                    </div>
+                  </div>
+
+                  {friendsInOpenWorlds.length === 0 ? (
+                    <div className="medieval-inset p-6 text-center space-y-2.5">
+                      <Wifi className="w-7 h-7 text-amber-400/70 mx-auto" />
+                      <div className="space-y-1">
+                        <div className="font-pixel text-xs font-bold text-amber-300 uppercase">
+                          Nenhum mundo de amigo aberto no momento
+                        </div>
+                        <p className="text-xs text-[#c4ab7d] max-w-md mx-auto">
+                          Quando um amigo seu estiver jogando com a{' '}
+                          <strong>Disponibilidade Online ativada</strong>, o
+                          mundo dele aparecerá aqui para você pedir para entrar.
+                          Você também pode gerenciar ou buscar amigos no Hub
+                          Social.
+                        </p>
+                      </div>
+                      <div className="pt-1">
+                        <button
+                          onClick={() => setViewMode('friends_hub')}
+                          className="px-4 py-2 medieval-btn-wood text-xs font-pixel font-bold uppercase inline-flex items-center gap-2"
+                        >
+                          <Users className="w-3.5 h-3.5 text-amber-300" />
+                          <span>
+                            Abrir Hub Social (Gerenciar e Buscar Amigos)
+                          </span>
+                        </button>
+                      </div>
                     </div>
                   ) : (
-                    <div className="space-y-2">
-                      {friendsList.map((friend) => {
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      {friendsInOpenWorlds.map((friend) => {
                         const live = friendsStatusMap[friend.playerPublicId];
-                        const isOnline = Boolean(live?.isOnline);
-                        const inOpenWorld = Boolean(live?.inOpenWorld);
-
                         return (
                           <div
                             key={friend.playerPublicId}
-                            className="medieval-inset p-3 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5"
+                            className="medieval-inset p-3.5 border border-emerald-500/40 bg-[#121e16]/80 flex flex-col justify-between gap-3"
                           >
-                            <div className="space-y-0.5">
-                              <div className="flex items-center gap-2">
-                                <span
-                                  className={`w-2.5 h-2.5 rounded-full ${
-                                    isOnline
-                                      ? 'bg-emerald-400'
-                                      : 'bg-slate-600'
-                                  }`}
-                                />
-                                <span className="text-sm font-bold text-[#f3e5c8]">
+                            <div className="space-y-1">
+                              <div className="flex items-center justify-between gap-2">
+                                <span className="font-pixel text-xs font-bold text-amber-300 truncate">
+                                  {live?.worldName || 'Mundo Online'}
+                                </span>
+                                <span className="px-2 py-0.5 bg-emerald-950 border border-emerald-500/50 text-[10px] font-bold text-emerald-300 flex items-center gap-1 shrink-0">
+                                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                                  <span>Aberto</span>
+                                </span>
+                              </div>
+                              <div className="text-xs text-[#e5d5b5]">
+                                Anfitrião:{' '}
+                                <strong>
                                   {live?.username || friend.username}
-                                </span>
-                                <span className="text-[10px] font-mono text-[#c4ab7d]">
-                                  ({friend.playerPublicId})
-                                </span>
-                              </div>
-
-                              <div className="text-xs pl-4">
-                                {!isOnline ? (
-                                  <span className="text-[#8b7355]">
-                                    Offline
-                                  </span>
-                                ) : inOpenWorld ? (
-                                  <span className="text-emerald-400 font-semibold">
-                                    Jogando em mundo aberto
-                                    {live?.worldName
-                                      ? `: ${live.worldName}`
-                                      : ''}
-                                  </span>
-                                ) : (
-                                  <span className="text-sky-300 font-semibold">
-                                    Online
-                                  </span>
-                                )}
+                                </strong>
                               </div>
                             </div>
 
-                            <div className="flex items-center gap-2 self-end sm:self-center">
-                              {isOnline && inOpenWorld && (
-                                <button
-                                  onClick={() =>
-                                    void handleRequestJoinFriendWorld(
-                                      friend.playerPublicId
-                                    )
-                                  }
-                                  disabled={Boolean(activeJoinRequest)}
-                                  className="px-3.5 py-2 medieval-btn-emerald text-[11px] font-pixel font-bold uppercase flex items-center gap-1.5 disabled:opacity-50"
-                                >
-                                  <Wifi className="w-3.5 h-3.5" />
-                                  <span>Solicitar entrada</span>
-                                </button>
-                              )}
-                              <button
-                                onClick={() =>
-                                  void handleRemoveFriend(friend.playerPublicId)
-                                }
-                                title="Remover amigo"
-                                className="p-2 medieval-btn-crimson"
-                              >
-                                <Trash2 className="w-3.5 h-3.5" />
-                              </button>
-                            </div>
+                            <button
+                              onClick={() =>
+                                void handleRequestJoinFriendWorld(
+                                  friend.playerPublicId
+                                )
+                              }
+                              disabled={Boolean(activeJoinRequest)}
+                              className="w-full min-h-[38px] medieval-btn-emerald text-xs font-pixel font-bold uppercase flex items-center justify-center gap-2 disabled:opacity-50"
+                            >
+                              <Wifi className="w-3.5 h-3.5" />
+                              <span>Solicitar entrada no mundo</span>
+                            </button>
                           </div>
                         );
                       })}

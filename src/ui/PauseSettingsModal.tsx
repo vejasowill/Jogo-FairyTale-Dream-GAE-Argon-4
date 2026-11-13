@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import {
+  Check,
   Download,
   LogOut,
   Maximize2,
@@ -10,13 +11,20 @@ import {
   Save,
   Settings,
   Sliders,
+  UserPlus,
+  Users,
   Volume2,
   VolumeX,
   Wifi,
   X,
 } from 'lucide-react';
-import { GAME_VERSION, GameSettings } from '../game/core/types';
+import {
+  FriendProfileEntry,
+  GameSettings,
+  OnlinePeerSummary,
+} from '../game/core/types';
 import { GameEngine } from '../game/loop/GameEngine';
+import { firebaseCloudSync } from '../game/persistence/FirebaseCloudSync';
 import { SaveManager } from '../game/persistence/SaveManager';
 
 interface PauseSettingsModalProps {
@@ -49,8 +57,14 @@ export const PauseSettingsModal: React.FC<PauseSettingsModalProps> = ({
     null
   );
   const [, setForceTick] = useState(0);
+  const [friendsList, setFriendsList] = useState<FriendProfileEntry[]>(() =>
+    SaveManager.getFriendsList()
+  );
+  const [addingPeerId, setAddingPeerId] = useState<string | null>(null);
 
   const isGlobalOnly = mode === 'global_only' || !engine;
+  const myPublicId = SaveManager.getPlayerPublicId();
+  const myUsername = SaveManager.getEffectiveUsername();
 
   const handleManualSave = async () => {
     if (!engine) return;
@@ -80,6 +94,58 @@ export const PauseSettingsModal: React.FC<PauseSettingsModalProps> = ({
       setOnlineRuleWarning(null);
     }
     setForceTick((t) => t + 1);
+  };
+
+  const handleAddPeerInWorldAsFriend = async (peer: OnlinePeerSummary) => {
+    const targetPublicId = (peer.playerPublicId || peer.peerId || '')
+      .trim()
+      .toUpperCase();
+    if (!targetPublicId || targetPublicId === myPublicId) return;
+
+    setAddingPeerId(peer.peerId);
+    try {
+      let updatedList: FriendProfileEntry[] | null = null;
+      try {
+        const res = await fetch('/api/social/friends/add', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            myPublicId,
+            myUsername,
+            targetPublicId,
+            targetUsername: peer.name || 'Aventureiro',
+          }),
+        });
+        const json = await res.json();
+        if (res.ok && json?.ok && Array.isArray(json.friendsList)) {
+          updatedList = json.friendsList;
+        }
+      } catch {
+        // Fallback to local addition
+      }
+
+      if (!updatedList) {
+        const current = SaveManager.getFriendsList();
+        const exists = current.some((f) => f.playerPublicId === targetPublicId);
+        updatedList = exists
+          ? current
+          : [
+              ...current,
+              {
+                playerPublicId: targetPublicId,
+                username: peer.name || 'Aventureiro',
+                addedAt: Date.now(),
+              },
+            ];
+      }
+
+      SaveManager.setFriendsList(updatedList);
+      setFriendsList(updatedList);
+      void firebaseCloudSync.ensureUserProfileSynced(undefined, true);
+      setSaveFeedback(`${peer.name} adicionado aos seus amigos!`);
+    } finally {
+      setAddingPeerId(null);
+    }
   };
 
   const hudScale = settings.hudScale || 1.0;
@@ -418,7 +484,7 @@ export const PauseSettingsModal: React.FC<PauseSettingsModalProps> = ({
             )}
           </div>
 
-          {/* RIGHT COLUMN (5 cols): In-World Controls, Online Availability, Save & Exit */}
+          {/* RIGHT COLUMN (5 cols): In-World Controls, Online Availability, Players in World, Save & Exit */}
           {!isGlobalOnly && engine && (
             <div className="sm:col-span-5 space-y-2.5">
               {saveFeedback && (
@@ -435,6 +501,11 @@ export const PauseSettingsModal: React.FC<PauseSettingsModalProps> = ({
                   engine.metadata.onlineEnabled || onlineInfo.isOnline
                 );
                 const hasGuestsPresent = engine.hasConnectedNetworkPlayers();
+                const otherPeers = onlineInfo.connectedPeers.filter(
+                  (p) =>
+                    p.peerId !== engine.multiplayer.peerId &&
+                    (!p.playerPublicId || p.playerPublicId !== myPublicId)
+                );
 
                 return (
                   <div className="medieval-inset p-3 space-y-2 border border-emerald-500/40 bg-[#132419]/60">
@@ -501,6 +572,58 @@ export const PauseSettingsModal: React.FC<PauseSettingsModalProps> = ({
                       </div>
                     )}
 
+                    {/* Players in the same world — 1-click Add Friend */}
+                    {otherPeers.length > 0 && (
+                      <div className="pt-1.5 border-t border-emerald-500/20 space-y-1.5">
+                        <div className="flex items-center gap-1.5 text-[10px] font-pixel font-bold text-amber-300 uppercase">
+                          <Users className="w-3 h-3" />
+                          <span>Jogadores neste Mundo ({otherPeers.length})</span>
+                        </div>
+                        <div className="space-y-1 max-h-28 overflow-y-auto">
+                          {otherPeers.map((peer) => {
+                            const targetId = (
+                              peer.playerPublicId ||
+                              peer.peerId ||
+                              ''
+                            )
+                              .trim()
+                              .toUpperCase();
+                            const alreadyFriend = friendsList.some(
+                              (f) => f.playerPublicId === targetId
+                            );
+                            return (
+                              <div
+                                key={peer.peerId}
+                                className="flex items-center justify-between gap-2 px-2 py-1.5 bg-[#0e0905]/90 border border-[#3d2616] text-[11px]"
+                              >
+                                <span className="font-bold text-[#f3e5c8] truncate">
+                                  {peer.name}
+                                </span>
+                                {alreadyFriend ? (
+                                  <span className="text-[10px] font-bold text-emerald-400 flex items-center gap-1 shrink-0">
+                                    <Check className="w-3 h-3" />
+                                    <span>Amigo</span>
+                                  </span>
+                                ) : (
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      void handleAddPeerInWorldAsFriend(peer)
+                                    }
+                                    disabled={addingPeerId === peer.peerId}
+                                    className="px-2 py-0.5 medieval-btn-emerald text-[10px] font-pixel font-bold uppercase flex items-center gap-1 shrink-0"
+                                  >
+                                    <UserPlus className="w-3 h-3" />
+                                    <span>+ Amigo</span>
+                                  </button>
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )}
+
                     {onOpenOnlineInvite && isOnlineEnabled && (
                       <button
                         type="button"
@@ -508,7 +631,7 @@ export const PauseSettingsModal: React.FC<PauseSettingsModalProps> = ({
                         className="w-full min-h-[34px] medieval-btn-wood font-pixel text-[10px] font-bold flex items-center justify-center gap-1.5"
                       >
                         <Wifi className="w-3.5 h-3.5 text-emerald-400" />
-                        <span>SALA ONLINE / CÓDIGO DE CONVITE</span>
+                        <span>SALA ONLINE / JOGADORES & CONVITE</span>
                       </button>
                     )}
                   </div>

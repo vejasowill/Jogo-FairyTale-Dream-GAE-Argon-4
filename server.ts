@@ -112,6 +112,7 @@ function writeStoredWorlds(worlds: StoredWorldsMap): void {
 
 interface ConnectedPeer {
   peerId: string;
+  playerPublicId?: string;
   name: string;
   isHost: boolean;
   ws: WebSocket | null;
@@ -155,6 +156,7 @@ function generateInviteCode(): string {
 function getRoomPeersSummary(room: OnlineWorldRoom) {
   return Array.from(room.peers.values()).map((p) => ({
     peerId: p.peerId,
+    playerPublicId: p.playerPublicId || p.lastState?.playerPublicId || undefined,
     name: p.name,
     isHost: p.isHost,
     level: p.lastState?.level ?? 1,
@@ -1615,37 +1617,133 @@ async function startServer() {
     }
   });
 
+  function normalizePublicPlayerId(raw: string): string {
+    const clean = String(raw || '')
+      .trim()
+      .toUpperCase()
+      .replace(/[^A-Z0-9-]/g, '');
+    if (!clean) return '';
+    const alnum = clean.replace(/-/g, '');
+    if (alnum.startsWith('SE') && alnum.length === 10) {
+      return `SE-${alnum.slice(2, 6)}-${alnum.slice(6, 10)}`;
+    }
+    if (alnum.length === 8) {
+      return `SE-${alnum.slice(0, 4)}-${alnum.slice(4, 8)}`;
+    }
+    return clean;
+  }
+
+  function syncActiveRoomsIntoSocialStore(store: SocialStoreData): boolean {
+    let dirty = false;
+    const now = Date.now();
+    for (const room of activeRooms.values()) {
+      for (const peer of room.peers.values()) {
+        const pubId = normalizePublicPlayerId(
+          peer.playerPublicId || peer.lastState?.playerPublicId || ''
+        );
+        if (!pubId) continue;
+        let prof = store.profilesByPublicId[pubId];
+        if (!prof) {
+          prof = {
+            playerPublicId: pubId,
+            username: peer.name || 'Aventureiro',
+            friendsList: [],
+            deletedWorldIds: [],
+            updatedAt: now,
+          };
+          store.profilesByPublicId[pubId] = prof;
+          dirty = true;
+        } else if (peer.name && prof.username !== peer.name) {
+          prof.username = peer.name;
+          dirty = true;
+        }
+      }
+    }
+    return dirty;
+  }
+
   app.get('/api/social/search', (req, res) => {
     try {
       const store = readSocialStore();
-      const playerIdQuery = String(req.query.playerId || '')
+      if (syncActiveRoomsIntoSocialStore(store)) {
+        writeSocialStore(store);
+      }
+
+      const rawQ = String(req.query.q || '').trim();
+      const playerIdQuery = String(req.query.playerId || rawQ)
         .trim()
         .toUpperCase();
-      const usernameQuery = String(req.query.username || '')
+      const usernameQuery = String(req.query.username || rawQ)
         .trim()
         .toLowerCase();
-      const excludeId = String(req.query.excludeId || '')
-        .trim()
-        .toUpperCase();
+      const excludeId = normalizePublicPlayerId(String(req.query.excludeId || ''));
 
-      const results: { playerPublicId: string; username: string }[] = [];
+      const resultsMap = new Map<
+        string,
+        {
+          playerPublicId: string;
+          username: string;
+          isOnline?: boolean;
+          inOpenWorld?: boolean;
+          worldName?: string | null;
+        }
+      >();
 
-      if (playerIdQuery) {
-        const exact = store.profilesByPublicId[playerIdQuery];
+      const all = Object.values(store.profilesByPublicId);
+      const normalizedIdQuery = normalizePublicPlayerId(playerIdQuery);
+      const strippedIdQuery = playerIdQuery.replace(/[^A-Z0-9]/g, '');
+
+      // 1. Check ID matches (exact normalized or partial alphanumeric match)
+      if (playerIdQuery && !req.query.username) {
+        const exact =
+          store.profilesByPublicId[normalizedIdQuery] ||
+          store.profilesByPublicId[playerIdQuery];
         if (exact && exact.playerPublicId !== excludeId) {
-          results.push({
+          const st = computeLiveStatusForPublicId(
+            store,
+            exact.playerPublicId,
+            exact.username
+          );
+          resultsMap.set(exact.playerPublicId, {
             playerPublicId: exact.playerPublicId,
             username: exact.username,
+            isOnline: st.isOnline,
+            inOpenWorld: st.inOpenWorld,
+            worldName: st.worldName,
           });
         }
-      } else if (usernameQuery) {
-        const all = Object.values(store.profilesByPublicId);
+        if (strippedIdQuery.length >= 3) {
+          for (const p of all) {
+            if (!p || !p.playerPublicId || p.playerPublicId === excludeId)
+              continue;
+            const pStripped = p.playerPublicId.replace(/[^A-Z0-9]/g, '');
+            if (pStripped.includes(strippedIdQuery)) {
+              const st = computeLiveStatusForPublicId(
+                store,
+                p.playerPublicId,
+                p.username
+              );
+              resultsMap.set(p.playerPublicId, {
+                playerPublicId: p.playerPublicId,
+                username: p.username,
+                isOnline: st.isOnline,
+                inOpenWorld: st.inOpenWorld,
+                worldName: st.worldName,
+              });
+            }
+          }
+        }
+      }
+
+      // 2. Check Username matches (or unified query)
+      if (usernameQuery && !req.query.playerId) {
         const matches = all.filter(
           (p) =>
             p &&
             p.playerPublicId &&
             p.playerPublicId !== excludeId &&
-            (p.username || '').toLowerCase().includes(usernameQuery)
+            ((p.username || '').toLowerCase().includes(usernameQuery) ||
+              p.playerPublicId.toLowerCase().includes(usernameQuery))
         );
         matches.sort((a, b) => {
           const aExact = a.username.toLowerCase() === usernameQuery ? 0 : 1;
@@ -1654,14 +1752,22 @@ async function startServer() {
           return (b.updatedAt || 0) - (a.updatedAt || 0);
         });
         for (const m of matches.slice(0, 25)) {
-          results.push({
+          const st = computeLiveStatusForPublicId(
+            store,
+            m.playerPublicId,
+            m.username
+          );
+          resultsMap.set(m.playerPublicId, {
             playerPublicId: m.playerPublicId,
             username: m.username,
+            isOnline: st.isOnline,
+            inOpenWorld: st.inOpenWorld,
+            worldName: st.worldName,
           });
         }
       }
 
-      res.json({ ok: true, results });
+      res.json({ ok: true, results: Array.from(resultsMap.values()) });
     } catch (err: any) {
       res.status(500).json({ ok: false, error: err?.message || 'Search error' });
     }
@@ -1670,18 +1776,23 @@ async function startServer() {
   app.post('/api/social/friends/add', (req, res) => {
     try {
       const store = readSocialStore();
-      const myPublicId = String(req.body?.myPublicId || '')
-        .trim()
-        .toUpperCase();
+      syncActiveRoomsIntoSocialStore(store);
+
+      const myPublicId = normalizePublicPlayerId(
+        String(req.body?.myPublicId || '')
+      );
       const myUsername =
         String(req.body?.myUsername || 'Aventureiro')
           .trim()
           .slice(0, 22) || 'Aventureiro';
-      const targetPublicId = String(req.body?.targetPublicId || '')
+      const targetPublicId = normalizePublicPlayerId(
+        String(req.body?.targetPublicId || '')
+      );
+      const targetUsernameHint = String(req.body?.targetUsername || '')
         .trim()
-        .toUpperCase();
+        .slice(0, 22);
 
-      if (!myPublicId || !targetPublicId) {
+      if (!myPublicId || !targetPublicId || targetPublicId.length < 4) {
         res.status(400).json({ ok: false, error: 'ID de jogador inválido.' });
         return;
       }
@@ -1692,13 +1803,24 @@ async function startServer() {
         return;
       }
 
-      const targetProfile = store.profilesByPublicId[targetPublicId];
+      const now = Date.now();
+      let targetProfile = store.profilesByPublicId[targetPublicId];
       if (!targetProfile) {
-        res.status(404).json({
-          ok: false,
-          error: 'Nenhum jogador encontrado com este ID de jogador.',
-        });
-        return;
+        // Create placeholder entry so cross-device / P2P / direct ID friends can always be added immediately
+        targetProfile = {
+          playerPublicId: targetPublicId,
+          username:
+            targetUsernameHint || `Jogador ${targetPublicId.slice(-4)}`,
+          friendsList: [],
+          deletedWorldIds: [],
+          updatedAt: now,
+        };
+        store.profilesByPublicId[targetPublicId] = targetProfile;
+      } else if (
+        targetUsernameHint &&
+        targetProfile.username.startsWith('Jogador ')
+      ) {
+        targetProfile.username = targetUsernameHint;
       }
 
       let myProfile = store.profilesByPublicId[myPublicId];
@@ -1708,12 +1830,11 @@ async function startServer() {
           username: myUsername,
           friendsList: [],
           deletedWorldIds: [],
-          updatedAt: Date.now(),
+          updatedAt: now,
         };
         store.profilesByPublicId[myPublicId] = myProfile;
       }
 
-      const now = Date.now();
       if (
         !myProfile.friendsList.some((f) => f.playerPublicId === targetPublicId)
       ) {
@@ -2038,8 +2159,15 @@ async function startServer() {
         : new Map<string, ConnectedPeer>();
 
       const existingHostPeer = peersMap.get(hostPeerId);
+      const hostPublicId =
+        normalizePublicPlayerId(
+          String(
+            req.body?.playerPublicId || playerState?.playerPublicId || ''
+          )
+        ) || undefined;
       const hostPeer: ConnectedPeer = {
         peerId: hostPeerId,
+        playerPublicId: hostPublicId,
         name: hostName,
         isHost: true,
         ws: existingHostPeer?.ws || null,
@@ -2048,6 +2176,7 @@ async function startServer() {
         lastState: {
           ...(playerState || {}),
           peerId: hostPeerId,
+          playerPublicId: hostPublicId,
           name: hostName,
           isHost: true,
         },
@@ -2137,8 +2266,15 @@ async function startServer() {
         .slice(0, 22);
 
       const existingPeer = room.peers.get(guestPeerId);
+      const guestPublicId =
+        normalizePublicPlayerId(
+          String(
+            req.body?.playerPublicId || playerState?.playerPublicId || ''
+          )
+        ) || undefined;
       const guestPeer: ConnectedPeer = {
         peerId: guestPeerId,
+        playerPublicId: guestPublicId,
         name: guestName,
         isHost: false,
         ws: existingPeer?.ws || null,
@@ -2163,6 +2299,7 @@ async function startServer() {
             },
           }),
           peerId: guestPeerId,
+          playerPublicId: guestPublicId,
           name: guestName,
           isHost: false,
         },

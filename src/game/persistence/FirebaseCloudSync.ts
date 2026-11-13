@@ -16,6 +16,7 @@ import {
   fallbackDefaultDb,
   googleProvider,
   handleFirestoreError,
+  isFirestoreQuotaExhaustedError,
   isFirestoreWriteQuotaExhausted,
   onAuthStateChanged,
   OperationType,
@@ -1274,9 +1275,7 @@ class FirebaseCloudSyncService {
       } catch (err: any) {
         const msg = String(err?.message || err?.code || '');
         if (
-          msg.includes('RESOURCE_EXHAUSTED') ||
-          msg.includes('Quota limit exceeded') ||
-          msg.includes('FIRESTORE_WRITE_QUOTA_EXHAUSTED') ||
+          isFirestoreQuotaExhaustedError(err) ||
           msg.includes('Tempo limite excedido')
         ) {
           this.profileReadyForUid = uid;
@@ -1785,6 +1784,9 @@ class FirebaseCloudSyncService {
           updatedAt: serverTimestamp(),
         });
       } catch (err2) {
+        if (isFirestoreQuotaExhaustedError(err2)) {
+          return;
+        }
         handleFirestoreError(err2, OperationType.WRITE, chunkPath);
       }
     }
@@ -2373,7 +2375,11 @@ class FirebaseCloudSyncService {
           }
 
           // CASE E (Divergence Conflict): Both Local and Cloud were modified independently!
-          if (localModifiedSinceLastSync && cloudModifiedSinceLastSync) {
+          if (
+            !isFirestoreWriteQuotaExhausted() &&
+            localModifiedSinceLastSync &&
+            cloudModifiedSinceLastSync
+          ) {
             this.setWorldDetailedState(localMeta.id, 'VERSION_CONFLICT', {
               worldName: localMeta.name,
             });
@@ -2397,8 +2403,13 @@ class FirebaseCloudSyncService {
                     localMeta.id,
                     'cloud_conflict'
                   );
-                const primaryRes = await this.uploadWorldToCloud(fullLocal);
-                const copyRes = await this.uploadWorldToCloud(preservedCopy);
+                const primaryRes = await this.uploadWorldToCloud(fullLocal, {
+                  existingWorldDataHint:
+                    cloudEntry.sourceDb === db ? cloudEntry.rawDocData : null,
+                });
+                const copyRes = await this.uploadWorldToCloud(preservedCopy, {
+                  worldKnownNotInCloud: true,
+                });
                 this.setWorldDetailedState(
                   preservedCopy.metadata.id,
                   'VERSION_CONFLICT',
@@ -2435,8 +2446,12 @@ class FirebaseCloudSyncService {
                       SaveManager.computeCanonicalSyncHash(cloudReconstructed),
                   }
                 );
-                const copyRes =
-                  await this.uploadWorldToCloud(preservedLocalCopy);
+                const copyRes = await this.uploadWorldToCloud(
+                  preservedLocalCopy,
+                  {
+                    worldKnownNotInCloud: true,
+                  }
+                );
                 this.setWorldDetailedState(
                   preservedLocalCopy.metadata.id,
                   'VERSION_CONFLICT',
@@ -2888,8 +2903,7 @@ class FirebaseCloudSyncService {
     } catch (err: any) {
       const msg = String(err?.message || err?.code || '');
       if (
-        msg.includes('RESOURCE_EXHAUSTED') ||
-        msg.includes('Quota limit exceeded') ||
+        isFirestoreQuotaExhaustedError(err) ||
         msg.includes('Tempo limite excedido')
       ) {
         return this.entitlements;

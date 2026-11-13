@@ -70,6 +70,7 @@ const RTC_ICE_SERVERS: RTCIceServer[] = [
 
 export class MultiplayerManager {
   public peerId: string;
+  public playerPublicId: string;
   public localPlayerName: string;
   public isOnline = false;
   public role: 'HOST' | 'GUEST' | 'OFFLINE' = 'OFFLINE';
@@ -146,6 +147,7 @@ export class MultiplayerManager {
       Math.random().toString(36).slice(2, 9) +
       '_' +
       Date.now().toString(36).slice(-4);
+    this.playerPublicId = SaveManager.getPlayerPublicId();
     this.localPlayerName = (localPlayerName || 'Aventureiro')
       .trim()
       .slice(0, 22);
@@ -348,6 +350,7 @@ export class MultiplayerManager {
     const heldSlot = player.inventory[player.selectedHotbarIndex];
     return {
       persistentPlayerId: player.persistentPlayerId || undefined,
+      playerPublicId: this.playerPublicId,
       x: Math.round(player.x * 10) / 10,
       y: Math.round(player.y * 10) / 10,
       vx: Math.round(player.vx * 10) / 10,
@@ -644,6 +647,7 @@ export class MultiplayerManager {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           peerId: this.peerId,
+          playerPublicId: this.playerPublicId,
           playerName: this.localPlayerName,
           preferredCode: preferredCode ?? this.inviteCode ?? '',
           gameVersion: GAME_VERSION,
@@ -1116,11 +1120,18 @@ export class MultiplayerManager {
         }
 
         // Add or update in connectedPeers
+        const guestPublicId =
+          String(
+            msg.playerPublicId || msg.playerState?.playerPublicId || ''
+          )
+            .trim()
+            .toUpperCase() || undefined;
         const existingPeerIdx = this.connectedPeers.findIndex(
           (p) => p.peerId === guestPeerId
         );
         const guestSummary: OnlinePeerSummary = {
           peerId: guestPeerId,
+          playerPublicId: guestPublicId,
           name: guestName,
           isHost: false,
           level: msg.playerState?.level || 1,
@@ -1131,6 +1142,7 @@ export class MultiplayerManager {
           if (!this.connectedPeers.some((p) => p.peerId === this.peerId)) {
             this.connectedPeers.unshift({
               peerId: this.peerId,
+              playerPublicId: this.playerPublicId,
               name: this.localPlayerName,
               isHost: true,
               level: hostLevel,
@@ -1846,6 +1858,7 @@ export class MultiplayerManager {
               type: 'p2p_join_request',
               isResync: true,
               peerId: this.peerId,
+              playerPublicId: this.playerPublicId,
               playerName: this.localPlayerName,
               gameVersion: GAME_VERSION,
               playerState: this.latestLocalPlayerState,
@@ -2274,6 +2287,7 @@ export class MultiplayerManager {
         body: JSON.stringify({
           inviteCode: cleanCode,
           peerId: manager.peerId,
+          playerPublicId: manager.playerPublicId,
           playerName: manager.localPlayerName,
           gameVersion: GAME_VERSION,
         }),
@@ -2416,6 +2430,7 @@ export class MultiplayerManager {
             {
               type: 'p2p_join_request',
               peerId: manager.peerId,
+              playerPublicId: manager.playerPublicId,
               playerName: manager.localPlayerName,
               gameVersion: GAME_VERSION,
             },

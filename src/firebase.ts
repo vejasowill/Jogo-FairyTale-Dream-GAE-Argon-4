@@ -182,21 +182,122 @@ export function getClientFirebaseDiagnostics() {
 let connectionTested = false;
 let lastConnectionResult = false;
 let firestoreWriteQuotaExhausted = false;
+let firestoreQuotaExhaustedReason: string | null = null;
 const quotaExhaustedListeners = new Set<(reason: string) => void>();
+
+export interface FirestoreQuotaResetInfo {
+  isExhausted: boolean;
+  errorReason: string;
+  remainingHours: number;
+  remainingMinutes: number;
+  formattedCountdown: string;
+  resetLocalTimeFormatted: string;
+}
 
 export function isFirestoreWriteQuotaExhausted(): boolean {
   return firestoreWriteQuotaExhausted;
 }
 
+/**
+ * Computes the exact time remaining until Firebase / Google Cloud Firestore resets its daily
+ * free-tier quota (which occurs daily at 00:00 Midnight Pacific Time - America/Los_Angeles).
+ */
+export function getFirestoreQuotaResetInfo(): FirestoreQuotaResetInfo {
+  const now = new Date();
+  let remainingSec = 3600;
+  try {
+    const parts = new Intl.DateTimeFormat('en-US', {
+      timeZone: 'America/Los_Angeles',
+      hour12: false,
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+    }).formatToParts(now);
+    const h = Number(parts.find((p) => p.type === 'hour')?.value || 0) % 24;
+    const m = Number(parts.find((p) => p.type === 'minute')?.value || 0);
+    const s = Number(parts.find((p) => p.type === 'second')?.value || 0);
+    const elapsedSec = h * 3600 + m * 60 + s;
+    remainingSec = Math.max(60, 86400 - elapsedSec);
+  } catch {
+    // Fallback to UTC-8 calculation if Intl timeZone is unavailable
+    const utcHours = now.getUTCHours();
+    const utcMinutes = now.getUTCMinutes();
+    const ptHours = (utcHours - 8 + 24) % 24;
+    const elapsedSec = ptHours * 3600 + utcMinutes * 60;
+    remainingSec = Math.max(60, 86400 - elapsedSec);
+  }
+
+  let remainingHours = Math.floor(remainingSec / 3600);
+  let remainingMinutes = Math.ceil((remainingSec % 3600) / 60);
+  if (remainingMinutes >= 60) {
+    remainingHours += 1;
+    remainingMinutes = 0;
+  }
+
+  const resetDate = new Date(now.getTime() + remainingSec * 1000);
+  let resetLocalTimeFormatted = '04:00';
+  try {
+    resetLocalTimeFormatted = resetDate.toLocaleTimeString('pt-BR', {
+      hour: '2-digit',
+      minute: '2-digit',
+    });
+  } catch {
+    // ignore
+  }
+
+  const formattedCountdown =
+    remainingHours > 0
+      ? `${remainingHours}h ${remainingMinutes}min`
+      : `${Math.max(1, remainingMinutes)}min`;
+
+  return {
+    isExhausted: firestoreWriteQuotaExhausted,
+    errorReason:
+      firestoreQuotaExhaustedReason ||
+      'Limite diário gratuito de operações (leitura/gravação) do banco de dados Cloud Firestore atingido.',
+    remainingHours,
+    remainingMinutes,
+    formattedCountdown,
+    resetLocalTimeFormatted,
+  };
+}
+
+export function isFirestoreQuotaExhaustedError(error: unknown): boolean {
+  if (firestoreWriteQuotaExhausted) return true;
+  const text =
+    error instanceof Error
+      ? `${error.name} ${error.message} ${(error as any).code || ''}`
+      : String(error ?? '');
+  if (
+    text.includes('RESOURCE_EXHAUSTED') ||
+    text.includes('resource-exhausted') ||
+    text.includes('Quota limit exceeded') ||
+    text.includes('Quota exceeded') ||
+    text.includes('FIRESTORE_WRITE_QUOTA_EXHAUSTED') ||
+    text.includes('FIRESTORE_QUOTA_EXHAUSTED')
+  ) {
+    const isReadQuota = text.includes('Free daily read units');
+    const friendlyReason = isReadQuota
+      ? 'Cota diária gratuita de leituras do Cloud Firestore excedida (Free daily read units per project).'
+      : 'Cota diária gratuita de operações do Cloud Firestore excedida (Quota limit exceeded).';
+    markFirestoreWriteQuotaExhausted(friendlyReason);
+    return true;
+  }
+  return false;
+}
+
 export function markFirestoreWriteQuotaExhausted(
-  reason = 'RESOURCE_EXHAUSTED: Cota diária gratuita de gravações do Firestore atingida.'
+  reason = 'Cota diária gratuita do Cloud Firestore atingida.'
 ): void {
   if (!firestoreWriteQuotaExhausted) {
     firestoreWriteQuotaExhausted = true;
   }
+  if (reason && !firestoreQuotaExhaustedReason) {
+    firestoreQuotaExhaustedReason = reason;
+  }
   for (const listener of Array.from(quotaExhaustedListeners)) {
     try {
-      listener(reason);
+      listener(firestoreQuotaExhaustedReason || reason);
     } catch {
       // ignore
     }
@@ -209,7 +310,7 @@ export function onFirestoreWriteQuotaExhausted(
   quotaExhaustedListeners.add(listener);
   if (firestoreWriteQuotaExhausted) {
     listener(
-      'RESOURCE_EXHAUSTED: Cota diária gratuita de gravações do Firestore atingida.'
+      'RESOURCE_EXHAUSTED: Cota diária gratuita do Firestore atingida.'
     );
   }
   return () => {

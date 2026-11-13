@@ -18,6 +18,7 @@ import {
   db,
   getBytes,
   handleFirestoreError,
+  isFirestoreQuotaExhaustedError,
   isFirestoreWriteQuotaExhausted,
   markFirestoreWriteQuotaExhausted,
   onFirestoreWriteQuotaExhausted,
@@ -239,10 +240,10 @@ export function withFirestoreTimeout<T>(
   operationLabel = 'firestore_op',
   isWriteOp = false
 ): Promise<T> {
-  if (isWriteOp && isFirestoreWriteQuotaExhausted()) {
+  if (isFirestoreWriteQuotaExhausted()) {
     return Promise.reject(
       new Error(
-        `FIRESTORE_WRITE_QUOTA_EXHAUSTED: Cota diária de gravação do Firestore atingida (${operationLabel}).`
+        `FIRESTORE_WRITE_QUOTA_EXHAUSTED: Cota diária do Firestore atingida (${operationLabel}).`
       )
     );
   }
@@ -1347,10 +1348,7 @@ export class CloudWorldStorageEngine {
         );
         existingChunkPartIds.add(part.partDocKey);
       } catch (err2: any) {
-        if (
-          isFirestoreWriteQuotaExhausted() ||
-          String(err2?.message || '').includes('FIRESTORE_WRITE_QUOTA_EXHAUSTED')
-        ) {
+        if (isFirestoreQuotaExhaustedError(err2)) {
           throw err2;
         }
         handleFirestoreError(err2, OperationType.WRITE, chunkDocPath);
@@ -1507,7 +1505,7 @@ export class CloudWorldStorageEngine {
     let worldAlreadyExistsInCloud = false;
     let existingWorldData: Record<string, unknown> | null = null;
 
-    if (options?.worldKnownNotInCloud) {
+    if (options?.worldKnownNotInCloud || isFirestoreWriteQuotaExhausted()) {
       worldAlreadyExistsInCloud = false;
       existingWorldData = null;
     } else if (
@@ -1527,8 +1525,16 @@ export class CloudWorldStorageEngine {
         existingWorldData = worldAlreadyExistsInCloud
           ? (existingWorldSnap!.data() as Record<string, unknown>)
           : null;
-      } catch (err) {
-        handleFirestoreError(err, OperationType.GET, worldPath);
+      } catch (err: any) {
+        if (
+          isFirestoreQuotaExhaustedError(err) ||
+          String(err?.message || '').includes('Tempo limite excedido')
+        ) {
+          worldAlreadyExistsInCloud = false;
+          existingWorldData = null;
+        } else {
+          handleFirestoreError(err, OperationType.GET, worldPath);
+        }
       }
     }
 
@@ -2212,10 +2218,7 @@ export class CloudWorldStorageEngine {
         }
       } catch (commitErr: any) {
         if (
-          (isFirestoreWriteQuotaExhausted() ||
-            String(commitErr?.message || '').includes(
-              'FIRESTORE_WRITE_QUOTA_EXHAUSTED'
-            )) &&
+          isFirestoreQuotaExhaustedError(commitErr) &&
           options?.simulateInterruptAfterChunks === undefined
         ) {
           return completeWithQuotaFallback();
@@ -3036,21 +3039,25 @@ export class CloudWorldStorageEngine {
 
     const worldPath = `users/${cleanUid}/worlds/${cleanWorldId}`;
     const worldRef = doc(db, 'users', cleanUid, 'worlds', cleanWorldId);
-    try {
-      const snap = await withFirestoreTimeout(
-        getDoc(worldRef),
-        FIRESTORE_OP_TIMEOUT_MS,
-        `getDoc:delete:${worldPath}`
-      );
-      if (snap.exists()) {
-        await withFirestoreTimeout(
-          deleteDoc(worldRef),
+    if (!isFirestoreWriteQuotaExhausted()) {
+      try {
+        const snap = await withFirestoreTimeout(
+          getDoc(worldRef),
           FIRESTORE_OP_TIMEOUT_MS,
-          `deleteDoc:${worldPath}`
+          `getDoc:delete:${worldPath}`
         );
+        if (snap.exists()) {
+          await withFirestoreTimeout(
+            deleteDoc(worldRef),
+            FIRESTORE_OP_TIMEOUT_MS,
+            `deleteDoc:${worldPath}`
+          );
+        }
+      } catch (err) {
+        if (!isFirestoreQuotaExhaustedError(err)) {
+          handleFirestoreError(err, OperationType.DELETE, worldPath);
+        }
       }
-    } catch (err) {
-      handleFirestoreError(err, OperationType.DELETE, worldPath);
     }
 
     await persistentUploadQueue.clearQueue(cleanUid, cleanWorldId);
@@ -3207,7 +3214,7 @@ export class CloudWorldStorageEngine {
     return entries.map((e) => ({
       worldId: e.worldId,
       ownerId: uid,
-      name: e.name,
+      name: e.baseWorldName || stripWorldCopySuffix(e.name),
       seed: e.seed,
       seedText: String(e.seed),
       difficulty: 'normal',

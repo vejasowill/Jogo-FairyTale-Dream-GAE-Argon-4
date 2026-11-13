@@ -943,6 +943,7 @@ export interface RemotePlayerState {
 
 export interface OnlinePeerSummary {
   peerId: string;
+  playerPublicId?: string;
   name: string;
   isHost: boolean;
   level?: number;
@@ -956,7 +957,7 @@ export interface OnlineActivationStep {
 }
 
 // REGRA PERMANENTE: A cada nova atualização do jogo, incremente a versão para o número seguinte da beta (ex: 0.4.4-beta -> 0.4.5-beta).
-export const GAME_VERSION = '0.8.5-beta';
+export const GAME_VERSION = '0.8.6-beta';
 export const CURRENT_WORLD_GEN_VERSION = 5;
 
 export interface AppearancePresetSlot {

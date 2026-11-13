@@ -13,14 +13,22 @@ import {
   Shield,
   Sparkles,
   User,
+  UserPlus,
   Users,
   Wifi,
   WifiOff,
   X,
   XCircle,
 } from 'lucide-react';
-import { GAME_VERSION, GameSettings } from '../game/core/types';
+import {
+  FriendProfileEntry,
+  GAME_VERSION,
+  GameSettings,
+  OnlinePeerSummary,
+} from '../game/core/types';
 import { GameEngine, HudSnapshot } from '../game/loop/GameEngine';
+import { firebaseCloudSync } from '../game/persistence/FirebaseCloudSync';
+import { SaveManager } from '../game/persistence/SaveManager';
 
 interface OnlineInviteModalProps {
   engine: GameEngine;
@@ -45,6 +53,14 @@ export const OnlineInviteModal: React.FC<OnlineInviteModalProps> = ({
   const [nameSaved, setNameSaved] = useState(false);
   const [chatInput, setChatInput] = useState('');
   const [showDiagnostics, setShowDiagnostics] = useState(true);
+  const [friendsList, setFriendsList] = useState<FriendProfileEntry[]>(() =>
+    SaveManager.getFriendsList()
+  );
+  const [addingPeerId, setAddingPeerId] = useState<string | null>(null);
+  const [friendBanner, setFriendBanner] = useState<string | null>(null);
+
+  const myPublicId = SaveManager.getPlayerPublicId();
+  const myUsername = SaveManager.getEffectiveUsername();
 
   const onToggleOnline = () => engine.toggleOnlineSession();
   const onRegenerateCode = () => engine.regenerateInviteCode();
@@ -79,6 +95,60 @@ export const OnlineInviteModal: React.FC<OnlineInviteModalProps> = ({
     if (!chatInput.trim()) return;
     onSendChat(chatInput.trim());
     setChatInput('');
+  };
+
+  const handleAddPeerAsFriend = async (peer: OnlinePeerSummary) => {
+    const targetPublicId = (peer.playerPublicId || peer.peerId || '')
+      .trim()
+      .toUpperCase();
+    if (!targetPublicId || targetPublicId === myPublicId) return;
+
+    setAddingPeerId(peer.peerId);
+    setFriendBanner(null);
+    try {
+      let updatedList: FriendProfileEntry[] | null = null;
+      try {
+        const res = await fetch('/api/social/friends/add', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            myPublicId,
+            myUsername,
+            targetPublicId,
+            targetUsername: peer.name || 'Aventureiro',
+          }),
+        });
+        const json = await res.json();
+        if (res.ok && json?.ok && Array.isArray(json.friendsList)) {
+          updatedList = json.friendsList;
+        }
+      } catch {
+        // Fallback to local addition if server endpoint is unreachable
+      }
+
+      if (!updatedList) {
+        const current = SaveManager.getFriendsList();
+        const exists = current.some((f) => f.playerPublicId === targetPublicId);
+        updatedList = exists
+          ? current
+          : [
+              ...current,
+              {
+                playerPublicId: targetPublicId,
+                username: peer.name || 'Aventureiro',
+                addedAt: Date.now(),
+              },
+            ];
+      }
+
+      SaveManager.setFriendsList(updatedList);
+      setFriendsList(updatedList);
+      void firebaseCloudSync.ensureUserProfileSynced(undefined, true);
+      setFriendBanner(`${peer.name} foi adicionado à sua lista de amigos!`);
+      window.setTimeout(() => setFriendBanner(null), 3500);
+    } finally {
+      setAddingPeerId(null);
+    }
   };
 
   return (
@@ -163,7 +233,7 @@ export const OnlineInviteModal: React.FC<OnlineInviteModalProps> = ({
                       : 'MUNDO ONLINE (CONVIDADO)'
                     : hasError
                     ? 'FALHA NA ATIVAÇÃO ONLINE'
-                    : 'MODO OFFLINE (CONVITE DESATIVADO)'}
+                    : 'MODO OFFLINE (CONVITE DESATIVIVADO)'}
                 </div>
                 <div className="text-[11px] text-amber-100/60">
                   Mundo:{' '}
@@ -404,11 +474,10 @@ export const OnlineInviteModal: React.FC<OnlineInviteModalProps> = ({
               </div>
 
               <p className="text-[11px] text-amber-100/75 max-w-md mx-auto leading-relaxed">
-                Outro jogador só precisa abrir a tela inicial de{' '}
-                <strong>Mundos</strong>, digitar este código em{' '}
-                <strong>Entrar com Código de Convite</strong> e clicar em
-                Conectar. O convite vale enquanto você estiver com este mundo
-                aberto!
+                Outro jogador só precisa abrir a aba{' '}
+                <strong>Amigos (Mundos & Convite)</strong> em{' '}
+                <strong>Jogar</strong>, digitar este código em{' '}
+                <strong>Código de Convite de Mundo</strong> e clicar em Entrar!
               </p>
             </div>
           ) : (
@@ -477,7 +546,7 @@ export const OnlineInviteModal: React.FC<OnlineInviteModalProps> = ({
             </form>
           )}
 
-          {/* Connected Players List */}
+          {/* Connected Players List with 1-Click Add Friend */}
           <div className="p-3 rounded-xl bg-[#1f160f] border border-[#47301b] space-y-2">
             <div className="flex items-center justify-between">
               <span className="flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wider text-amber-300/90">
@@ -485,11 +554,20 @@ export const OnlineInviteModal: React.FC<OnlineInviteModalProps> = ({
                 {session.connectedPeers.length || 1})
               </span>
               <span className="text-[10px] text-emerald-400/90 flex items-center gap-1">
-                <Globe className="w-3 h-3" /> Tempo Real
+                <Globe className="w-3 h-3" /> Tempo Real • Adicione Amigos
               </span>
             </div>
 
-            <div className="space-y-1.5 max-h-36 overflow-y-auto pr-1">
+            {friendBanner && (
+              <div className="px-2.5 py-1.5 rounded-lg bg-emerald-950/90 border border-emerald-500/50 text-[11px] font-bold text-emerald-300 flex items-center justify-between">
+                <span>{friendBanner}</span>
+                <button onClick={() => setFriendBanner(null)}>
+                  <X className="w-3 h-3" />
+                </button>
+              </div>
+            )}
+
+            <div className="space-y-1.5 max-h-44 overflow-y-auto pr-1">
               {session.connectedPeers.length === 0 ? (
                 <div className="flex items-center justify-between px-3 py-2 rounded-lg bg-black/40 border border-stone-800 text-xs">
                   <span className="font-semibold text-amber-100">
@@ -500,34 +578,88 @@ export const OnlineInviteModal: React.FC<OnlineInviteModalProps> = ({
                   </span>
                 </div>
               ) : (
-                session.connectedPeers.map((peer) => (
-                  <div
-                    key={peer.peerId}
-                    className="flex items-center justify-between px-3 py-2 rounded-lg bg-black/40 border border-[#422d1a] text-xs"
-                  >
-                    <div className="flex items-center gap-2">
-                      <span className="w-2 h-2 rounded-full bg-emerald-400" />
-                      <span className="font-bold text-amber-100">
-                        {peer.name}
-                      </span>
-                      {peer.level && (
-                        <span className="text-[10px] text-amber-400/80">
-                          Nv.{peer.level}
-                        </span>
-                      )}
-                    </div>
-                    <span
-                      className={`text-[10px] font-bold px-2 py-0.5 rounded flex items-center gap-1 ${
-                        peer.isHost
-                          ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40'
-                          : 'bg-sky-500/20 text-sky-300 border border-sky-500/40'
-                      }`}
+                session.connectedPeers.map((peer) => {
+                  const isSelf =
+                    peer.peerId === engine.multiplayer.peerId ||
+                    (Boolean(peer.playerPublicId) &&
+                      peer.playerPublicId === myPublicId);
+                  const peerTargetId = (
+                    peer.playerPublicId ||
+                    peer.peerId ||
+                    ''
+                  )
+                    .trim()
+                    .toUpperCase();
+                  const isAlreadyFriend = friendsList.some(
+                    (f) => f.playerPublicId === peerTargetId
+                  );
+
+                  return (
+                    <div
+                      key={peer.peerId}
+                      className="flex items-center justify-between gap-2 px-3 py-2 rounded-lg bg-black/40 border border-[#422d1a] text-xs"
                     >
-                      <Shield className="w-2.5 h-2.5" />
-                      {peer.isHost ? 'Anfitrião' : 'Convidado'}
-                    </span>
-                  </div>
-                ))
+                      <div className="flex items-center gap-2 min-w-0">
+                        <span className="w-2 h-2 rounded-full bg-emerald-400 shrink-0" />
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-1.5">
+                            <span className="font-bold text-amber-100 truncate">
+                              {peer.name}
+                              {isSelf ? ' (Você)' : ''}
+                            </span>
+                            {peer.level && (
+                              <span className="text-[10px] text-amber-400/80 shrink-0">
+                                Nv.{peer.level}
+                              </span>
+                            )}
+                          </div>
+                          {peer.playerPublicId && (
+                            <div className="text-[10px] font-mono text-amber-300/70">
+                              ID: {peer.playerPublicId}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        {!isSelf && (
+                          isAlreadyFriend ? (
+                            <span className="px-2 py-1 rounded bg-emerald-950/80 border border-emerald-500/40 text-[10px] font-bold text-emerald-300 flex items-center gap-1">
+                              <Check className="w-3 h-3" />
+                              <span>Amigo</span>
+                            </span>
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={() => void handleAddPeerAsFriend(peer)}
+                              disabled={addingPeerId === peer.peerId}
+                              className="px-2.5 py-1 rounded-lg bg-emerald-700 hover:bg-emerald-600 border border-emerald-400/50 text-white text-[10px] font-extrabold uppercase flex items-center gap-1 transition cursor-pointer disabled:opacity-50"
+                              title="Adicionar este jogador do mundo como amigo"
+                            >
+                              <UserPlus className="w-3 h-3" />
+                              <span>
+                                {addingPeerId === peer.peerId
+                                  ? 'Adicionando...'
+                                  : '+ Amigo'}
+                              </span>
+                            </button>
+                          )
+                        )}
+
+                        <span
+                          className={`text-[10px] font-bold px-2 py-0.5 rounded flex items-center gap-1 ${
+                            peer.isHost
+                              ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40'
+                              : 'bg-sky-500/20 text-sky-300 border border-sky-500/40'
+                          }`}
+                        >
+                          <Shield className="w-2.5 h-2.5" />
+                          {peer.isHost ? 'Anfitrião' : 'Convidado'}
+                        </span>
+                      </div>
+                    </div>
+                  );
+                })
               )}
             </div>
           </div>
