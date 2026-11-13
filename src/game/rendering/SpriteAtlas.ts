@@ -7629,13 +7629,52 @@ class SpriteAtlasManager {
     return url;
   }
 
+  public getPlayerHeadPreviewUrl(
+    appearance?: Partial<PlayerAppearance> | null
+  ): string {
+    this.ensureInitialized();
+    const app: PlayerAppearance = {
+      ...DEFAULT_PLAYER_APPEARANCE,
+      ...(appearance || {}),
+    };
+    const key = [
+      'preview_player_head_v2',
+      app.gender || 'masculino',
+      app.skinColor || '#fdba74',
+      app.skinMark || 'none',
+      app.hairStyle || 'adventurer',
+      app.hairColor || '#451a03',
+      app.eyeStyle || 'classic',
+      app.eyeColor || '#0f172a',
+    ].join('|');
+    const existing = this.itemDataUrls.get(key);
+    if (existing) return existing;
+
+    const full = this.getCompositePlayerSprite(
+      'down',
+      0,
+      { head: null, body: 'white_tank_top', legs: 'brown_shorts', feet: null },
+      app,
+      'none'
+    );
+    const c = createPixelCanvas(24, 24);
+    const ctx = c.getContext('2d')!;
+    ctx.imageSmoothingEnabled = false;
+    // Head on 48x42 composite canvas is drawn at dx=8, dy=1 (center x=24).
+    // Crop (sx=12, sy=0, sw=24, sh=20) into 24x24 avatar canvas.
+    ctx.drawImage(full, 12, 0, 24, 20, 0, 2, 24, 20);
+    const url = c.toDataURL();
+    this.itemDataUrls.set(key, url);
+    return url;
+  }
+
   public getHairStylePreviewUrl(
     style: HairStyleId,
     hairColor: string,
     skinColor: string
   ): string {
     this.ensureInitialized();
-    const key = `preview_hair_${style}_${hairColor}_${skinColor}`;
+    const key = `preview_hair_v2_${style}_${hairColor}_${skinColor}`;
     const existing = this.itemDataUrls.get(key);
     if (existing) return existing;
 
@@ -7653,8 +7692,8 @@ class SpriteAtlasManager {
     );
     const c = createPixelCanvas(24, 24);
     const ctx = c.getContext('2d')!;
-    // Crop upper head & shoulders region (x=4..28, y=0..20) into 24x24 preview
-    ctx.drawImage(full, 4, 0, 24, 20, 0, 2, 24, 20);
+    // Crop upper head & shoulders region centered on 48x42 canvas (x=12..36, y=0..20) into 24x24 preview
+    ctx.drawImage(full, 12, 0, 24, 20, 0, 2, 24, 20);
     const url = c.toDataURL();
     this.itemDataUrls.set(key, url);
     return url;
@@ -7666,7 +7705,7 @@ class SpriteAtlasManager {
     skinColor: string
   ): string {
     this.ensureInitialized();
-    const key = `preview_eye_${style}_${eyeColor}_${skinColor}`;
+    const key = `preview_eye_v2_${style}_${eyeColor}_${skinColor}`;
     const existing = this.itemDataUrls.get(key);
     if (existing) return existing;
 
@@ -7686,8 +7725,8 @@ class SpriteAtlasManager {
     );
     const c = createPixelCanvas(16, 16);
     const ctx = c.getContext('2d')!;
-    // Crop the face & eye region (x=8..24, y=3..15) so the eye shape fills the slot clearly
-    ctx.drawImage(full, 8, 2, 16, 12, 0, 2, 16, 12);
+    // Crop the face & eye region centered on 48x42 canvas (x=16..32, y=2..14) so the eye shape fills the slot clearly
+    ctx.drawImage(full, 16, 2, 16, 12, 0, 2, 16, 12);
     const url = c.toDataURL();
     this.itemDataUrls.set(key, url);
     return url;

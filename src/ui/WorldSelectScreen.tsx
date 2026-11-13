@@ -79,6 +79,7 @@ interface WorldSelectScreenProps {
 interface SearchResultEntry {
   playerPublicId: string;
   username: string;
+  appearance?: Partial<PlayerAppearance> | null;
   isOnline?: boolean;
   inOpenWorld?: boolean;
   worldName?: string | null;
@@ -869,7 +870,8 @@ export const WorldSelectScreen: React.FC<WorldSelectScreenProps> = ({
 
   const handleAddFriend = async (
     rawTargetPublicId: string,
-    fallbackUsername?: string
+    fallbackUsername?: string,
+    targetAppearance?: Partial<PlayerAppearance> | null
   ) => {
     const targetPublicId = normalizeCandidatePublicId(rawTargetPublicId);
     if (!targetPublicId) return;
@@ -885,7 +887,7 @@ export const WorldSelectScreen: React.FC<WorldSelectScreenProps> = ({
     setFriendsMessage(null);
     setBlockingSyncState({
       isOpen: true,
-      title: 'Adicionando Amigo',
+      title: 'Adicionando Jogador aos Amigos',
       processLabel: `Vinculando ${
         fallbackUsername || targetPublicId
       } à sua conta`,
@@ -899,6 +901,7 @@ export const WorldSelectScreen: React.FC<WorldSelectScreenProps> = ({
         myUsername,
         targetPublicId,
         targetUsername: fallbackUsername || undefined,
+        targetAppearance: targetAppearance || null,
       });
       if (!json?.ok) {
         setBlockingSyncState((prev) => ({
@@ -914,11 +917,13 @@ export const WorldSelectScreen: React.FC<WorldSelectScreenProps> = ({
 
       if (Array.isArray(json.friendsList)) {
         SaveManager.setFriendsList(json.friendsList);
-        setFriendsList(json.friendsList);
+        setFriendsList(SaveManager.getFriendsList());
       }
 
       if (Array.isArray(json.friendsStatus)) {
-        const nextMap: Record<string, FriendLiveStatus> = {};
+        const nextMap: Record<string, FriendLiveStatus> = {
+          ...friendsStatusMap,
+        };
         for (const st of json.friendsStatus) {
           if (st && st.playerPublicId) nextMap[st.playerPublicId] = st;
         }
@@ -926,12 +931,17 @@ export const WorldSelectScreen: React.FC<WorldSelectScreenProps> = ({
       }
 
       await firebaseCloudSync.syncProfileAppearanceAndSettings();
+      const latestSavedFriends = SaveManager.getFriendsList();
+      setFriendsList(latestSavedFriends);
       setBlockingSyncState((prev) => ({ ...prev, isOpen: false, error: null }));
+      const addedEntry = latestSavedFriends.find(
+        (f) => f.playerPublicId === targetPublicId
+      );
       setFriendsMessage({
         type: 'success',
         text: `Jogador ${
-          fallbackUsername || targetPublicId
-        } adicionado com sucesso à sua lista de amigos!`,
+          addedEntry?.username || fallbackUsername || targetPublicId
+        } (${targetPublicId}) adicionado com sucesso à sua lista de amigos!`,
       });
     } catch (err: any) {
       setBlockingSyncState((prev) => ({
@@ -1497,57 +1507,92 @@ export const WorldSelectScreen: React.FC<WorldSelectScreenProps> = ({
                         const live = friendsStatusMap[friend.playerPublicId];
                         const isOnline = Boolean(live?.isOnline);
                         const inOpenWorld = Boolean(live?.inOpenWorld);
+                        const resolvedAppearance =
+                          live?.appearance || friend.appearance || null;
+                        const headPreviewUrl =
+                          spriteAtlas.getPlayerHeadPreviewUrl(
+                            resolvedAppearance
+                          );
+                        const displayUsername =
+                          live?.username &&
+                          !/^Jogador\s+[A-Z0-9-]{2,12}$/i.test(live.username)
+                            ? live.username
+                            : !/^Jogador\s+[A-Z0-9-]{2,12}$/i.test(
+                                  friend.username
+                                )
+                              ? friend.username
+                              : 'Aventureiro';
 
                         return (
                           <div
                             key={friend.playerPublicId}
                             className="medieval-inset p-3 flex flex-col sm:flex-row sm:items-center justify-between gap-3"
                           >
-                            <div className="space-y-1">
-                              <div className="flex flex-wrap items-center gap-2">
+                            <div className="flex items-center gap-3">
+                              {/* Cabeça da aparência definida do jogador */}
+                              <div className="relative w-11 h-11 bg-[#0e0905] border-2 border-[#5c3c24] flex items-center justify-center shrink-0 shadow-inner">
+                                <img
+                                  src={headPreviewUrl}
+                                  alt={displayUsername}
+                                  className="w-9 h-9 pixelated"
+                                />
                                 <span
-                                  className={`w-2.5 h-2.5 rounded-full ${
+                                  className={`absolute -bottom-1 -right-1 w-3 h-3 rounded-full border-2 border-[#0e0905] ${
                                     isOnline ? 'bg-emerald-400' : 'bg-slate-600'
                                   }`}
+                                  title={isOnline ? 'Online' : 'Offline'}
                                 />
-                                <span className="text-sm font-bold text-[#f3e5c8]">
-                                  {live?.username || friend.username}
-                                </span>
-                                <span className="px-2 py-0.5 bg-[#0e0905] border border-[#3d2616] text-[10px] font-mono text-amber-300">
-                                  {friend.playerPublicId}
-                                </span>
-                                <button
-                                  onClick={() =>
-                                    handleCopyFriendId(friend.playerPublicId)
-                                  }
-                                  className="text-[10px] text-[#c4ab7d] hover:text-white flex items-center gap-0.5"
-                                  title="Copiar ID deste amigo"
-                                >
-                                  {copiedFriendId === friend.playerPublicId ? (
-                                    <Check className="w-3 h-3 text-emerald-400" />
-                                  ) : (
-                                    <Copy className="w-3 h-3" />
-                                  )}
-                                </button>
                               </div>
 
-                              <div className="text-xs pl-4">
-                                {!isOnline ? (
-                                  <span className="text-[#8b7355]">
-                                    Offline
+                              <div className="space-y-1">
+                                <div className="flex flex-wrap items-center gap-2">
+                                  <span className="text-sm font-bold text-[#f3e5c8]">
+                                    {displayUsername}
                                   </span>
-                                ) : inOpenWorld ? (
-                                  <span className="text-emerald-400 font-semibold">
-                                    Jogando em mundo aberto
-                                    {live?.worldName
-                                      ? `: ${live.worldName}`
-                                      : ''}
+                                  <span className="px-2 py-0.5 bg-[#0e0905] border border-[#3d2616] text-[10px] font-mono text-amber-300">
+                                    {friend.playerPublicId}
                                   </span>
-                                ) : (
-                                  <span className="text-sky-300 font-semibold">
-                                    Online no menu
-                                  </span>
-                                )}
+                                  <button
+                                    onClick={() =>
+                                      handleCopyFriendId(friend.playerPublicId)
+                                    }
+                                    className="text-[10px] text-[#c4ab7d] hover:text-white flex items-center gap-0.5"
+                                    title="Copiar ID deste amigo"
+                                  >
+                                    {copiedFriendId ===
+                                    friend.playerPublicId ? (
+                                      <Check className="w-3 h-3 text-emerald-400" />
+                                    ) : (
+                                      <Copy className="w-3 h-3" />
+                                    )}
+                                  </button>
+                                </div>
+
+                                <div className="text-xs flex items-center gap-1.5">
+                                  <span
+                                    className={`w-2 h-2 rounded-full ${
+                                      isOnline
+                                        ? 'bg-emerald-400'
+                                        : 'bg-slate-600'
+                                    }`}
+                                  />
+                                  {!isOnline ? (
+                                    <span className="text-[#8b7355]">
+                                      Offline
+                                    </span>
+                                  ) : inOpenWorld ? (
+                                    <span className="text-emerald-400 font-semibold">
+                                      Online • Jogando em mundo aberto
+                                      {live?.worldName
+                                        ? `: ${live.worldName}`
+                                        : ''}
+                                    </span>
+                                  ) : (
+                                    <span className="text-sky-300 font-semibold">
+                                      Online
+                                    </span>
+                                  )}
+                                </div>
                               </div>
                             </div>
 
@@ -1723,46 +1768,86 @@ export const WorldSelectScreen: React.FC<WorldSelectScreenProps> = ({
                           </button>
                         </div>
 
-                        <div className="space-y-2 max-h-60 overflow-y-auto">
+                        <div className="space-y-2 max-h-64 overflow-y-auto">
                           {searchResults.map((resItem) => {
                             const alreadyFriend = friendsList.some(
                               (f) => f.playerPublicId === resItem.playerPublicId
                             );
                             const isAddingThis =
                               addingFriendId === resItem.playerPublicId;
+                            const headPreviewUrl =
+                              spriteAtlas.getPlayerHeadPreviewUrl(
+                                resItem.appearance
+                              );
+                            const cleanDisplayUsername =
+                              resItem.username &&
+                              !/^Jogador\s+[A-Z0-9-]{2,12}$/i.test(
+                                resItem.username
+                              )
+                                ? resItem.username
+                                : 'Aventureiro';
 
                             return (
                               <div
                                 key={resItem.playerPublicId}
-                                className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 p-3 bg-[#120b07] border border-[#4a301e]"
+                                className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-3 bg-[#120b07] border border-[#4a301e]"
                               >
-                                <div className="space-y-0.5">
-                                  <div className="flex items-center gap-2">
+                                <div className="flex items-center gap-3">
+                                  {/* Cabeça da aparência definida desse jogador no lugar da bolinha */}
+                                  <div className="relative w-11 h-11 bg-[#1c120b] border-2 border-[#6e4930] flex items-center justify-center shrink-0 shadow-inner">
+                                    <img
+                                      src={headPreviewUrl}
+                                      alt={cleanDisplayUsername}
+                                      className="w-9 h-9 pixelated"
+                                    />
                                     <span
-                                      className={`w-2 h-2 rounded-full ${
+                                      className={`absolute -bottom-1 -right-1 w-3 h-3 rounded-full border-2 border-[#120b07] ${
                                         resItem.isOnline
                                           ? 'bg-emerald-400'
                                           : 'bg-slate-600'
                                       }`}
+                                      title={
+                                        resItem.isOnline ? 'Online' : 'Offline'
+                                      }
                                     />
-                                    <span className="text-sm font-bold text-[#f3e5c8]">
-                                      {resItem.username}
-                                    </span>
-                                    {resItem.isOnline && (
-                                      <span className="text-[10px] font-bold text-emerald-400">
-                                        {resItem.inOpenWorld
-                                          ? `• Em Mundo Aberto (${
-                                              resItem.worldName || 'Online'
-                                            })`
-                                          : '• Online'}
-                                      </span>
-                                    )}
                                   </div>
-                                  <div className="text-[11px] font-mono text-amber-400 pl-4">
-                                    ID: {resItem.playerPublicId}
+
+                                  {/* Ao lado: Username, código do jogador e se está online */}
+                                  <div className="space-y-1">
+                                    <div className="flex flex-wrap items-center gap-2">
+                                      <span className="text-sm font-bold text-[#f3e5c8]">
+                                        {cleanDisplayUsername}
+                                      </span>
+                                      <span className="px-2 py-0.5 bg-[#0e0905] border border-[#3d2616] text-[10px] font-mono text-amber-300">
+                                        {resItem.playerPublicId}
+                                      </span>
+                                    </div>
+                                    <div className="flex items-center gap-1.5 text-[11px]">
+                                      <span
+                                        className={`w-2 h-2 rounded-full ${
+                                          resItem.isOnline
+                                            ? 'bg-emerald-400'
+                                            : 'bg-slate-500'
+                                        }`}
+                                      />
+                                      {resItem.isOnline ? (
+                                        <span className="font-bold text-emerald-400">
+                                          {resItem.inOpenWorld
+                                            ? `Online • Em Mundo Aberto (${
+                                                resItem.worldName || 'Online'
+                                              })`
+                                            : 'Online'}
+                                        </span>
+                                      ) : (
+                                        <span className="text-[#8b7355] font-semibold">
+                                          Offline
+                                        </span>
+                                      )}
+                                    </div>
                                   </div>
                                 </div>
 
+                                {/* Ao lado direito: Opção de adicionar jogador */}
                                 <div className="flex items-center gap-2 self-end sm:self-center">
                                   {alreadyFriend ? (
                                     <span className="px-3 py-1.5 bg-emerald-950/80 border border-emerald-500/40 text-[10px] font-pixel font-bold text-emerald-300 uppercase flex items-center gap-1">
@@ -1774,7 +1859,8 @@ export const WorldSelectScreen: React.FC<WorldSelectScreenProps> = ({
                                       onClick={() =>
                                         void handleAddFriend(
                                           resItem.playerPublicId,
-                                          resItem.username
+                                          cleanDisplayUsername,
+                                          resItem.appearance
                                         )
                                       }
                                       disabled={isAddingThis}
@@ -1784,7 +1870,7 @@ export const WorldSelectScreen: React.FC<WorldSelectScreenProps> = ({
                                       <span>
                                         {isAddingThis
                                           ? 'Adicionando...'
-                                          : 'Adicionar Amigo'}
+                                          : 'Adicionar Jogador'}
                                       </span>
                                     </button>
                                   )}

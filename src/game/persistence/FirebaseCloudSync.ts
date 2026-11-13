@@ -1371,25 +1371,64 @@ class FirebaseCloudSyncService {
         }
 
         // Reconcile removedFriendIds tombstones and friendsList
+        // Never allow remote removedFriendIds to resurrect a tombstone for a friend currently present in local friendsList
+        const currentLocalFriends = SaveManager.getFriendsList();
+        const activeLocalFriendIdSet = new Set<string>(
+          currentLocalFriends.map((f) =>
+            String(f.playerPublicId || '').trim().toUpperCase()
+          )
+        );
         const remSet = new Set<string>(SaveManager.getRemovedFriendIds());
-        if (Array.isArray(remoteSettings.removedFriendIds)) {
+        const remoteFriendsTs =
+          typeof remoteSettings.friendsUpdatedAt === 'number'
+            ? remoteSettings.friendsUpdatedAt
+            : 0;
+        const localFriendsTs = updatedLocal.friendsUpdatedAt || 0;
+
+        if (
+          Array.isArray(remoteSettings.removedFriendIds) &&
+          !forceProfileWrite
+        ) {
           for (const rId of remoteSettings.removedFriendIds) {
             const cleanR = String(rId || '').trim().toUpperCase();
-            if (cleanR) remSet.add(cleanR);
+            if (!cleanR) continue;
+            // If friend is currently in local friendsList and local is at least as recent, do not re-tombstone
+            if (
+              activeLocalFriendIdSet.has(cleanR) &&
+              localFriendsTs >= remoteFriendsTs
+            ) {
+              continue;
+            }
+            remSet.add(cleanR);
+          }
+        }
+        for (const activeId of activeLocalFriendIdSet) {
+          if (localFriendsTs >= remoteFriendsTs || forceProfileWrite) {
+            remSet.delete(activeId);
           }
         }
         updatedLocal.removedFriendIds = Array.from(remSet);
 
         if (Array.isArray(remoteSettings.friendsList)) {
           const fMap = new Map<string, any>();
-          for (const f of updatedLocal.friendsList || []) {
+          for (const f of currentLocalFriends) {
             if (f && f.playerPublicId && !remSet.has(f.playerPublicId)) {
               fMap.set(f.playerPublicId, f);
             }
           }
           for (const rf of remoteSettings.friendsList) {
             if (rf && rf.playerPublicId && !remSet.has(rf.playerPublicId)) {
-              fMap.set(rf.playerPublicId, rf);
+              const existingLocal = fMap.get(rf.playerPublicId);
+              const cleanRemoteName =
+                rf.username &&
+                !/^Jogador\s+[A-Z0-9-]{2,12}$/i.test(String(rf.username).trim())
+                  ? String(rf.username).trim()
+                  : existingLocal?.username || 'Aventureiro';
+              fMap.set(rf.playerPublicId, {
+                ...existingLocal,
+                ...rf,
+                username: cleanRemoteName,
+              });
             }
           }
           updatedLocal.friendsList = Array.from(fMap.values());

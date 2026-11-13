@@ -2,11 +2,12 @@ import Peer, { DataConnection } from 'peerjs';
 import {
   FriendLiveStatus,
   FriendProfileEntry,
+  PlayerAppearance,
   WorldJoinRequestInfo,
 } from '../core/types';
 import { SaveManager } from '../persistence/SaveManager';
 
-const SOCIAL_CACHE_STORAGE_KEY = 'wildborn_social_directory_cache_v2';
+const SOCIAL_CACHE_STORAGE_KEY = 'wildborn_social_directory_cache_v3';
 const ACTIVE_WORLD_SESSION_STORAGE_KEY =
   'wildborn_active_world_session_lock_v1';
 const P2P_SOCIAL_ID_PREFIX = 'wildborn-social-id-';
@@ -20,9 +21,18 @@ const FALLBACK_CLOUD_RUN_ORIGINS = [
   'https://ais-dev-nhbwd2rigz63jxcesl5fyc-452713893501.us-east1.run.app',
 ];
 
+function isPlaceholderUsername(name: string | undefined | null): boolean {
+  const clean = String(name || '').trim();
+  if (!clean) return true;
+  if (clean === 'Aventureiro') return true;
+  if (/^Jogador\s+[A-Z0-9-]{2,12}$/i.test(clean)) return true;
+  return false;
+}
+
 export interface SocialSearchResultEntry {
   playerPublicId: string;
   username: string;
+  appearance?: Partial<PlayerAppearance> | null;
   isOnline?: boolean;
   inOpenWorld?: boolean;
   worldName?: string | null;
@@ -42,6 +52,7 @@ export interface ActiveWorldSessionLockInfo {
 interface CachedSocialProfile {
   playerPublicId: string;
   username: string;
+  appearance?: Partial<PlayerAppearance> | null;
   isOnline?: boolean;
   inOpenWorld?: boolean;
   worldId?: string | null;
@@ -120,9 +131,13 @@ class SocialDirectoryClientService {
         for (const item of parsed) {
           if (item && item.playerPublicId && item.username) {
             const normId = normalizeSocialPlayerId(item.playerPublicId);
+            const safeName = isPlaceholderUsername(item.username)
+              ? 'Aventureiro'
+              : String(item.username).trim();
             this.directoryCache.set(normId, {
               ...item,
               playerPublicId: normId,
+              username: safeName,
             });
           }
         }
@@ -145,19 +160,25 @@ class SocialDirectoryClientService {
     const normId = normalizeSocialPlayerId(entry.playerPublicId || '');
     if (!normId || normId.length < 4) return;
     const existing = this.directoryCache.get(normId);
-    const cleanUsername = (entry.username || existing?.username || '')
-      .trim()
-      .slice(0, 22);
-    if (!cleanUsername) return;
+    const rawCandidate = (entry.username || '').trim().slice(0, 22);
+    const candidateIsPlaceholder = isPlaceholderUsername(rawCandidate);
+    const existingHasRealName =
+      existing?.username && !isPlaceholderUsername(existing.username);
+
+    const resolvedUsername =
+      !candidateIsPlaceholder && rawCandidate
+        ? rawCandidate
+        : existingHasRealName
+          ? existing!.username
+          : 'Aventureiro';
 
     this.directoryCache.set(normId, {
       playerPublicId: normId,
-      username:
-        cleanUsername === 'Aventureiro' &&
-        existing?.username &&
-        existing.username !== 'Aventureiro'
-          ? existing.username
-          : cleanUsername,
+      username: resolvedUsername,
+      appearance:
+        entry.appearance && typeof entry.appearance === 'object'
+          ? entry.appearance
+          : existing?.appearance ?? null,
       isOnline:
         typeof entry.isOnline === 'boolean'
           ? entry.isOnline
@@ -252,6 +273,7 @@ class SocialDirectoryClientService {
     this.localPresence = {
       playerPublicId: normId,
       username: (myUsername || 'Aventureiro').trim().slice(0, 22),
+      appearance: presence?.appearance ?? SaveManager.getAccountAppearance(),
       isOnline: presence?.isOnline ?? true,
       inOpenWorld: presence?.inOpenWorld ?? false,
       worldId: presence?.worldId ?? null,
@@ -593,6 +615,14 @@ class SocialDirectoryClientService {
     const localSettings = SaveManager.loadSettings();
     const resolvedUsername =
       payload.username || SaveManager.getEffectiveUsername();
+    const currentLocalFriends = payload.friendsList || SaveManager.getFriendsList();
+    const activeFriendSet = new Set(
+      currentLocalFriends.map((f) => normalizeSocialPlayerId(f.playerPublicId))
+    );
+    const cleanedRemovedIds = Array.from(SaveManager.getRemovedFriendIds()).filter(
+      (id) => !activeFriendSet.has(normalizeSocialPlayerId(id))
+    );
+
     const enrichedPayload = {
       ...payload,
       username: resolvedUsername,
@@ -600,9 +630,12 @@ class SocialDirectoryClientService {
         payload.usernameUpdatedAt ?? localSettings.usernameUpdatedAt ?? 0,
       appearanceUpdatedAt:
         payload.appearanceUpdatedAt ?? localSettings.appearanceUpdatedAt ?? 0,
-      removedFriendIds:
-        payload.removedFriendIds ??
-        Array.from(SaveManager.getRemovedFriendIds()),
+      friendsList: currentLocalFriends,
+      removedFriendIds: payload.removedFriendIds
+        ? payload.removedFriendIds.filter(
+            (id) => !activeFriendSet.has(normalizeSocialPlayerId(id))
+          )
+        : cleanedRemovedIds,
       presence: payload.presence
         ? {
             ...payload.presence,
@@ -612,6 +645,7 @@ class SocialDirectoryClientService {
     };
 
     this.ensureP2PSocialMesh(payload.playerPublicId, resolvedUsername, {
+      appearance: payload.accountAppearance || SaveManager.getAccountAppearance(),
       isOnline: payload.presence?.isOnline ?? true,
       inOpenWorld: payload.presence?.inOpenWorld ?? false,
       worldId: payload.presence?.worldId ?? null,
@@ -667,14 +701,11 @@ class SocialDirectoryClientService {
 
       if (
         remoteProf?.username &&
-        remoteProf.username !== 'Aventureiro' &&
-        !String(remoteProf.username).startsWith('Jogador ')
+        !isPlaceholderUsername(remoteProf.username)
       ) {
         const remoteNameTs = remoteProf.usernameUpdatedAt || 0;
         const localNameTs = latestSettings.usernameUpdatedAt || 0;
-        const localIsUnset =
-          !latestSettings.accountUsername ||
-          latestSettings.accountUsername === 'Aventureiro';
+        const localIsUnset = isPlaceholderUsername(latestSettings.accountUsername);
         if (remoteNameTs > localNameTs || localIsUnset) {
           patch.accountUsername = remoteProf.username;
           patch.playerName = remoteProf.username;
@@ -703,11 +734,22 @@ class SocialDirectoryClientService {
         }
       }
 
+      const latestLocalFriends = SaveManager.getFriendsList();
+      const latestLocalFriendSet = new Set(
+        latestLocalFriends.map((f) => normalizeSocialPlayerId(f.playerPublicId))
+      );
+
       if (Array.isArray(remoteProf?.removedFriendIds)) {
         const remSet = new Set<string>(SaveManager.getRemovedFriendIds());
         for (const rId of remoteProf.removedFriendIds) {
           const normR = normalizeSocialPlayerId(rId);
-          if (normR) remSet.add(normR);
+          // Never re-tombstone a friend who is currently in the local friendsList
+          if (normR && !latestLocalFriendSet.has(normR)) {
+            remSet.add(normR);
+          }
+        }
+        for (const activeId of latestLocalFriendSet) {
+          remSet.delete(activeId);
         }
         patch.removedFriendIds = Array.from(remSet);
         settingsChanged = true;
@@ -718,7 +760,7 @@ class SocialDirectoryClientService {
           patch.removedFriendIds || SaveManager.getRemovedFriendIds()
         );
         const fMap = new Map<string, FriendProfileEntry>();
-        for (const f of SaveManager.getFriendsList()) {
+        for (const f of latestLocalFriends) {
           const normF = normalizeSocialPlayerId(f.playerPublicId);
           if (normF && !remSet.has(normF)) fMap.set(normF, f);
         }
@@ -726,10 +768,24 @@ class SocialDirectoryClientService {
           if (rf && rf.playerPublicId) {
             const normF = normalizeSocialPlayerId(rf.playerPublicId);
             if (normF && !remSet.has(normF)) {
+              const existingLocal = fMap.get(normF);
+              const cached = this.directoryCache.get(normF);
+              const cleanName = !isPlaceholderUsername(rf.username)
+                ? String(rf.username).trim()
+                : !isPlaceholderUsername(cached?.username)
+                  ? cached!.username
+                  : !isPlaceholderUsername(existingLocal?.username)
+                    ? existingLocal!.username
+                    : 'Aventureiro';
               fMap.set(normF, {
                 playerPublicId: normF,
-                username: rf.username || 'Aventureiro',
-                addedAt: rf.addedAt || Date.now(),
+                username: cleanName,
+                appearance:
+                  rf.appearance ||
+                  cached?.appearance ||
+                  existingLocal?.appearance ||
+                  null,
+                addedAt: rf.addedAt || existingLocal?.addedAt || Date.now(),
               });
             }
           }
@@ -826,7 +882,10 @@ class SocialDirectoryClientService {
       if (exact && exact.playerPublicId !== excludeNorm) {
         resultsMap.set(exact.playerPublicId, {
           playerPublicId: exact.playerPublicId,
-          username: exact.username,
+          username: isPlaceholderUsername(exact.username)
+            ? 'Aventureiro'
+            : exact.username,
+          appearance: exact.appearance ?? null,
           isOnline: exact.isOnline,
           inOpenWorld: exact.inOpenWorld,
           worldName: exact.worldName,
@@ -841,7 +900,10 @@ class SocialDirectoryClientService {
           if (entryStripped.includes(strippedQuery)) {
             resultsMap.set(entry.playerPublicId, {
               playerPublicId: entry.playerPublicId,
-              username: entry.username,
+              username: isPlaceholderUsername(entry.username)
+                ? 'Aventureiro'
+                : entry.username,
+              appearance: entry.appearance ?? null,
               isOnline: entry.isOnline,
               inOpenWorld: entry.inOpenWorld,
               worldName: entry.worldName,
@@ -868,7 +930,10 @@ class SocialDirectoryClientService {
       for (const m of matches.slice(0, 25)) {
         resultsMap.set(m.playerPublicId, {
           playerPublicId: m.playerPublicId,
-          username: m.username,
+          username: isPlaceholderUsername(m.username)
+            ? 'Aventureiro'
+            : m.username,
+          appearance: m.appearance ?? null,
           isOnline: m.isOnline,
           inOpenWorld: m.inOpenWorld,
           worldName: m.worldName,
@@ -888,6 +953,7 @@ class SocialDirectoryClientService {
     myUsername: string;
     targetPublicId: string;
     targetUsername?: string;
+    targetAppearance?: Partial<PlayerAppearance> | null;
   }): Promise<{
     ok: boolean;
     error?: string;
@@ -917,8 +983,11 @@ class SocialDirectoryClientService {
     SaveManager.clearFriendRemoved(targetNorm);
 
     const cachedTargetBefore = this.directoryCache.get(targetNorm);
-    const resolvedHint =
-      payload.targetUsername || cachedTargetBefore?.username || '';
+    const resolvedHint = !isPlaceholderUsername(payload.targetUsername)
+      ? payload.targetUsername!
+      : !isPlaceholderUsername(cachedTargetBefore?.username)
+        ? cachedTargetBefore!.username
+        : '';
 
     const baseUrls = this.getApiCandidateBaseUrls();
     const [httpResponses, p2pProfile] = await Promise.all([
@@ -965,13 +1034,15 @@ class SocialDirectoryClientService {
     }
 
     const cachedTarget = this.directoryCache.get(targetNorm);
-    const resolvedUsername =
-      payload.targetUsername ||
-      p2pProfile?.username ||
-      cachedTarget?.username ||
-      '';
+    const resolvedUsername = !isPlaceholderUsername(payload.targetUsername)
+      ? payload.targetUsername!
+      : !isPlaceholderUsername(p2pProfile?.username)
+        ? p2pProfile!.username
+        : !isPlaceholderUsername(cachedTarget?.username)
+          ? cachedTarget!.username
+          : '';
 
-    if (!resolvedUsername && !serverConfirmed) {
+    if (!resolvedUsername && !serverConfirmed && !cachedTarget) {
       return {
         ok: false,
         error:
@@ -981,13 +1052,25 @@ class SocialDirectoryClientService {
       };
     }
 
+    const finalTargetName = resolvedUsername || 'Aventureiro';
+    const finalTargetAppearance =
+      payload.targetAppearance ||
+      p2pProfile?.appearance ||
+      cachedTarget?.appearance ||
+      null;
+
     this.upsertDirectoryEntry({
       playerPublicId: targetNorm,
-      username: resolvedUsername || 'Aventureiro',
+      username: finalTargetName,
+      appearance: finalTargetAppearance,
     });
     this.saveLocalCache();
 
+    // Ensure targetNorm is NEVER in remSet when adding
+    SaveManager.clearFriendRemoved(targetNorm);
     const remSet = new Set<string>(SaveManager.getRemovedFriendIds());
+    remSet.delete(targetNorm);
+
     const currentFriends = SaveManager.getFriendsList();
     const friendMap = new Map<string, FriendProfileEntry>();
     for (const f of currentFriends) {
@@ -996,7 +1079,12 @@ class SocialDirectoryClientService {
       const cached = this.directoryCache.get(fNorm);
       friendMap.set(fNorm, {
         playerPublicId: fNorm,
-        username: cached?.username || f.username || 'Aventureiro',
+        username: !isPlaceholderUsername(cached?.username)
+          ? cached!.username
+          : !isPlaceholderUsername(f.username)
+            ? f.username
+            : 'Aventureiro',
+        appearance: cached?.appearance || f.appearance || null,
         addedAt: f.addedAt || Date.now(),
       });
     }
@@ -1008,7 +1096,13 @@ class SocialDirectoryClientService {
           const cached = this.directoryCache.get(fNorm);
           friendMap.set(fNorm, {
             playerPublicId: fNorm,
-            username: cached?.username || f.username || 'Aventureiro',
+            username: !isPlaceholderUsername(cached?.username)
+              ? cached!.username
+              : !isPlaceholderUsername(f.username)
+                ? f.username
+                : 'Aventureiro',
+            appearance:
+              f.appearance || cached?.appearance || null,
             addedAt: f.addedAt || Date.now(),
           });
         }
@@ -1016,7 +1110,8 @@ class SocialDirectoryClientService {
     }
     friendMap.set(targetNorm, {
       playerPublicId: targetNorm,
-      username: resolvedUsername || 'Aventureiro',
+      username: finalTargetName,
+      appearance: finalTargetAppearance,
       addedAt: friendMap.get(targetNorm)?.addedAt || Date.now(),
     });
 
@@ -1027,7 +1122,10 @@ class SocialDirectoryClientService {
       const cached = this.directoryCache.get(f.playerPublicId);
       return {
         playerPublicId: f.playerPublicId,
-        username: cached?.username || f.username,
+        username: !isPlaceholderUsername(cached?.username)
+          ? cached!.username
+          : f.username,
+        appearance: cached?.appearance || f.appearance || null,
         isOnline: Boolean(cached?.isOnline),
         inOpenWorld: Boolean(cached?.inOpenWorld),
         worldName: cached?.worldName || null,
@@ -1156,18 +1254,26 @@ class SocialDirectoryClientService {
     }
     this.saveLocalCache();
 
-    // Update local friend usernames if resolved in directoryCache
+    // Update local friend usernames & appearances if resolved in directoryCache
     let friendsUpdated = false;
     const updatedFriends = currentFriends.map((f) => {
       const norm = normalizeSocialPlayerId(f.playerPublicId);
       const cached = this.directoryCache.get(norm);
-      if (
-        cached?.username &&
-        cached.username !== f.username &&
-        !cached.username.startsWith('Jogador ')
-      ) {
+      const nextUsername =
+        cached?.username && !isPlaceholderUsername(cached.username)
+          ? cached.username
+          : isPlaceholderUsername(f.username)
+            ? 'Aventureiro'
+            : f.username;
+      const nextAppearance = cached?.appearance || f.appearance || null;
+      if (nextUsername !== f.username || nextAppearance !== f.appearance) {
         friendsUpdated = true;
-        return { ...f, playerPublicId: norm, username: cached.username };
+        return {
+          ...f,
+          playerPublicId: norm,
+          username: nextUsername,
+          appearance: nextAppearance,
+        };
       }
       return { ...f, playerPublicId: norm };
     });
@@ -1179,7 +1285,11 @@ class SocialDirectoryClientService {
       const cached = this.directoryCache.get(f.playerPublicId);
       return {
         playerPublicId: f.playerPublicId,
-        username: cached?.username || f.username,
+        username:
+          cached?.username && !isPlaceholderUsername(cached.username)
+            ? cached.username
+            : f.username,
+        appearance: cached?.appearance || f.appearance || null,
         isOnline: Boolean(cached?.isOnline),
         inOpenWorld: Boolean(cached?.inOpenWorld),
         worldName: cached?.worldName || null,

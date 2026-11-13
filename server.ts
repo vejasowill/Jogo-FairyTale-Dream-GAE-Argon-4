@@ -1498,6 +1498,37 @@ async function startServer() {
     );
   }
 
+  function getResolvedProfileAppearance(
+    prof?: ServerSocialProfile | null
+  ): any {
+    if (!prof) return null;
+    if (prof.accountAppearance && typeof prof.accountAppearance === 'object') {
+      return prof.accountAppearance;
+    }
+    if (
+      Array.isArray(prof.appearanceSlots) &&
+      prof.appearanceSlots.length > 0
+    ) {
+      const idx =
+        typeof prof.activeAppearanceSlotIndex === 'number'
+          ? Math.max(0, Math.min(prof.appearanceSlots.length - 1, prof.activeAppearanceSlotIndex))
+          : 0;
+      return prof.appearanceSlots[idx]?.appearance || null;
+    }
+    return null;
+  }
+
+  function sanitizeUsernameValue(
+    candidate?: string | null,
+    fallback = 'Aventureiro'
+  ): string {
+    const clean = String(candidate || '').trim().slice(0, 22);
+    if (!clean || /^Jogador\s+[A-Z0-9-]{2,12}$/i.test(clean)) {
+      return fallback;
+    }
+    return clean;
+  }
+
   function computeLiveStatusForPublicId(
     store: SocialStoreData,
     publicId: string,
@@ -1506,13 +1537,18 @@ async function startServer() {
     const cleanId = normalizePublicPlayerId(publicId);
     const prof = store.profilesByPublicId[cleanId];
     const now = Date.now();
-    const username = prof?.username || fallbackUsername;
+    const username = sanitizeUsernameValue(
+      prof?.username,
+      sanitizeUsernameValue(fallbackUsername, 'Aventureiro')
+    );
+    const appearance = getResolvedProfileAppearance(prof);
     const pres = prof?.presence;
     const isRecent = Boolean(pres && now - (pres.updatedAt || 0) < 45000);
     if (!isRecent || !pres?.isOnline) {
       return {
         playerPublicId: cleanId,
         username,
+        appearance,
         isOnline: false,
         inOpenWorld: false,
         worldName: null,
@@ -1530,6 +1566,7 @@ async function startServer() {
     return {
       playerPublicId: cleanId,
       username,
+      appearance,
       isOnline: true,
       inOpenWorld,
       worldName: inOpenWorld
@@ -1584,12 +1621,8 @@ async function startServer() {
       // 1. Resolve Username using timestamps so a fresh login on a new device NEVER overwrites a saved custom username
       const incUserTime = Number(usernameUpdatedAt || 0);
       const extUserTime = Number(existing?.usernameUpdatedAt || 0);
-      const incomingTrimmed = String(rawUsername || '')
-        .trim()
-        .slice(0, 22);
-      const existingTrimmed = String(existing?.username || '')
-        .trim()
-        .slice(0, 22);
+      const incomingTrimmed = sanitizeUsernameValue(rawUsername, '');
+      const existingTrimmed = sanitizeUsernameValue(existing?.username, '');
 
       let resolvedUsername = existingTrimmed || incomingTrimmed || 'Aventureiro';
       let resolvedUsernameUpdatedAt = Math.max(incUserTime, extUserTime);
@@ -1597,12 +1630,9 @@ async function startServer() {
       if (incomingTrimmed) {
         const incomingIsCustom =
           incomingTrimmed !== 'Aventureiro' &&
-          !incomingTrimmed.startsWith('Jogador ') &&
           !/^Convidado\d{4}$/.test(incomingTrimmed);
         const existingIsDefault =
-          !existingTrimmed ||
-          existingTrimmed === 'Aventureiro' ||
-          existingTrimmed.startsWith('Jogador ');
+          !existingTrimmed || existingTrimmed === 'Aventureiro';
 
         if (
           incUserTime > extUserTime ||
@@ -1656,22 +1686,41 @@ async function startServer() {
 
       const resolvedAppearanceUpdatedAt = Math.max(incAppTime, extAppTime);
 
-      // 3. Resolve Removed Friends & Friends List
+      // 3. Resolve Removed Friends & Friends List (allowing re-added friends to clear old tombstones!)
+      const incomingRemovedSet = new Set<string>(
+        Array.isArray(removedFriendIds)
+          ? removedFriendIds
+              .map((id) => normalizePublicPlayerId(String(id || '')))
+              .filter(Boolean)
+          : []
+      );
+      const incomingFriendsSet = new Set<string>(
+        Array.isArray(friendsList)
+          ? friendsList
+              .map((f: any) => normalizePublicPlayerId(String(f?.playerPublicId || '')))
+              .filter(Boolean)
+          : []
+      );
+
       const removedSet = new Set<string>(
         Array.isArray(existing?.removedFriendIds)
           ? existing.removedFriendIds.map((id) => normalizePublicPlayerId(id))
           : []
       );
-      if (Array.isArray(removedFriendIds)) {
-        for (const rId of removedFriendIds) {
-          const cleanR = normalizePublicPlayerId(String(rId || ''));
-          if (cleanR) removedSet.add(cleanR);
+      for (const rId of incomingRemovedSet) {
+        removedSet.add(rId);
+      }
+      // CRITICAL: If the client has a friend in its current friendsList (and NOT in its removedFriendIds),
+      // the user added or re-added that friend — delete any old tombstone from removedSet!
+      for (const fId of incomingFriendsSet) {
+        if (!incomingRemovedSet.has(fId)) {
+          removedSet.delete(fId);
         }
       }
 
       const friendMap = new Map<
         string,
-        { playerPublicId: string; username: string; addedAt: number }
+        { playerPublicId: string; username: string; addedAt: number; appearance?: any }
       >();
       if (Array.isArray(existing?.friendsList)) {
         for (const f of existing.friendsList) {
@@ -1681,8 +1730,12 @@ async function startServer() {
             const targetProf = store.profilesByPublicId[fId];
             friendMap.set(fId, {
               playerPublicId: fId,
-              username: targetProf?.username || f.username || 'Aventureiro',
+              username: sanitizeUsernameValue(
+                targetProf?.username,
+                sanitizeUsernameValue(f.username, 'Aventureiro')
+              ),
               addedAt: f.addedAt || now,
+              appearance: getResolvedProfileAppearance(targetProf),
             });
           }
         }
@@ -1695,8 +1748,12 @@ async function startServer() {
             const targetProf = store.profilesByPublicId[fId];
             friendMap.set(fId, {
               playerPublicId: fId,
-              username: targetProf?.username || f.username || 'Aventureiro',
+              username: sanitizeUsernameValue(
+                targetProf?.username,
+                sanitizeUsernameValue(f.username, 'Aventureiro')
+              ),
               addedAt: f.addedAt || now,
+              appearance: getResolvedProfileAppearance(targetProf),
             });
           }
         }
@@ -1838,16 +1895,24 @@ async function startServer() {
         if (!prof) {
           prof = {
             playerPublicId: pubId,
-            username: peer.name || 'Aventureiro',
+            username: sanitizeUsernameValue(peer.name, 'Aventureiro'),
+            accountAppearance: peer.lastState?.appearance || undefined,
             friendsList: [],
             deletedWorldIds: [],
             updatedAt: now,
           };
           store.profilesByPublicId[pubId] = prof;
           dirty = true;
-        } else if (peer.name && prof.username !== peer.name) {
-          prof.username = peer.name;
-          dirty = true;
+        } else {
+          const cleanPeerName = sanitizeUsernameValue(peer.name, '');
+          if (cleanPeerName && prof.username !== cleanPeerName) {
+            prof.username = cleanPeerName;
+            dirty = true;
+          }
+          if (peer.lastState?.appearance && !prof.accountAppearance) {
+            prof.accountAppearance = peer.lastState.appearance;
+            dirty = true;
+          }
         }
       }
     }
@@ -1882,20 +1947,17 @@ async function startServer() {
           store.publicIdByUid[u.uid] = pubId;
           dirty = true;
         }
-        const displayUsername = (
-          u.displayName ||
-          (u.email ? u.email.split('@')[0] : '') ||
+        const displayUsername = sanitizeUsernameValue(
+          u.displayName || (u.email ? u.email.split('@')[0] : ''),
           'Aventureiro'
-        )
-          .trim()
-          .slice(0, 22);
+        );
 
         const existing = store.profilesByPublicId[pubId];
         if (!existing) {
           store.profilesByPublicId[pubId] = {
             uid: u.uid,
             playerPublicId: pubId,
-            username: displayUsername || 'Aventureiro',
+            username: displayUsername,
             friendsList: [],
             removedFriendIds: [],
             deletedWorldIds: [],
@@ -1907,7 +1969,6 @@ async function startServer() {
             existing.uid = u.uid;
             dirty = true;
           }
-          // If Firebase Auth displayName was updated via updateProfile, adopt it if local store has no newer custom username
           if (
             u.displayName &&
             u.displayName.trim() &&
@@ -1916,8 +1977,8 @@ async function startServer() {
               existing.username.startsWith('Jogador ') ||
               !existing.usernameUpdatedAt)
           ) {
-            const authClean = u.displayName.trim().slice(0, 22);
-            if (existing.username !== authClean) {
+            const authClean = sanitizeUsernameValue(u.displayName, '');
+            if (authClean && existing.username !== authClean) {
               existing.username = authClean;
               dirty = true;
             }
@@ -1951,14 +2012,13 @@ async function startServer() {
           );
           if (!pubId) continue;
           store.publicIdByUid[uid] = pubId;
-          const customUsername = String(
+          const customUsername = sanitizeUsernameValue(
             settings.accountUsername ||
               settings.playerName ||
               data.displayName ||
-              ''
-          )
-            .trim()
-            .slice(0, 22);
+              '',
+            ''
+          );
 
           const existing = store.profilesByPublicId[pubId];
           if (!existing) {
@@ -1989,20 +2049,39 @@ async function startServer() {
               updatedAt: now,
             };
             dirty = true;
-          } else if (
-            customUsername &&
-            customUsername !== 'Aventureiro' &&
-            (existing.username === 'Aventureiro' ||
-              existing.username.startsWith('Jogador ') ||
-              Number(settings.usernameUpdatedAt || 0) >
-                Number(existing.usernameUpdatedAt || 0))
-          ) {
-            existing.username = customUsername;
-            existing.usernameUpdatedAt = Math.max(
-              Number(existing.usernameUpdatedAt || 0),
-              Number(settings.usernameUpdatedAt || 0)
-            );
-            dirty = true;
+          } else {
+            if (
+              customUsername &&
+              customUsername !== 'Aventureiro' &&
+              (existing.username === 'Aventureiro' ||
+                existing.username.startsWith('Jogador ') ||
+                Number(settings.usernameUpdatedAt || 0) >
+                  Number(existing.usernameUpdatedAt || 0))
+            ) {
+              existing.username = customUsername;
+              existing.usernameUpdatedAt = Math.max(
+                Number(existing.usernameUpdatedAt || 0),
+                Number(settings.usernameUpdatedAt || 0)
+              );
+              dirty = true;
+            }
+            if (
+              (settings.accountAppearance || data.appearance) &&
+              (!existing.accountAppearance ||
+                Number(settings.appearanceUpdatedAt || 0) >
+                  Number(existing.appearanceUpdatedAt || 0))
+            ) {
+              existing.accountAppearance =
+                settings.accountAppearance || data.appearance;
+              if (Array.isArray(settings.appearanceSlots)) {
+                existing.appearanceSlots = settings.appearanceSlots;
+              }
+              existing.appearanceUpdatedAt = Math.max(
+                Number(existing.appearanceUpdatedAt || 0),
+                Number(settings.appearanceUpdatedAt || 0)
+              );
+              dirty = true;
+            }
           }
         }
       } catch {
@@ -2046,6 +2125,7 @@ async function startServer() {
         {
           playerPublicId: string;
           username: string;
+          appearance?: any;
           isOnline?: boolean;
           inOpenWorld?: boolean;
           worldName?: string | null;
@@ -2069,7 +2149,8 @@ async function startServer() {
           );
           resultsMap.set(exact.playerPublicId, {
             playerPublicId: exact.playerPublicId,
-            username: exact.username,
+            username: st.username,
+            appearance: st.appearance,
             isOnline: st.isOnline,
             inOpenWorld: st.inOpenWorld,
             worldName: st.worldName,
@@ -2088,7 +2169,8 @@ async function startServer() {
               );
               resultsMap.set(p.playerPublicId, {
                 playerPublicId: p.playerPublicId,
-                username: p.username,
+                username: st.username,
+                appearance: st.appearance,
                 isOnline: st.isOnline,
                 inOpenWorld: st.inOpenWorld,
                 worldName: st.worldName,
@@ -2105,12 +2187,20 @@ async function startServer() {
             p &&
             p.playerPublicId &&
             p.playerPublicId !== excludeId &&
-            ((p.username || '').toLowerCase().includes(usernameQuery) ||
+            (sanitizeUsernameValue(p.username)
+              .toLowerCase()
+              .includes(usernameQuery) ||
               p.playerPublicId.toLowerCase().includes(usernameQuery))
         );
         matches.sort((a, b) => {
-          const aExact = a.username.toLowerCase() === usernameQuery ? 0 : 1;
-          const bExact = b.username.toLowerCase() === usernameQuery ? 0 : 1;
+          const aExact =
+            sanitizeUsernameValue(a.username).toLowerCase() === usernameQuery
+              ? 0
+              : 1;
+          const bExact =
+            sanitizeUsernameValue(b.username).toLowerCase() === usernameQuery
+              ? 0
+              : 1;
           if (aExact !== bExact) return aExact - bExact;
           return (b.updatedAt || 0) - (a.updatedAt || 0);
         });
@@ -2122,7 +2212,8 @@ async function startServer() {
           );
           resultsMap.set(m.playerPublicId, {
             playerPublicId: m.playerPublicId,
-            username: m.username,
+            username: st.username,
+            appearance: st.appearance,
             isOnline: st.isOnline,
             inOpenWorld: st.inOpenWorld,
             worldName: st.worldName,
@@ -2142,7 +2233,8 @@ async function startServer() {
           );
           resultsMap.set(p.playerPublicId, {
             playerPublicId: p.playerPublicId,
-            username: p.username,
+            username: st.username,
+            appearance: st.appearance,
             isOnline: st.isOnline,
             inOpenWorld: st.inOpenWorld,
             worldName: st.worldName,
@@ -2165,16 +2257,17 @@ async function startServer() {
       const myPublicId = normalizePublicPlayerId(
         String(req.body?.myPublicId || '')
       );
-      const myUsername =
-        String(req.body?.myUsername || 'Aventureiro')
-          .trim()
-          .slice(0, 22) || 'Aventureiro';
+      const myUsername = sanitizeUsernameValue(
+        req.body?.myUsername,
+        'Aventureiro'
+      );
       const targetPublicId = normalizePublicPlayerId(
         String(req.body?.targetPublicId || '')
       );
-      const targetUsernameHint = String(req.body?.targetUsername || '')
-        .trim()
-        .slice(0, 22);
+      const targetUsernameHint = sanitizeUsernameValue(
+        req.body?.targetUsername,
+        ''
+      );
 
       if (!myPublicId || !targetPublicId || targetPublicId.length < 4) {
         res.status(400).json({ ok: false, error: 'ID de jogador inválido.' });
@@ -2209,6 +2302,7 @@ async function startServer() {
         store.profilesByPublicId[targetPublicId] = targetProfile;
       } else if (
         targetUsernameHint &&
+        targetUsernameHint !== 'Aventureiro' &&
         (targetProfile.username === 'Aventureiro' ||
           targetProfile.username.startsWith('Jogador '))
       ) {
@@ -2236,21 +2330,45 @@ async function startServer() {
         targetProfile.removedFriendIds || []
       ).filter((id) => normalizePublicPlayerId(id) !== myPublicId);
 
-      if (
-        !myProfile.friendsList.some((f) => f.playerPublicId === targetPublicId)
-      ) {
+      const cleanTargetName = sanitizeUsernameValue(
+        targetProfile.username,
+        targetUsernameHint || 'Aventureiro'
+      );
+      const cleanMyName = sanitizeUsernameValue(
+        myProfile.username,
+        myUsername || 'Aventureiro'
+      );
+
+      const existingEntryIdx = myProfile.friendsList.findIndex(
+        (f) => normalizePublicPlayerId(f.playerPublicId) === targetPublicId
+      );
+      if (existingEntryIdx >= 0) {
+        myProfile.friendsList[existingEntryIdx] = {
+          playerPublicId: targetPublicId,
+          username: cleanTargetName,
+          addedAt: now,
+        };
+      } else {
         myProfile.friendsList.push({
           playerPublicId: targetPublicId,
-          username: targetProfile.username,
+          username: cleanTargetName,
           addedAt: now,
         });
       }
-      if (
-        !targetProfile.friendsList.some((f) => f.playerPublicId === myPublicId)
-      ) {
+
+      const existingTargetEntryIdx = targetProfile.friendsList.findIndex(
+        (f) => normalizePublicPlayerId(f.playerPublicId) === myPublicId
+      );
+      if (existingTargetEntryIdx >= 0) {
+        targetProfile.friendsList[existingTargetEntryIdx] = {
+          playerPublicId: myPublicId,
+          username: cleanMyName,
+          addedAt: now,
+        };
+      } else {
         targetProfile.friendsList.push({
           playerPublicId: myPublicId,
-          username: myProfile.username,
+          username: cleanMyName,
           addedAt: now,
         });
       }

@@ -1219,6 +1219,58 @@ export class SaveManager {
     return { slots, activeIndex };
   }
 
+  public static saveAppearanceSlotsAndActive(
+    slots: AppearancePresetSlot[],
+    activeIndex: number
+  ): PlayerAppearance {
+    const clampedIdx = Math.max(0, Math.min(4, Math.floor(activeIndex)));
+    const now = Date.now();
+    const normalizedSlots: AppearancePresetSlot[] = [];
+    for (let i = 0; i < 5; i++) {
+      const s = slots[i];
+      normalizedSlots.push({
+        id: s?.id || `slot_${i}`,
+        slotIndex: i,
+        name: (s?.name || '').trim().slice(0, 22) || `Aparência ${i + 1}`,
+        appearance: {
+          ...DEFAULT_ACCOUNT_APPEARANCE,
+          ...(s?.appearance || {}),
+        },
+        updatedAt: now,
+      });
+    }
+    const activeApp = {
+      ...DEFAULT_ACCOUNT_APPEARANCE,
+      ...normalizedSlots[clampedIdx].appearance,
+    };
+    const settings = this.loadSettings();
+    this.saveSettings({
+      ...settings,
+      accountAppearance: activeApp,
+      appearanceSlots: normalizedSlots,
+      activeAppearanceSlotIndex: clampedIdx,
+      appearanceUpdatedAt: now,
+    });
+    try {
+      for (let i = 0; i < localStorage.length; i++) {
+        const key = localStorage.key(i);
+        if (key && key.startsWith('wildborn_guest_player_')) {
+          const raw = localStorage.getItem(key);
+          if (raw) {
+            const p = JSON.parse(raw);
+            if (p && typeof p === 'object') {
+              p.appearance = { ...activeApp };
+              localStorage.setItem(key, JSON.stringify(p));
+            }
+          }
+        }
+      }
+    } catch {
+      // ignore
+    }
+    return activeApp;
+  }
+
   public static selectAppearanceSlot(slotIndex: number): PlayerAppearance {
     const clamped = Math.max(0, Math.min(4, Math.floor(slotIndex)));
     const { slots } = this.getAppearanceSlots();
@@ -1431,25 +1483,31 @@ export class SaveManager {
           )
         : []
     );
-    if (removedSet.has(clean)) {
-      removedSet.delete(clean);
-      this.saveSettings({
-        ...settings,
-        removedFriendIds: Array.from(removedSet),
-      });
-    }
+    removedSet.delete(clean);
+    this.saveSettings({
+      ...settings,
+      removedFriendIds: Array.from(removedSet),
+      friendsUpdatedAt: Date.now(),
+    });
   }
 
   public static getFriendsList(): FriendProfileEntry[] {
     const settings = this.loadSettings();
     const removed = this.getRemovedFriendIds();
     const list = Array.isArray(settings.friendsList) ? settings.friendsList : [];
-    return list.filter(
-      (f) =>
-        f &&
-        f.playerPublicId &&
-        !removed.has(String(f.playerPublicId).trim().toUpperCase())
-    );
+    return list
+      .filter(
+        (f) =>
+          f &&
+          f.playerPublicId &&
+          !removed.has(String(f.playerPublicId).trim().toUpperCase())
+      )
+      .map((f) => ({
+        ...f,
+        username: /^Jogador\s+[A-Z0-9-]{2,12}$/i.test(String(f.username || '').trim())
+          ? 'Aventureiro'
+          : f.username || 'Aventureiro',
+      }));
   }
 
   public static setFriendsList(
@@ -1458,15 +1516,25 @@ export class SaveManager {
   ): void {
     const settings = this.loadSettings();
     const removed = this.getRemovedFriendIds();
-    const cleanList = (Array.isArray(friends) ? friends : []).filter(
-      (f) =>
-        f &&
-        f.playerPublicId &&
-        !removed.has(String(f.playerPublicId).trim().toUpperCase())
-    );
+    const cleanList: FriendProfileEntry[] = [];
+    for (const f of Array.isArray(friends) ? friends : []) {
+      if (!f || !f.playerPublicId) continue;
+      const normId = String(f.playerPublicId).trim().toUpperCase();
+      // If a friend is explicitly included in the new friendsList, ensure they are not blocked by an old tombstone
+      removed.delete(normId);
+      const rawName = String(f.username || '').trim();
+      cleanList.push({
+        ...f,
+        playerPublicId: normId,
+        username: /^Jogador\s+[A-Z0-9-]{2,12}$/i.test(rawName)
+          ? 'Aventureiro'
+          : rawName || 'Aventureiro',
+      });
+    }
     this.saveSettings({
       ...settings,
       friendsList: cleanList,
+      removedFriendIds: Array.from(removed),
       friendsUpdatedAt: Date.now(),
     });
     if (!skipSyncTrigger) {

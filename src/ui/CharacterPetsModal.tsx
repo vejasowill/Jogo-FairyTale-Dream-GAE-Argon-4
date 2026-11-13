@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import {
+  AlertTriangle,
   Check,
   Edit3,
   Heart,
@@ -7,6 +8,7 @@ import {
   Palette,
   Plus,
   RotateCw,
+  Save,
   Shield,
   Swords,
   User,
@@ -244,15 +246,83 @@ export const CharacterPetsModal: React.FC<CharacterPetsModalProps> = ({
   >('ALL');
   const [showHelp, setShowHelp] = useState(false);
 
+  const [draftAppearance, setDraftAppearance] = useState<PlayerAppearance>(() => ({
+    ...DEFAULT_PLAYER_APPEARANCE,
+    ...(player.appearance || {}),
+  }));
+  const [hasAppearanceDirty, setHasAppearanceDirty] = useState(false);
+  const [appearanceSavedFeedback, setAppearanceSavedFeedback] = useState(false);
+  const [showUnsavedWarning, setShowUnsavedWarning] = useState(false);
+  const [blockingSyncState, setBlockingSyncState] = useState<{
+    isOpen: boolean;
+    title: string;
+    processLabel: string;
+    subprocessLabel: string;
+    error: string | null;
+    closeModalOnSuccess?: boolean;
+  }>({
+    isOpen: false,
+    title: '',
+    processLabel: '',
+    subprocessLabel: '',
+    error: null,
+  });
+
   const eq = player.equippedBySlot || {
     head: null,
     body: player.equippedArmorId || null,
     legs: null,
     feet: null,
   };
-  const app = {
-    ...DEFAULT_PLAYER_APPEARANCE,
-    ...(player.appearance || {}),
+  const app = draftAppearance;
+
+  const updateDraftAppearance = (partial: Partial<PlayerAppearance>) => {
+    setDraftAppearance((prev) => ({
+      ...prev,
+      ...partial,
+    }));
+    setHasAppearanceDirty(true);
+    setAppearanceSavedFeedback(false);
+  };
+
+  const handleSaveAppearanceInWorld = async (closeAfterSave = false) => {
+    engine.updatePlayerAppearance(draftAppearance);
+    setHasAppearanceDirty(false);
+
+    if (firebaseCloudSync.getSnapshot().user) {
+      setBlockingSyncState({
+        isOpen: true,
+        title: 'Salvando e Sincronizando Aparência',
+        processLabel: 'Salvando Aparência Universal da Conta',
+        subprocessLabel:
+          'Subprocesso: Sincronizando aparência no diretório social e na nuvem...',
+        error: null,
+        closeModalOnSuccess: closeAfterSave,
+      });
+      const res = await firebaseCloudSync.syncProfileAppearanceAndSettings();
+      if (!res.ok && res.error) {
+        setBlockingSyncState((prev) => ({
+          ...prev,
+          error: res.error || 'Falha ao confirmar salvamento na nuvem.',
+        }));
+        return;
+      }
+      setBlockingSyncState((prev) => ({ ...prev, isOpen: false, error: null }));
+    }
+
+    setAppearanceSavedFeedback(true);
+    window.setTimeout(() => setAppearanceSavedFeedback(false), 2200);
+    if (closeAfterSave) {
+      onClose();
+    }
+  };
+
+  const handleAttemptCloseInWorld = () => {
+    if (hasAppearanceDirty) {
+      setShowUnsavedWarning(true);
+    } else {
+      onClose();
+    }
   };
 
   const totalDefPct = Math.round(engine.getTotalDefenseBonus() * 100);
@@ -263,7 +333,11 @@ export const CharacterPetsModal: React.FC<CharacterPetsModalProps> = ({
     Math.max(0, Math.floor(player.bonusMaxHpFromItems || 0));
 
   const playerPreviewUrl = (() => {
-    const c = spriteAtlas.getPlayerSprite(previewDir, 0, player);
+    const previewState = {
+      ...player,
+      appearance: app,
+    } as PlayerState;
+    const c = spriteAtlas.getPlayerSprite(previewDir, 0, previewState);
     return c.toDataURL();
   })();
 
@@ -386,8 +460,81 @@ export const CharacterPetsModal: React.FC<CharacterPetsModalProps> = ({
   return (
     <div
       className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-1.5 sm:p-3"
-      onClick={onClose}
+      onClick={handleAttemptCloseInWorld}
     >
+      <BlockingSyncOperationModal
+        isOpen={blockingSyncState.isOpen}
+        title={blockingSyncState.title}
+        processLabel={blockingSyncState.processLabel}
+        subprocessLabel={blockingSyncState.subprocessLabel}
+        error={blockingSyncState.error}
+        onCancelOrExit={() => {
+          const shouldClose = blockingSyncState.closeModalOnSuccess;
+          setBlockingSyncState((prev) => ({
+            ...prev,
+            isOpen: false,
+            error: null,
+          }));
+          if (shouldClose) {
+            onClose();
+          }
+        }}
+      />
+
+      {/* Aviso de Alterações Não Salvas na Aparência */}
+      {showUnsavedWarning && (
+        <div
+          className="fixed inset-0 z-[70] bg-black/85 flex items-center justify-center p-4"
+          onClick={(e) => e.stopPropagation()}
+        >
+          <div className="w-full max-w-md medieval-panel p-5 space-y-4 border-2 border-amber-500/80">
+            <div className="flex items-start gap-3">
+              <div className="w-10 h-10 bg-amber-950/90 border border-amber-500/60 flex items-center justify-center shrink-0">
+                <AlertTriangle className="w-5 h-5 text-amber-400" />
+              </div>
+              <div className="space-y-1">
+                <h3 className="font-pixel text-xs font-bold text-amber-300 uppercase">
+                  Alterações de Aparência Não Salvas
+                </h3>
+                <p className="text-xs text-[#e5d5b5] leading-relaxed">
+                  Você modificou a aparência do seu personagem, mas ainda não
+                  clicou em <strong>Salvar Aparência</strong>. Se você sair sem
+                  salvar, todas as alterações feitas serão perdidas.
+                </p>
+              </div>
+            </div>
+
+            <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-end gap-2 pt-2 border-t border-[#3d2616]">
+              <button
+                onClick={() => setShowUnsavedWarning(false)}
+                className="px-3 py-2 medieval-btn-wood text-xs font-pixel font-bold uppercase"
+              >
+                Continuar Editando
+              </button>
+              <button
+                onClick={() => {
+                  setShowUnsavedWarning(false);
+                  onClose();
+                }}
+                className="px-3 py-2 medieval-btn-crimson text-xs font-pixel font-bold uppercase"
+              >
+                Sair sem Salvar
+              </button>
+              <button
+                onClick={() => {
+                  setShowUnsavedWarning(false);
+                  void handleSaveAppearanceInWorld(true);
+                }}
+                className="px-3.5 py-2 medieval-btn-emerald text-xs font-pixel font-bold uppercase flex items-center justify-center gap-1.5"
+              >
+                <Save className="w-3.5 h-3.5" />
+                <span>Salvar e Sair</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <div
         className="w-full max-w-4xl medieval-panel flex flex-col max-h-[96dvh] overflow-hidden"
         onClick={(e) => e.stopPropagation()}
@@ -446,7 +593,7 @@ export const CharacterPetsModal: React.FC<CharacterPetsModalProps> = ({
             </div>
             <WindowHelpButton onClick={() => setShowHelp(true)} />
             <button
-              onClick={onClose}
+              onClick={handleAttemptCloseInWorld}
               className="min-h-[34px] min-w-[34px] medieval-btn-crimson flex items-center justify-center shrink-0"
             >
               <X className="w-4 h-4" />
@@ -629,16 +776,52 @@ export const CharacterPetsModal: React.FC<CharacterPetsModalProps> = ({
             {/* RIGHT COLUMN (6 cols): Inventory-Style Appearance Window by Category */}
             <div className="sm:col-span-6 medieval-inset p-2.5 flex flex-col gap-2">
               <div className="flex items-center justify-between border-b border-[#3d281a] pb-1.5">
-                <h3 className="font-pixel text-[10px] font-bold text-amber-400">
-                  APARÊNCIA UNIVERSAL DA CONTA
-                </h3>
+                <div className="flex items-center gap-2">
+                  <h3 className="font-pixel text-[10px] font-bold text-amber-400">
+                    APARÊNCIA UNIVERSAL DA CONTA
+                  </h3>
+                  {hasAppearanceDirty && (
+                    <span className="px-1.5 py-0.5 bg-amber-950 border border-amber-500/60 text-[8px] font-pixel font-bold text-amber-300 uppercase">
+                      Não salvo
+                    </span>
+                  )}
+                </div>
                 <button
-                  onClick={() =>
-                    engine.updatePlayerAppearance(DEFAULT_PLAYER_APPEARANCE)
-                  }
+                  onClick={() => updateDraftAppearance(DEFAULT_PLAYER_APPEARANCE)}
                   className="text-[9px] text-[#c4ab7d] hover:text-amber-300 underline"
                 >
                   Restaurar Padrão
+                </button>
+              </div>
+
+              {/* Botão explícito de Salvar Aparência */}
+              <div className="flex items-center justify-between gap-2 bg-[#120b07] p-2 border border-[#4a301e]">
+                <span className="text-[10px] text-[#c4ab7d]">
+                  {hasAppearanceDirty
+                    ? 'Clique em Salvar Aparência para confirmar e sincronizar.'
+                    : appearanceSavedFeedback
+                      ? 'Aparência salva e sincronizada com sucesso!'
+                      : 'Personalize abaixo e clique em Salvar Aparência.'}
+                </span>
+                <button
+                  onClick={() => void handleSaveAppearanceInWorld(false)}
+                  className={`px-3 py-1.5 text-[10px] font-pixel font-bold uppercase flex items-center gap-1.5 shrink-0 ${
+                    hasAppearanceDirty
+                      ? 'medieval-btn-emerald ring-1 ring-emerald-400'
+                      : 'medieval-btn-gold'
+                  }`}
+                >
+                  {appearanceSavedFeedback ? (
+                    <>
+                      <Check className="w-3.5 h-3.5" />
+                      <span>Aparência Salva!</span>
+                    </>
+                  ) : (
+                    <>
+                      <Save className="w-3.5 h-3.5" />
+                      <span>Salvar Aparência</span>
+                    </>
+                  )}
                 </button>
               </div>
 
@@ -649,9 +832,7 @@ export const CharacterPetsModal: React.FC<CharacterPetsModalProps> = ({
                   return (
                     <button
                       key={g.id}
-                      onClick={() =>
-                        engine.updatePlayerAppearance({ gender: g.id })
-                      }
+                      onClick={() => updateDraftAppearance({ gender: g.id })}
                       className={`py-1 px-2 text-[10px] font-bold flex items-center justify-center gap-1.5 ${
                         isSelected ? 'medieval-btn-gold' : 'medieval-btn-wood'
                       }`}
@@ -698,7 +879,7 @@ export const CharacterPetsModal: React.FC<CharacterPetsModalProps> = ({
               </div>
 
               {/* Inventory Container for Selected Category (Vertical Scroll) */}
-              <div className="max-h-[305px] overflow-y-auto pr-1 space-y-2.5">
+              <div className="max-h-[275px] overflow-y-auto pr-1 space-y-2.5">
                 {appearanceCat === 'skin' && (
                   <>
                     {/* Top Inventory Section: Marcas de Pele (1 selectable) */}
@@ -721,7 +902,7 @@ export const CharacterPetsModal: React.FC<CharacterPetsModalProps> = ({
                             <button
                               key={mark.id}
                               onClick={() =>
-                                engine.updatePlayerAppearance({
+                                updateDraftAppearance({
                                   skinMark: mark.id,
                                 })
                               }
@@ -767,7 +948,7 @@ export const CharacterPetsModal: React.FC<CharacterPetsModalProps> = ({
                             <button
                               key={tone.color}
                               onClick={() =>
-                                engine.updatePlayerAppearance({
+                                updateDraftAppearance({
                                   skinColor: tone.color,
                                 })
                               }
@@ -843,7 +1024,7 @@ export const CharacterPetsModal: React.FC<CharacterPetsModalProps> = ({
                             <button
                               key={st.id}
                               onClick={() =>
-                                engine.updatePlayerAppearance({
+                                updateDraftAppearance({
                                   hairStyle: st.id,
                                 })
                               }
@@ -890,7 +1071,7 @@ export const CharacterPetsModal: React.FC<CharacterPetsModalProps> = ({
                             <button
                               key={hc.color}
                               onClick={() =>
-                                engine.updatePlayerAppearance({
+                                updateDraftAppearance({
                                   hairColor: hc.color,
                                 })
                               }
@@ -968,7 +1149,7 @@ export const CharacterPetsModal: React.FC<CharacterPetsModalProps> = ({
                             <button
                               key={es.id}
                               onClick={() =>
-                                engine.updatePlayerAppearance({
+                                updateDraftAppearance({
                                   eyeStyle: es.id,
                                 })
                               }
@@ -1015,7 +1196,7 @@ export const CharacterPetsModal: React.FC<CharacterPetsModalProps> = ({
                             <button
                               key={ec.color}
                               onClick={() =>
-                                engine.updatePlayerAppearance({
+                                updateDraftAppearance({
                                   eyeColor: ec.color,
                                 })
                               }
@@ -1404,6 +1585,8 @@ export const AccountAppearanceModal: React.FC<AccountAppearanceModalProps> = ({
   );
   const [previewDir, setPreviewDir] = useState<Direction>('down');
   const [hasAppearanceDirty, setHasAppearanceDirty] = useState(false);
+  const [appearanceSavedFeedback, setAppearanceSavedFeedback] = useState(false);
+  const [showUnsavedWarning, setShowUnsavedWarning] = useState(false);
   const [blockingSyncState, setBlockingSyncState] = useState<{
     isOpen: boolean;
     title: string;
@@ -1423,12 +1606,14 @@ export const AccountAppearanceModal: React.FC<AccountAppearanceModalProps> = ({
     const unsub = firebaseCloudSync.subscribe((snap) => {
       const signedIn = Boolean(snap.user);
       setIsGoogleLoggedIn(signedIn);
-      const latestSlots = SaveManager.getAppearanceSlots();
-      setSlotsData(latestSlots);
-      setApp(SaveManager.getAccountAppearance());
+      if (!hasAppearanceDirty) {
+        const latestSlots = SaveManager.getAppearanceSlots();
+        setSlotsData(latestSlots);
+        setApp(SaveManager.getAccountAppearance());
+      }
     });
     return unsub;
-  }, []);
+  }, [hasAppearanceDirty]);
 
   const runConfirmedProfileSync = async (opts: {
     title: string;
@@ -1460,39 +1645,41 @@ export const AccountAppearanceModal: React.FC<AccountAppearanceModalProps> = ({
     return true;
   };
 
-  const handleSelectSlot = async (index: number) => {
-    const selectedApp = SaveManager.selectAppearanceSlot(index);
-    const refreshed = SaveManager.getAppearanceSlots();
-    setSlotsData(refreshed);
-    setApp({ ...selectedApp });
-    setSlotNameDraft(
-      refreshed.slots[index]?.name || `Aparência ${index + 1}`
-    );
+  const handleSelectSlot = (index: number) => {
+    const clamped = Math.max(0, Math.min(slotsData.slots.length - 1, index));
+    const selectedSlot = slotsData.slots[clamped];
+    const selectedApp = {
+      ...DEFAULT_PLAYER_APPEARANCE,
+      ...(selectedSlot?.appearance || {}),
+    };
+    setSlotsData((prev) => ({
+      ...prev,
+      activeIndex: clamped,
+    }));
+    setApp(selectedApp);
+    setSlotNameDraft(selectedSlot?.name || `Aparência ${clamped + 1}`);
     setIsEditingSlotName(false);
     setHasAppearanceDirty(true);
-    onAppearanceSaved?.(selectedApp);
+    setAppearanceSavedFeedback(false);
   };
 
-  const handleCommitSlotName = async () => {
-    const updatedSlots = SaveManager.renameAppearanceSlot(
-      slotsData.activeIndex,
-      slotNameDraft
-    );
-    setSlotsData({
-      slots: updatedSlots,
-      activeIndex: slotsData.activeIndex,
+  const handleCommitSlotName = () => {
+    const cleanName =
+      slotNameDraft.trim().slice(0, 20) ||
+      `Aparência ${slotsData.activeIndex + 1}`;
+    setSlotsData((prev) => {
+      const nextSlots = prev.slots.map((s, idx) =>
+        idx === prev.activeIndex ? { ...s, name: cleanName } : s
+      );
+      return {
+        ...prev,
+        slots: nextSlots,
+      };
     });
-    setSlotNameDraft(
-      updatedSlots[slotsData.activeIndex]?.name ||
-        `Aparência ${slotsData.activeIndex + 1}`
-    );
+    setSlotNameDraft(cleanName);
     setIsEditingSlotName(false);
-    await runConfirmedProfileSync({
-      title: 'Salvando Nome do Slot de Aparência',
-      processLabel: 'Sincronizando Slots de Aparência',
-      subprocessLabel:
-        'Subprocesso: Gravando nome do slot no diretório social e na conta Google...',
-    });
+    setHasAppearanceDirty(true);
+    setAppearanceSavedFeedback(false);
   };
 
   const handleSaveUsername = async () => {
@@ -1513,23 +1700,61 @@ export const AccountAppearanceModal: React.FC<AccountAppearanceModalProps> = ({
   };
 
   const updateAccountAppearance = (partial: Partial<PlayerAppearance>) => {
-    const updated = SaveManager.saveAccountAppearance(partial);
-    const refreshed = SaveManager.getAppearanceSlots();
-    setSlotsData(refreshed);
-    setApp({ ...updated });
+    const nextApp: PlayerAppearance = {
+      ...app,
+      ...partial,
+    };
+    setApp(nextApp);
+    setSlotsData((prev) => {
+      const nextSlots = prev.slots.map((slot, idx) =>
+        idx === prev.activeIndex
+          ? { ...slot, appearance: { ...nextApp } }
+          : slot
+      );
+      return {
+        ...prev,
+        slots: nextSlots,
+      };
+    });
     setHasAppearanceDirty(true);
-    onAppearanceSaved?.(updated);
+    setAppearanceSavedFeedback(false);
   };
 
-  const handleCloseModalWithSync = async () => {
-    if (hasAppearanceDirty && isGoogleLoggedIn) {
-      await runConfirmedProfileSync({
-        title: 'Sincronizando Aparência do Personagem',
+  const handleSaveAppearanceButton = async (closeAfterSave = false) => {
+    const savedActive = SaveManager.saveAppearanceSlotsAndActive(
+      slotsData.slots,
+      slotsData.activeIndex
+    );
+    const refreshed = SaveManager.getAppearanceSlots();
+    setSlotsData(refreshed);
+    setApp({ ...savedActive });
+    setHasAppearanceDirty(false);
+    onAppearanceSaved?.(savedActive);
+
+    if (isGoogleLoggedIn) {
+      const ok = await runConfirmedProfileSync({
+        title: 'Salvando e Sincronizando Aparência',
         processLabel: 'Salvando Slots de Aparência na Conta',
         subprocessLabel:
-          'Subprocesso: Confirmando sincronização dos 5 slots de aparência na nuvem...',
-        closeModalOnSuccess: true,
+          'Subprocesso: Confirmando sincronização direta da aparência no diretório social e na nuvem...',
+        closeModalOnSuccess: closeAfterSave,
       });
+      if (ok && !closeAfterSave) {
+        setAppearanceSavedFeedback(true);
+        window.setTimeout(() => setAppearanceSavedFeedback(false), 2200);
+      }
+    } else {
+      setAppearanceSavedFeedback(true);
+      window.setTimeout(() => setAppearanceSavedFeedback(false), 2200);
+      if (closeAfterSave) {
+        onClose();
+      }
+    }
+  };
+
+  const handleAttemptCloseModal = () => {
+    if (hasAppearanceDirty) {
+      setShowUnsavedWarning(true);
     } else {
       onClose();
     }
@@ -1598,7 +1823,7 @@ export const AccountAppearanceModal: React.FC<AccountAppearanceModalProps> = ({
   return (
     <div
       className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-2 sm:p-4"
-      onClick={handleCloseModalWithSync}
+      onClick={handleAttemptCloseModal}
     >
       <BlockingSyncOperationModal
         isOpen={blockingSyncState.isOpen}
@@ -1618,6 +1843,61 @@ export const AccountAppearanceModal: React.FC<AccountAppearanceModalProps> = ({
           }
         }}
       />
+
+      {/* Aviso de Alterações Não Salvas ao Tentar Sair */}
+      {showUnsavedWarning && (
+        <div
+          className="fixed inset-0 z-[70] bg-black/85 flex items-center justify-center p-4"
+          onClick={(e) => e.stopPropagation()}
+        >
+          <div className="w-full max-w-md medieval-panel p-5 space-y-4 border-2 border-amber-500/80">
+            <div className="flex items-start gap-3">
+              <div className="w-10 h-10 bg-amber-950/90 border border-amber-500/60 flex items-center justify-center shrink-0">
+                <AlertTriangle className="w-5 h-5 text-amber-400" />
+              </div>
+              <div className="space-y-1">
+                <h3 className="font-pixel text-xs font-bold text-amber-300 uppercase">
+                  Alterações Não Salvas na Aparência
+                </h3>
+                <p className="text-xs text-[#e5d5b5] leading-relaxed">
+                  Você modificou a aparência do seu personagem, mas ainda não
+                  clicou em <strong>Salvar Aparência</strong>. Se sair sem
+                  salvar agora, você perderá as alterações feitas.
+                </p>
+              </div>
+            </div>
+
+            <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-end gap-2 pt-2 border-t border-[#3d2616]">
+              <button
+                onClick={() => setShowUnsavedWarning(false)}
+                className="px-3 py-2 medieval-btn-wood text-xs font-pixel font-bold uppercase"
+              >
+                Continuar Editando
+              </button>
+              <button
+                onClick={() => {
+                  setShowUnsavedWarning(false);
+                  onClose();
+                }}
+                className="px-3 py-2 medieval-btn-crimson text-xs font-pixel font-bold uppercase"
+              >
+                Sair sem Salvar
+              </button>
+              <button
+                onClick={() => {
+                  setShowUnsavedWarning(false);
+                  void handleSaveAppearanceButton(true);
+                }}
+                className="px-3.5 py-2 medieval-btn-emerald text-xs font-pixel font-bold uppercase flex items-center justify-center gap-1.5"
+              >
+                <Save className="w-3.5 h-3.5" />
+                <span>Salvar e Sair</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <div
         className="w-full max-w-3xl medieval-panel flex flex-col max-h-[94dvh] overflow-hidden"
         onClick={(e) => e.stopPropagation()}
@@ -1627,33 +1907,44 @@ export const AccountAppearanceModal: React.FC<AccountAppearanceModalProps> = ({
           <div className="flex items-center gap-2">
             <Palette className="w-4 h-4 text-amber-400" />
             <div>
-              <h2 className="font-pixel text-xs font-bold text-amber-400 uppercase">
-                Personalização do Personagem
-              </h2>
+              <div className="flex items-center gap-2">
+                <h2 className="font-pixel text-xs font-bold text-amber-400 uppercase">
+                  Personalização do Personagem
+                </h2>
+                {hasAppearanceDirty && (
+                  <span className="px-1.5 py-0.5 bg-amber-950 border border-amber-500/60 text-[9px] font-pixel font-bold text-amber-300 uppercase">
+                    Alterações não salvas
+                  </span>
+                )}
+              </div>
               <p className="text-[10px] text-[#c4ab7d]">
                 5 slots de aparência e username da conta sincronizados
               </p>
             </div>
           </div>
           <div className="flex items-center gap-2">
-            {hasAppearanceDirty && isGoogleLoggedIn && (
-              <button
-                onClick={() =>
-                  runConfirmedProfileSync({
-                    title: 'Sincronizando Aparência do Personagem',
-                    processLabel: 'Salvando Slots de Aparência na Conta',
-                    subprocessLabel:
-                      'Subprocesso: Confirmando sincronização dos 5 slots de aparência na nuvem...',
-                  })
-                }
-                className="px-2.5 py-1.5 medieval-btn-emerald text-[10px] font-pixel font-bold uppercase flex items-center gap-1"
-              >
-                <Check className="w-3.5 h-3.5" />
-                <span>Salvar Aparência</span>
-              </button>
-            )}
             <button
-              onClick={handleCloseModalWithSync}
+              onClick={() => void handleSaveAppearanceButton(false)}
+              className={`px-3 py-1.5 text-[10px] font-pixel font-bold uppercase flex items-center gap-1.5 ${
+                hasAppearanceDirty
+                  ? 'medieval-btn-emerald ring-1 ring-emerald-400'
+                  : 'medieval-btn-gold'
+              }`}
+            >
+              {appearanceSavedFeedback ? (
+                <>
+                  <Check className="w-3.5 h-3.5" />
+                  <span>Aparência Salva!</span>
+                </>
+              ) : (
+                <>
+                  <Save className="w-3.5 h-3.5" />
+                  <span>Salvar Aparência</span>
+                </>
+              )}
+            </button>
+            <button
+              onClick={handleAttemptCloseModal}
               className="min-h-[34px] min-w-[34px] medieval-btn-crimson flex items-center justify-center"
             >
               <X className="w-4 h-4" />
@@ -1763,7 +2054,7 @@ export const AccountAppearanceModal: React.FC<AccountAppearanceModalProps> = ({
                   <button
                     onClick={handleCommitSlotName}
                     className="p-1.5 medieval-btn-emerald"
-                    title="Salvar nome do slot"
+                    title="Confirmar nome do slot"
                   >
                     <Check className="w-3.5 h-3.5" />
                   </button>
@@ -1802,9 +2093,32 @@ export const AccountAppearanceModal: React.FC<AccountAppearanceModalProps> = ({
               <RotateCw className="w-3.5 h-3.5 text-amber-300" />
               <span>Girar Direção</span>
             </button>
+
+            {/* Botão Principal de Salvar Aparência na Coluna de Preview */}
+            <button
+              onClick={() => void handleSaveAppearanceButton(false)}
+              className={`w-full py-2 px-3 text-xs font-pixel font-bold uppercase flex items-center justify-center gap-1.5 ${
+                hasAppearanceDirty
+                  ? 'medieval-btn-emerald ring-1 ring-emerald-400'
+                  : 'medieval-btn-gold'
+              }`}
+            >
+              {appearanceSavedFeedback ? (
+                <>
+                  <Check className="w-3.5 h-3.5" />
+                  <span>Aparência Salva!</span>
+                </>
+              ) : (
+                <>
+                  <Save className="w-3.5 h-3.5" />
+                  <span>Salvar Aparência</span>
+                </>
+              )}
+            </button>
+
             <button
               onClick={() => updateAccountAppearance(DEFAULT_PLAYER_APPEARANCE)}
-              className="text-[10px] text-[#c4ab7d] hover:text-amber-300 underline pt-1"
+              className="text-[10px] text-[#c4ab7d] hover:text-amber-300 underline pt-0.5"
             >
               Restaurar Padrão neste Slot
             </button>
