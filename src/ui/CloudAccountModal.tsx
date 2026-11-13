@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   AlertTriangle,
   CheckCircle2,
@@ -371,16 +371,19 @@ export const CloudSyncAutoModal: React.FC<{
     getFirestoreQuotaResetInfo()
   );
   const [dismissedQuotaAlert, setDismissedQuotaAlert] = useState(false);
+  const wasReconcilingRef = useRef<boolean>(snap.reconciliation.active);
 
   useEffect(() => {
     const unsub = firebaseCloudSync.subscribe((next) => {
-      setSnap((prev) => {
-        if (prev.reconciliation.active && !next.reconciliation.active) {
-          onWorldsUpdated?.();
-        }
-        return next;
-      });
+      const wasActive = wasReconcilingRef.current;
+      wasReconcilingRef.current = next.reconciliation.active;
+      setSnap(next);
       setQuotaInfo(getFirestoreQuotaResetInfo());
+      if (wasActive && !next.reconciliation.active) {
+        window.setTimeout(() => {
+          onWorldsUpdated?.();
+        }, 0);
+      }
     });
     const unsubQuota = onFirestoreWriteQuotaExhausted(() => {
       setQuotaInfo(getFirestoreQuotaResetInfo());
