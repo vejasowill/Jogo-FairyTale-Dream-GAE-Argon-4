@@ -14,6 +14,7 @@ import {
   auth,
   db,
   fallbackDefaultDb,
+  getFirestoreQuotaResetInfo,
   googleProvider,
   handleFirestoreError,
   isFirestoreQuotaExhaustedError,
@@ -375,7 +376,11 @@ class FirebaseCloudSyncService {
   }
 
   public dismissReconciliationModal(): void {
-    if (this.reconciliation.canDismissToPlayLocal || !this.reconciliation.active) {
+    if (
+      this.reconciliation.canDismissToPlayLocal ||
+      this.reconciliation.hasErrors ||
+      !this.reconciliation.active
+    ) {
       this.reconciliation = {
         ...this.reconciliation,
         showModal: false,
@@ -383,6 +388,17 @@ class FirebaseCloudSyncService {
       };
       this.notifyListeners();
     }
+  }
+
+  public forceCancelReconciliation(): void {
+    this.reconciliation = {
+      ...this.reconciliation,
+      active: false,
+      canDismissToPlayLocal: true,
+      showModal: false,
+      dismissedByUser: true,
+    };
+    this.notifyListeners();
   }
 
   public openReconciliationModal(): void {
@@ -538,9 +554,23 @@ class FirebaseCloudSyncService {
       this.notifyListeners();
 
       try {
+        this.updateReconciliation({
+          stageNumber: 1,
+          stageLabel: STAGE_LABELS[1],
+          microDetail: 'Subprocesso: Sincronizando perfil, username, aparências e lista de amigos...',
+          progressPercent: 8,
+          completedUnits: 2,
+        });
         await this.ensureUserProfileSynced(user);
         this.sessionCompletedOpsCount++;
 
+        this.updateReconciliation({
+          stageNumber: 1,
+          stageLabel: STAGE_LABELS[1],
+          microDetail: 'Subprocesso: Verificando permissões e dados da conta...',
+          progressPercent: 14,
+          completedUnits: 3,
+        });
         await this.fetchUserEntitlements(user.uid);
         this.sessionCompletedOpsCount++;
 
@@ -548,22 +578,33 @@ class FirebaseCloudSyncService {
         await this.syncAllGuestProfilesWithCloud();
         await this.processPendingWorldSyncQueue();
 
-        const hasAnyError = Array.from(this.worldSyncStates.values()).some(
+        const errorWorldStates = Array.from(this.worldSyncStates.values()).filter(
           (st) => st.detailedStatus === 'SYNC_ERROR'
         );
+        const qInfo = getFirestoreQuotaResetInfo();
+        const hasAnyError =
+          errorWorldStates.length > 0 ||
+          qInfo.isExhausted ||
+          isFirestoreWriteQuotaExhausted();
         const hasPending =
           this.pendingWorldSyncReasons.size > 0 ||
           this.activeWorldUploads.size > 0;
 
         if (hasAnyError) {
+          const specificErrorMsg =
+            errorWorldStates[0]?.error ||
+            (qInfo.isExhausted
+              ? qInfo.errorReason
+              : 'Sincronização finalizada com alertas em alguns mundos. Verifique o diagnóstico.');
           this.syncStatus = 'ERROR';
+          this.statusMessage = specificErrorMsg;
           this.updateReconciliation({
             active: false,
             canDismissToPlayLocal: true,
             stageNumber: 9,
             stageLabel: STAGE_LABELS[9],
-            microDetail:
-              'Sincronização finalizada com alertas em alguns mundos. Verifique o diagnóstico.',
+            microDetail: specificErrorMsg,
+            errorSummary: specificErrorMsg,
             progressPercent: 100,
             hasErrors: true,
           });
@@ -574,7 +615,7 @@ class FirebaseCloudSyncService {
             canDismissToPlayLocal: true,
             stageNumber: 5,
             stageLabel: STAGE_LABELS[5],
-            microDetail: 'Concluindo envios pendentes em segundo plano...',
+            microDetail: 'Subprocesso: Concluindo envios pendentes de mundos...',
           });
         } else {
           this.syncStatus = 'SYNCED';
@@ -585,13 +626,13 @@ class FirebaseCloudSyncService {
             canDismissToPlayLocal: true,
             stageNumber: 9,
             stageLabel: STAGE_LABELS[9],
-            microDetail: `Mundos sincronizados: ${finalWorldsCount} de ${finalWorldsCount}`,
+            microDetail: `Sincronização concluída com sucesso (${finalWorldsCount} de ${finalWorldsCount} mundos prontos).`,
             progressPercent: 100,
             completedUnits: this.reconciliation.totalUnits,
             worldsSyncedCount: finalWorldsCount,
             worldsTotalToProcess: finalWorldsCount,
           });
-          // Automatically close the post-login sync screen once 100% complete
+          // Automatically close the post-login sync screen once 100% complete without errors
           setTimeout(() => {
             if (!this.reconciliation.active && !this.reconciliation.hasErrors) {
               this.reconciliation = {
@@ -600,7 +641,7 @@ class FirebaseCloudSyncService {
               };
               this.notifyListeners();
             }
-          }, 550);
+          }, 700);
         }
       } catch (err: any) {
         this.sessionFailedOpsCount++;
@@ -1196,65 +1237,38 @@ class FirebaseCloudSyncService {
       const appearance = SaveManager.getAccountAppearance();
       const publicId = SaveManager.getPlayerPublicId(uid);
 
-      // 1. Always sync profile, 5 appearance slots, username, friends, and deletedWorldIds with /api/social/sync-profile
+      // 1. Always sync profile, 5 appearance slots, username, friends, removedFriendIds, and deletedWorldIds with /api/social/sync-profile
       try {
         const slotsInfo = SaveManager.getAppearanceSlots();
         const json = await socialDirectoryClient.syncProfile({
           uid,
           playerPublicId: publicId,
           username: settings.accountUsername || undefined,
+          usernameUpdatedAt: settings.usernameUpdatedAt || 0,
           appearanceSlots: settings.appearanceSlots,
           activeAppearanceSlotIndex: slotsInfo.activeIndex,
           accountAppearance: settings.accountAppearance,
+          appearanceUpdatedAt: settings.appearanceUpdatedAt || 0,
           friendsList: SaveManager.getFriendsList(),
+          removedFriendIds: Array.from(SaveManager.getRemovedFriendIds()),
           deletedWorldIds: Array.from(SaveManager.getDeletedWorldIds()),
         });
-        if (json.ok) {
-          const remoteProf = json?.profile;
-          if (remoteProf) {
-            const currentSettings = SaveManager.loadSettings();
-            const mergedDeleted = Array.from(
-              new Set([
-                ...(currentSettings.deletedWorldIds || []),
-                ...(Array.isArray(remoteProf.deletedWorldIds)
-                  ? remoteProf.deletedWorldIds
-                  : []),
-              ])
-            );
-            SaveManager.saveSettings({
-              ...currentSettings,
-              playerPublicId: publicId,
-              accountUsername:
-                currentSettings.accountUsername ||
-                remoteProf.username ||
-                'Aventureiro',
-              playerName:
-                currentSettings.accountUsername ||
-                remoteProf.username ||
-                'Aventureiro',
-              appearanceSlots:
-                Array.isArray(currentSettings.appearanceSlots) &&
-                currentSettings.appearanceSlots.length > 0
-                  ? currentSettings.appearanceSlots
-                  : Array.isArray(remoteProf.appearanceSlots)
-                  ? remoteProf.appearanceSlots
-                  : undefined,
-              activeAppearanceSlotIndex:
-                typeof currentSettings.activeAppearanceSlotIndex === 'number'
-                  ? currentSettings.activeAppearanceSlotIndex
-                  : typeof remoteProf.activeAppearanceSlotIndex === 'number'
-                  ? remoteProf.activeAppearanceSlotIndex
-                  : 0,
-              accountAppearance:
-                currentSettings.accountAppearance ||
-                remoteProf.accountAppearance ||
-                appearance,
-              friendsList: Array.isArray(remoteProf.friendsList)
-                ? remoteProf.friendsList
-                : currentSettings.friendsList || [],
-              deletedWorldIds: mergedDeleted,
-            });
-          }
+        if (json.ok && json.profile) {
+          const remoteProf = json.profile;
+          const currentSettings = SaveManager.loadSettings();
+          const mergedDeleted = Array.from(
+            new Set([
+              ...(currentSettings.deletedWorldIds || []),
+              ...(Array.isArray(remoteProf.deletedWorldIds)
+                ? remoteProf.deletedWorldIds
+                : []),
+            ])
+          );
+          SaveManager.saveSettings({
+            ...currentSettings,
+            playerPublicId: publicId,
+            deletedWorldIds: mergedDeleted,
+          });
         }
       } catch {
         // ignore offline social sync error
@@ -1300,37 +1314,88 @@ class FirebaseCloudSyncService {
 
         const updatedLocal = SaveManager.loadSettings();
         let needsLocalSave = false;
+
+        // Reconcile username across devices using timestamp + non-default check
+        const remoteUsernameCandidate = String(
+          remoteSettings.accountUsername ||
+            remoteSettings.playerName ||
+            remoteData?.displayName ||
+            user.displayName ||
+            ''
+        )
+          .trim()
+          .slice(0, 22);
+        const remoteNameTs =
+          typeof remoteSettings.usernameUpdatedAt === 'number'
+            ? remoteSettings.usernameUpdatedAt
+            : 0;
+        const localNameTs = updatedLocal.usernameUpdatedAt || 0;
+        const localNameUnset =
+          !updatedLocal.accountUsername ||
+          updatedLocal.accountUsername === 'Aventureiro';
+
         if (
-          !updatedLocal.accountUsername &&
-          typeof remoteSettings.accountUsername === 'string' &&
-          remoteSettings.accountUsername.trim()
+          remoteUsernameCandidate &&
+          remoteUsernameCandidate !== 'Aventureiro' &&
+          (localNameUnset || remoteNameTs > localNameTs)
         ) {
-          updatedLocal.accountUsername = remoteSettings.accountUsername.trim();
-          updatedLocal.playerName = updatedLocal.accountUsername;
+          updatedLocal.accountUsername = remoteUsernameCandidate;
+          updatedLocal.playerName = remoteUsernameCandidate;
+          updatedLocal.usernameUpdatedAt = Math.max(remoteNameTs, localNameTs, 1);
           needsLocalSave = true;
         }
+
+        // Reconcile appearance slots across devices using timestamp
+        const remoteAppTs =
+          typeof remoteSettings.appearanceUpdatedAt === 'number'
+            ? remoteSettings.appearanceUpdatedAt
+            : 0;
+        const localAppTs = updatedLocal.appearanceUpdatedAt || 0;
         if (
-          (!updatedLocal.appearanceSlots ||
-            updatedLocal.appearanceSlots.length === 0) &&
           Array.isArray(remoteSettings.appearanceSlots) &&
-          remoteSettings.appearanceSlots.length > 0
+          remoteSettings.appearanceSlots.length > 0 &&
+          (!updatedLocal.appearanceSlots ||
+            updatedLocal.appearanceSlots.length === 0 ||
+            remoteAppTs > localAppTs)
         ) {
           updatedLocal.appearanceSlots = remoteSettings.appearanceSlots;
           if (typeof remoteSettings.activeAppearanceSlotIndex === 'number') {
             updatedLocal.activeAppearanceSlotIndex =
               remoteSettings.activeAppearanceSlotIndex;
           }
+          if (remoteSettings.accountAppearance) {
+            updatedLocal.accountAppearance = remoteSettings.accountAppearance;
+          }
+          updatedLocal.appearanceUpdatedAt = Math.max(remoteAppTs, localAppTs);
           needsLocalSave = true;
         }
-        if (
-          (!updatedLocal.friendsList ||
-            updatedLocal.friendsList.length === 0) &&
-          Array.isArray(remoteSettings.friendsList) &&
-          remoteSettings.friendsList.length > 0
-        ) {
-          updatedLocal.friendsList = remoteSettings.friendsList;
+
+        // Reconcile removedFriendIds tombstones and friendsList
+        const remSet = new Set<string>(SaveManager.getRemovedFriendIds());
+        if (Array.isArray(remoteSettings.removedFriendIds)) {
+          for (const rId of remoteSettings.removedFriendIds) {
+            const cleanR = String(rId || '').trim().toUpperCase();
+            if (cleanR) remSet.add(cleanR);
+          }
+        }
+        updatedLocal.removedFriendIds = Array.from(remSet);
+
+        if (Array.isArray(remoteSettings.friendsList)) {
+          const fMap = new Map<string, any>();
+          for (const f of updatedLocal.friendsList || []) {
+            if (f && f.playerPublicId && !remSet.has(f.playerPublicId)) {
+              fMap.set(f.playerPublicId, f);
+            }
+          }
+          for (const rf of remoteSettings.friendsList) {
+            if (rf && rf.playerPublicId && !remSet.has(rf.playerPublicId)) {
+              fMap.set(rf.playerPublicId, rf);
+            }
+          }
+          updatedLocal.friendsList = Array.from(fMap.values());
           needsLocalSave = true;
         }
+
         if (
           Array.isArray(remoteSettings.deletedWorldIds) &&
           remoteSettings.deletedWorldIds.length > 0
@@ -1397,10 +1462,18 @@ class FirebaseCloudSyncService {
         hudOpacity: Number(freshSettings.hudOpacity ?? 0.96),
         playerName: sanitizeString(resolvedUsername, 1, 32, 'Aventureiro'),
         accountUsername: sanitizeString(resolvedUsername, 1, 32, 'Aventureiro'),
+        usernameUpdatedAt: Number(freshSettings.usernameUpdatedAt || Date.now()),
         playerPublicId: publicId,
         activeAppearanceSlotIndex: slotsData.activeIndex,
         appearanceSlots: slotsData.slots.slice(0, 5),
+        appearanceUpdatedAt: Number(
+          freshSettings.appearanceUpdatedAt || Date.now()
+        ),
         friendsList: SaveManager.getFriendsList().slice(0, 100),
+        removedFriendIds: Array.from(SaveManager.getRemovedFriendIds()).slice(
+          0,
+          200
+        ),
         deletedWorldIds: Array.from(SaveManager.getDeletedWorldIds()).slice(
           0,
           200
@@ -1516,16 +1589,45 @@ class FirebaseCloudSyncService {
   }
 
   /**
-   * Synchronizes the player's universal appearance & settings to `/users/{uid}` when modified in the UI.
+   * Synchronizes the player's universal appearance, username, & settings to `/api/social/sync-profile`
+   * and `/users/{uid}` when modified in the UI, returning confirmation so the UI can await completion.
    */
-  public async syncProfileAppearanceAndSettings(): Promise<void> {
+  public async syncProfileAppearanceAndSettings(): Promise<{
+    ok: boolean;
+    error?: string;
+  }> {
     const user = this.currentUser || auth.currentUser;
-    if (!user || !user.emailVerified) return;
-    this.profileReadyForUid = null;
+    const settings = SaveManager.loadSettings();
+    const slotsInfo = SaveManager.getAppearanceSlots();
+    const publicId = SaveManager.getPlayerPublicId(user?.uid || null);
+
     try {
-      await this.ensureUserProfileSynced(user, true);
-    } catch {
-      // ignore offline
+      const socialRes = await socialDirectoryClient.syncProfile({
+        uid: user?.uid || null,
+        playerPublicId: publicId,
+        username: settings.accountUsername || SaveManager.getEffectiveUsername(),
+        usernameUpdatedAt: settings.usernameUpdatedAt || Date.now(),
+        appearanceSlots: settings.appearanceSlots,
+        activeAppearanceSlotIndex: slotsInfo.activeIndex,
+        accountAppearance: settings.accountAppearance,
+        appearanceUpdatedAt: settings.appearanceUpdatedAt || Date.now(),
+        friendsList: SaveManager.getFriendsList(),
+        removedFriendIds: Array.from(SaveManager.getRemovedFriendIds()),
+        deletedWorldIds: Array.from(SaveManager.getDeletedWorldIds()),
+      });
+
+      if (user && user.emailVerified) {
+        this.profileReadyForUid = null;
+        await this.ensureUserProfileSynced(user, true);
+      }
+
+      return { ok: Boolean(socialRes.ok) };
+    } catch (err: any) {
+      return {
+        ok: false,
+        error:
+          err?.message || 'Erro ao sincronizar alterações do perfil com a nuvem.',
+      };
     }
   }
 

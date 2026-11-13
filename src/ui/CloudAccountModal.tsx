@@ -361,6 +361,149 @@ export const CloudAccountModal: React.FC<CloudAccountModalProps> = ({
   );
 };
 
+export interface BlockingSyncOperationModalProps {
+  isOpen: boolean;
+  title: string;
+  processLabel: string;
+  subprocessLabel?: string;
+  error?: string | null;
+  timeoutSeconds?: number;
+  onCancelOrExit: () => void;
+}
+
+export const BlockingSyncOperationModal: React.FC<
+  BlockingSyncOperationModalProps
+> = ({
+  isOpen,
+  title,
+  processLabel,
+  subprocessLabel,
+  error,
+  timeoutSeconds = 8,
+  onCancelOrExit,
+}) => {
+  const [elapsedSec, setElapsedSec] = useState(0);
+  const [quotaInfo, setQuotaInfo] = useState<FirestoreQuotaResetInfo>(() =>
+    getFirestoreQuotaResetInfo()
+  );
+
+  useEffect(() => {
+    if (!isOpen) {
+      setElapsedSec(0);
+      return;
+    }
+    setElapsedSec(0);
+    setQuotaInfo(getFirestoreQuotaResetInfo());
+    const timer = window.setInterval(() => {
+      setElapsedSec((prev) => prev + 1);
+      setQuotaInfo(getFirestoreQuotaResetInfo());
+    }, 1000);
+    return () => window.clearInterval(timer);
+  }, [isOpen]);
+
+  if (!isOpen) return null;
+
+  const isTimedOut = elapsedSec >= timeoutSeconds;
+  const canCancelOrExit = Boolean(error) || isTimedOut;
+
+  return (
+    <div className="fixed inset-0 z-[95] bg-black/85 backdrop-blur-sm flex items-center justify-center p-4">
+      <div
+        className="w-full max-w-md medieval-panel border-2 border-[#8c6d46] bg-[#160e09] p-5 space-y-4 shadow-2xl"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center gap-3 border-b border-[#3d2616] pb-3">
+          <div className="w-9 h-9 bg-[#2a1b10] border border-amber-500/50 flex items-center justify-center shrink-0">
+            {error ? (
+              <AlertTriangle className="w-5 h-5 text-red-400" />
+            ) : (
+              <RefreshCw className="w-5 h-5 text-amber-400 animate-spin" />
+            )}
+          </div>
+          <div className="min-w-0">
+            <h3 className="font-pixel text-xs font-bold text-amber-300 uppercase tracking-wider truncate">
+              {title}
+            </h3>
+            <p className="text-[11px] text-[#c4ab7d]">
+              {error
+                ? 'Falha detectada ao confirmar sincronização'
+                : 'Aguardando confirmação real de salvamento na nuvem/servidor...'}
+            </p>
+          </div>
+        </div>
+
+        <div className="medieval-inset p-3.5 space-y-2.5 bg-[#120b07]">
+          <div className="flex items-center justify-between text-xs font-bold text-[#f3e5c8]">
+            <span>Processo: {processLabel}</span>
+            <span className="font-mono text-amber-300">{elapsedSec}s</span>
+          </div>
+
+          <div className="w-full h-2.5 bg-[#0c0704] border border-[#4a301e] overflow-hidden">
+            <div
+              className={`h-full transition-all duration-300 ${
+                error
+                  ? 'bg-red-500 w-full'
+                  : 'bg-gradient-to-r from-amber-500 via-yellow-400 to-emerald-400 animate-pulse w-4/5'
+              }`}
+            />
+          </div>
+
+          <div className="text-[11px] text-sky-300 font-medium leading-snug">
+            {subprocessLabel ||
+              'Subprocesso: Comunicando com o diretório social e perfil da conta...'}
+          </div>
+        </div>
+
+        {error && (
+          <div className="p-3 bg-red-950/90 border border-red-500/70 space-y-1.5 text-xs">
+            <div className="font-pixel text-[10px] font-bold text-red-300 uppercase flex items-center gap-1.5">
+              <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
+              <span>Erro Específico Detectado</span>
+            </div>
+            <p className="text-red-100 leading-relaxed">{error}</p>
+            {quotaInfo.isExhausted && (
+              <p className="text-[11px] text-amber-200 pt-1">
+                Cota do Firestore reinicia em{' '}
+                <strong className="font-mono text-amber-300">
+                  {quotaInfo.formattedCountdown}
+                </strong>{' '}
+                (às {quotaInfo.resetLocalTimeFormatted}).
+              </p>
+            )}
+          </div>
+        )}
+
+        {!error && isTimedOut && (
+          <div className="p-3 bg-amber-950/80 border border-amber-500/60 text-xs text-amber-200 space-y-1">
+            <div className="font-bold text-amber-300">
+              A sincronização está demorando mais que o normal ({elapsedSec}s).
+            </div>
+            <p className="text-[11px] leading-relaxed">
+              A alteração já foi salva localmente neste dispositivo. Você pode
+              continuar aguardando ou cancelar/sair agora.
+            </p>
+          </div>
+        )}
+
+        {canCancelOrExit ? (
+          <button
+            onClick={onCancelOrExit}
+            className="w-full py-2.5 px-4 medieval-btn-crimson text-xs font-pixel font-bold uppercase tracking-wider flex items-center justify-center gap-2"
+          >
+            <X className="w-4 h-4" />
+            <span>{error ? 'Fechar / Sair' : 'Cancelar / Sair'}</span>
+          </button>
+        ) : (
+          <div className="text-center text-[11px] text-[#a38960] italic">
+            Esta janela fechará automaticamente assim que o salvamento for
+            confirmado.
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};
+
 export const CloudSyncAutoModal: React.FC<{
   onWorldsUpdated?: () => void;
 }> = ({ onWorldsUpdated }) => {
@@ -370,6 +513,7 @@ export const CloudSyncAutoModal: React.FC<{
   const [quotaInfo, setQuotaInfo] = useState<FirestoreQuotaResetInfo>(() =>
     getFirestoreQuotaResetInfo()
   );
+  const [elapsedSec, setElapsedSec] = useState(0);
   const [dismissedQuotaAlert, setDismissedQuotaAlert] = useState(false);
   const wasReconcilingRef = useRef<boolean>(snap.reconciliation.active);
 
@@ -391,7 +535,7 @@ export const CloudSyncAutoModal: React.FC<{
     });
     const timer = window.setInterval(() => {
       setQuotaInfo(getFirestoreQuotaResetInfo());
-    }, 30000);
+    }, 15000);
     return () => {
       unsub();
       unsubQuota();
@@ -399,18 +543,243 @@ export const CloudSyncAutoModal: React.FC<{
     };
   }, [onWorldsUpdated]);
 
-  const hasErrorOrQuota =
-    quotaInfo.isExhausted ||
+  // Track elapsed time while the login reconciliation modal is active
+  useEffect(() => {
+    if (!snap.reconciliation.showModal || !snap.reconciliation.active) {
+      setElapsedSec(0);
+      return;
+    }
+    setElapsedSec(0);
+    const interval = window.setInterval(() => {
+      setElapsedSec((prev) => prev + 1);
+    }, 1000);
+    return () => window.clearInterval(interval);
+  }, [snap.reconciliation.showModal, snap.reconciliation.active]);
+
+  const rec = snap.reconciliation;
+  const tp = snap.transferProgress;
+
+  const worldErrors = Object.values(snap.worldSyncStates).filter(
+    (st) => st.detailedStatus === 'SYNC_ERROR' && st.error
+  );
+
+  const hasSpecificError =
+    rec.hasErrors ||
     snap.syncStatus === 'ERROR' ||
-    snap.reconciliation.hasErrors;
+    quotaInfo.isExhausted ||
+    worldErrors.length > 0;
 
-  if (hasErrorOrQuota && !dismissedQuotaAlert) {
-    const errorMessage = quotaInfo.isExhausted
-      ? quotaInfo.errorReason
-      : snap.reconciliation.errorSummary ||
-        snap.statusMessage ||
-        'Limite ou falha interna na sincronização com a nuvem.';
+  const specificErrorText =
+    rec.errorSummary ||
+    worldErrors[0]?.error ||
+    (quotaInfo.isExhausted ? quotaInfo.errorReason : null) ||
+    (snap.syncStatus === 'ERROR' ? snap.statusMessage : null);
 
+  // 1. Full Blocking Login & Account Synchronization Modal
+  if (rec.showModal && !rec.dismissedByUser) {
+    const isTakingTooLong = elapsedSec >= 12;
+    const allowCancelOrClose =
+      !rec.active || hasSpecificError || isTakingTooLong;
+    const pct = Math.min(100, Math.max(2, rec.progressPercent || 0));
+
+    return (
+      <div className="fixed inset-0 z-[90] bg-black/85 backdrop-blur-sm flex items-center justify-center p-3 sm:p-4">
+        <div
+          className="w-full max-w-lg medieval-panel border-2 border-[#8c6d46] bg-[#160e09] p-4 sm:p-5 space-y-4 shadow-2xl"
+          onClick={(e) => e.stopPropagation()}
+        >
+          {/* Header */}
+          <div className="flex items-center justify-between gap-3 border-b-2 border-[#3d2616] pb-3">
+            <div className="flex items-center gap-3 min-w-0">
+              <div className="w-10 h-10 bg-[#2a1b10] border-2 border-amber-500/60 flex items-center justify-center shrink-0">
+                {hasSpecificError ? (
+                  <AlertTriangle className="w-5 h-5 text-amber-400" />
+                ) : rec.active ? (
+                  <RefreshCw className="w-5 h-5 text-amber-400 animate-spin" />
+                ) : (
+                  <CheckCircle2 className="w-5 h-5 text-emerald-400" />
+                )}
+              </div>
+              <div className="min-w-0">
+                <h2 className="font-pixel text-xs sm:text-sm font-bold text-amber-300 uppercase tracking-wider">
+                  Sincronizando Conta e Mundos
+                </h2>
+                <p className="text-[11px] text-[#c4ab7d] truncate">
+                  Reconciliação completa entre o dispositivo local e a nuvem
+                </p>
+              </div>
+            </div>
+            {rec.active && (
+              <span className="text-[11px] font-mono text-amber-300/90 shrink-0">
+                {elapsedSec}s
+              </span>
+            )}
+          </div>
+
+          {/* Main Process + Progress Bar + Subprocess */}
+          <div className="medieval-inset p-3.5 sm:p-4 space-y-3 bg-[#120b07] border border-[#4a301e]">
+            <div className="flex items-center justify-between gap-2">
+              <div className="text-xs sm:text-sm font-bold text-amber-200">
+                Processo ({rec.stageNumber} de 9): {rec.stageLabel}
+              </div>
+              <div className="font-pixel text-xs sm:text-sm font-bold text-emerald-400 shrink-0">
+                {pct}%
+              </div>
+            </div>
+
+            {/* Progress Bar */}
+            <div className="w-full h-3 bg-[#0a0604] border border-[#5c3c24] overflow-hidden p-0.5">
+              <div
+                className={`h-full transition-all duration-300 ${
+                  hasSpecificError
+                    ? 'bg-gradient-to-r from-amber-500 to-red-500'
+                    : 'bg-gradient-to-r from-amber-500 via-yellow-400 to-emerald-400'
+                }`}
+                style={{ width: `${pct}%` }}
+              />
+            </div>
+
+            {/* Subprocess Detail */}
+            <div className="space-y-1 pt-0.5">
+              <div className="text-xs text-sky-300 font-semibold leading-snug">
+                {rec.microDetail || 'Iniciando verificação da conta...'}
+              </div>
+
+              {tp && tp.phase !== 'IDLE' && tp.phase !== 'COMPLETED' && (
+                <div className="text-[11px] text-[#d5c3a1] font-mono bg-[#1a110b] px-2.5 py-1.5 border border-[#3d2616] flex flex-wrap items-center justify-between gap-2">
+                  <span>
+                    Mundo: <strong>{tp.worldName || 'Mundo'}</strong>
+                  </span>
+                  <span>
+                    Pacotes: <strong>{tp.chunksUploaded}</strong> /{' '}
+                    <strong>{Math.max(1, tp.chunksTotal)}</strong>
+                  </span>
+                  {tp.transferSpeedBytesPerSec > 0 && (
+                    <span className="text-emerald-400">
+                      {tp.transferSpeedBytesPerSec >= 1024 * 1024
+                        ? `${(
+                            tp.transferSpeedBytesPerSec /
+                            (1024 * 1024)
+                          ).toFixed(2)} MB/s`
+                        : `${Math.max(
+                            1,
+                            Math.round(tp.transferSpeedBytesPerSec / 1024)
+                          )} KB/s`}
+                    </span>
+                  )}
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Telemetry Counters */}
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-center">
+            <div className="medieval-inset p-2.5 bg-[#120b07]">
+              <div className="text-[10px] text-[#c4ab7d] uppercase">
+                Mundos Locais
+              </div>
+              <div className="font-pixel text-xs font-bold text-[#f3e5c8] mt-1">
+                {snap.diagnostics.localWorldsCount}
+              </div>
+            </div>
+            <div className="medieval-inset p-2.5 bg-[#120b07]">
+              <div className="text-[10px] text-[#c4ab7d] uppercase">
+                Mundos Nuvem
+              </div>
+              <div className="font-pixel text-xs font-bold text-sky-400 mt-1">
+                {Math.max(
+                  snap.diagnostics.cloudWorldsCount,
+                  rec.worldsIdentifiedInCloud
+                )}
+              </div>
+            </div>
+            <div className="medieval-inset p-2.5 bg-[#120b07]">
+              <div className="text-[10px] text-[#c4ab7d] uppercase">
+                Baixados
+              </div>
+              <div className="font-pixel text-xs font-bold text-amber-400 mt-1">
+                {snap.diagnostics.downloadedWorldsCount}
+              </div>
+            </div>
+            <div className="medieval-inset p-2.5 bg-[#120b07]">
+              <div className="text-[10px] text-[#c4ab7d] uppercase">
+                Sincronizados
+              </div>
+              <div className="font-pixel text-xs font-bold text-emerald-400 mt-1">
+                {snap.diagnostics.syncedWorldsCount}
+              </div>
+            </div>
+          </div>
+
+          {/* Specific Error Box if any error occurred */}
+          {hasSpecificError && specificErrorText && (
+            <div className="p-3 bg-red-950/90 border-2 border-red-500/70 space-y-2 text-xs">
+              <div className="flex items-start gap-2">
+                <AlertTriangle className="w-4 h-4 text-red-400 shrink-0 mt-0.5" />
+                <div className="space-y-1">
+                  <div className="font-pixel text-[10px] font-bold text-red-300 uppercase">
+                    Erro Específico na Sincronização
+                  </div>
+                  <div className="text-red-100 leading-relaxed">
+                    {specificErrorText}
+                  </div>
+                </div>
+              </div>
+              {quotaInfo.isExhausted && (
+                <div className="p-2 bg-[#140c07] border border-amber-500/40 flex items-center gap-2 text-[11px] text-amber-200">
+                  <Clock className="w-4 h-4 text-amber-400 shrink-0" />
+                  <span>
+                    A cota diária do Firebase reiniciará em{' '}
+                    <strong className="text-amber-300 font-mono">
+                      {quotaInfo.formattedCountdown}
+                    </strong>{' '}
+                    (às {quotaInfo.resetLocalTimeFormatted}).
+                  </span>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Timeout notice if taking > 12s */}
+          {!hasSpecificError && rec.active && isTakingTooLong && (
+            <div className="p-2.5 bg-amber-950/80 border border-amber-500/60 text-[11px] text-amber-200">
+              A sincronização está demorando mais que o esperado ({elapsedSec}
+              s). Você pode aguardar a conclusão ou cancelar/sair para continuar
+              com os dados já carregados.
+            </div>
+          )}
+
+          {/* Non-minimizable enforcement: only show Cancel/Close when error, timeout, or finished */}
+          {allowCancelOrClose ? (
+            <div className="pt-1">
+              <button
+                onClick={() => {
+                  firebaseCloudSync.forceCancelReconciliation();
+                  onWorldsUpdated?.();
+                }}
+                className="w-full py-2.5 px-4 medieval-btn-crimson text-xs font-pixel font-bold uppercase tracking-wider flex items-center justify-center gap-2"
+              >
+                <X className="w-4 h-4" />
+                <span>
+                  {!rec.active
+                    ? 'Fechar e Continuar'
+                    : 'Cancelar / Continuar com Mundos Locais'}
+                </span>
+              </button>
+            </div>
+          ) : (
+            <div className="text-center text-[11px] text-[#a38960] italic pt-1">
+              Sincronização obrigatória de login em andamento. Esta tela fechará
+              automaticamente ao concluir (100%).
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  // 2. Non-blocking Quota Alert Banner when not in active login modal
+  if (hasSpecificError && !dismissedQuotaAlert && quotaInfo.isExhausted) {
     return (
       <div className="fixed bottom-3 right-3 z-40 max-w-sm">
         <div className="medieval-panel p-3 border-2 border-amber-500/80 bg-[#1a110b]/95 shadow-2xl space-y-1.5">
@@ -428,7 +797,7 @@ export const CloudSyncAutoModal: React.FC<{
             </button>
           </div>
           <p className="text-[11px] text-[#f3e5c8] leading-snug">
-            <strong>Erro:</strong> {errorMessage}
+            <strong>Erro:</strong> {quotaInfo.errorReason}
           </p>
           <p className="text-[11px] text-amber-200 leading-snug flex items-center gap-1.5 pt-0.5">
             <Clock className="w-3.5 h-3.5 text-amber-400 shrink-0" />
@@ -445,16 +814,5 @@ export const CloudSyncAutoModal: React.FC<{
     );
   }
 
-  if (!snap.reconciliation.active) return null;
-
-  return (
-    <div className="fixed bottom-3 right-3 z-40 pointer-events-none">
-      <div className="medieval-panel px-3 py-2 flex items-center gap-2 border border-amber-500/40 bg-[#1a110b]/95 shadow-lg">
-        <RefreshCw className="w-3.5 h-3.5 text-amber-400 animate-spin shrink-0" />
-        <span className="text-[11px] font-semibold text-[#f3e5c8]">
-          Sincronizando dados da conta...
-        </span>
-      </div>
-    </div>
-  );
+  return null;
 };

@@ -19,7 +19,7 @@ import {
   WorldSaveData,
 } from '../core/types';
 import { WorldManager } from '../world/WorldManager';
-import { auth } from '../../firebase';
+import { auth, updateProfile } from '../../firebase';
 import { firebaseCloudSync } from './FirebaseCloudSync';
 
 const INDEX_KEY = 'wildborn_worlds_index_v1';
@@ -1089,9 +1089,10 @@ export class SaveManager {
     };
     const settings = this.loadSettings();
     const slotsState = this.getAppearanceSlots();
+    const now = Date.now();
     const updatedSlots = slotsState.slots.map((s, idx) =>
       idx === slotsState.activeIndex
-        ? { ...s, appearance: { ...updated }, updatedAt: Date.now() }
+        ? { ...s, appearance: { ...updated }, updatedAt: now }
         : s
     );
     this.saveSettings({
@@ -1099,6 +1100,7 @@ export class SaveManager {
       accountAppearance: updated,
       appearanceSlots: updatedSlots,
       activeAppearanceSlotIndex: slotsState.activeIndex,
+      appearanceUpdatedAt: now,
     });
     // Also update any cached guest profiles so online sessions reflect the universal appearance
     try {
@@ -1227,6 +1229,7 @@ export class SaveManager {
       activeAppearanceSlotIndex: clamped,
       accountAppearance: { ...chosen },
       appearanceSlots: slots,
+      appearanceUpdatedAt: Date.now(),
     });
     void firebaseCloudSync.syncProfileAppearanceAndSettings();
     return { ...chosen };
@@ -1239,16 +1242,18 @@ export class SaveManager {
     const clamped = Math.max(0, Math.min(4, Math.floor(slotIndex)));
     const { slots, activeIndex } = this.getAppearanceSlots();
     const cleanName = newName.trim().slice(0, 22) || `Aparência ${clamped + 1}`;
+    const now = Date.now();
     slots[clamped] = {
       ...slots[clamped],
       name: cleanName,
-      updatedAt: Date.now(),
+      updatedAt: now,
     };
     const settings = this.loadSettings();
     this.saveSettings({
       ...settings,
       appearanceSlots: slots,
       activeAppearanceSlotIndex: activeIndex,
+      appearanceUpdatedAt: now,
     });
     void firebaseCloudSync.syncProfileAppearanceAndSettings();
     return slots;
@@ -1288,16 +1293,22 @@ export class SaveManager {
       return this.getOrCreateGuestUsername();
     }
     const settings = this.loadSettings();
+    if (
+      settings.accountUsername &&
+      settings.accountUsername.trim() &&
+      (settings.accountUsername.trim() !== 'Aventureiro' ||
+        Boolean(settings.usernameUpdatedAt))
+    ) {
+      return settings.accountUsername.trim().slice(0, 22);
+    }
+    const authDisplay = (auth?.currentUser?.displayName || '').trim();
+    if (authDisplay) {
+      return authDisplay.slice(0, 22);
+    }
     if (settings.accountUsername && settings.accountUsername.trim()) {
       return settings.accountUsername.trim().slice(0, 22);
     }
-    const fallback = 'Aventureiro';
-    this.saveSettings({
-      ...settings,
-      accountUsername: fallback,
-      playerName: fallback,
-    });
-    return fallback;
+    return 'Aventureiro';
   }
 
   /**
@@ -1308,12 +1319,21 @@ export class SaveManager {
       return this.getOrCreateGuestUsername();
     }
     const clean = newUsername.trim().slice(0, 22) || 'Aventureiro';
+    const now = Date.now();
     const settings = this.loadSettings();
     this.saveSettings({
       ...settings,
       accountUsername: clean,
       playerName: clean,
+      usernameUpdatedAt: now,
     });
+    try {
+      void updateProfile(auth.currentUser, { displayName: clean }).catch(
+        () => {}
+      );
+    } catch {
+      // ignore
+    }
     void firebaseCloudSync.syncProfileAppearanceAndSettings();
     return clean;
   }
@@ -1336,7 +1356,10 @@ export class SaveManager {
       return derived;
     }
     const settings = this.loadSettings();
-    if (settings.playerPublicId && /^SE-[A-Z0-9]{4}-[A-Z0-9]{4}$/.test(settings.playerPublicId)) {
+    if (
+      settings.playerPublicId &&
+      /^SE-[A-Z0-9]{4}-[A-Z0-9]{4}$/.test(settings.playerPublicId)
+    ) {
       return settings.playerPublicId;
     }
     const localSeed = getOrCreateLocalDevicePlayerUid();
@@ -1348,18 +1371,107 @@ export class SaveManager {
     return derived;
   }
 
-  public static getFriendsList(): FriendProfileEntry[] {
+  public static getRemovedFriendIds(): Set<string> {
     const settings = this.loadSettings();
-    return Array.isArray(settings.friendsList) ? settings.friendsList : [];
+    return new Set(
+      Array.isArray(settings.removedFriendIds)
+        ? settings.removedFriendIds.map((id) =>
+            String(id || '')
+              .trim()
+              .toUpperCase()
+          )
+        : []
+    );
   }
 
-  public static setFriendsList(friends: FriendProfileEntry[]): void {
+  public static markFriendRemoved(targetPublicId: string): void {
+    const clean = String(targetPublicId || '')
+      .trim()
+      .toUpperCase();
+    if (!clean) return;
     const settings = this.loadSettings();
+    const removedSet = new Set(
+      Array.isArray(settings.removedFriendIds)
+        ? settings.removedFriendIds.map((id) =>
+            String(id || '')
+              .trim()
+              .toUpperCase()
+          )
+        : []
+    );
+    removedSet.add(clean);
+    const filteredFriends = (
+      Array.isArray(settings.friendsList) ? settings.friendsList : []
+    ).filter(
+      (f) =>
+        String(f?.playerPublicId || '')
+          .trim()
+          .toUpperCase() !== clean
+    );
     this.saveSettings({
       ...settings,
-      friendsList: friends,
+      friendsList: filteredFriends,
+      removedFriendIds: Array.from(removedSet),
+      friendsUpdatedAt: Date.now(),
     });
-    void firebaseCloudSync.syncProfileAppearanceAndSettings();
+  }
+
+  public static clearFriendRemoved(targetPublicId: string): void {
+    const clean = String(targetPublicId || '')
+      .trim()
+      .toUpperCase();
+    if (!clean) return;
+    const settings = this.loadSettings();
+    const removedSet = new Set(
+      Array.isArray(settings.removedFriendIds)
+        ? settings.removedFriendIds.map((id) =>
+            String(id || '')
+              .trim()
+              .toUpperCase()
+          )
+        : []
+    );
+    if (removedSet.has(clean)) {
+      removedSet.delete(clean);
+      this.saveSettings({
+        ...settings,
+        removedFriendIds: Array.from(removedSet),
+      });
+    }
+  }
+
+  public static getFriendsList(): FriendProfileEntry[] {
+    const settings = this.loadSettings();
+    const removed = this.getRemovedFriendIds();
+    const list = Array.isArray(settings.friendsList) ? settings.friendsList : [];
+    return list.filter(
+      (f) =>
+        f &&
+        f.playerPublicId &&
+        !removed.has(String(f.playerPublicId).trim().toUpperCase())
+    );
+  }
+
+  public static setFriendsList(
+    friends: FriendProfileEntry[],
+    skipSyncTrigger = false
+  ): void {
+    const settings = this.loadSettings();
+    const removed = this.getRemovedFriendIds();
+    const cleanList = (Array.isArray(friends) ? friends : []).filter(
+      (f) =>
+        f &&
+        f.playerPublicId &&
+        !removed.has(String(f.playerPublicId).trim().toUpperCase())
+    );
+    this.saveSettings({
+      ...settings,
+      friendsList: cleanList,
+      friendsUpdatedAt: Date.now(),
+    });
+    if (!skipSyncTrigger) {
+      void firebaseCloudSync.syncProfileAppearanceAndSettings();
+    }
   }
 
   public static getDeletedWorldIds(): Set<string> {

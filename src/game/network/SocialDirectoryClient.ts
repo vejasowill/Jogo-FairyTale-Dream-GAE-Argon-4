@@ -7,6 +7,8 @@ import {
 import { SaveManager } from '../persistence/SaveManager';
 
 const SOCIAL_CACHE_STORAGE_KEY = 'wildborn_social_directory_cache_v2';
+const ACTIVE_WORLD_SESSION_STORAGE_KEY =
+  'wildborn_active_world_session_lock_v1';
 const P2P_SOCIAL_ID_PREFIX = 'wildborn-social-id-';
 const P2P_SOCIAL_HUB_IDS = [
   'wildborn-social-hub-v1-0',
@@ -27,6 +29,16 @@ export interface SocialSearchResultEntry {
   inviteCode?: string | null;
 }
 
+export interface ActiveWorldSessionLockInfo {
+  playerPublicId: string;
+  sessionId: string;
+  worldId: string;
+  worldName: string;
+  deviceLabel: string;
+  startedAt: number;
+  updatedAt: number;
+}
+
 interface CachedSocialProfile {
   playerPublicId: string;
   username: string;
@@ -35,6 +47,7 @@ interface CachedSocialProfile {
   worldId?: string | null;
   worldName?: string | null;
   inviteCode?: string | null;
+  sessionId?: string | null;
   updatedAt: number;
 }
 
@@ -70,9 +83,32 @@ class SocialDirectoryClientService {
   private incomingJoinRequests = new Map<string, WorldJoinRequestInfo>();
   private outgoingJoinRequests = new Map<string, WorldJoinRequestInfo>();
   private p2pInitialized = false;
+  private readonly clientSessionId: string;
 
   constructor() {
+    this.clientSessionId = `sess_${Date.now()}_${Math.random()
+      .toString(36)
+      .slice(2, 9)}`;
     this.loadLocalCache();
+    if (typeof window !== 'undefined') {
+      window.addEventListener('beforeunload', () => {
+        this.releaseLocalTabWorldLockSync();
+      });
+    }
+  }
+
+  public getClientSessionId(): string {
+    return this.clientSessionId;
+  }
+
+  public getDeviceLabel(): string {
+    if (typeof navigator === 'undefined') return 'Navegador Web';
+    const ua = navigator.userAgent || '';
+    if (/Android/i.test(ua)) return 'Dispositivo Android';
+    if (/iPhone|iPad|iPod/i.test(ua)) return 'Dispositivo iOS';
+    if (/Windows/i.test(ua)) return 'Computador Windows';
+    if (/Mac/i.test(ua)) return 'Computador Mac';
+    return 'Navegador Web';
   }
 
   private loadLocalCache(): void {
@@ -116,7 +152,12 @@ class SocialDirectoryClientService {
 
     this.directoryCache.set(normId, {
       playerPublicId: normId,
-      username: cleanUsername,
+      username:
+        cleanUsername === 'Aventureiro' &&
+        existing?.username &&
+        existing.username !== 'Aventureiro'
+          ? existing.username
+          : cleanUsername,
       isOnline:
         typeof entry.isOnline === 'boolean'
           ? entry.isOnline
@@ -135,6 +176,10 @@ class SocialDirectoryClientService {
         entry.inviteCode !== undefined
           ? entry.inviteCode
           : existing?.inviteCode ?? null,
+      sessionId:
+        entry.sessionId !== undefined
+          ? entry.sessionId
+          : existing?.sessionId ?? null,
       updatedAt: entry.updatedAt || Date.now(),
     });
   }
@@ -168,7 +213,8 @@ class SocialDirectoryClientService {
     baseUrl: string,
     pathAndQuery: string,
     init?: RequestInit,
-    timeoutMs = 5500
+    timeoutMs = 5500,
+    allowErrorJson = false
   ): Promise<any | null> {
     const controller = new AbortController();
     const timer = window.setTimeout(() => controller.abort(), timeoutMs);
@@ -178,7 +224,7 @@ class SocialDirectoryClientService {
         ...init,
         signal: controller.signal,
       });
-      if (!res.ok) return null;
+      if (!res.ok && !allowErrorJson) return null;
       const contentType = (res.headers.get('content-type') || '').toLowerCase();
       if (!contentType.includes('application/json')) {
         return null;
@@ -211,6 +257,7 @@ class SocialDirectoryClientService {
       worldId: presence?.worldId ?? null,
       worldName: presence?.worldName ?? null,
       inviteCode: presence?.inviteCode ?? null,
+      sessionId: this.clientSessionId,
       updatedAt: Date.now(),
     };
     this.upsertDirectoryEntry(this.localPresence);
@@ -318,7 +365,6 @@ class SocialDirectoryClientService {
   private connectOrHostDirectoryHub(): void {
     for (const hubId of P2P_SOCIAL_HUB_IDS) {
       try {
-        // Attempt to claim hub ID if unoccupied; if already taken, connect as client!
         const candidateHub = new Peer(hubId);
         candidateHub.on('open', () => {
           this.hubHostPeer = candidateHub;
@@ -426,76 +472,110 @@ class SocialDirectoryClientService {
 
   private probePeerByPublicId(
     targetPublicId: string,
-    timeoutMs = 2400
+    timeoutMs = 2400,
+    allowSelfProbe = false
   ): Promise<CachedSocialProfile | null> {
     const normTarget = normalizeSocialPlayerId(targetPublicId);
     if (
       !normTarget ||
-      !this.personalPeer ||
-      this.personalPeer.destroyed ||
-      normTarget === this.personalPeerPublicId
+      (!allowSelfProbe && normTarget === this.personalPeerPublicId)
     ) {
       return Promise.resolve(null);
     }
 
+    // If probing self (to detect another open tab/device on the same account), create a temporary probe peer
+    const useTempPeer =
+      allowSelfProbe || !this.personalPeer || this.personalPeer.destroyed;
+
     return new Promise((resolve) => {
       let settled = false;
+      let tempPeer: Peer | null = null;
       const finish = (val: CachedSocialProfile | null) => {
         if (settled) return;
         settled = true;
+        if (tempPeer) {
+          try {
+            tempPeer.destroy();
+          } catch {
+            // ignore
+          }
+        }
         resolve(val);
       };
 
       const timer = window.setTimeout(() => finish(null), timeoutMs);
-      try {
-        const conn = this.personalPeer!.connect(PublicIdToPeerId(normTarget), {
-          reliable: true,
-        });
-        conn.on('open', () => {
-          conn.send({
-            type: 'social_profile_probe',
-            senderProfile: this.localPresence,
+      const connectWithPeer = (activePeer: Peer) => {
+        try {
+          const conn = activePeer.connect(PublicIdToPeerId(normTarget), {
+            reliable: true,
           });
-        });
-        conn.on('data', (msg: any) => {
-          if (msg?.type === 'social_profile_reply' && msg.profile) {
+          conn.on('open', () => {
+            conn.send({
+              type: 'social_profile_probe',
+              senderProfile: this.localPresence,
+            });
+          });
+          conn.on('data', (msg: any) => {
+            if (msg?.type === 'social_profile_reply' && msg.profile) {
+              window.clearTimeout(timer);
+              this.upsertDirectoryEntry(msg.profile);
+              if (Array.isArray(msg.directory)) {
+                for (const d of msg.directory) this.upsertDirectoryEntry(d);
+              }
+              this.saveLocalCache();
+              try {
+                conn.close();
+              } catch {
+                // ignore
+              }
+              finish(msg.profile);
+            }
+          });
+          conn.on('error', () => {
             window.clearTimeout(timer);
-            this.upsertDirectoryEntry(msg.profile);
-            if (Array.isArray(msg.directory)) {
-              for (const d of msg.directory) this.upsertDirectoryEntry(d);
-            }
-            this.saveLocalCache();
-            try {
-              conn.close();
-            } catch {
-              // ignore
-            }
-            finish(this.directoryCache.get(normTarget) || msg.profile);
-          }
-        });
-        conn.on('error', () => {
+            finish(null);
+          });
+        } catch {
           window.clearTimeout(timer);
           finish(null);
-        });
-      } catch {
-        window.clearTimeout(timer);
-        finish(null);
+        }
+      };
+
+      if (useTempPeer) {
+        try {
+          tempPeer = new Peer();
+          tempPeer.on('open', () => {
+            if (tempPeer) connectWithPeer(tempPeer);
+          });
+          tempPeer.on('error', () => {
+            window.clearTimeout(timer);
+            finish(null);
+          });
+        } catch {
+          window.clearTimeout(timer);
+          finish(null);
+        }
+      } else {
+        connectWithPeer(this.personalPeer!);
       }
     });
   }
 
   /**
    * Synchronizes the local player's profile with all reachable social backends + P2P mesh,
-   * and pulls the latest directory of registered players so search by ID and Username is instant.
+   * adopts newer remote username/appearance/friends tombstones, and returns server confirmation.
    */
   public async syncProfile(payload: {
     uid: string | null;
     playerPublicId: string;
     username?: string;
+    usernameUpdatedAt?: number;
     appearanceSlots?: any[];
     activeAppearanceSlotIndex?: number;
     accountAppearance?: any;
+    appearanceUpdatedAt?: number;
     friendsList?: FriendProfileEntry[];
+    removedFriendIds?: string[];
     deletedWorldIds?: string[];
     presence?: {
       isOnline: boolean;
@@ -506,17 +586,38 @@ class SocialDirectoryClientService {
     };
   }): Promise<{
     ok: boolean;
+    confirmedByServer: boolean;
     profile?: any;
     friendsStatus?: FriendLiveStatus[];
   }> {
+    const localSettings = SaveManager.loadSettings();
     const resolvedUsername =
       payload.username || SaveManager.getEffectiveUsername();
+    const enrichedPayload = {
+      ...payload,
+      username: resolvedUsername,
+      usernameUpdatedAt:
+        payload.usernameUpdatedAt ?? localSettings.usernameUpdatedAt ?? 0,
+      appearanceUpdatedAt:
+        payload.appearanceUpdatedAt ?? localSettings.appearanceUpdatedAt ?? 0,
+      removedFriendIds:
+        payload.removedFriendIds ??
+        Array.from(SaveManager.getRemovedFriendIds()),
+      presence: payload.presence
+        ? {
+            ...payload.presence,
+            sessionId: this.clientSessionId,
+          }
+        : undefined,
+    };
+
     this.ensureP2PSocialMesh(payload.playerPublicId, resolvedUsername, {
       isOnline: payload.presence?.isOnline ?? true,
       inOpenWorld: payload.presence?.inOpenWorld ?? false,
       worldId: payload.presence?.worldId ?? null,
       worldName: payload.presence?.worldName ?? null,
       inviteCode: payload.presence?.inviteCode ?? null,
+      sessionId: this.clientSessionId,
     });
 
     const baseUrls = this.getApiCandidateBaseUrls();
@@ -525,7 +626,7 @@ class SocialDirectoryClientService {
         this.fetchJsonEndpoint(base, '/api/social/sync-profile', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(payload),
+          body: JSON.stringify(enrichedPayload),
         })
       )
     );
@@ -548,18 +649,117 @@ class SocialDirectoryClientService {
       })
     );
 
-    const valid = responses.find((r) => r && r.ok);
-    if (valid) {
-      if (Array.isArray(valid.friendsStatus)) {
-        for (const st of valid.friendsStatus) {
+    const validResponses = responses.filter((r) => r && r.ok && r.profile);
+    if (validResponses.length > 0) {
+      // Pick the profile with the most recent usernameUpdatedAt / updatedAt
+      validResponses.sort(
+        (a, b) =>
+          (b.profile?.usernameUpdatedAt || b.profile?.updatedAt || 0) -
+          (a.profile?.usernameUpdatedAt || a.profile?.updatedAt || 0)
+      );
+      const best = validResponses[0];
+      const remoteProf = best.profile;
+
+      // Reconcile remote profile into local settings if remote has newer data
+      const latestSettings = SaveManager.loadSettings();
+      let settingsChanged = false;
+      const patch: Record<string, any> = {};
+
+      if (
+        remoteProf?.username &&
+        remoteProf.username !== 'Aventureiro' &&
+        !String(remoteProf.username).startsWith('Jogador ')
+      ) {
+        const remoteNameTs = remoteProf.usernameUpdatedAt || 0;
+        const localNameTs = latestSettings.usernameUpdatedAt || 0;
+        const localIsUnset =
+          !latestSettings.accountUsername ||
+          latestSettings.accountUsername === 'Aventureiro';
+        if (remoteNameTs > localNameTs || localIsUnset) {
+          patch.accountUsername = remoteProf.username;
+          patch.playerName = remoteProf.username;
+          patch.usernameUpdatedAt = Math.max(remoteNameTs, localNameTs, 1);
+          settingsChanged = true;
+        }
+      }
+
+      if (
+        Array.isArray(remoteProf?.appearanceSlots) &&
+        remoteProf.appearanceSlots.length > 0
+      ) {
+        const remoteAppTs = remoteProf.appearanceUpdatedAt || 0;
+        const localAppTs = latestSettings.appearanceUpdatedAt || 0;
+        if (remoteAppTs > localAppTs || !latestSettings.appearanceSlots) {
+          patch.appearanceSlots = remoteProf.appearanceSlots;
+          if (typeof remoteProf.activeAppearanceSlotIndex === 'number') {
+            patch.activeAppearanceSlotIndex =
+              remoteProf.activeAppearanceSlotIndex;
+          }
+          if (remoteProf.accountAppearance) {
+            patch.accountAppearance = remoteProf.accountAppearance;
+          }
+          patch.appearanceUpdatedAt = Math.max(remoteAppTs, localAppTs);
+          settingsChanged = true;
+        }
+      }
+
+      if (Array.isArray(remoteProf?.removedFriendIds)) {
+        const remSet = new Set<string>(SaveManager.getRemovedFriendIds());
+        for (const rId of remoteProf.removedFriendIds) {
+          const normR = normalizeSocialPlayerId(rId);
+          if (normR) remSet.add(normR);
+        }
+        patch.removedFriendIds = Array.from(remSet);
+        settingsChanged = true;
+      }
+
+      if (Array.isArray(remoteProf?.friendsList)) {
+        const remSet = new Set<string>(
+          patch.removedFriendIds || SaveManager.getRemovedFriendIds()
+        );
+        const fMap = new Map<string, FriendProfileEntry>();
+        for (const f of SaveManager.getFriendsList()) {
+          const normF = normalizeSocialPlayerId(f.playerPublicId);
+          if (normF && !remSet.has(normF)) fMap.set(normF, f);
+        }
+        for (const rf of remoteProf.friendsList) {
+          if (rf && rf.playerPublicId) {
+            const normF = normalizeSocialPlayerId(rf.playerPublicId);
+            if (normF && !remSet.has(normF)) {
+              fMap.set(normF, {
+                playerPublicId: normF,
+                username: rf.username || 'Aventureiro',
+                addedAt: rf.addedAt || Date.now(),
+              });
+            }
+          }
+        }
+        patch.friendsList = Array.from(fMap.values());
+        settingsChanged = true;
+      }
+
+      if (settingsChanged) {
+        SaveManager.saveSettings({
+          ...latestSettings,
+          ...patch,
+        });
+      }
+
+      if (Array.isArray(best.friendsStatus)) {
+        for (const st of best.friendsStatus) {
           this.upsertDirectoryEntry(st);
         }
         this.saveLocalCache();
       }
-      return valid;
+      return {
+        ok: true,
+        confirmedByServer: true,
+        profile: remoteProf,
+        friendsStatus: best.friendsStatus,
+      };
     }
 
-    return { ok: true };
+    return { ok: true, confirmedByServer: false };
   }
 
   /**
@@ -713,19 +913,33 @@ class SocialDirectoryClientService {
       };
     }
 
+    // Clear target from removedFriendIds tombstones since user is explicitly adding them
+    SaveManager.clearFriendRemoved(targetNorm);
+
+    const cachedTargetBefore = this.directoryCache.get(targetNorm);
+    const resolvedHint =
+      payload.targetUsername || cachedTargetBefore?.username || '';
+
     const baseUrls = this.getApiCandidateBaseUrls();
     const [httpResponses, p2pProfile] = await Promise.all([
       Promise.all(
         baseUrls.map((base) =>
-          this.fetchJsonEndpoint(base, '/api/social/friends/add', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              ...payload,
-              myPublicId: myNorm,
-              targetPublicId: targetNorm,
-            }),
-          })
+          this.fetchJsonEndpoint(
+            base,
+            '/api/social/friends/add',
+            {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                ...payload,
+                myPublicId: myNorm,
+                targetPublicId: targetNorm,
+                targetUsername: resolvedHint,
+              }),
+            },
+            5500,
+            true
+          )
         )
       ),
       this.probePeerByPublicId(targetNorm, 1800),
@@ -735,8 +949,10 @@ class SocialDirectoryClientService {
       this.upsertDirectoryEntry(p2pProfile);
     }
 
+    let serverConfirmed = false;
     for (const res of httpResponses) {
       if (res?.ok && Array.isArray(res.friendsList)) {
+        serverConfirmed = true;
         for (const f of res.friendsList) {
           this.upsertDirectoryEntry(f);
         }
@@ -753,19 +969,30 @@ class SocialDirectoryClientService {
       payload.targetUsername ||
       p2pProfile?.username ||
       cachedTarget?.username ||
-      `Jogador ${targetNorm.slice(-4)}`;
+      '';
+
+    if (!resolvedUsername && !serverConfirmed) {
+      return {
+        ok: false,
+        error:
+          'Jogador não encontrado na busca. Pesquise pelo ID ou Username e selecione o jogador na lista de resultados.',
+        friendsList: SaveManager.getFriendsList(),
+        friendsStatus: [],
+      };
+    }
 
     this.upsertDirectoryEntry({
       playerPublicId: targetNorm,
-      username: resolvedUsername,
+      username: resolvedUsername || 'Aventureiro',
     });
     this.saveLocalCache();
 
-    // Merge into local friendsList
+    const remSet = new Set<string>(SaveManager.getRemovedFriendIds());
     const currentFriends = SaveManager.getFriendsList();
     const friendMap = new Map<string, FriendProfileEntry>();
     for (const f of currentFriends) {
       const fNorm = normalizeSocialPlayerId(f.playerPublicId);
+      if (remSet.has(fNorm)) continue;
       const cached = this.directoryCache.get(fNorm);
       friendMap.set(fNorm, {
         playerPublicId: fNorm,
@@ -774,9 +1001,10 @@ class SocialDirectoryClientService {
       });
     }
     for (const res of httpResponses) {
-      if (Array.isArray(res?.friendsList)) {
+      if (res?.ok && Array.isArray(res?.friendsList)) {
         for (const f of res.friendsList) {
           const fNorm = normalizeSocialPlayerId(f.playerPublicId);
+          if (remSet.has(fNorm)) continue;
           const cached = this.directoryCache.get(fNorm);
           friendMap.set(fNorm, {
             playerPublicId: fNorm,
@@ -788,7 +1016,7 @@ class SocialDirectoryClientService {
     }
     friendMap.set(targetNorm, {
       playerPublicId: targetNorm,
-      username: resolvedUsername,
+      username: resolvedUsername || 'Aventureiro',
       addedAt: friendMap.get(targetNorm)?.addedAt || Date.now(),
     });
 
@@ -820,17 +1048,21 @@ class SocialDirectoryClientService {
     targetPublicId: string;
   }): Promise<{
     ok: boolean;
+    confirmedByServer: boolean;
     friendsList: FriendProfileEntry[];
   }> {
     const myNorm = normalizeSocialPlayerId(payload.myPublicId);
     const targetNorm = normalizeSocialPlayerId(payload.targetPublicId);
+
+    // Record permanent removal tombstone and update local list immediately
+    SaveManager.markFriendRemoved(targetNorm);
     const filtered = SaveManager.getFriendsList().filter(
       (f) => normalizeSocialPlayerId(f.playerPublicId) !== targetNorm
     );
     SaveManager.setFriendsList(filtered);
 
     const baseUrls = this.getApiCandidateBaseUrls();
-    await Promise.all(
+    const responses = await Promise.all(
       baseUrls.map((base) =>
         this.fetchJsonEndpoint(base, '/api/social/friends/remove', {
           method: 'POST',
@@ -843,7 +1075,8 @@ class SocialDirectoryClientService {
       )
     );
 
-    return { ok: true, friendsList: filtered };
+    const confirmedByServer = responses.some((r) => Boolean(r && r.ok));
+    return { ok: true, confirmedByServer, friendsList: filtered };
   }
 
   public async reportPresence(payload: {
@@ -862,18 +1095,34 @@ class SocialDirectoryClientService {
   }> {
     this.ensureP2PSocialMesh(payload.playerPublicId, payload.username, payload);
 
+    if (payload.worldId) {
+      this.writeLocalTabWorldLock(
+        payload.playerPublicId,
+        payload.worldId,
+        payload.worldName || 'Mundo'
+      );
+    }
+
     const baseUrls = this.getApiCandidateBaseUrls();
     const responses = await Promise.all(
       baseUrls.map((base) =>
         this.fetchJsonEndpoint(base, '/api/social/presence', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(payload),
+          body: JSON.stringify({
+            ...payload,
+            sessionId: this.clientSessionId,
+            deviceLabel: this.getDeviceLabel(),
+          }),
         })
       )
     );
 
-    const currentFriends = SaveManager.getFriendsList();
+    const removedSet = new Set<string>(SaveManager.getRemovedFriendIds());
+    const currentFriends = SaveManager.getFriendsList().filter(
+      (f) => !removedSet.has(normalizeSocialPlayerId(f.playerPublicId))
+    );
+
     // Also probe up to 8 friends directly via PeerJS P2P if they aren't marked online yet
     await Promise.all(
       currentFriends.slice(0, 8).map((f) =>
@@ -945,6 +1194,223 @@ class SocialDirectoryClientService {
       friendsStatus,
       pendingJoinRequests: Array.from(pendingRequestsMap.values()),
     };
+  }
+
+  private readLocalTabWorldLock(
+    myPublicId: string
+  ): ActiveWorldSessionLockInfo | null {
+    try {
+      const raw = localStorage.getItem(ACTIVE_WORLD_SESSION_STORAGE_KEY);
+      if (!raw) return null;
+      const parsed = JSON.parse(raw) as ActiveWorldSessionLockInfo;
+      if (!parsed || typeof parsed !== 'object') return null;
+      const normId = normalizeSocialPlayerId(parsed.playerPublicId || '');
+      if (normId !== normalizeSocialPlayerId(myPublicId)) return null;
+      if (Date.now() - (parsed.updatedAt || 0) > 25000) {
+        return null;
+      }
+      return parsed;
+    } catch {
+      return null;
+    }
+  }
+
+  private writeLocalTabWorldLock(
+    myPublicId: string,
+    worldId: string,
+    worldName: string
+  ): void {
+    try {
+      const normId = normalizeSocialPlayerId(myPublicId);
+      if (!normId) return;
+      const existing = this.readLocalTabWorldLock(normId);
+      const lock: ActiveWorldSessionLockInfo = {
+        playerPublicId: normId,
+        sessionId: this.clientSessionId,
+        worldId,
+        worldName: worldName || 'Mundo',
+        deviceLabel: this.getDeviceLabel(),
+        startedAt: existing?.startedAt || Date.now(),
+        updatedAt: Date.now(),
+      };
+      localStorage.setItem(
+        ACTIVE_WORLD_SESSION_STORAGE_KEY,
+        JSON.stringify(lock)
+      );
+    } catch {
+      // ignore
+    }
+  }
+
+  private releaseLocalTabWorldLockSync(): void {
+    try {
+      const raw = localStorage.getItem(ACTIVE_WORLD_SESSION_STORAGE_KEY);
+      if (!raw) return;
+      const parsed = JSON.parse(raw) as ActiveWorldSessionLockInfo;
+      if (!parsed || parsed.sessionId === this.clientSessionId) {
+        localStorage.removeItem(ACTIVE_WORLD_SESSION_STORAGE_KEY);
+      }
+    } catch {
+      // ignore
+    }
+  }
+
+  /**
+   * Verifies and acquires an exclusive active world session lock for this account (`playerPublicId`).
+   * Prevents opening any world if the same account already has a world open in another tab or device.
+   */
+  public async acquireAccountWorldSessionLock(params: {
+    playerPublicId: string;
+    worldId: string;
+    worldName: string;
+  }): Promise<{
+    ok: boolean;
+    conflict: boolean;
+    error?: string;
+    activeSession?: ActiveWorldSessionLockInfo | null;
+  }> {
+    const normId = normalizeSocialPlayerId(params.playerPublicId);
+    if (!normId) {
+      return { ok: true, conflict: false, activeSession: null };
+    }
+
+    // 1. Check cross-tab localStorage lock on the same browser
+    const localLock = this.readLocalTabWorldLock(normId);
+    if (localLock && localLock.sessionId !== this.clientSessionId) {
+      return {
+        ok: false,
+        conflict: true,
+        error: `Sua conta já está com o mundo "${localLock.worldName}" aberto em outra aba ou janela neste dispositivo. Feche o mundo na outra aba antes de abrir um mundo aqui para evitar conflito nos saves.`,
+        activeSession: localLock,
+      };
+    }
+
+    // 2. Check all HTTP social backends AND PeerJS P2P personal peer in parallel
+    const baseUrls = this.getApiCandidateBaseUrls();
+    const [httpResults, p2pSelfReply] = await Promise.all([
+      Promise.all(
+        baseUrls.map((base) =>
+          this.fetchJsonEndpoint(
+            base,
+            '/api/social/world-session',
+            {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                action: 'acquire',
+                playerPublicId: normId,
+                sessionId: this.clientSessionId,
+                worldId: params.worldId,
+                worldName: params.worldName,
+                deviceLabel: this.getDeviceLabel(),
+              }),
+            },
+            4000,
+            true
+          )
+        )
+      ),
+      this.probePeerByPublicId(normId, 1600, true),
+    ]);
+
+    // Check if any HTTP backend reported a live conflict from another sessionId
+    for (const res of httpResults) {
+      if (
+        res?.conflict &&
+        res.activeSession &&
+        res.activeSession.sessionId !== this.clientSessionId
+      ) {
+        return {
+          ok: false,
+          conflict: true,
+          error:
+            res.error ||
+            `Sua conta já está com o mundo "${
+              res.activeSession.worldName || 'Mundo'
+            }" aberto em outra sessão (${
+              res.activeSession.deviceLabel || 'Outro Dispositivo'
+            }). Feche o mundo na outra sessão antes de abrir um mundo aqui para evitar perda ou conflito nos saves.`,
+          activeSession: res.activeSession,
+        };
+      }
+    }
+
+    // Check if another P2P session for our own Public ID responded that it is inside a world
+    if (
+      p2pSelfReply &&
+      p2pSelfReply.worldId &&
+      p2pSelfReply.sessionId &&
+      p2pSelfReply.sessionId !== this.clientSessionId &&
+      Date.now() - (p2pSelfReply.updatedAt || 0) < 30000
+    ) {
+      const conflictSession: ActiveWorldSessionLockInfo = {
+        playerPublicId: normId,
+        sessionId: p2pSelfReply.sessionId,
+        worldId: p2pSelfReply.worldId,
+        worldName: p2pSelfReply.worldName || 'Mundo Ativo',
+        deviceLabel: 'Outro Dispositivo Conectado',
+        startedAt: p2pSelfReply.updatedAt || Date.now(),
+        updatedAt: p2pSelfReply.updatedAt || Date.now(),
+      };
+      return {
+        ok: false,
+        conflict: true,
+        error: `Sua conta já está com o mundo "${conflictSession.worldName}" aberto em outro dispositivo. Feche o mundo no outro dispositivo antes de abrir um mundo aqui para evitar conflito nos saves.`,
+        activeSession: conflictSession,
+      };
+    }
+
+    // Lock acquired! Persist local cross-tab lock
+    this.writeLocalTabWorldLock(normId, params.worldId, params.worldName);
+    if (this.localPresence) {
+      this.localPresence.worldId = params.worldId;
+      this.localPresence.worldName = params.worldName;
+      this.localPresence.sessionId = this.clientSessionId;
+      this.localPresence.updatedAt = Date.now();
+    }
+
+    return {
+      ok: true,
+      conflict: false,
+      activeSession: this.readLocalTabWorldLock(normId),
+    };
+  }
+
+  public async releaseAccountWorldSessionLock(
+    playerPublicId?: string
+  ): Promise<void> {
+    this.releaseLocalTabWorldLockSync();
+    if (this.localPresence) {
+      this.localPresence.worldId = null;
+      this.localPresence.worldName = null;
+      this.localPresence.inOpenWorld = false;
+      this.localPresence.inviteCode = null;
+      this.localPresence.updatedAt = Date.now();
+    }
+    const normId = normalizeSocialPlayerId(
+      playerPublicId || SaveManager.getPlayerPublicId()
+    );
+    if (!normId) return;
+
+    const baseUrls = this.getApiCandidateBaseUrls();
+    await Promise.all(
+      baseUrls.map((base) =>
+        this.fetchJsonEndpoint(
+          base,
+          '/api/social/world-session',
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              action: 'release',
+              playerPublicId: normId,
+              sessionId: this.clientSessionId,
+            }),
+          },
+          3500
+        )
+      )
+    );
   }
 
   public async sendJoinRequest(payload: {

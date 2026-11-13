@@ -1102,12 +1102,16 @@ export type HudControlLayout = Record<HudElementKey, HudElementPlacement>;
 export interface GameSettings {
   playerName?: string;
   accountUsername?: string;
+  usernameUpdatedAt?: number;
   guestUsername?: string;
   playerPublicId?: string;
   accountAppearance?: PlayerAppearance;
   appearanceSlots?: AppearancePresetSlot[];
   activeAppearanceSlotIndex?: number;
+  appearanceUpdatedAt?: number;
   friendsList?: FriendProfileEntry[];
+  removedFriendIds?: string[];
+  friendsUpdatedAt?: number;
   deletedWorldIds?: string[];
   soundEnabled: boolean;
   soundVolume: number;

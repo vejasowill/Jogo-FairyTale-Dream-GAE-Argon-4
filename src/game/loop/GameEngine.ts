@@ -564,6 +564,7 @@ export class GameEngine {
     soundManager.stopAmbientMusic();
     this.input.detach();
     this.multiplayer.disconnect(false);
+    void socialDirectoryClient.releaseAccountWorldSessionLock();
   }
 
   /**

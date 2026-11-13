@@ -46,7 +46,10 @@ import {
   WorldSaveData,
 } from '../game/core/types';
 import { MultiplayerManager } from '../game/network/MultiplayerManager';
-import { socialDirectoryClient } from '../game/network/SocialDirectoryClient';
+import {
+  ActiveWorldSessionLockInfo,
+  socialDirectoryClient,
+} from '../game/network/SocialDirectoryClient';
 import {
   CloudSyncSnapshot,
   firebaseCloudSync,
@@ -54,7 +57,11 @@ import {
 import { SaveManager } from '../game/persistence/SaveManager';
 import { spriteAtlas } from '../game/rendering/SpriteAtlas';
 import { AccountAppearanceModal } from './CharacterPetsModal';
-import { CloudAccountModal, CloudSyncAutoModal } from './CloudAccountModal';
+import {
+  BlockingSyncOperationModal,
+  CloudAccountModal,
+  CloudSyncAutoModal,
+} from './CloudAccountModal';
 import { PauseSettingsModal } from './PauseSettingsModal';
 
 interface WorldSelectScreenProps {
@@ -212,6 +219,32 @@ export const WorldSelectScreen: React.FC<WorldSelectScreenProps> = ({
   const [activeJoinRequest, setActiveJoinRequest] =
     useState<WorldJoinRequestInfo | null>(null);
 
+  // Blocking Sync Operation Modal State (for immediate-sync edits)
+  const [blockingSyncState, setBlockingSyncState] = useState<{
+    isOpen: boolean;
+    title: string;
+    processLabel: string;
+    subprocessLabel: string;
+    error: string | null;
+  }>({
+    isOpen: false,
+    title: '',
+    processLabel: '',
+    subprocessLabel: '',
+    error: null,
+  });
+
+  // Account Active World Session Conflict Modal State
+  const [activeWorldConflict, setActiveWorldConflict] = useState<{
+    isOpen: boolean;
+    message: string;
+    activeSession?: ActiveWorldSessionLockInfo | null;
+  }>({
+    isOpen: false,
+    message: '',
+    activeSession: null,
+  });
+
   const refreshLocalWorlds = useCallback(() => {
     setWorlds(SaveManager.listWorlds());
   }, []);
@@ -249,17 +282,21 @@ export const WorldSelectScreen: React.FC<WorldSelectScreenProps> = ({
   // Report presence on menu and sync profile on mount
   const syncMySocialProfileWithServer = useCallback(async () => {
     try {
+      const signedIn = Boolean(cloudSnap.user);
       const pubId = SaveManager.getPlayerPublicId(cloudSnap.user?.uid);
-      const uname = SaveManager.getEffectiveUsername(Boolean(cloudSnap.user));
+      const localSettings = SaveManager.loadSettings();
       const slotsInfo = SaveManager.getAppearanceSlots();
       const json = await socialDirectoryClient.syncProfile({
         uid: cloudSnap.user?.uid || null,
         playerPublicId: pubId,
-        username: uname,
+        username: localSettings.accountUsername || undefined,
+        usernameUpdatedAt: localSettings.usernameUpdatedAt || 0,
         appearanceSlots: slotsInfo.slots,
         activeAppearanceSlotIndex: slotsInfo.activeIndex,
         accountAppearance: SaveManager.getAccountAppearance(),
+        appearanceUpdatedAt: localSettings.appearanceUpdatedAt || 0,
         friendsList: SaveManager.getFriendsList(),
+        removedFriendIds: Array.from(SaveManager.getRemovedFriendIds()),
         deletedWorldIds: Array.from(SaveManager.getDeletedWorldIds()),
         presence: {
           isOnline: true,
@@ -270,10 +307,9 @@ export const WorldSelectScreen: React.FC<WorldSelectScreenProps> = ({
         },
       });
       if (json.ok) {
-        if (Array.isArray(json?.profile?.friendsList)) {
-          SaveManager.setFriendsList(json.profile.friendsList);
-          setFriendsList(json.profile.friendsList);
-        }
+        setMyUsername(SaveManager.getEffectiveUsername(signedIn));
+        setAccountAppearance(SaveManager.getAccountAppearance());
+        setFriendsList(SaveManager.getFriendsList());
         if (Array.isArray(json?.friendsStatus)) {
           const map: Record<string, FriendLiveStatus> = {};
           for (const st of json.friendsStatus) {
@@ -307,12 +343,7 @@ export const WorldSelectScreen: React.FC<WorldSelectScreenProps> = ({
         inviteCode: null,
       });
       if (json.ok) {
-        if (Array.isArray(json?.friendsList) && json.friendsList.length > 0) {
-          SaveManager.setFriendsList(json.friendsList);
-          setFriendsList(json.friendsList);
-        } else {
-          setFriendsList(SaveManager.getFriendsList());
-        }
+        setFriendsList(SaveManager.getFriendsList());
         if (Array.isArray(json?.friendsStatus)) {
           const nextMap: Record<string, FriendLiveStatus> = {};
           for (const st of json.friendsStatus) {
@@ -456,27 +487,111 @@ export const WorldSelectScreen: React.FC<WorldSelectScreenProps> = ({
 
   const handlePlayExistingWorld = async (worldId: string) => {
     setLoadingWorldId(worldId);
+    const targetMeta = worlds.find((w) => w.id === worldId);
+    const targetName = targetMeta?.name || 'Mundo';
+
+    setBlockingSyncState({
+      isOpen: true,
+      title: 'Verificando Sessão da Conta',
+      processLabel: `Preparando abertura de "${targetName}"`,
+      subprocessLabel:
+        'Subprocesso: Verificando se já existe outro mundo aberto nesta mesma conta em outra aba ou dispositivo...',
+      error: null,
+    });
+
     try {
+      const lockCheck =
+        await socialDirectoryClient.acquireAccountWorldSessionLock({
+          playerPublicId: myPublicId,
+          worldId,
+          worldName: targetName,
+        });
+
+      if (!lockCheck.ok || lockCheck.conflict) {
+        setBlockingSyncState((prev) => ({ ...prev, isOpen: false, error: null }));
+        setActiveWorldConflict({
+          isOpen: true,
+          message:
+            lockCheck.error ||
+            'Esta conta já está com um mundo aberto em outra sessão ou dispositivo. Feche o mundo na outra sessão antes de abrir um mundo aqui para evitar conflito nos saves.',
+          activeSession: lockCheck.activeSession || null,
+        });
+        return;
+      }
+
+      setBlockingSyncState((prev) => ({
+        ...prev,
+        subprocessLabel:
+          'Subprocesso: Carregando dados do mundo do armazenamento seguro...',
+      }));
+
       const fullWorld = await SaveManager.loadWorldGuaranteed(worldId);
+      setBlockingSyncState((prev) => ({ ...prev, isOpen: false, error: null }));
+
       if (fullWorld) {
         onStartWorld(fullWorld, null);
+      } else {
+        await socialDirectoryClient.releaseAccountWorldSessionLock(myPublicId);
       }
+    } catch (err: any) {
+      setBlockingSyncState((prev) => ({
+        ...prev,
+        error: err?.message || 'Erro ao verificar ou carregar o mundo.',
+      }));
     } finally {
       setLoadingWorldId(null);
     }
   };
 
-  const handleConfirmCreateWorld = () => {
+  const handleConfirmCreateWorld = async () => {
     const cleanName = newWorldName.trim() || 'Vale Encantado';
+
+    setBlockingSyncState({
+      isOpen: true,
+      title: 'Verificando Sessão e Criando Mundo',
+      processLabel: `Criando mundo "${cleanName}"`,
+      subprocessLabel:
+        'Subprocesso: Verificando se já existe outro mundo aberto nesta mesma conta...',
+      error: null,
+    });
+
+    const lockCheck =
+      await socialDirectoryClient.acquireAccountWorldSessionLock({
+        playerPublicId: myPublicId,
+        worldId: `creating_${Date.now()}`,
+        worldName: cleanName,
+      });
+
+    if (!lockCheck.ok || lockCheck.conflict) {
+      setBlockingSyncState((prev) => ({ ...prev, isOpen: false, error: null }));
+      setActiveWorldConflict({
+        isOpen: true,
+        message:
+          lockCheck.error ||
+          'Esta conta já está com um mundo aberto em outra sessão ou dispositivo. Feche o mundo na outra sessão antes de criar ou abrir um mundo aqui.',
+        activeSession: lockCheck.activeSession || null,
+      });
+      return;
+    }
+
     const created = SaveManager.createNewWorld(
       cleanName,
       newWorldSeed,
       newWorldDifficulty,
       newWorldOnlineEnabled
     );
+
+    await socialDirectoryClient.acquireAccountWorldSessionLock({
+      playerPublicId: myPublicId,
+      worldId: created.metadata.id,
+      worldName: created.metadata.name,
+    });
+
     if (cloudSnap.user) {
       firebaseCloudSync.enqueueWorldSync(created.metadata.id, 'world_create');
     }
+
+    setBlockingSyncState((prev) => ({ ...prev, isOpen: false, error: null }));
     setShowCreateModal(false);
     refreshLocalWorlds();
     onStartWorld(created, null);
@@ -490,8 +605,16 @@ export const WorldSelectScreen: React.FC<WorldSelectScreenProps> = ({
     setManageFeedback(null);
   };
 
-  const handleSaveWorldManagement = () => {
+  const handleSaveWorldManagement = async () => {
     if (!managingWorld) return;
+    setBlockingSyncState({
+      isOpen: true,
+      title: 'Salvando Alterações do Mundo',
+      processLabel: `Atualizando "${editName.trim() || managingWorld.name}"`,
+      subprocessLabel:
+        'Subprocesso: Gravando configurações e sincronizando metadados do mundo...',
+      error: null,
+    });
     const updated = SaveManager.updateWorldMetadata(
       managingWorld.id,
       editName,
@@ -501,18 +624,48 @@ export const WorldSelectScreen: React.FC<WorldSelectScreenProps> = ({
     if (updated) {
       setManagingWorld({ ...updated });
       refreshLocalWorlds();
-      setManageFeedback('Alterações salvas com sucesso!');
+      if (cloudSnap.user) {
+        try {
+          await firebaseCloudSync.uploadWorldToCloud(updated.id);
+        } catch {
+          // queued fallback
+        }
+      }
+      setBlockingSyncState((prev) => ({ ...prev, isOpen: false, error: null }));
+      setManageFeedback('Alterações salvas e sincronizadas com sucesso!');
       window.setTimeout(() => setManageFeedback(null), 2000);
+    } else {
+      setBlockingSyncState((prev) => ({
+        ...prev,
+        error: 'Não foi possível salvar as alterações deste mundo.',
+      }));
     }
   };
 
   const handleCreateWorldCopy = async () => {
     if (!managingWorld) return;
+    setBlockingSyncState({
+      isOpen: true,
+      title: 'Duplicando Mundo',
+      processLabel: `Criando cópia de "${managingWorld.name}"`,
+      subprocessLabel:
+        'Subprocesso: Clonando regiões e sincronizando novo mundo...',
+      error: null,
+    });
     const copy = await SaveManager.duplicateWorld(managingWorld.id);
     if (copy) {
       refreshLocalWorlds();
+      if (cloudSnap.user) {
+        firebaseCloudSync.enqueueWorldSync(copy.metadata.id, 'world_duplicate');
+      }
+      setBlockingSyncState((prev) => ({ ...prev, isOpen: false, error: null }));
       setManageFeedback('Cópia do mundo criada com sucesso!');
       window.setTimeout(() => setManageFeedback(null), 2200);
+    } else {
+      setBlockingSyncState((prev) => ({
+        ...prev,
+        error: 'Falha ao criar cópia do mundo.',
+      }));
     }
   };
 
@@ -526,10 +679,21 @@ export const WorldSelectScreen: React.FC<WorldSelectScreenProps> = ({
     }
   };
 
-  const handleConfirmPermanentDelete = () => {
+  const handleConfirmPermanentDelete = async () => {
     if (!confirmDeleteWorld) return;
     const targetId = confirmDeleteWorld.id;
+    const targetName = confirmDeleteWorld.name;
+    setBlockingSyncState({
+      isOpen: true,
+      title: 'Excluindo Mundo Permanentemente',
+      processLabel: `Removendo "${targetName}"`,
+      subprocessLabel:
+        'Subprocesso: Excluindo mundo do armazenamento local e sincronizando exclusão na nuvem...',
+      error: null,
+    });
     SaveManager.deleteWorld(targetId, settings);
+    await firebaseCloudSync.syncProfileAppearanceAndSettings();
+    setBlockingSyncState((prev) => ({ ...prev, isOpen: false, error: null }));
     setConfirmDeleteWorld(null);
     if (managingWorld?.id === targetId) {
       setManagingWorld(null);
@@ -719,6 +883,16 @@ export const WorldSelectScreen: React.FC<WorldSelectScreenProps> = ({
 
     setAddingFriendId(targetPublicId);
     setFriendsMessage(null);
+    setBlockingSyncState({
+      isOpen: true,
+      title: 'Adicionando Amigo',
+      processLabel: `Vinculando ${
+        fallbackUsername || targetPublicId
+      } à sua conta`,
+      subprocessLabel:
+        'Subprocesso: Confirmando adição mútua no diretório social e salvando na nuvem...',
+      error: null,
+    });
     try {
       const json = await socialDirectoryClient.addFriend({
         myPublicId,
@@ -727,6 +901,10 @@ export const WorldSelectScreen: React.FC<WorldSelectScreenProps> = ({
         targetUsername: fallbackUsername || undefined,
       });
       if (!json?.ok) {
+        setBlockingSyncState((prev) => ({
+          ...prev,
+          error: json?.error || 'Não foi possível adicionar este jogador.',
+        }));
         setFriendsMessage({
           type: 'error',
           text: json?.error || 'Não foi possível adicionar este jogador.',
@@ -747,57 +925,51 @@ export const WorldSelectScreen: React.FC<WorldSelectScreenProps> = ({
         setFriendsStatusMap(nextMap);
       }
 
-      void firebaseCloudSync.ensureUserProfileSynced(undefined, true);
+      await firebaseCloudSync.syncProfileAppearanceAndSettings();
+      setBlockingSyncState((prev) => ({ ...prev, isOpen: false, error: null }));
       setFriendsMessage({
         type: 'success',
         text: `Jogador ${
           fallbackUsername || targetPublicId
         } adicionado com sucesso à sua lista de amigos!`,
       });
-    } catch {
-      const current = SaveManager.getFriendsList();
-      if (!current.some((f) => f.playerPublicId === targetPublicId)) {
-        const next = [
-          ...current,
-          {
-            playerPublicId: targetPublicId,
-            username:
-              fallbackUsername || `Aventureiro (${targetPublicId.slice(-4)})`,
-            addedAt: Date.now(),
-          },
-        ];
-        SaveManager.setFriendsList(next);
-        setFriendsList(next);
-        void firebaseCloudSync.ensureUserProfileSynced(undefined, true);
-      }
-      setFriendsMessage({
-        type: 'success',
-        text: `Amigo (${targetPublicId}) salvo na sua lista!`,
-      });
+    } catch (err: any) {
+      setBlockingSyncState((prev) => ({
+        ...prev,
+        error: err?.message || 'Erro ao adicionar amigo no servidor.',
+      }));
     } finally {
       setAddingFriendId(null);
     }
   };
 
   const handleRemoveFriend = async (targetPublicId: string) => {
-    const filtered = SaveManager.getFriendsList().filter(
-      (f) => f.playerPublicId !== targetPublicId
-    );
-    SaveManager.setFriendsList(filtered);
-    setFriendsList(filtered);
-
+    setBlockingSyncState({
+      isOpen: true,
+      title: 'Removendo Amigo da Lista',
+      processLabel: `Removendo conexão (${targetPublicId})`,
+      subprocessLabel:
+        'Subprocesso: Removendo amigo do diretório social e confirmando sincronização na conta...',
+      error: null,
+    });
     try {
       const json = await socialDirectoryClient.removeFriend({
         myPublicId,
         targetPublicId,
       });
-      if (json?.ok && Array.isArray(json.friendsList)) {
-        SaveManager.setFriendsList(json.friendsList);
-        setFriendsList(json.friendsList);
-      }
-      void firebaseCloudSync.ensureUserProfileSynced(undefined, true);
-    } catch {
-      // ignore offline
+      setFriendsList(json.friendsList);
+      await firebaseCloudSync.syncProfileAppearanceAndSettings();
+      setBlockingSyncState((prev) => ({ ...prev, isOpen: false, error: null }));
+      setFriendsMessage({
+        type: 'info',
+        text: `Amigo (${targetPublicId}) removido da sua lista com sucesso.`,
+      });
+    } catch (err: any) {
+      setFriendsList(SaveManager.getFriendsList());
+      setBlockingSyncState((prev) => ({
+        ...prev,
+        error: err?.message || 'Erro ao sincronizar remoção do amigo.',
+      }));
     }
   };
 
@@ -1521,44 +1693,16 @@ export const WorldSelectScreen: React.FC<WorldSelectScreenProps> = ({
                         <span>{searchFeedback.error}</span>
                       </div>
                     ) : searchResults.length === 0 ? (
-                      <div className="p-4 bg-[#120b07] border border-[#3d2616] space-y-3 text-center">
-                        <div className="space-y-1">
-                          <div className="font-pixel text-xs font-bold text-amber-300 uppercase">
-                            Nenhum jogador listado no diretório para &ldquo;
-                            {searchFeedback.query}&rdquo;
-                          </div>
-                          <p className="text-xs text-[#c4ab7d]">
-                            {searchFeedback.mode === 'id'
-                              ? 'O jogador pode ainda não ter conectado hoje neste servidor, mas você pode adicioná-lo diretamente pelo ID abaixo:'
-                              : 'Verifique se o nome está correto ou peça o ID de Jogador (SE-XXXX-XXXX) do seu amigo para adicioná-lo diretamente.'}
-                          </p>
+                      <div className="p-4 bg-[#120b07] border border-[#3d2616] space-y-2 text-center">
+                        <div className="font-pixel text-xs font-bold text-amber-300 uppercase">
+                          Nenhum jogador encontrado para &ldquo;
+                          {searchFeedback.query}&rdquo;
                         </div>
-
-                        {searchFeedback.mode === 'id' &&
-                          searchFeedback.query.length >= 4 && (
-                            <div className="pt-1 flex justify-center">
-                              <button
-                                onClick={() =>
-                                  void handleAddFriend(
-                                    normalizeCandidatePublicId(
-                                      searchFeedback.query
-                                    )
-                                  )
-                                }
-                                disabled={Boolean(addingFriendId)}
-                                className="px-4 py-2.5 medieval-btn-emerald font-pixel text-xs font-bold uppercase flex items-center gap-2"
-                              >
-                                <UserPlus className="w-4 h-4" />
-                                <span>
-                                  Adicionar Diretamente pelo ID (
-                                  {normalizeCandidatePublicId(
-                                    searchFeedback.query
-                                  )}
-                                  )
-                                </span>
-                              </button>
-                            </div>
-                          )}
+                        <p className="text-xs text-[#c4ab7d]">
+                          {searchFeedback.mode === 'id'
+                            ? 'Verifique se o ID de Jogador (formato SE-XXXX-XXXX) foi digitado corretamente.'
+                            : 'Verifique se o Username foi digitado corretamente ou busque pelo ID de Jogador (SE-XXXX-XXXX).'}
+                        </p>
                       </div>
                     ) : (
                       <div className="space-y-2">
@@ -2522,6 +2666,89 @@ export const WorldSelectScreen: React.FC<WorldSelectScreenProps> = ({
           onUpdateSettings={onUpdateSettings}
           onResume={() => setShowGlobalOptionsModal(false)}
         />
+      )}
+
+      <BlockingSyncOperationModal
+        isOpen={blockingSyncState.isOpen}
+        title={blockingSyncState.title}
+        processLabel={blockingSyncState.processLabel}
+        subprocessLabel={blockingSyncState.subprocessLabel}
+        error={blockingSyncState.error}
+        onCancelOrExit={() =>
+          setBlockingSyncState((prev) => ({
+            ...prev,
+            isOpen: false,
+            error: null,
+          }))
+        }
+      />
+
+      {/* Account Active World Session Conflict Modal */}
+      {activeWorldConflict.isOpen && (
+        <div
+          className="fixed inset-0 z-[96] bg-black/85 backdrop-blur-sm flex items-center justify-center p-4"
+          onClick={() =>
+            setActiveWorldConflict({
+              isOpen: false,
+              message: '',
+              activeSession: null,
+            })
+          }
+        >
+          <div
+            className="w-full max-w-md medieval-panel border-2 border-rose-500/80 bg-[#160e09] p-5 space-y-4 shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center gap-3 border-b border-[#3d2616] pb-3">
+              <div className="w-10 h-10 bg-rose-950/80 border border-rose-500/60 flex items-center justify-center shrink-0">
+                <ShieldAlert className="w-5 h-5 text-rose-400" />
+              </div>
+              <div>
+                <h3 className="font-pixel text-xs font-bold text-rose-300 uppercase">
+                  Mundo Já Aberto Nesta Conta
+                </h3>
+                <p className="text-[11px] text-[#c4ab7d]">
+                  Proteção contra conflito de saves entre dispositivos
+                </p>
+              </div>
+            </div>
+
+            <div className="p-3 bg-rose-950/60 border border-rose-500/50 text-xs text-[#f3e5c8] leading-relaxed space-y-2">
+              <p>{activeWorldConflict.message}</p>
+              {activeWorldConflict.activeSession && (
+                <div className="p-2 bg-[#120b07] border border-[#3d2616] text-[11px] font-mono text-amber-300 space-y-1">
+                  <div>
+                    Mundo em uso:{' '}
+                    <strong>
+                      {activeWorldConflict.activeSession.worldName}
+                    </strong>
+                  </div>
+                  <div>
+                    Sessão ativa:{' '}
+                    <strong>
+                      {activeWorldConflict.activeSession.deviceLabel ||
+                        'Outro Dispositivo / Aba'}
+                    </strong>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            <button
+              onClick={() =>
+                setActiveWorldConflict({
+                  isOpen: false,
+                  message: '',
+                  activeSession: null,
+                })
+              }
+              className="w-full py-2.5 px-4 medieval-btn-crimson text-xs font-pixel font-bold uppercase tracking-wider flex items-center justify-center gap-2"
+            >
+              <X className="w-4 h-4" />
+              <span>Entendi / Voltar</span>
+            </button>
+          </div>
+        </div>
       )}
 
       <CloudSyncAutoModal onWorldsUpdated={refreshLocalWorlds} />

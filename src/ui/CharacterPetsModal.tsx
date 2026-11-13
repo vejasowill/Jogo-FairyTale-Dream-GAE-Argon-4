@@ -37,6 +37,7 @@ import {
   DEFAULT_PLAYER_APPEARANCE,
   spriteAtlas,
 } from '../game/rendering/SpriteAtlas';
+import { BlockingSyncOperationModal } from './CloudAccountModal';
 import { WindowHelpButton, WindowHelpModal } from './UiTooltipAndHelp';
 
 interface CharacterPetsModalProps {
@@ -1402,12 +1403,26 @@ export const AccountAppearanceModal: React.FC<AccountAppearanceModalProps> = ({
     'skin'
   );
   const [previewDir, setPreviewDir] = useState<Direction>('down');
+  const [hasAppearanceDirty, setHasAppearanceDirty] = useState(false);
+  const [blockingSyncState, setBlockingSyncState] = useState<{
+    isOpen: boolean;
+    title: string;
+    processLabel: string;
+    subprocessLabel: string;
+    error: string | null;
+    closeModalOnSuccess?: boolean;
+  }>({
+    isOpen: false,
+    title: '',
+    processLabel: '',
+    subprocessLabel: '',
+    error: null,
+  });
 
   useEffect(() => {
     const unsub = firebaseCloudSync.subscribe((snap) => {
       const signedIn = Boolean(snap.user);
       setIsGoogleLoggedIn(signedIn);
-      setUsernameDraft(SaveManager.getEffectiveUsername(signedIn));
       const latestSlots = SaveManager.getAppearanceSlots();
       setSlotsData(latestSlots);
       setApp(SaveManager.getAccountAppearance());
@@ -1415,7 +1430,37 @@ export const AccountAppearanceModal: React.FC<AccountAppearanceModalProps> = ({
     return unsub;
   }, []);
 
-  const handleSelectSlot = (index: number) => {
+  const runConfirmedProfileSync = async (opts: {
+    title: string;
+    processLabel: string;
+    subprocessLabel: string;
+    closeModalOnSuccess?: boolean;
+  }) => {
+    setBlockingSyncState({
+      isOpen: true,
+      title: opts.title,
+      processLabel: opts.processLabel,
+      subprocessLabel: opts.subprocessLabel,
+      error: null,
+      closeModalOnSuccess: opts.closeModalOnSuccess,
+    });
+    const res = await firebaseCloudSync.syncProfileAppearanceAndSettings();
+    if (!res.ok && res.error) {
+      setBlockingSyncState((prev) => ({
+        ...prev,
+        error: res.error || 'Falha ao confirmar salvamento na nuvem.',
+      }));
+      return false;
+    }
+    setHasAppearanceDirty(false);
+    setBlockingSyncState((prev) => ({ ...prev, isOpen: false, error: null }));
+    if (opts.closeModalOnSuccess) {
+      onClose();
+    }
+    return true;
+  };
+
+  const handleSelectSlot = async (index: number) => {
     const selectedApp = SaveManager.selectAppearanceSlot(index);
     const refreshed = SaveManager.getAppearanceSlots();
     setSlotsData(refreshed);
@@ -1424,10 +1469,11 @@ export const AccountAppearanceModal: React.FC<AccountAppearanceModalProps> = ({
       refreshed.slots[index]?.name || `Aparência ${index + 1}`
     );
     setIsEditingSlotName(false);
+    setHasAppearanceDirty(true);
     onAppearanceSaved?.(selectedApp);
   };
 
-  const handleCommitSlotName = () => {
+  const handleCommitSlotName = async () => {
     const updatedSlots = SaveManager.renameAppearanceSlot(
       slotsData.activeIndex,
       slotNameDraft
@@ -1441,15 +1487,29 @@ export const AccountAppearanceModal: React.FC<AccountAppearanceModalProps> = ({
         `Aparência ${slotsData.activeIndex + 1}`
     );
     setIsEditingSlotName(false);
+    await runConfirmedProfileSync({
+      title: 'Salvando Nome do Slot de Aparência',
+      processLabel: 'Sincronizando Slots de Aparência',
+      subprocessLabel:
+        'Subprocesso: Gravando nome do slot no diretório social e na conta Google...',
+    });
   };
 
-  const handleSaveUsername = () => {
+  const handleSaveUsername = async () => {
     if (!isGoogleLoggedIn) return;
     const saved = SaveManager.setAccountUsername(usernameDraft);
     setUsernameDraft(saved);
-    setUsernameSavedFeedback(true);
-    onUsernameSaved?.(saved);
-    window.setTimeout(() => setUsernameSavedFeedback(false), 1800);
+    const ok = await runConfirmedProfileSync({
+      title: 'Salvando Username na Conta',
+      processLabel: `Atualizando Username para "${saved}"`,
+      subprocessLabel:
+        'Subprocesso: Confirmando gravação no Firebase Auth, diretório social e nuvem...',
+    });
+    if (ok) {
+      setUsernameSavedFeedback(true);
+      onUsernameSaved?.(saved);
+      window.setTimeout(() => setUsernameSavedFeedback(false), 2000);
+    }
   };
 
   const updateAccountAppearance = (partial: Partial<PlayerAppearance>) => {
@@ -1457,7 +1517,22 @@ export const AccountAppearanceModal: React.FC<AccountAppearanceModalProps> = ({
     const refreshed = SaveManager.getAppearanceSlots();
     setSlotsData(refreshed);
     setApp({ ...updated });
+    setHasAppearanceDirty(true);
     onAppearanceSaved?.(updated);
+  };
+
+  const handleCloseModalWithSync = async () => {
+    if (hasAppearanceDirty && isGoogleLoggedIn) {
+      await runConfirmedProfileSync({
+        title: 'Sincronizando Aparência do Personagem',
+        processLabel: 'Salvando Slots de Aparência na Conta',
+        subprocessLabel:
+          'Subprocesso: Confirmando sincronização dos 5 slots de aparência na nuvem...',
+        closeModalOnSuccess: true,
+      });
+    } else {
+      onClose();
+    }
   };
 
   const previewPlayerState = {
@@ -1523,8 +1598,26 @@ export const AccountAppearanceModal: React.FC<AccountAppearanceModalProps> = ({
   return (
     <div
       className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-2 sm:p-4"
-      onClick={onClose}
+      onClick={handleCloseModalWithSync}
     >
+      <BlockingSyncOperationModal
+        isOpen={blockingSyncState.isOpen}
+        title={blockingSyncState.title}
+        processLabel={blockingSyncState.processLabel}
+        subprocessLabel={blockingSyncState.subprocessLabel}
+        error={blockingSyncState.error}
+        onCancelOrExit={() => {
+          const shouldClose = blockingSyncState.closeModalOnSuccess;
+          setBlockingSyncState((prev) => ({
+            ...prev,
+            isOpen: false,
+            error: null,
+          }));
+          if (shouldClose) {
+            onClose();
+          }
+        }}
+      />
       <div
         className="w-full max-w-3xl medieval-panel flex flex-col max-h-[94dvh] overflow-hidden"
         onClick={(e) => e.stopPropagation()}
@@ -1542,12 +1635,30 @@ export const AccountAppearanceModal: React.FC<AccountAppearanceModalProps> = ({
               </p>
             </div>
           </div>
-          <button
-            onClick={onClose}
-            className="min-h-[34px] min-w-[34px] medieval-btn-crimson flex items-center justify-center"
-          >
-            <X className="w-4 h-4" />
-          </button>
+          <div className="flex items-center gap-2">
+            {hasAppearanceDirty && isGoogleLoggedIn && (
+              <button
+                onClick={() =>
+                  runConfirmedProfileSync({
+                    title: 'Sincronizando Aparência do Personagem',
+                    processLabel: 'Salvando Slots de Aparência na Conta',
+                    subprocessLabel:
+                      'Subprocesso: Confirmando sincronização dos 5 slots de aparência na nuvem...',
+                  })
+                }
+                className="px-2.5 py-1.5 medieval-btn-emerald text-[10px] font-pixel font-bold uppercase flex items-center gap-1"
+              >
+                <Check className="w-3.5 h-3.5" />
+                <span>Salvar Aparência</span>
+              </button>
+            )}
+            <button
+              onClick={handleCloseModalWithSync}
+              className="min-h-[34px] min-w-[34px] medieval-btn-crimson flex items-center justify-center"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
         </div>
 
         {/* Account Username & 5 Appearance Slots Bar */}

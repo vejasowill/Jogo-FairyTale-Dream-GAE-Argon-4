@@ -6,25 +6,39 @@ import path from 'path';
 
 const TMP_SOCIAL_FILE = path.join('/tmp', 'fairytale_social_profiles.json');
 
+interface ServerActiveWorldSession {
+  sessionId: string;
+  worldId: string;
+  worldName: string;
+  deviceLabel?: string;
+  startedAt: number;
+  updatedAt: number;
+}
+
 interface ServerSocialProfile {
   uid?: string | null;
   playerPublicId: string;
   username: string;
+  usernameUpdatedAt?: number;
   appearanceSlots?: any[];
   activeAppearanceSlotIndex?: number;
   accountAppearance?: any;
+  appearanceUpdatedAt?: number;
   friendsList: {
     playerPublicId: string;
     username: string;
     addedAt: number;
   }[];
+  removedFriendIds?: string[];
   deletedWorldIds: string[];
+  activeWorldSession?: ServerActiveWorldSession | null;
   presence?: {
     isOnline: boolean;
     inOpenWorld: boolean;
     worldId?: string | null;
     worldName?: string | null;
     inviteCode?: string | null;
+    sessionId?: string | null;
     updatedAt: number;
   };
   updatedAt: number;
@@ -262,6 +276,10 @@ async function syncFromFirebaseAuthAndFirestore(
             uid,
             playerPublicId: pubId,
             username: customUsername || 'Aventureiro',
+            usernameUpdatedAt:
+              typeof settings.usernameUpdatedAt === 'number'
+                ? settings.usernameUpdatedAt
+                : 0,
             appearanceSlots: Array.isArray(settings.appearanceSlots)
               ? settings.appearanceSlots
               : undefined,
@@ -271,8 +289,15 @@ async function syncFromFirebaseAuthAndFirestore(
                 : 0,
             accountAppearance:
               settings.accountAppearance || data.appearance || undefined,
+            appearanceUpdatedAt:
+              typeof settings.appearanceUpdatedAt === 'number'
+                ? settings.appearanceUpdatedAt
+                : 0,
             friendsList: Array.isArray(settings.friendsList)
               ? settings.friendsList
+              : [],
+            removedFriendIds: Array.isArray(settings.removedFriendIds)
+              ? settings.removedFriendIds
               : [],
             deletedWorldIds: Array.isArray(settings.deletedWorldIds)
               ? settings.deletedWorldIds
@@ -490,10 +515,65 @@ export default async function handler(req: any, res: any) {
       store.publicIdByUid[body.uid] = cleanPubId;
     }
     const existing = store.profilesByPublicId[cleanPubId];
-    const cleanUsername =
-      String(body.username || existing?.username || 'Aventureiro')
-        .trim()
-        .slice(0, 22) || 'Aventureiro';
+    const incomingUsername = String(body.username || '')
+      .trim()
+      .slice(0, 22);
+    const incomingUsernameTs =
+      typeof body.usernameUpdatedAt === 'number' ? body.usernameUpdatedAt : 0;
+    const existingUsernameTs = existing?.usernameUpdatedAt || 0;
+
+    let resolvedUsername = existing?.username || 'Aventureiro';
+    let resolvedUsernameTs = existingUsernameTs;
+
+    if (incomingUsername) {
+      const isIncomingDefault =
+        incomingUsername === 'Aventureiro' ||
+        incomingUsername.startsWith('Jogador ');
+      const isExistingDefault =
+        !existing?.username ||
+        existing.username === 'Aventureiro' ||
+        existing.username.startsWith('Jogador ');
+
+      if (
+        incomingUsernameTs > existingUsernameTs ||
+        (isExistingDefault && !isIncomingDefault) ||
+        !existing?.username
+      ) {
+        resolvedUsername = incomingUsername;
+        resolvedUsernameTs = Math.max(incomingUsernameTs, existingUsernameTs);
+      }
+    }
+
+    // Update Firebase Auth displayName via Admin SDK if we have a newer custom username
+    const resolvedUid = body.uid || existing?.uid || null;
+    if (
+      resolvedUid &&
+      resolvedUsername &&
+      resolvedUsername !== 'Aventureiro' &&
+      incomingUsernameTs > existingUsernameTs &&
+      ensureAdminInit()
+    ) {
+      try {
+        await getAdminAuth().updateUser(resolvedUid, {
+          displayName: resolvedUsername,
+        });
+      } catch {
+        // ignore admin auth update errors
+      }
+    }
+
+    // Merge removedFriendIds tombstones so deleted friends do not resurrect
+    const removedSet = new Set<string>(
+      Array.isArray(existing?.removedFriendIds)
+        ? existing.removedFriendIds.map((id) => normalizePublicPlayerId(id))
+        : []
+    );
+    if (Array.isArray(body.removedFriendIds)) {
+      for (const rId of body.removedFriendIds) {
+        const normR = normalizePublicPlayerId(String(rId || ''));
+        if (normR) removedSet.add(normR);
+      }
+    }
 
     const friendMap = new Map<
       string,
@@ -503,6 +583,7 @@ export default async function handler(req: any, res: any) {
       for (const f of existing.friendsList) {
         if (f && f.playerPublicId) {
           const fId = normalizePublicPlayerId(f.playerPublicId);
+          if (removedSet.has(fId)) continue;
           const tProf = store.profilesByPublicId[fId];
           friendMap.set(fId, {
             playerPublicId: fId,
@@ -516,7 +597,7 @@ export default async function handler(req: any, res: any) {
       for (const f of body.friendsList) {
         if (f && f.playerPublicId) {
           const fId = normalizePublicPlayerId(f.playerPublicId);
-          if (fId === cleanPubId) continue;
+          if (fId === cleanPubId || removedSet.has(fId)) continue;
           const tProf = store.profilesByPublicId[fId];
           friendMap.set(fId, {
             playerPublicId: fId,
@@ -536,21 +617,38 @@ export default async function handler(req: any, res: any) {
       }
     }
 
+    const incomingAppTs =
+      typeof body.appearanceUpdatedAt === 'number'
+        ? body.appearanceUpdatedAt
+        : 0;
+    const existingAppTs = existing?.appearanceUpdatedAt || 0;
+    const useIncomingAppearance =
+      incomingAppTs >= existingAppTs || !existing?.appearanceSlots;
+
     const mergedProfile: ServerSocialProfile = {
-      uid: body.uid || existing?.uid || null,
+      uid: resolvedUid,
       playerPublicId: cleanPubId,
-      username: cleanUsername,
+      username: resolvedUsername,
+      usernameUpdatedAt: resolvedUsernameTs,
       appearanceSlots:
-        Array.isArray(body.appearanceSlots) && body.appearanceSlots.length > 0
+        useIncomingAppearance &&
+        Array.isArray(body.appearanceSlots) &&
+        body.appearanceSlots.length > 0
           ? body.appearanceSlots
-          : existing?.appearanceSlots,
+          : existing?.appearanceSlots || body.appearanceSlots,
       activeAppearanceSlotIndex:
+        useIncomingAppearance &&
         typeof body.activeAppearanceSlotIndex === 'number'
           ? body.activeAppearanceSlotIndex
           : existing?.activeAppearanceSlotIndex ?? 0,
-      accountAppearance: body.accountAppearance || existing?.accountAppearance,
+      accountAppearance: useIncomingAppearance
+        ? body.accountAppearance || existing?.accountAppearance
+        : existing?.accountAppearance || body.accountAppearance,
+      appearanceUpdatedAt: Math.max(incomingAppTs, existingAppTs),
       friendsList: Array.from(friendMap.values()),
+      removedFriendIds: Array.from(removedSet),
       deletedWorldIds: Array.from(delSet),
+      activeWorldSession: existing?.activeWorldSession || null,
       presence: body.presence
         ? {
             isOnline: Boolean(body.presence.isOnline),
@@ -558,6 +656,7 @@ export default async function handler(req: any, res: any) {
             worldId: body.presence.worldId || null,
             worldName: body.presence.worldName || null,
             inviteCode: body.presence.inviteCode || null,
+            sessionId: body.presence.sessionId || null,
             updatedAt: Date.now(),
           }
         : existing?.presence,
@@ -596,7 +695,12 @@ export default async function handler(req: any, res: any) {
         updatedAt: now,
       };
       store.profilesByPublicId[cleanPubId] = prof;
-    } else if (body.username && String(body.username).trim()) {
+    } else if (
+      body.username &&
+      String(body.username).trim() &&
+      String(body.username).trim() !== 'Aventureiro' &&
+      (!prof.username || prof.username === 'Aventureiro')
+    ) {
       prof.username = String(body.username).trim().slice(0, 22);
     }
 
@@ -606,8 +710,27 @@ export default async function handler(req: any, res: any) {
       worldId: body.worldId || null,
       worldName: body.worldName || null,
       inviteCode: body.inviteCode || null,
+      sessionId: body.sessionId || null,
       updatedAt: now,
     };
+
+    if (body.worldId && body.sessionId) {
+      prof.activeWorldSession = {
+        sessionId: String(body.sessionId),
+        worldId: String(body.worldId),
+        worldName: String(body.worldName || 'Mundo'),
+        deviceLabel: String(body.deviceLabel || 'Dispositivo Ativo'),
+        startedAt: prof.activeWorldSession?.startedAt || now,
+        updatedAt: now,
+      };
+    } else if (
+      !body.worldId &&
+      body.sessionId &&
+      prof.activeWorldSession?.sessionId === String(body.sessionId)
+    ) {
+      prof.activeWorldSession = null;
+    }
+
     prof.updatedAt = now;
     writeStore(store);
 
@@ -630,6 +753,114 @@ export default async function handler(req: any, res: any) {
       friendsList: prof.friendsList,
       friendsStatus,
       pendingJoinRequests,
+      activeWorldSession: prof.activeWorldSession || null,
+    });
+    return;
+  }
+
+  // 3B. POST /api/social/world-session
+  if (cleanRoute === 'world-session') {
+    const body = req.body || {};
+    const cleanPubId = normalizePublicPlayerId(String(body.playerPublicId || ''));
+    const action = String(body.action || 'check');
+    const sessionId = String(body.sessionId || '').trim();
+    const worldId = String(body.worldId || '').trim();
+    const worldName = String(body.worldName || 'Mundo').trim();
+    const deviceLabel = String(body.deviceLabel || 'Outra Sessão').trim();
+    const now = Date.now();
+    const SESSION_LOCK_TTL_MS = 25000;
+
+    if (!cleanPubId) {
+      res.status(400).json({ ok: false, error: 'Missing playerPublicId' });
+      return;
+    }
+
+    let prof = store.profilesByPublicId[cleanPubId];
+    if (!prof) {
+      prof = {
+        playerPublicId: cleanPubId,
+        username: 'Aventureiro',
+        friendsList: [],
+        deletedWorldIds: [],
+        updatedAt: now,
+      };
+      store.profilesByPublicId[cleanPubId] = prof;
+    }
+
+    const currentLock = prof.activeWorldSession;
+    const isLockAlive = Boolean(
+      currentLock && now - (currentLock.updatedAt || 0) < SESSION_LOCK_TTL_MS
+    );
+
+    if (!isLockAlive && currentLock) {
+      prof.activeWorldSession = null;
+    }
+
+    if (action === 'release') {
+      if (
+        !prof.activeWorldSession ||
+        !sessionId ||
+        prof.activeWorldSession.sessionId === sessionId
+      ) {
+        prof.activeWorldSession = null;
+        writeStore(store);
+      }
+      res.status(200).json({ ok: true, activeSession: null });
+      return;
+    }
+
+    if (action === 'check') {
+      const conflict = Boolean(
+        isLockAlive &&
+          currentLock &&
+          sessionId &&
+          currentLock.sessionId !== sessionId
+      );
+      res.status(200).json({
+        ok: true,
+        conflict,
+        activeSession: isLockAlive ? prof.activeWorldSession : null,
+      });
+      return;
+    }
+
+    if (action === 'acquire' || action === 'heartbeat') {
+      if (
+        isLockAlive &&
+        currentLock &&
+        sessionId &&
+        currentLock.sessionId !== sessionId
+      ) {
+        res.status(409).json({
+          ok: false,
+          conflict: true,
+          error: `Esta conta já está com o mundo "${currentLock.worldName}" aberto em outra sessão ou dispositivo. Feche o mundo na outra sessão antes de abrir um mundo aqui para evitar conflito nos saves.`,
+          activeSession: currentLock,
+        });
+        return;
+      }
+
+      prof.activeWorldSession = {
+        sessionId: sessionId || `sess_${now}`,
+        worldId: worldId || currentLock?.worldId || 'world',
+        worldName: worldName || currentLock?.worldName || 'Mundo',
+        deviceLabel: deviceLabel || currentLock?.deviceLabel || 'Sessão Ativa',
+        startedAt: currentLock?.startedAt || now,
+        updatedAt: now,
+      };
+      writeStore(store);
+      res.status(200).json({
+        ok: true,
+        conflict: false,
+        activeSession: prof.activeWorldSession,
+      });
+      return;
+    }
+
+    res.status(200).json({
+      ok: true,
+      conflict: false,
+      activeSession: isLockAlive ? prof.activeWorldSession : null,
     });
     return;
   }
@@ -663,16 +894,26 @@ export default async function handler(req: any, res: any) {
     const now = Date.now();
     let targetProfile = store.profilesByPublicId[targetPublicId];
     if (!targetProfile) {
-      targetProfile = {
-        playerPublicId: targetPublicId,
-        username: targetUsernameHint || `Jogador ${targetPublicId.slice(-4)}`,
-        friendsList: [],
-        deletedWorldIds: [],
-        updatedAt: now,
-      };
-      store.profilesByPublicId[targetPublicId] = targetProfile;
+      if (targetUsernameHint && !targetUsernameHint.startsWith('Jogador ')) {
+        targetProfile = {
+          playerPublicId: targetPublicId,
+          username: targetUsernameHint,
+          friendsList: [],
+          deletedWorldIds: [],
+          updatedAt: now,
+        };
+        store.profilesByPublicId[targetPublicId] = targetProfile;
+      } else {
+        res.status(404).json({
+          ok: false,
+          error:
+            'Jogador não encontrado no diretório. Busque o jogador na aba Buscar Jogadores primeiro.',
+        });
+        return;
+      }
     } else if (
       targetUsernameHint &&
+      !targetUsernameHint.startsWith('Jogador ') &&
       targetProfile.username.startsWith('Jogador ')
     ) {
       targetProfile.username = targetUsernameHint;
@@ -684,11 +925,19 @@ export default async function handler(req: any, res: any) {
         playerPublicId: myPublicId,
         username: myUsername,
         friendsList: [],
+        removedFriendIds: [],
         deletedWorldIds: [],
         updatedAt: now,
       };
       store.profilesByPublicId[myPublicId] = myProfile;
     }
+
+    myProfile.removedFriendIds = (myProfile.removedFriendIds || []).filter(
+      (id) => normalizePublicPlayerId(id) !== targetPublicId
+    );
+    targetProfile.removedFriendIds = (
+      targetProfile.removedFriendIds || []
+    ).filter((id) => normalizePublicPlayerId(id) !== myPublicId);
 
     if (
       !myProfile.friendsList.some((f) => f.playerPublicId === targetPublicId)
@@ -729,14 +978,20 @@ export default async function handler(req: any, res: any) {
     const myProfile = store.profilesByPublicId[myPublicId];
     if (myProfile) {
       myProfile.friendsList = myProfile.friendsList.filter(
-        (f) => f.playerPublicId !== targetPublicId
+        (f) => normalizePublicPlayerId(f.playerPublicId) !== targetPublicId
       );
+      const remSet = new Set(myProfile.removedFriendIds || []);
+      if (targetPublicId) remSet.add(targetPublicId);
+      myProfile.removedFriendIds = Array.from(remSet);
     }
     const targetProfile = store.profilesByPublicId[targetPublicId];
     if (targetProfile) {
       targetProfile.friendsList = targetProfile.friendsList.filter(
-        (f) => f.playerPublicId !== myPublicId
+        (f) => normalizePublicPlayerId(f.playerPublicId) !== myPublicId
       );
+      const remSet = new Set(targetProfile.removedFriendIds || []);
+      if (myPublicId) remSet.add(myPublicId);
+      targetProfile.removedFriendIds = Array.from(remSet);
     }
     writeStore(store);
     const friendsList = myProfile?.friendsList || [];

@@ -5,6 +5,7 @@ import {
   onAuthStateChanged,
   signInWithPopup,
   signOut,
+  updateProfile,
   type User,
 } from 'firebase/auth';
 import {
@@ -94,6 +95,7 @@ export {
   signInWithPopup,
   signOut,
   storageRef,
+  updateProfile,
   uploadBytesResumable,
   type User,
 };
