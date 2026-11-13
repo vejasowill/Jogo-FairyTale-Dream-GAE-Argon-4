@@ -748,6 +748,24 @@ async function startServer() {
   const httpServer = createHttpServer(app);
   const PORT = Number(process.env.PORT) || 3000;
 
+  // Enable CORS on all API routes so published frontends (e.g. Vercel) can federate with this backend
+  app.use((req, res, next) => {
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader(
+      'Access-Control-Allow-Methods',
+      'GET, POST, PUT, DELETE, OPTIONS'
+    );
+    res.setHeader(
+      'Access-Control-Allow-Headers',
+      'Content-Type, Authorization, X-Player-Uid'
+    );
+    if (req.method === 'OPTIONS') {
+      res.status(204).end();
+      return;
+    }
+    next();
+  });
+
   app.use(express.json({ limit: '50mb' }));
 
   // Health check endpoint
@@ -1617,6 +1635,29 @@ async function startServer() {
     }
   });
 
+  function computeServerPlayerPublicIdFromSeed(seedStr: string): string {
+    const alphabet = '23456789ABCDEFGHJKLMNPQRSTUVWXYZ';
+    const clean = (seedStr || 'default_seed').trim();
+    let h1 = 0x811c9dc5 | 0;
+    let h2 = 0x6a09e667 | 0;
+    for (let i = 0; i < clean.length; i++) {
+      const c = clean.charCodeAt(i);
+      h1 = Math.imul(h1 ^ c, 0x01000193);
+      h2 = Math.imul(h2 ^ (c + i * 17), 0x85ebca6b);
+    }
+    let p1 = '';
+    let p2 = '';
+    let v1 = h1 >>> 0;
+    let v2 = h2 >>> 0;
+    for (let i = 0; i < 4; i++) {
+      p1 += alphabet[v1 % alphabet.length];
+      v1 = Math.floor(v1 / alphabet.length) ^ ((h2 >>> (i * 4)) & 0xff);
+      p2 += alphabet[v2 % alphabet.length];
+      v2 = Math.floor(v2 / alphabet.length) ^ ((h1 >>> (i * 4)) & 0xff);
+    }
+    return `SE-${p1}-${p2}`;
+  }
+
   function normalizePublicPlayerId(raw: string): string {
     const clean = String(raw || '')
       .trim()
@@ -1662,10 +1703,163 @@ async function startServer() {
     return dirty;
   }
 
-  app.get('/api/social/search', (req, res) => {
+  let lastFirebaseDirectorySyncAt = 0;
+
+  async function syncFirebaseUsersIntoSocialStore(
+    store: SocialStoreData,
+    force = false
+  ): Promise<boolean> {
+    const now = Date.now();
+    if (!force && now - lastFirebaseDirectorySyncAt < 20000) {
+      return false;
+    }
+    lastFirebaseDirectorySyncAt = now;
+    initFirebaseAdminIfConfigured();
+    if (!firebaseAdminInitialized) return false;
+
+    let dirty = false;
+
+    // 1. Index all registered Google / Firebase Auth users (0 Firestore quota used!)
+    try {
+      const authList = await getAdminAuth().listUsers(1000);
+      for (const u of authList.users) {
+        if (!u.uid) continue;
+        const pubId = computeServerPlayerPublicIdFromSeed(
+          `google_uid_${u.uid}`
+        );
+        if (store.publicIdByUid[u.uid] !== pubId) {
+          store.publicIdByUid[u.uid] = pubId;
+          dirty = true;
+        }
+        const displayUsername = (
+          u.displayName ||
+          (u.email ? u.email.split('@')[0] : '') ||
+          'Aventureiro'
+        )
+          .trim()
+          .slice(0, 22);
+
+        const existing = store.profilesByPublicId[pubId];
+        if (!existing) {
+          store.profilesByPublicId[pubId] = {
+            uid: u.uid,
+            playerPublicId: pubId,
+            username: displayUsername || 'Aventureiro',
+            friendsList: [],
+            deletedWorldIds: [],
+            updatedAt: now,
+          };
+          dirty = true;
+        } else {
+          if (!existing.uid) {
+            existing.uid = u.uid;
+            dirty = true;
+          }
+          if (
+            displayUsername &&
+            (!existing.username ||
+              existing.username === 'Aventureiro' ||
+              existing.username.startsWith('Jogador '))
+          ) {
+            existing.username = displayUsername;
+            dirty = true;
+          }
+        }
+      }
+    } catch {
+      // ignore if Auth Admin is temporarily unreachable
+    }
+
+    // 2. Also enrich from Firestore /users collection (if quota allows)
+    const dbCandidates = [
+      '(default)',
+      'ai-studio-remix2pixelsurvi-82a1c441-67e6-40f5-b2fb-00c7ebfba58d',
+    ];
+    for (const dbId of dbCandidates) {
+      try {
+        const adminDb =
+          dbId === '(default)'
+            ? getAdminFirestore()
+            : getAdminFirestore(undefined as any, dbId);
+        const snap = await adminDb.collection('users').limit(250).get();
+        for (const docSnap of snap.docs) {
+          const data = docSnap.data() || {};
+          const uid = String(data.uid || docSnap.id || '').trim();
+          if (!uid) continue;
+          const settings = (data.settings || {}) as Record<string, any>;
+          const pubId = normalizePublicPlayerId(
+            settings.playerPublicId ||
+              computeServerPlayerPublicIdFromSeed(`google_uid_${uid}`)
+          );
+          if (!pubId) continue;
+          store.publicIdByUid[uid] = pubId;
+          const customUsername = String(
+            settings.accountUsername ||
+              settings.playerName ||
+              data.displayName ||
+              ''
+          )
+            .trim()
+            .slice(0, 22);
+
+          const existing = store.profilesByPublicId[pubId];
+          if (!existing) {
+            store.profilesByPublicId[pubId] = {
+              uid,
+              playerPublicId: pubId,
+              username: customUsername || 'Aventureiro',
+              appearanceSlots: Array.isArray(settings.appearanceSlots)
+                ? settings.appearanceSlots
+                : undefined,
+              activeAppearanceSlotIndex:
+                typeof settings.activeAppearanceSlotIndex === 'number'
+                  ? settings.activeAppearanceSlotIndex
+                  : 0,
+              accountAppearance:
+                settings.accountAppearance || data.appearance || undefined,
+              friendsList: Array.isArray(settings.friendsList)
+                ? settings.friendsList
+                : [],
+              deletedWorldIds: Array.isArray(settings.deletedWorldIds)
+                ? settings.deletedWorldIds
+                : [],
+              updatedAt: now,
+            };
+            dirty = true;
+          } else if (
+            customUsername &&
+            customUsername !== 'Aventureiro' &&
+            (existing.username === 'Aventureiro' ||
+              existing.username.startsWith('Jogador '))
+          ) {
+            existing.username = customUsername;
+            dirty = true;
+          }
+        }
+      } catch {
+        // ignore if Firestore quota is exhausted on this database
+      }
+    }
+
+    return dirty;
+  }
+
+  // Trigger initial background indexing on startup
+  void (async () => {
+    const store = readSocialStore();
+    if (await syncFirebaseUsersIntoSocialStore(store, true)) {
+      writeSocialStore(store);
+    }
+  })();
+
+  app.get('/api/social/search', async (req, res) => {
     try {
       const store = readSocialStore();
-      if (syncActiveRoomsIntoSocialStore(store)) {
+      let dirty = syncActiveRoomsIntoSocialStore(store);
+      if (await syncFirebaseUsersIntoSocialStore(store, false)) {
+        dirty = true;
+      }
+      if (dirty) {
         writeSocialStore(store);
       }
 
@@ -1760,6 +1954,26 @@ async function startServer() {
           resultsMap.set(m.playerPublicId, {
             playerPublicId: m.playerPublicId,
             username: m.username,
+            isOnline: st.isOnline,
+            inOpenWorld: st.inOpenWorld,
+            worldName: st.worldName,
+          });
+        }
+      }
+
+      // 3. If no query filter was passed (directory dump for P2P / cross-server federation), return recent profiles
+      if (!playerIdQuery && !usernameQuery) {
+        for (const p of all.slice(0, 100)) {
+          if (!p || !p.playerPublicId || p.playerPublicId === excludeId)
+            continue;
+          const st = computeLiveStatusForPublicId(
+            store,
+            p.playerPublicId,
+            p.username
+          );
+          resultsMap.set(p.playerPublicId, {
+            playerPublicId: p.playerPublicId,
+            username: p.username,
             isOnline: st.isOnline,
             inOpenWorld: st.inOpenWorld,
             worldName: st.worldName,

@@ -32,6 +32,7 @@ import {
   WorldMetadata,
   WorldSaveData,
 } from '../core/types';
+import { socialDirectoryClient } from '../network/SocialDirectoryClient';
 import {
   CloudPublishTelemetry,
   CloudTransferProgress,
@@ -1198,22 +1199,17 @@ class FirebaseCloudSyncService {
       // 1. Always sync profile, 5 appearance slots, username, friends, and deletedWorldIds with /api/social/sync-profile
       try {
         const slotsInfo = SaveManager.getAppearanceSlots();
-        const res = await fetch('/api/social/sync-profile', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            uid,
-            playerPublicId: publicId,
-            username: settings.accountUsername || undefined,
-            appearanceSlots: settings.appearanceSlots,
-            activeAppearanceSlotIndex: slotsInfo.activeIndex,
-            accountAppearance: settings.accountAppearance,
-            friendsList: SaveManager.getFriendsList(),
-            deletedWorldIds: Array.from(SaveManager.getDeletedWorldIds()),
-          }),
+        const json = await socialDirectoryClient.syncProfile({
+          uid,
+          playerPublicId: publicId,
+          username: settings.accountUsername || undefined,
+          appearanceSlots: settings.appearanceSlots,
+          activeAppearanceSlotIndex: slotsInfo.activeIndex,
+          accountAppearance: settings.accountAppearance,
+          friendsList: SaveManager.getFriendsList(),
+          deletedWorldIds: Array.from(SaveManager.getDeletedWorldIds()),
         });
-        if (res.ok) {
-          const json = await res.json();
+        if (json.ok) {
           const remoteProf = json?.profile;
           if (remoteProf) {
             const currentSettings = SaveManager.loadSettings();

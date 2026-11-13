@@ -46,6 +46,7 @@ import {
   WorldSaveData,
 } from '../game/core/types';
 import { MultiplayerManager } from '../game/network/MultiplayerManager';
+import { socialDirectoryClient } from '../game/network/SocialDirectoryClient';
 import {
   CloudSyncSnapshot,
   firebaseCloudSync,
@@ -251,29 +252,24 @@ export const WorldSelectScreen: React.FC<WorldSelectScreenProps> = ({
       const pubId = SaveManager.getPlayerPublicId(cloudSnap.user?.uid);
       const uname = SaveManager.getEffectiveUsername(Boolean(cloudSnap.user));
       const slotsInfo = SaveManager.getAppearanceSlots();
-      const res = await fetch('/api/social/sync-profile', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          uid: cloudSnap.user?.uid || null,
-          playerPublicId: pubId,
-          username: uname,
-          appearanceSlots: slotsInfo.slots,
-          activeAppearanceSlotIndex: slotsInfo.activeIndex,
-          accountAppearance: SaveManager.getAccountAppearance(),
-          friendsList: SaveManager.getFriendsList(),
-          deletedWorldIds: Array.from(SaveManager.getDeletedWorldIds()),
-          presence: {
-            isOnline: true,
-            inOpenWorld: false,
-            worldId: null,
-            worldName: null,
-            inviteCode: null,
-          },
-        }),
+      const json = await socialDirectoryClient.syncProfile({
+        uid: cloudSnap.user?.uid || null,
+        playerPublicId: pubId,
+        username: uname,
+        appearanceSlots: slotsInfo.slots,
+        activeAppearanceSlotIndex: slotsInfo.activeIndex,
+        accountAppearance: SaveManager.getAccountAppearance(),
+        friendsList: SaveManager.getFriendsList(),
+        deletedWorldIds: Array.from(SaveManager.getDeletedWorldIds()),
+        presence: {
+          isOnline: true,
+          inOpenWorld: false,
+          worldId: null,
+          worldName: null,
+          inviteCode: null,
+        },
       });
-      if (res.ok) {
-        const json = await res.json();
+      if (json.ok) {
         if (Array.isArray(json?.profile?.friendsList)) {
           SaveManager.setFriendsList(json.profile.friendsList);
           setFriendsList(json.profile.friendsList);
@@ -301,21 +297,16 @@ export const WorldSelectScreen: React.FC<WorldSelectScreenProps> = ({
     try {
       const pubId = SaveManager.getPlayerPublicId();
       const uname = SaveManager.getEffectiveUsername();
-      const res = await fetch('/api/social/presence', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          playerPublicId: pubId,
-          username: uname,
-          isOnline: true,
-          inOpenWorld: false,
-          worldId: null,
-          worldName: null,
-          inviteCode: null,
-        }),
+      const json = await socialDirectoryClient.reportPresence({
+        playerPublicId: pubId,
+        username: uname,
+        isOnline: true,
+        inOpenWorld: false,
+        worldId: null,
+        worldName: null,
+        inviteCode: null,
       });
-      if (res.ok) {
-        const json = await res.json();
+      if (json.ok) {
         if (Array.isArray(json?.friendsList) && json.friendsList.length > 0) {
           SaveManager.setFriendsList(json.friendsList);
           setFriendsList(json.friendsList);
@@ -359,12 +350,10 @@ export const WorldSelectScreen: React.FC<WorldSelectScreenProps> = ({
 
     const timer = window.setInterval(async () => {
       try {
-        const res = await fetch(
-          `/api/social/join-request/${encodeURIComponent(
-            activeJoinRequest.requestId
-          )}`
+        const json = await socialDirectoryClient.pollJoinRequestStatus(
+          activeJoinRequest.requestId
         );
-        if (!res.ok) {
+        if (!json.ok || !json.request) {
           if (!cancelled) {
             setActiveJoinRequest(null);
             setFriendsMessage({
@@ -374,9 +363,8 @@ export const WorldSelectScreen: React.FC<WorldSelectScreenProps> = ({
           }
           return;
         }
-        const json = await res.json();
-        const reqData = json?.request as WorldJoinRequestInfo | undefined;
-        if (!reqData || cancelled) return;
+        const reqData = json.request;
+        if (cancelled) return;
 
         if (reqData.status === 'ACCEPTED' && reqData.inviteCode) {
           setActiveJoinRequest(null);
@@ -617,15 +605,13 @@ export const WorldSelectScreen: React.FC<WorldSelectScreenProps> = ({
     setSearchFeedback(null);
     try {
       await syncMySocialProfileWithServer();
-      const res = await fetch(
-        `/api/social/search?playerId=${encodeURIComponent(
-          clean
-        )}&excludeId=${encodeURIComponent(myPublicId)}`
-      );
+      const res = await socialDirectoryClient.searchPlayers({
+        playerId: clean,
+        excludeId: myPublicId,
+      });
       if (res.ok) {
-        const json = await res.json();
-        const list: SearchResultEntry[] = Array.isArray(json?.results)
-          ? json.results
+        const list: SearchResultEntry[] = Array.isArray(res.results)
+          ? res.results
           : [];
         setSearchResults(list);
         setSearchFeedback({
@@ -641,7 +627,8 @@ export const WorldSelectScreen: React.FC<WorldSelectScreenProps> = ({
           mode: 'id',
           query: clean,
           count: 0,
-          error: 'Não foi possível consultar o servidor no momento.',
+          error:
+            res.error || 'Não foi possível consultar o servidor no momento.',
         });
       }
     } catch {
@@ -676,15 +663,13 @@ export const WorldSelectScreen: React.FC<WorldSelectScreenProps> = ({
     setSearchFeedback(null);
     try {
       await syncMySocialProfileWithServer();
-      const res = await fetch(
-        `/api/social/search?username=${encodeURIComponent(
-          clean
-        )}&excludeId=${encodeURIComponent(myPublicId)}`
-      );
+      const res = await socialDirectoryClient.searchPlayers({
+        username: clean,
+        excludeId: myPublicId,
+      });
       if (res.ok) {
-        const json = await res.json();
-        const list: SearchResultEntry[] = Array.isArray(json?.results)
-          ? json.results
+        const list: SearchResultEntry[] = Array.isArray(res.results)
+          ? res.results
           : [];
         setSearchResults(list);
         setSearchFeedback({
@@ -700,7 +685,8 @@ export const WorldSelectScreen: React.FC<WorldSelectScreenProps> = ({
           mode: 'username',
           query: clean,
           count: 0,
-          error: 'Não foi possível consultar o servidor no momento.',
+          error:
+            res.error || 'Não foi possível consultar o servidor no momento.',
         });
       }
     } catch {
@@ -734,18 +720,13 @@ export const WorldSelectScreen: React.FC<WorldSelectScreenProps> = ({
     setAddingFriendId(targetPublicId);
     setFriendsMessage(null);
     try {
-      const res = await fetch('/api/social/friends/add', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          myPublicId,
-          myUsername,
-          targetPublicId,
-          targetUsername: fallbackUsername || undefined,
-        }),
+      const json = await socialDirectoryClient.addFriend({
+        myPublicId,
+        myUsername,
+        targetPublicId,
+        targetUsername: fallbackUsername || undefined,
       });
-      const json = await res.json();
-      if (!res.ok || !json?.ok) {
+      if (!json?.ok) {
         setFriendsMessage({
           type: 'error',
           text: json?.error || 'Não foi possível adicionar este jogador.',
@@ -756,21 +737,6 @@ export const WorldSelectScreen: React.FC<WorldSelectScreenProps> = ({
       if (Array.isArray(json.friendsList)) {
         SaveManager.setFriendsList(json.friendsList);
         setFriendsList(json.friendsList);
-      } else {
-        const current = SaveManager.getFriendsList();
-        if (!current.some((f) => f.playerPublicId === targetPublicId)) {
-          const next = [
-            ...current,
-            {
-              playerPublicId: targetPublicId,
-              username:
-                fallbackUsername || `Aventureiro (${targetPublicId.slice(-4)})`,
-              addedAt: Date.now(),
-            },
-          ];
-          SaveManager.setFriendsList(next);
-          setFriendsList(next);
-        }
       }
 
       if (Array.isArray(json.friendsStatus)) {
@@ -789,7 +755,6 @@ export const WorldSelectScreen: React.FC<WorldSelectScreenProps> = ({
         } adicionado com sucesso à sua lista de amigos!`,
       });
     } catch {
-      // Fallback: Save locally so the player never loses the friend addition
       const current = SaveManager.getFriendsList();
       if (!current.some((f) => f.playerPublicId === targetPublicId)) {
         const next = [
@@ -822,16 +787,11 @@ export const WorldSelectScreen: React.FC<WorldSelectScreenProps> = ({
     setFriendsList(filtered);
 
     try {
-      const res = await fetch('/api/social/friends/remove', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          myPublicId,
-          targetPublicId,
-        }),
+      const json = await socialDirectoryClient.removeFriend({
+        myPublicId,
+        targetPublicId,
       });
-      const json = await res.json();
-      if (res.ok && json?.ok && Array.isArray(json.friendsList)) {
+      if (json?.ok && Array.isArray(json.friendsList)) {
         SaveManager.setFriendsList(json.friendsList);
         setFriendsList(json.friendsList);
       }
@@ -844,17 +804,12 @@ export const WorldSelectScreen: React.FC<WorldSelectScreenProps> = ({
   const handleRequestJoinFriendWorld = async (targetPublicId: string) => {
     setFriendsMessage(null);
     try {
-      const res = await fetch('/api/social/join-request', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          requesterPublicId: myPublicId,
-          requesterName: myUsername,
-          targetPublicId,
-        }),
+      const json = await socialDirectoryClient.sendJoinRequest({
+        requesterPublicId: myPublicId,
+        requesterName: myUsername,
+        targetPublicId,
       });
-      const json = await res.json();
-      if (!res.ok || !json?.ok || !json.request) {
+      if (!json?.ok || !json.request) {
         setFriendsMessage({
           type: 'error',
           text:
@@ -863,7 +818,11 @@ export const WorldSelectScreen: React.FC<WorldSelectScreenProps> = ({
         });
         return;
       }
-      setActiveJoinRequest(json.request as WorldJoinRequestInfo);
+      if (json.request.status === 'ACCEPTED' && json.request.inviteCode) {
+        await handleConnectToInviteCode(json.request.inviteCode);
+        return;
+      }
+      setActiveJoinRequest(json.request);
     } catch {
       setFriendsMessage({
         type: 'error',

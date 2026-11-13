@@ -24,6 +24,7 @@ import {
   OnlinePeerSummary,
 } from '../game/core/types';
 import { GameEngine } from '../game/loop/GameEngine';
+import { socialDirectoryClient } from '../game/network/SocialDirectoryClient';
 import { firebaseCloudSync } from '../game/persistence/FirebaseCloudSync';
 import { SaveManager } from '../game/persistence/SaveManager';
 
@@ -104,41 +105,15 @@ export const PauseSettingsModal: React.FC<PauseSettingsModalProps> = ({
 
     setAddingPeerId(peer.peerId);
     try {
-      let updatedList: FriendProfileEntry[] | null = null;
-      try {
-        const res = await fetch('/api/social/friends/add', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            myPublicId,
-            myUsername,
-            targetPublicId,
-            targetUsername: peer.name || 'Aventureiro',
-          }),
-        });
-        const json = await res.json();
-        if (res.ok && json?.ok && Array.isArray(json.friendsList)) {
-          updatedList = json.friendsList;
-        }
-      } catch {
-        // Fallback to local addition
-      }
-
-      if (!updatedList) {
-        const current = SaveManager.getFriendsList();
-        const exists = current.some((f) => f.playerPublicId === targetPublicId);
-        updatedList = exists
-          ? current
-          : [
-              ...current,
-              {
-                playerPublicId: targetPublicId,
-                username: peer.name || 'Aventureiro',
-                addedAt: Date.now(),
-              },
-            ];
-      }
-
+      const json = await socialDirectoryClient.addFriend({
+        myPublicId,
+        myUsername,
+        targetPublicId,
+        targetUsername: peer.name || 'Aventureiro',
+      });
+      const updatedList = Array.isArray(json.friendsList)
+        ? json.friendsList
+        : SaveManager.getFriendsList();
       SaveManager.setFriendsList(updatedList);
       setFriendsList(updatedList);
       void firebaseCloudSync.ensureUserProfileSynced(undefined, true);

@@ -68,6 +68,7 @@ import {
 } from '../entities/EntityManager';
 import { InputManager } from '../input/InputManager';
 import { MultiplayerManager } from '../network/MultiplayerManager';
+import { socialDirectoryClient } from '../network/SocialDirectoryClient';
 import { firebaseCloudSync } from '../persistence/FirebaseCloudSync';
 import {
   createInitialPlayerState,
@@ -22310,31 +22311,24 @@ export class GameEngine {
           this.metadata.onlineEnabled &&
           this.multiplayer.inviteCode
       );
-      const res = await fetch('/api/social/presence', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          playerPublicId: publicId,
-          username,
-          isOnline: true,
-          inOpenWorld,
-          worldId: this.metadata.id,
-          worldName: this.metadata.name,
-          inviteCode: inOpenWorld ? this.multiplayer.inviteCode : null,
-        }),
+      const json = await socialDirectoryClient.reportPresence({
+        playerPublicId: publicId,
+        username,
+        isOnline: true,
+        inOpenWorld,
+        worldId: this.metadata.id,
+        worldName: this.metadata.name,
+        inviteCode: inOpenWorld ? this.multiplayer.inviteCode : null,
       });
-      if (res.ok) {
-        const json = await res.json();
-        if (Array.isArray(json?.pendingJoinRequests)) {
-          const incoming = json.pendingJoinRequests as WorldJoinRequestInfo[];
-          const prevIds = this.pendingJoinRequests
-            .map((r) => r.requestId)
-            .join(',');
-          const nextIds = incoming.map((r) => r.requestId).join(',');
-          if (prevIds !== nextIds) {
-            this.pendingJoinRequests = incoming;
-            this.emitUiSnapshot();
-          }
+      if (json.ok && Array.isArray(json?.pendingJoinRequests)) {
+        const incoming = json.pendingJoinRequests as WorldJoinRequestInfo[];
+        const prevIds = this.pendingJoinRequests
+          .map((r) => r.requestId)
+          .join(',');
+        const nextIds = incoming.map((r) => r.requestId).join(',');
+        if (prevIds !== nextIds) {
+          this.pendingJoinRequests = incoming;
+          this.emitUiSnapshot();
         }
       }
     } catch {
@@ -22351,14 +22345,7 @@ export class GameEngine {
     );
     this.emitUiSnapshot();
     try {
-      await fetch('/api/social/join-request/respond', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          requestId,
-          accept,
-        }),
-      });
+      await socialDirectoryClient.respondToJoinRequest(requestId, accept);
     } catch {
       // ignore
     }
